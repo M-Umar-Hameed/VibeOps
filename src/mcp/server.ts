@@ -6,6 +6,8 @@ import { resolveActor } from "../services/actors.js";
 import { createTicket, updateTicket } from "../services/tickets.js";
 import { addComment } from "../services/comments.js";
 import { getTicketHistory, searchTickets } from "../services/history.js";
+import { saveNote } from "../services/notes.js";
+import { searchKnowledge } from "../services/knowledge.js";
 
 export async function buildServer(apiKey: string) {
   const actor = await resolveActor(apiKey);
@@ -32,6 +34,18 @@ export async function buildServer(apiKey: string) {
   server.registerTool("get_ticket_history",
     { inputSchema: { ticketId: z.string() } },
     async ({ ticketId }) => ({ content: [{ type: "text", text: JSON.stringify(await getTicketHistory(ticketId)) }] }));
+
+  server.registerTool("save_note",
+    { inputSchema: { body: z.string(), scope: z.enum(["global", "project", "ticket"]), refId: z.string().optional() } },
+    async ({ body, scope, refId }) => ({
+      content: [{ type: "text", text: JSON.stringify(await saveNote(actor.id, { body, scope, refId })) }],
+    }));
+
+  server.registerTool("search_knowledge",
+    { inputSchema: { query: z.string(), limit: z.number().optional() } },
+    async ({ query, limit }) => ({
+      content: [{ type: "text", text: JSON.stringify(await searchKnowledge(query, { limit })) }],
+    }));
 
   return server;
 }

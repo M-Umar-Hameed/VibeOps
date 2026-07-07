@@ -41,8 +41,14 @@ export async function updateTicket(
       throw new StaleVersionError(expectedVersion, current.version);
     }
 
+    // Whitelist editable fields so a caller can't mass-assign columns like createdAt/projectId.
+    const ALLOWED = ["title", "body", "status", "priority", "assigneeId"] as const;
+    const clean = Object.fromEntries(
+      Object.entries(patch).filter(([k]) => (ALLOWED as readonly string[]).includes(k)),
+    );
+
     const changes: Record<string, { from: unknown; to: unknown }> = {};
-    for (const [k, v] of Object.entries(patch)) {
+    for (const [k, v] of Object.entries(clean)) {
       if (v !== undefined && (current as Record<string, unknown>)[k] !== v) {
         changes[k] = { from: (current as Record<string, unknown>)[k], to: v };
       }
@@ -50,7 +56,7 @@ export async function updateTicket(
 
     // Guarded UPDATE: version in WHERE closes the check-then-write race.
     const [updated] = await tx.update(tickets)
-      .set({ ...patch, version: current.version + 1, updatedAt: new Date() })
+      .set({ ...clean, version: current.version + 1, updatedAt: new Date() })
       .where(and(eq(tickets.id, id), eq(tickets.version, expectedVersion)))
       .returning();
     if (!updated) throw new StaleVersionError(expectedVersion, current.version);

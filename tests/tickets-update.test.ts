@@ -33,3 +33,24 @@ test("concurrent stale update is rejected", async () => {
     updateTicket(actor.id, ticket.id, 1, { title: "B" }), // still expects 1 -> stale
   ).rejects.toBeInstanceOf(StaleVersionError);
 });
+
+test("update ignores unwhitelisted fields (mass-assignment protection)", async () => {
+  const { actor, ticket } = await setup();
+  const originalCreatedAt = ticket.createdAt;
+  const originalProjectId = ticket.projectId;
+
+  const updated = await updateTicket(actor.id, ticket.id, ticket.version, {
+    title: "new",
+    createdAt: new Date(0),
+    projectId: "00000000-0000-0000-0000-000000000000",
+  } as any);
+
+  expect(updated.title).toBe("new");
+  expect(updated.createdAt).toEqual(originalCreatedAt);
+  expect(updated.projectId).toBe(originalProjectId);
+
+  const rows = await db.select().from(events).where(eq(events.ticketId, ticket.id));
+  const updateRow = rows.find((r) => r.action === "ticket.updated");
+  expect(updateRow).toBeDefined();
+  expect(updateRow!.changes).toEqual({ title: { from: "T", to: "new" } });
+});

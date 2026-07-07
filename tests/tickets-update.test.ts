@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
+import { eq } from "drizzle-orm";
 import { db } from "../src/db/client.js";
-import { projects } from "../src/db/schema.js";
+import { projects, events } from "../src/db/schema.js";
 import { createActor } from "../src/services/actors.js";
 import { createTicket, updateTicket } from "../src/services/tickets.js";
 import { StaleVersionError } from "../src/services/errors.js";
@@ -18,6 +19,11 @@ test("update bumps version and records field changes", async () => {
   const updated = await updateTicket(actor.id, ticket.id, ticket.version, { status: "in_progress" });
   expect(updated.version).toBe(2);
   expect(updated.status).toBe("in_progress");
+
+  const rows = await db.select().from(events).where(eq(events.ticketId, ticket.id));
+  const updateRow = rows.find((r) => r.action === "ticket.updated");
+  expect(updateRow).toBeDefined();
+  expect(updateRow!.changes).toEqual({ status: { from: "open", to: "in_progress" } });
 });
 
 test("concurrent stale update is rejected", async () => {

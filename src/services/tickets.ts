@@ -43,7 +43,7 @@ export async function updateTicket(
 
     const changes: Record<string, { from: unknown; to: unknown }> = {};
     for (const [k, v] of Object.entries(patch)) {
-      if ((current as Record<string, unknown>)[k] !== v) {
+      if (v !== undefined && (current as Record<string, unknown>)[k] !== v) {
         changes[k] = { from: (current as Record<string, unknown>)[k], to: v };
       }
     }

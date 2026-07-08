@@ -49,7 +49,7 @@ export async function insertNoteEmbedding(noteId: string, body: string, embedder
 
 export async function searchKnowledge(
   query: string,
-  opts: { limit?: number; scope?: string; refId?: string } = {},
+  opts: { limit?: number } = {},
   embedder: Embedder = getEmbedder(),
 ): Promise<{ content: string; sourceKind: string; sourceRef: string; score: number; citation: string }[]> {
   const [qv] = await embedder.embed([query]);

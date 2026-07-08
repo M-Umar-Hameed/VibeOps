@@ -6,7 +6,7 @@ import { eq, and } from "drizzle-orm";
 import { db } from "../src/db/client.js";
 import { embeddings } from "../src/db/schema.js";
 import { FakeEmbedder } from "../src/knowledge/embedder.js";
-import { indexVaultOnce, handleUnlink } from "../src/ingest/watch.js";
+import { indexVaultOnce, handleUnlink, reindexFile } from "../src/ingest/watch.js";
 
 const emb = new FakeEmbedder(1024);
 const rows = (p: string) =>
@@ -31,6 +31,20 @@ test("full index, hash-gate skip, re-index on change, delete on unlink", async (
 
   await handleUnlink(file);                            // delete
   expect((await rows(file)).length).toBe(0);
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("reindexFile hash-gates a single path", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "vault-"));
+  const file = join(dir, "doc.md");
+  writeFileSync(file, "# Title\nfirst content");
+
+  expect(await reindexFile(file, emb)).toBe(true);          // embedded
+  expect(await reindexFile(file, emb)).toBe(false);         // unchanged -> skip
+
+  writeFileSync(file, "# Title\ndifferent content");
+  expect(await reindexFile(file, emb)).toBe(true);           // changed -> re-embed
 
   rmSync(dir, { recursive: true, force: true });
 });

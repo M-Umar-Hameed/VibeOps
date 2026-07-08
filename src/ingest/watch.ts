@@ -19,17 +19,24 @@ function walkMd(dir: string): string[] {
   return out;
 }
 
+export async function reindexFile(path: string, embedder: Embedder): Promise<boolean> {
+  const text = readFileSync(path, "utf8");
+  const hash = fileHash(text);
+  const [existing] = await db.select({ h: embeddings.contentHash }).from(embeddings)
+    .where(and(eq(embeddings.sourceKind, "vault"), eq(embeddings.sourceRef, path))).limit(1);
+  if (existing && existing.h === hash) return false;
+  await upsertVaultFile(path, text, embedder);
+  return true;
+}
+
 export async function indexVaultOnce(
   dir: string, embedder: Embedder,
 ): Promise<{ indexed: number; skipped: number }> {
   let indexed = 0, skipped = 0;
   for (const path of walkMd(dir)) {
-    const text = readFileSync(path, "utf8");
-    const hash = fileHash(text);
-    const [existing] = await db.select({ h: embeddings.contentHash }).from(embeddings)
-      .where(and(eq(embeddings.sourceKind, "vault"), eq(embeddings.sourceRef, path))).limit(1);
-    if (existing && existing.h === hash) { skipped++; continue; }
-    try { await upsertVaultFile(path, text, embedder); indexed++; }
+    try {
+      if (await reindexFile(path, embedder)) indexed++; else skipped++;
+    }
     catch (e) { console.error(`ingest failed for ${path}:`, (e as Error).message); }
   }
   return { indexed, skipped };
@@ -50,7 +57,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const reindex = (path: string) => {
     clearTimeout(debounce.get(path));
     debounce.set(path, setTimeout(async () => {
-      try { await upsertVaultFile(path, readFileSync(path, "utf8"), embedder); }
+      try { await reindexFile(path, embedder); }
       catch (e) { console.error(`ingest failed for ${path}:`, (e as Error).message); }
     }, 300));
   };

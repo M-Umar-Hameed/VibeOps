@@ -25,3 +25,7 @@ export async function resolveActor(rawKey: string): Promise<Actor> {
   if (!actor) throw new AuthError("invalid api key");
   return actor;
 }
+
+export async function listActors(): Promise<{ id: string; name: string; kind: string; role: string }[]> {
+  return db.select({ id: actors.id, name: actors.name, kind: actors.kind, role: actors.role }).from(actors);
+}

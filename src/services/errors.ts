@@ -5,3 +5,4 @@ export class StaleVersionError extends Error {
     super(`stale version: expected ${expected}, actual ${actual}`);
   }
 }
+export class ConflictError extends Error {}

@@ -1,7 +1,11 @@
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { comments, tickets, events, type Comment } from "../db/schema.js";
 import { NotFoundError } from "./errors.js";
+
+export async function listComments(ticketId: string): Promise<Comment[]> {
+  return db.select().from(comments).where(eq(comments.ticketId, ticketId)).orderBy(asc(comments.createdAt));
+}
 
 export async function addComment(
   actorId: string, ticketId: string, body: string,

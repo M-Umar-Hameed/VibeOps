@@ -1,6 +1,13 @@
 import { and, asc, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { tickets, events, type Ticket, type Event } from "../db/schema.js";
+import { NotFoundError } from "./errors.js";
+
+export async function getTicket(id: string): Promise<Ticket> {
+  const [t] = await db.select().from(tickets).where(eq(tickets.id, id)).limit(1);
+  if (!t) throw new NotFoundError(`ticket ${id}`);
+  return t;
+}
 
 export async function getTicketHistory(ticketId: string): Promise<Event[]> {
   return db.select().from(events).where(eq(events.ticketId, ticketId)).orderBy(asc(events.at));

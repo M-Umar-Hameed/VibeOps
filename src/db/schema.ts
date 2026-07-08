@@ -87,6 +87,7 @@ export const embeddings = pgTable("embeddings", {
   uniqChunk: uniqueIndex("embeddings_uniq_chunk").on(t.sourceKind, t.sourceRef, t.chunkIndex),
 }));
 
+export type Project = typeof projects.$inferSelect;
 export type Ticket = typeof tickets.$inferSelect;
 export type NewTicket = typeof tickets.$inferInsert;
 export type Actor = typeof actors.$inferSelect;

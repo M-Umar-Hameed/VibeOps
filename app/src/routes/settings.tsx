@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { getSettings, saveSettings } from "../settings.js";
 import { projects } from "../api/projects.js";
 import { Banner } from "../components/Banner.js";
 
-export function SettingsScreen({ onSaved }: { onSaved?: () => void }) {
+export function SettingsScreen() {
+  const nav = useNavigate();
   const [baseUrl, setBaseUrl] = useState("http://localhost:8787");
   const [apiKey, setApiKey] = useState("");
   const [status, setStatus] = useState<string | null>(null);
@@ -20,7 +22,7 @@ export function SettingsScreen({ onSaved }: { onSaved?: () => void }) {
     try { await projects.list(); setStatus("ok"); }
     catch { setStatus("bad"); }
   }
-  async function save() { await saveSettings({ baseUrl, apiKey }); onSaved?.(); }
+  async function save() { await saveSettings({ baseUrl, apiKey }); nav({ to: "/" }); }
 
   return (
     <div>

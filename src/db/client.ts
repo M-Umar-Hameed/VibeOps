@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { drizzle as drizzlePg } from "drizzle-orm/postgres-js";
@@ -20,7 +21,10 @@ async function makeDb() {
   const { vector } = await import("@electric-sql/pglite/vector");
   const { drizzle: drizzlePglite } = await import("drizzle-orm/pglite");
   const { migrate } = await import("drizzle-orm/pglite/migrator");
-  const client = new PGlite(join(homedir(), ".vibeops", "data"), { extensions: { vector } });
+  // PGlite's mkdir is not recursive; create the data dir (and ~/.vibeops) first.
+  const dataDir = join(homedir(), ".vibeops", "data");
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  const client = new PGlite(dataDir, { extensions: { vector } });
   await client.exec("CREATE EXTENSION IF NOT EXISTS vector");
   const d = drizzlePglite(client as never, { schema });
   await migrate(d as never, { migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)) });

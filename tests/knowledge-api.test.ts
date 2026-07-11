@@ -31,3 +31,26 @@ test("REST: save a note then retrieve it via /knowledge", async () => {
   expect(hits.length).toBeGreaterThan(0);
   expect(hits[0].content).toContain(uniq);
 });
+
+test("REST: retrieve knowledge source via /knowledge/source", async () => {
+  const { apiKey } = await createActor({ name: "ksource", kind: "human" });
+  const h = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+
+  const uniq = `source-${Date.now()}-${Math.round(performance.now() * 1000)}`;
+  const body = `test source content ${uniq}`;
+
+  const created = await app.request("/notes", {
+    method: "POST", headers: h,
+    body: JSON.stringify({ body, scope: "global" }),
+  });
+  const note = await created.json();
+  console.log("NOTE:", note);
+
+  const res = await app.request(`/knowledge/source?kind=note&ref=${note.id}`, { headers: h });
+  if (res.status !== 200) {
+    console.log("ERR:", await res.text());
+  }
+  expect(res.status).toBe(200);
+  const data = await res.json();
+  expect(data.text).toBe(body);
+});

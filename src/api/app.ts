@@ -4,10 +4,11 @@ import { createTicket, updateTicket } from "../services/tickets.js";
 import { addComment, listComments } from "../services/comments.js";
 import { getTicket, getTicketHistory, listTickets, searchTickets } from "../services/history.js";
 import { saveNote } from "../services/notes.js";
-import { searchKnowledge } from "../services/knowledge.js";
+import { searchKnowledge, getKnowledgeSource } from "../services/knowledge.js";
 import { AuthError, ConflictError, NotFoundError, StaleVersionError } from "../services/errors.js";
 import { listProjects, createProject } from "../services/projects.js";
 import { listActors } from "../services/actors.js";
+import { getSystemMetrics, getSystemLogs, getSystemTopology } from "../services/system.js";
 import type { Actor } from "../db/schema.js";
 
 export const app = new Hono<{ Variables: { actor: Actor } }>();
@@ -63,3 +64,21 @@ app.get("/knowledge", async (c) => {
   const limit = Number.isFinite(n) && n > 0 ? n : undefined;
   return c.json(await searchKnowledge(q, { limit }));
 });
+
+app.get("/knowledge/source", async (c) => {
+  try {
+    const kind = c.req.query("kind");
+    const ref = c.req.query("ref");
+    console.log("KNOWLEDGE SOURCE REQUEST:", { kind, ref });
+    if (!kind || !ref) return c.json({ error: "Missing kind or ref" }, 400);
+    const text = await getKnowledgeSource(kind, ref);
+    return c.json({ text });
+  } catch (err: any) {
+    console.error("APP_TS ERROR:", err);
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+app.get("/system/metrics", async (c) => c.json(await getSystemMetrics()));
+app.get("/system/logs", async (c) => c.json(await getSystemLogs()));
+app.get("/system/topology", async (c) => c.json(await getSystemTopology()));

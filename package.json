@@ -9,6 +9,7 @@
     "db:vector": "tsx -e \"import('./src/db/vector-setup.js').then(m=>m.ensureExtension())\"",
     "db:vector:index": "tsx -e \"import('./src/db/vector-setup.js').then(m=>m.ensureIndex())\"",
     "ingest:watch": "tsx src/ingest/watch.ts",
+    "key": "tsx src/api/generate-key.ts",
     "dev": "tsx watch src/api/server.ts",
     "mcp": "tsx src/mcp/server.ts",
     "sync:github": "tsx src/sync/cli.ts",

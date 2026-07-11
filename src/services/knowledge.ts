@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { and, eq } from "drizzle-orm";
 import { db, sql as rawSql } from "../db/client.js";
-import { embeddings } from "../db/schema.js";
+import { embeddings, notes } from "../db/schema.js";
 import { chunkMarkdown } from "../knowledge/chunker.js";
 import { getEmbedder, type Embedder } from "../knowledge/embedder.js";
 
@@ -71,4 +72,22 @@ export async function searchKnowledge(
     content: r.content, sourceKind: r.source_kind, sourceRef: r.source_ref,
     score: Number(r.score), citation: r.source_ref,
   }));
+}
+
+export async function getKnowledgeSource(kind: string, ref: string): Promise<string> {
+  if (kind === "vault") {
+    try {
+      return await readFile(ref, "utf-8");
+    } catch (e) {
+      return `Error: Could not read vault file ${ref}.`;
+    }
+  } else if (kind === "note") {
+    try {
+      const [noteRow] = await db.select({ body: notes.body }).from(notes).where(eq(notes.id, ref)).limit(1);
+      return noteRow ? noteRow.body : `Error: Note ${ref} not found.`;
+    } catch (e: any) {
+      return `Error: DB query failed: ${e.message}`;
+    }
+  }
+  return `Error: Unknown source kind ${kind}`;
 }

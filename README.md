@@ -1,4 +1,4 @@
-# ARCH
+# VibeOps
 
 A self-hosted ticketing engine with a built-in knowledge/RAG layer, reachable over REST and MCP so both humans and AI agents (Claude Code/Cowork, Gemini, Codex, Cursor) share one audited source of truth.
 

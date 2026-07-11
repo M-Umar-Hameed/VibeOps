@@ -11,6 +11,7 @@
     "ingest:watch": "tsx src/ingest/watch.ts",
     "dev": "tsx watch src/api/server.ts",
     "mcp": "tsx src/mcp/server.ts",
+    "sync:github": "tsx src/sync/cli.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

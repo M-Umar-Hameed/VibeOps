@@ -87,6 +87,23 @@ export const embeddings = pgTable("embeddings", {
   uniqChunk: uniqueIndex("embeddings_uniq_chunk").on(t.sourceKind, t.sourceRef, t.chunkIndex),
 }));
 
+export const syncLinks = pgTable("sync_links", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  source: text("source").notNull(),
+  externalId: text("external_id").notNull(),
+  ticketId: uuid("ticket_id").notNull().references(() => tickets.id),
+  externalUpdatedAt: timestamp("external_updated_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ uniq: uniqueIndex("sync_links_uniq").on(t.source, t.externalId) }));
+
+export const syncCommentLinks = pgTable("sync_comment_links", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  source: text("source").notNull(),
+  externalId: text("external_id").notNull(),
+  commentId: uuid("comment_id").notNull().references(() => comments.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ uniq: uniqueIndex("sync_comment_links_uniq").on(t.source, t.externalId) }));
+
 export type Project = typeof projects.$inferSelect;
 export type Ticket = typeof tickets.$inferSelect;
 export type NewTicket = typeof tickets.$inferInsert;
@@ -97,3 +114,5 @@ export type Note = typeof notes.$inferSelect;
 export type NewNote = typeof notes.$inferInsert;
 export type Embedding = typeof embeddings.$inferSelect;
 export type NewEmbedding = typeof embeddings.$inferInsert;
+export type SyncLink = typeof syncLinks.$inferSelect;
+export type SyncCommentLink = typeof syncCommentLinks.$inferSelect;

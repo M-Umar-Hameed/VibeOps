@@ -130,6 +130,8 @@ One flow, memory never lost to a flaky embedding API:
 
 ## Deferred to later slices
 - GitHub (Octokit) and URL (readability+turndown) ingestion adapters behind the ingestion interface.
+- PDF ingestion adapter via opendataloader-pdf (https://github.com/opendataloader-project/opendataloader-pdf) — extract structured text/tables from PDFs, then chunk+embed through the same pipeline as vault markdown. Same `sourceKind`-style adapter seam.
+- Graph-knowledge layer via graphify (https://graphify.net/ , https://github.com/Graphify-Labs/graphify) — evaluate as a graph-based retrieval/relationship layer complementing pgvector semantic search (entities/relations extracted from ingested docs). Investigate fit + licensing before adopting; candidate for a hybrid graph+vector retrieval slice.
 - Agent auto-capture memory policy.
 - `related_to_ticket` auto-surfacing tool.
 - Reranking / hybrid keyword+vector retrieval.

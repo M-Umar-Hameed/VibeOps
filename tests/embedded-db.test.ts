@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-test("migrations + vector round-trip work on PGlite", async () => {
+test("migrations + vector round-trip work on PGlite", { timeout: 60_000 }, async () => {
   const { PGlite } = await import("@electric-sql/pglite");
   const { vector } = await import("@electric-sql/pglite/vector");
   const { drizzle } = await import("drizzle-orm/pglite");

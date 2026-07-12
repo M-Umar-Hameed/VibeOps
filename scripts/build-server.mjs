@@ -39,11 +39,14 @@ cpSync("drizzle", join(outDir, "drizzle"), { recursive: true });
 const tfVersion = JSON.parse(readFileSync("package.json", "utf-8")).dependencies["@huggingface/transformers"];
 const winPrefix = mkdtempSync(join(tmpdir(), "vibeops-tf-win-"));
 const linuxPrefix = mkdtempSync(join(tmpdir(), "vibeops-tf-linux-"));
-execSync(`npm install --prefix "${winPrefix}" --no-save --omit=dev --os=win32 --cpu=x64 @huggingface/transformers@${tfVersion}`, { stdio: "inherit" });
-execSync(`npm install --prefix "${linuxPrefix}" --no-save --omit=dev --os=linux --cpu=x64 --libc=glibc @huggingface/transformers@${tfVersion}`, { stdio: "inherit" });
-cpSync(join(winPrefix, "node_modules"), join(outDir, "node_modules"), { recursive: true });
-cpSync(join(linuxPrefix, "node_modules"), join(outDir, "node_modules"), { recursive: true });
-rmSync(winPrefix, { recursive: true, force: true });
-rmSync(linuxPrefix, { recursive: true, force: true });
+try {
+  execSync(`npm install --prefix "${winPrefix}" --no-save --omit=dev --os=win32 --cpu=x64 @huggingface/transformers@${tfVersion}`, { stdio: "inherit" });
+  execSync(`npm install --prefix "${linuxPrefix}" --no-save --omit=dev --os=linux --cpu=x64 --libc=glibc @huggingface/transformers@${tfVersion}`, { stdio: "inherit" });
+  cpSync(join(winPrefix, "node_modules"), join(outDir, "node_modules"), { recursive: true });
+  cpSync(join(linuxPrefix, "node_modules"), join(outDir, "node_modules"), { recursive: true });
+} finally {
+  rmSync(winPrefix, { recursive: true, force: true });
+  rmSync(linuxPrefix, { recursive: true, force: true });
+}
 
 console.log(`payload ready: ${outDir}`);

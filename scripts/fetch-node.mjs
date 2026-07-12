@@ -1,5 +1,5 @@
 import { createWriteStream, existsSync, mkdirSync, renameSync, rmSync, chmodSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -47,12 +47,11 @@ console.log(`checksum verified: ${fileName}`);
 if (target.startsWith("win")) {
   execSync(`unzip -j "${archive}" "${name}/node.exe" -d "${outDir}"`, { stdio: "inherit" });
 } else {
-  const archiveName = target.startsWith("win") ? "node.zip" : "node.tar.xz";
   try {
-    execSync(`tar -xJf ${archiveName} ${name}/bin/node`, { stdio: "inherit", cwd: outDir, shell: true });
+    execSync(`tar -xJf node.tar.xz ${name}/bin/node`, { stdio: "inherit", cwd: outDir, shell: true });
   } catch {
     console.log("tar -xJf failed, trying WSL fallback");
-    execSync(`wsl -e tar -xJf ${archiveName} ${name}/bin/node`, { stdio: "inherit", cwd: outDir, shell: true });
+    execSync(`wsl -e tar -xJf node.tar.xz ${name}/bin/node`, { stdio: "inherit", cwd: outDir, shell: true });
   }
   renameSync(join(outDir, name, "bin", "node"), binPath);
   try { chmodSync(binPath, 0o755); } catch {}

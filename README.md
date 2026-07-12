@@ -9,11 +9,11 @@ A self-hosted ticketing engine with a built-in knowledge/RAG layer, reachable ov
 
 ## Install (one file)
 
-Build the installer once (`npm run build:sidecar`, then `npm run tauri build` in `app/` — requires Rust) and you get a single artifact per platform (NSIS `.exe` on Windows; `deb`/`AppImage` config on Linux). Installing and launching VibeOps:
+Build the installer once (`npm run build:sidecar`, then `npm run tauri build` in `app/` — requires Rust; delete `app/src-tauri/resources/node` before a release build to force a fresh, checksum-verified Node download) and you get a single artifact per platform (NSIS `.exe` on Windows; `deb`/`AppImage` config on Linux). Installing and launching VibeOps:
 
 - The app spawns its own bundled server (portable Node + embedded database) on `127.0.0.1:8787` — unless something is already serving there (a dev server or another VibeOps instance), in which case it attaches instead of double-spawning.
 - First launch self-creates the Inbox project, an owner API key, and `~/.vibeops/credentials.json`; the app auto-connects.
-- Quitting the app stops the bundled server. Data lives in `~/.vibeops` and is never touched by install or uninstall — backup/restore rules below apply unchanged.
+- Quitting the app stops the bundled server. A force-kill (Task Manager) can leave the server running; the next launch attaches to it instead of double-spawning. Data lives in `~/.vibeops` and is never touched by install or uninstall — backup/restore rules below apply unchanged.
 - Linux: the server payload is verified on Ubuntu (x64); deb/AppImage bundle configs are included. macOS config exists but is unverified.
 
 ## Prerequisites (running from source)

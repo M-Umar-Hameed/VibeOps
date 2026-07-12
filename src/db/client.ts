@@ -27,6 +27,8 @@ async function makeDb() {
   const client = new PGlite(dataDir, { extensions: { vector } });
   await client.exec("CREATE EXTENSION IF NOT EXISTS vector");
   const d = drizzlePglite(client as never, { schema });
+  // The import.meta fallback only resolves in the source tree; the bundled payload
+  // (server.mjs in resources/) MUST set VIBEOPS_MIGRATIONS_DIR (the launcher does).
   const migrationsDir = process.env.VIBEOPS_MIGRATIONS_DIR
     ?? fileURLToPath(new URL("../../drizzle", import.meta.url));
   await migrate(d as never, { migrationsFolder: migrationsDir });

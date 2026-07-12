@@ -98,6 +98,12 @@ PDF files are converted to markdown with [`@opendataloader/pdf`](https://github.
 
 Conversion runs in local (deterministic) mode. Hybrid/OCR mode, JSON-with-bounding-boxes output, and PDF/UA accessibility export are out of scope for this integration.
 
+### Session memory (cross-tool history)
+
+Session ingestion indexes Claude Code transcripts and claude-mem observations into the knowledge base, making recent project context searchable across any connected tool. Run `npm run ingest:sessions` to ingest the last 30 days (or set `SESSIONS_SINCE_DAYS` to widen the window); re-runs are safe and skip unchanged sessions via content hash-gating. Indexed sessions are searchable via `search_knowledge` from any connected MCP client.
+
+Note: Session ingestion stores conversation text in the local knowledge database; tool output blocks are stripped before indexing, but secrets pasted directly into messages may be indexed. Run with `EMBED_PROVIDER=fake` for a dry run without embedding costs.
+
 ## Graphify (agent-side knowledge graph)
 
 [Graphify](https://github.com/Graphify-Labs/graphify) (MIT) is an AI-assistant skill that turns a folder of code, schemas, docs, and papers into a queryable knowledge graph (GraphRAG, tree-sitter, Leiden clustering). It complements this server's `search_knowledge`:

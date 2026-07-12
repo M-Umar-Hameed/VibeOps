@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { db } from "./db/client.js";
@@ -11,6 +11,22 @@ import { createProject } from "./services/projects.js";
 export async function runBootstrap(
   port: number, dir = join(homedir(), ".vibeops"),
 ): Promise<{ bootstrapped: boolean }> {
+  // The default vault (human markdown, auto-indexed) lives inside the backup
+  // unit. Created every boot so pre-vault installs pick it up; the starter
+  // note is seeded once and never overwritten.
+  try {
+    const vaultDir = join(dir, "vault");
+    mkdirSync(vaultDir, { recursive: true });
+    const starter = join(vaultDir, "README.md");
+    if (!existsSync(starter)) {
+      writeFileSync(starter,
+        "# VibeOps Vault\n\nDrop markdown files here — VibeOps indexes them into knowledge search automatically.\n" +
+        "Open this folder as an Obsidian vault if you use Obsidian; any editor works.\n");
+    }
+  } catch (e) {
+    console.warn(`could not prepare default vault: ${(e as Error).message}`);
+  }
+
   const [existing] = await db.select({ id: actors.id }).from(actors).limit(1);
   if (existing) return { bootstrapped: false };
 

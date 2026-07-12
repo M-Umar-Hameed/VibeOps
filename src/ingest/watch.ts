@@ -1,4 +1,5 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { and, eq } from "drizzle-orm";
@@ -59,12 +60,21 @@ let lastError: string | null = null;
 let vaultPath: string | null = null;
 let indexedCount = 0;
 
+export function defaultVaultPath(homeDir = homedir()): string {
+  return join(homeDir, ".vibeops", "vault");
+}
+
+// Resolution chain: explicit path (caller) > configured setting > default vault.
+export async function resolveVaultPath(homeDir?: string): Promise<string> {
+  return (await getSetting("obsidian.vault_path")) ?? defaultVaultPath(homeDir);
+}
+
 export async function getVaultStatus() {
   const [res] = await db.select({ count: sql<number>`cast(count(distinct source_ref) as int)` })
     .from(embeddings).where(eq(embeddings.sourceKind, "vault"));
   indexedCount = res?.count || 0;
   return {
-    vaultPath: vaultPath ?? (await getSetting("obsidian.vault_path")),
+    vaultPath: vaultPath ?? (await resolveVaultPath()),
     isRunning: watcher !== null,
     error: lastError,
     lastSync,
@@ -74,8 +84,11 @@ export async function getVaultStatus() {
 
 export async function startWatcher(customPath?: string) {
   if (watcher) return;
-  const dir = customPath ?? await getSetting("obsidian.vault_path");
-  if (!dir) { lastError = "No vault path configured"; return; }
+  const dir = customPath ?? await resolveVaultPath();
+  // The default vault may not exist yet outside embedded bootstrap (external-PG
+  // mode); create it. Never create explicitly configured paths — typos should
+  // surface as errors, not empty vaults.
+  if (dir === defaultVaultPath()) mkdirSync(dir, { recursive: true });
   vaultPath = dir;
   lastError = null;
   const embedder = getEmbedder();

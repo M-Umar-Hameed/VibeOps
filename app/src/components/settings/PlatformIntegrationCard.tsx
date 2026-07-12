@@ -30,7 +30,7 @@ export function PlatformIntegrationCard({ id, title, subtitle, icon, borderColor
       const results: Record<string, string> = {};
       for (const field of fields) {
         const res = await api.get(`/settings/${field.key}`);
-        results[field.key] = res.data.value || "";
+        results[field.key] = res.value || "";
       }
       return results;
     }

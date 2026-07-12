@@ -10,8 +10,7 @@ export function ObsidianIntegrationCard() {
   const { data: status, isLoading } = useQuery({
     queryKey: ["obsidian-status"],
     queryFn: async () => {
-      const res = await api.get("/knowledge/obsidian");
-      return res.data;
+      return await api.get("/knowledge/obsidian");
     },
     refetchInterval: 5000,
   });
@@ -37,6 +36,10 @@ export function ObsidianIntegrationCard() {
   const handleSavePath = async () => {
     await api.patch("/settings/obsidian.vault_path", { value: vaultPath });
     setEditingPath(false);
+    // Re-point the watcher at the new path and refresh status.
+    await api.post("/knowledge/obsidian/stop").catch(() => {});
+    await api.post("/knowledge/obsidian/start", { vaultPath }).catch(() => {});
+    queryClient.invalidateQueries({ queryKey: ["obsidian-status"] });
   };
 
   return (
@@ -46,8 +49,8 @@ export function ObsidianIntegrationCard() {
           <span className="material-symbols-outlined text-[#7A52B3]">edit_document</span>
         </div>
         <div>
-          <h3 className="font-headline-sm text-on-surface font-bold">Obsidian Vault</h3>
-          <p className="text-xs text-on-surface-variant">Local Knowledge Base</p>
+          <h3 className="font-headline-sm text-on-surface font-bold">Knowledge Vault</h3>
+          <p className="text-xs text-on-surface-variant">Auto-indexed markdown &middot; Obsidian optional</p>
         </div>
       </div>
       
@@ -75,7 +78,7 @@ export function ObsidianIntegrationCard() {
                   <input 
                     type="text" 
                     className="flex-1 bg-surface-container-lowest/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface focus:border-primary outline-none transition-colors"
-                    placeholder="C:\Users\Name\Documents\Obsidian"
+                    placeholder="Leave blank for the default ~/.vibeops/vault"
                     value={vaultPath}
                     onChange={(e) => setVaultPath(e.target.value)}
                   />

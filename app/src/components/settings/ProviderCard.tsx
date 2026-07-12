@@ -21,7 +21,7 @@ export function ProviderCard({ settingKey, name, subtitle, icon, placeholder, bo
     queryKey: ["settings", settingKey],
     queryFn: async () => {
       const res = await api.get(`/settings/${settingKey}`);
-      return res.data.value || "";
+      return res.value || "";
     },
   });
 

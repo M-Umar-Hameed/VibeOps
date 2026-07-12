@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { and, eq, sql as dsql } from "drizzle-orm";
+import { and, eq, isNull, sql as dsql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { embeddings, notes } from "../db/schema.js";
 import { chunkMarkdown } from "../knowledge/chunker.js";
@@ -103,7 +103,7 @@ export async function getKnowledgeSource(kind: string, ref: string): Promise<str
     }
   } else if (kind === "note") {
     try {
-      const [noteRow] = await db.select({ body: notes.body }).from(notes).where(eq(notes.id, ref)).limit(1);
+      const [noteRow] = await db.select({ body: notes.body }).from(notes).where(and(eq(notes.id, ref), isNull(notes.deletedAt))).limit(1);
       return noteRow ? noteRow.body : `Error: Note ${ref} not found.`;
     } catch (e: any) {
       return `Error: DB query failed: ${e.message}`;

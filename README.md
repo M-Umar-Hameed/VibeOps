@@ -78,6 +78,12 @@ The legacy stdio server (`npm run mcp`) still works and remains the right choice
 
 Note: installed client configs hold the API key in plaintext, same trust level as `~/.vibeops/credentials.json` — treat them accordingly.
 
+## Actors and roles
+
+Every API key belongs to an actor, and every mutation is attributed to one in the audit trail. Actors carry a role: the bootstrap owner key is `admin`; keys minted afterwards default to `member`. Members get the full collaborative work surface (tickets, comments, notes, knowledge search/save); only admins can read or change settings (which may hold provider API keys), control vault indexing, install MCP client configs, trigger session ingestion, read system logs, or mint new actors.
+
+Give each agent its own key instead of sharing the owner's: create one from the Actors card in Settings (or `POST /actors` as admin — the plaintext key is returned exactly once), then generate that agent's MCP config by calling `GET /mcp/config` with the agent's key. Per-agent keys make the audit trail answer "which agent did this" and cap the blast radius of a misbehaving one.
+
 ## Advanced: external Postgres
 
 To use an external Postgres database (recommended for production), set `DATABASE_URL`:

@@ -1,4 +1,7 @@
 import os from "os";
+import { db } from "../db/client.js";
+import { aiUsageLogs, agentSessions } from "../db/schema.js";
+import { sql } from "drizzle-orm";
 
 export async function getSystemMetrics() {
   const uptime = os.uptime();
@@ -36,4 +39,32 @@ export async function getSystemTopology() {
 
 export async function getSystemLogs() {
   return [];
+}
+
+export async function getAiUsage() {
+  const usageStats = await db.select({
+    provider: aiUsageLogs.provider,
+    model: aiUsageLogs.model,
+    tokens: sql<number>`cast(sum(${aiUsageLogs.tokens}) as integer)`,
+    cost: sql<number>`cast(sum(${aiUsageLogs.cost}) as integer)`
+  }).from(aiUsageLogs).groupBy(aiUsageLogs.provider, aiUsageLogs.model);
+
+  const agentStats = await db.select({
+    agentName: agentSessions.agentName,
+    status: agentSessions.status,
+    count: sql<number>`cast(count(*) as integer)`
+  }).from(agentSessions).groupBy(agentSessions.agentName, agentSessions.status);
+  
+  const totalCost = usageStats.reduce((acc, curr) => acc + ((curr.cost || 0) / 1e6), 0);
+  const totalTokens = usageStats.reduce((acc, curr) => acc + Number(curr.tokens || 0), 0);
+
+  return {
+    overview: {
+      totalTokens,
+      totalCost,
+      activeStrategy: "Cost-Optimized"
+    },
+    usage: usageStats,
+    agents: agentStats
+  };
 }

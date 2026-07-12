@@ -9,7 +9,7 @@ import { AuthError, ConflictError, ForbiddenError, NotFoundError, StaleVersionEr
 import { listProjects, createProject } from "../services/projects.js";
 import { listActors, createActor } from "../services/actors.js";
 import { requireAdmin } from "./auth.js";
-import { getSystemMetrics, getSystemLogs, getSystemTopology } from "../services/system.js";
+import { getSystemMetrics, getSystemLogs, getSystemTopology, getAiUsage } from "../services/system.js";
 import { getSetting, setSetting } from "../services/settings.js";
 import { getVaultStatus, startWatcher, stopWatcher } from "../ingest/watch.js";
 import { getEmbedder } from "../knowledge/embedder.js";
@@ -147,5 +147,6 @@ app.post("/ingest/sessions", requireAdmin, async (c) => {
 app.get("/system/metrics", async (c) => c.json(await getSystemMetrics()));
 app.get("/system/logs", requireAdmin, async (c) => c.json(await getSystemLogs()));
 app.get("/system/topology", async (c) => c.json(await getSystemTopology()));
+app.get("/system/ai-usage", async (c) => c.json(await getAiUsage()));
 
 registerMcpRoutes(app);

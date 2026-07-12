@@ -124,3 +124,24 @@ export const settings = pgTable('settings', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),
 });
+
+export const aiUsageLogs = pgTable('ai_usage_logs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  provider: text('provider').notNull(),
+  model: text('model').notNull(),
+  tokens: integer('tokens').notNull(),
+  cost: integer('cost').notNull().default(0), // multiplied by 1e6 for fractional cents
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const agentSessions = pgTable('agent_sessions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  agentName: text('agent_name').notNull(),
+  status: text('status').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type AiUsageLog = typeof aiUsageLogs.$inferSelect;
+export type AgentSession = typeof agentSessions.$inferSelect;
+

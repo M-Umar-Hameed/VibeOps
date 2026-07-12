@@ -63,7 +63,9 @@ app.post("/actors", requireAdmin, async (c) => {
   if (typeof name !== "string" || !name.trim()) return c.json({ error: "name required" }, 400);
   if (kind !== "human" && kind !== "agent") return c.json({ error: "kind must be human|agent" }, 400);
   if (role !== undefined && role !== "admin" && role !== "member") return c.json({ error: "role must be admin|member" }, 400);
-  return c.json(await createActor({ name: name.trim(), kind, role }), 201);
+  const { actor, apiKey } = await createActor({ name: name.trim(), kind, role });
+  // Never serialize apiKeyHash — the plaintext key below is the one-time secret.
+  return c.json({ actor: { id: actor.id, name: actor.name, kind: actor.kind, role: actor.role }, apiKey }, 201);
 });
 
 app.post("/notes", async (c) => {

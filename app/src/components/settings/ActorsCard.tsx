@@ -37,9 +37,10 @@ export function ActorsCard() {
 
   function copyKey() {
     if (!newKey) return;
-    navigator.clipboard.writeText(newKey);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    navigator.clipboard.writeText(newKey).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }).catch(() => {});
   }
 
   return (

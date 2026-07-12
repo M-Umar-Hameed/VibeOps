@@ -123,7 +123,14 @@ Conversion runs in local (deterministic) mode. Hybrid/OCR mode, JSON-with-boundi
 
 ### Session memory (cross-tool history)
 
-Session ingestion indexes Claude Code transcripts and claude-mem observations into the knowledge base, making recent project context searchable across any connected tool. Run `npm run ingest:sessions` to ingest the last 30 days (or set `SESSIONS_SINCE_DAYS` to widen the window); re-runs are safe and skip unchanged sessions via content hash-gating. Indexed sessions are searchable via `search_knowledge` from any connected MCP client.
+Session ingestion indexes recent project context into the knowledge base, making it searchable across any connected tool. Run `npm run ingest:sessions` to ingest the last 30 days (or set `SESSIONS_SINCE_DAYS` to widen the window); re-runs are safe and skip unchanged sessions via content hash-gating. Indexed sessions are searchable via `search_knowledge` from any connected MCP client.
+
+Sources indexed:
+
+- **Claude Code transcripts** — from claude-mem observations in `~/.claudemem`
+- **Claude Code file history** — sessions from Claude Code runs, also in `~/.claudemem`
+- **Codex sessions** — markdown artifacts from `~/.codex/sessions`
+- **Antigravity agent artifacts** — plans, task lists, walkthroughs from `~/.gemini/antigravity/brain` and `conversations` (these appear only after Antigravity agent runs; empty directories are normal until first agent execution)
 
 Note: Session ingestion stores conversation text in the local knowledge database; tool output blocks are stripped before indexing, but secrets pasted directly into messages may be indexed. Run with `EMBED_PROVIDER=fake` for a dry run without embedding costs.
 

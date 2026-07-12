@@ -35,8 +35,10 @@ On first run, VibeOps boots an embedded PGlite database (pgvector included) in `
 
 No Docker, no environment variables, no setup — just run `npm run dev`.
 
+**Your vault:** `~/.vibeops/vault` is created on first run and indexed automatically. Drop `.md` or `.pdf` files into it, or open it as an Obsidian vault. To use an external vault instead, point `obsidian.vault_path` in Settings → Integrations to any folder — the setting always wins over the default.
+
 - `npm run mcp` — start the MCP server; the app uses credentials from `~/.vibeops/credentials.json`.
-- `npm run ingest:watch` — watch the Obsidian vault and index it (set `VAULT_PATH` at minimum; embedding uses a local model by default, or set `EMBED_PROVIDER` and its key for API-based embeddings; use `EMBED_PROVIDER=fake` for a no-network dry run).
+- `npm run ingest:watch` — watch the Obsidian vault and index it (uses `~/.vibeops/vault` by default, or set `VAULT_PATH` for a custom path; embedding uses a local model by default, or set `EMBED_PROVIDER` and its key for API-based embeddings; use `EMBED_PROVIDER=fake` for a no-network dry run).
 - `npm test` — server test suite. The desktop app has its own suite under `app/`.
 
 ### Factory reset

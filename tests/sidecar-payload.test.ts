@@ -26,6 +26,7 @@ test("built sidecar payload boots embedded and serves 401", { timeout: 120_000 }
     }
     expect(up).toBe(true);
     expect(existsSync(join(home, ".vibeops", "credentials.json"))).toBe(true);
+    expect(existsSync(join(home, ".vibeops", "vault", "README.md"))).toBe(true);
   } finally {
     child.kill();
     await new Promise((r) => setTimeout(r, 500));

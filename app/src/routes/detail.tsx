@@ -7,6 +7,8 @@ import { actors } from "../api/actors.js";
 import { StaleVersionError } from "../api/errors.js";
 import { system } from "../api/system.js";
 import { Avatar } from "../components/Avatar.js";
+import { AuditTimeline } from "../components/AuditTimeline.js";
+import { CommentList } from "../components/CommentList.js";
 
 export function DetailScreen({ id }: { id: string }) {
   const qc = useQueryClient();
@@ -111,34 +113,7 @@ export function DetailScreen({ id }: { id: string }) {
             <span className="material-symbols-outlined text-base">history</span>
             <h3 className="font-headline-md text-headline-md">Audit Timeline</h3>
           </div>
-          <div className="relative ml-4 space-y-8 before:absolute before:left-0 before:top-2 before:h-[calc(100%-8px)] before:w-[1px] before:bg-white/10">
-            {hq.data?.map((event, idx) => (
-              <div key={idx} className="relative pl-8">
-                <div className={`absolute left-[-4px] top-1.5 w-2 h-2 rounded-full ${idx === 0 ? 'bg-primary shadow-[0_0_8px_rgba(0,219,233,0.8)]' : 'bg-white/20'}`}></div>
-                <div className="flex flex-col sm:flex-row justify-between items-start gap-2">
-                  <div>
-                    <p className="font-body-sm font-semibold text-on-surface">
-                      {event.action}
-                    </p>
-                    <div className="text-on-surface-variant text-xs space-y-1 mt-1">
-                      {event.changes && Object.entries(event.changes).map(([k, v]) => (
-                        <p key={k}>{k}: {String(v.from)} {"->"} {String(v.to)}</p>
-                      ))}
-                    </div>
-                    <p className="text-on-surface-variant text-[10px] mt-1 font-code-sm opacity-60">
-                      By {actorName(event.actorId)}
-                    </p>
-                  </div>
-                  <span className="font-code-sm text-[11px] opacity-40 shrink-0">
-                    {new Date(event.at).toLocaleString()}
-                  </span>
-                </div>
-              </div>
-            ))}
-            {(!hq.data || hq.data.length === 0) && (
-              <p className="pl-8 text-on-surface-variant text-xs opacity-50 italic">No history available</p>
-            )}
-          </div>
+          <AuditTimeline events={hq.data} actorName={actorName} />
         </section>
 
         {/* Comments Section */}
@@ -147,25 +122,7 @@ export function DetailScreen({ id }: { id: string }) {
             <span className="material-symbols-outlined text-base">forum</span>
             <h3 className="font-headline-md text-headline-md">Comments</h3>
           </div>
-          <div className="space-y-4">
-            {cq.data?.map(c => (
-              <div key={c.id} className="flex gap-4">
-                <Avatar actorId={c.authorId} size="lg" />
-                <div className="flex-1 glass-card p-4 rounded-xl space-y-2">
-                  <div className="flex justify-between items-center gap-4">
-                    <span className="font-body-sm font-bold text-primary">{actorName(c.authorId)}</span>
-                    <span className="font-code-sm text-[11px] opacity-40 shrink-0">
-                      {new Date(c.createdAt).toLocaleString()}
-                    </span>
-                  </div>
-                  <p className="text-sm text-on-surface-variant whitespace-pre-wrap">{c.body}</p>
-                </div>
-              </div>
-            ))}
-            {(!cq.data || cq.data.length === 0) && (
-              <p className="text-on-surface-variant text-xs opacity-50 italic text-center py-4">No comments yet</p>
-            )}
-          </div>
+          <CommentList items={cq.data} actorName={actorName} />
           
           {/* Input area */}
           <div className="relative mt-8">

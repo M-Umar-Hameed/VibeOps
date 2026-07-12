@@ -6,6 +6,7 @@ import { projects } from "../api/projects.js";
 import { actors } from "../api/actors.js";
 import { system } from "../api/system.js";
 import { Avatar } from "../components/Avatar.js";
+import { StatusBadge } from "../components/StatusBadge.js";
 
 export function ListScreen() {
   const [projectId, setProjectId] = useState<string>("");
@@ -128,10 +129,7 @@ export function ListScreen() {
                     </span>
                   </td>
                   <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-primary-fixed-dim neon-pulse"></span>
-                      <span className="text-xs uppercase font-code-sm">{t.status}</span>
-                    </div>
+                    <StatusBadge status={t.status} />
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-2">

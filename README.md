@@ -66,6 +66,18 @@ npm run dev
 
 On boot, the app detects existing actors and skips bootstrap. Credentials are restored and auto-detected by the desktop app. Treat `~/.vibeops/credentials.json` like `~/.ssh` — it holds the plaintext API key.
 
+## Connect an agent (MCP)
+
+The sidecar serves MCP over streamable HTTP at `http://127.0.0.1:8787/mcp`, authenticated with the same API key as the REST API.
+
+The desktop app's MCP card (Settings) is the one-click path: Cursor and Gemini get their config file written automatically — any existing file is preserved as `<path>.vibeops-backup` before it's overwritten. Claude Code has no config file to write to, so the card instead gives you a `claude mcp add` command to copy and run.
+
+For scripting or a custom client, the same two endpoints back the card: `GET /mcp/config` returns the URL plus a ready-to-run command/snippet per client, and `POST /mcp/install` (`{ "client": "cursor" | "gemini" }`) performs the write.
+
+The legacy stdio server (`npm run mcp`) still works and remains the right choice for external-Postgres setups where the client runs on a different machine than the server.
+
+Note: installed client configs hold the API key in plaintext, same trust level as `~/.vibeops/credentials.json` — treat them accordingly.
+
 ## Advanced: external Postgres
 
 To use an external Postgres database (recommended for production), set `DATABASE_URL`:

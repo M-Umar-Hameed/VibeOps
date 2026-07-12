@@ -36,7 +36,7 @@ On first run, VibeOps boots an embedded PGlite database (pgvector included) in `
 No Docker, no environment variables, no setup — just run `npm run dev`.
 
 - `npm run mcp` — start the MCP server; the app uses credentials from `~/.vibeops/credentials.json`.
-- `npm run ingest:watch` — watch the Obsidian vault and index it (set `VAULT_PATH`, `EMBED_PROVIDER`, and the provider key; `EMBED_PROVIDER=fake` for a no-network dry run).
+- `npm run ingest:watch` — watch the Obsidian vault and index it (set `VAULT_PATH` at minimum; embedding uses a local model by default, or set `EMBED_PROVIDER` and its key for API-based embeddings; use `EMBED_PROVIDER=fake` for a no-network dry run).
 - `npm test` — server test suite. The desktop app has its own suite under `app/`.
 
 ### Factory reset
@@ -97,6 +97,8 @@ In external mode, the database does not auto-bootstrap — ensure you run the sc
 ## Knowledge ingestion
 
 The vault watcher indexes both `.md` and `.pdf` files. Each file is chunked, embedded, and stored in pgvector with the file path as its citation; unchanged files are hash-gated and skipped on re-index, and deleting a file removes it from the index.
+
+Knowledge search works with **no API key required by default**. When neither `EMBED_PROVIDER` nor `VOYAGE_API_KEY` is set, VibeOps uses a local embedding model (`all-MiniLM-L6-v2`, quantized ONNX via transformers.js) running entirely in-process. On first use, the model (~23 MB) downloads from the Hugging Face hub and caches in `~/.vibeops/models`; subsequent embedding operations work offline. While the initial download completes, embedding calls fail gracefully — notes remain unindexed and are swept on re-run. To opt into API-grade quality, set `VOYAGE_API_KEY` (Voyage is used automatically) or explicitly choose an `EMBED_PROVIDER`; explicit provider choice always takes precedence. Switching providers makes any notes embedded with the previous provider invisible to search (search filters by embedding dimension); migrate by re-ingesting. The `~/.vibeops/models` directory is part of the single backup unit and safe to delete — the model simply re-downloads on next run.
 
 ### PDF ingestion (requires Java 11+)
 

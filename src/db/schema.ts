@@ -116,3 +116,8 @@ export type Embedding = typeof embeddings.$inferSelect;
 export type NewEmbedding = typeof embeddings.$inferInsert;
 export type SyncLink = typeof syncLinks.$inferSelect;
 export type SyncCommentLink = typeof syncCommentLinks.$inferSelect;
+
+export const settings = pgTable('settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+});

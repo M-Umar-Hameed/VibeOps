@@ -3,6 +3,7 @@ import { app } from "./app.js";
 import { isEmbedded } from "../db/client.js";
 import { runBootstrap } from "../bootstrap.js";
 import { ensureIndex } from "../db/vector-setup.js";
+import { applyEnvSettings } from "../services/settings.js";
 
 const port = Number(process.env.PORT ?? 8787);
 if (isEmbedded) {
@@ -10,6 +11,7 @@ if (isEmbedded) {
   const { bootstrapped } = await runBootstrap(port);
   if (bootstrapped) console.log("first run: created Inbox project + owner key -> ~/.vibeops/credentials.json");
 }
+await applyEnvSettings();
 // Embedded (installed desktop) mode is loopback-only; external-Postgres deployments
 // legitimately serve other hosts.
 // overrideGlobalObjects:false — hono's lightweight global Response breaks

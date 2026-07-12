@@ -15,6 +15,13 @@
       "when": 1783829876770,
       "tag": "0001_tense_warpath",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783842719415,
+      "tag": "0002_fine_rocket_racer",
+      "breakpoints": true
     }
   ]
 }

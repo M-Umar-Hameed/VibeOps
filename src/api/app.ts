@@ -9,8 +9,10 @@ import { AuthError, ConflictError, NotFoundError, StaleVersionError } from "../s
 import { listProjects, createProject } from "../services/projects.js";
 import { listActors } from "../services/actors.js";
 import { getSystemMetrics, getSystemLogs, getSystemTopology } from "../services/system.js";
-import { registerMcpRoutes } from "./mcp-routes.js";
+import { getSetting, setSetting } from "../services/settings.js";
+import { getVaultStatus, startWatcher, stopWatcher } from "../ingest/watch.js";
 import type { Actor } from "../db/schema.js";
+import { registerMcpRoutes } from "./mcp-routes.js";
 
 export const app = new Hono<{ Variables: { actor: Actor } }>();
 
@@ -71,6 +73,24 @@ app.get("/knowledge/source", async (c) => {
   const ref = c.req.query("ref");
   if (!kind || !ref) return c.json({ error: "Missing kind or ref" }, 400);
   return c.json({ text: await getKnowledgeSource(kind, ref) });
+});
+
+app.get("/settings/:key", async (c) => c.json({ value: await getSetting(c.req.param("key")) }));
+app.patch("/settings/:key", async (c) => {
+  const { value } = await c.req.json();
+  await setSetting(c.req.param("key"), value);
+  return c.json({ ok: true });
+});
+
+app.get("/knowledge/obsidian", async (c) => c.json(await getVaultStatus()));
+app.post("/knowledge/obsidian/start", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  await startWatcher(body.vaultPath);
+  return c.json(await getVaultStatus());
+});
+app.post("/knowledge/obsidian/stop", async (c) => {
+  await stopWatcher();
+  return c.json(await getVaultStatus());
 });
 
 app.get("/system/metrics", async (c) => c.json(await getSystemMetrics()));

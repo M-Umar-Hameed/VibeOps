@@ -6,8 +6,10 @@ import { db } from "../db/client.js";
 import { embeddings } from "../db/schema.js";
 import { upsertVaultFile, deleteVaultFile, fileHash, fileHashBytes } from "../services/knowledge.js";
 import { sweepUnindexedNotes } from "../services/notes.js";
+import { sql } from "drizzle-orm";
 import { getEmbedder, type Embedder } from "../knowledge/embedder.js";
 import { convertPdf } from "./pdf.js";
+import { getSetting } from "../services/settings.js";
 
 let pdfConverter: (path: string) => Promise<string> = convertPdf;
 export function setPdfConverter(fn: (path: string) => Promise<string>) { pdfConverter = fn; }
@@ -51,23 +53,61 @@ export async function handleUnlink(path: string): Promise<void> {
   await deleteVaultFile(path);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const dir = process.env.VAULT_PATH;
-  if (!dir) throw new Error("VAULT_PATH not set");
+let watcher: import("chokidar").FSWatcher | null = null;
+let lastSync: Date | null = null;
+let lastError: string | null = null;
+let vaultPath: string | null = null;
+let indexedCount = 0;
+
+export async function getVaultStatus() {
+  const [res] = await db.select({ count: sql<number>`cast(count(distinct source_ref) as int)` })
+    .from(embeddings).where(eq(embeddings.sourceKind, "vault"));
+  indexedCount = res?.count || 0;
+  return {
+    vaultPath: vaultPath ?? (await getSetting("obsidian.vault_path")),
+    isRunning: watcher !== null,
+    error: lastError,
+    lastSync,
+    indexedCount,
+  };
+}
+
+export async function startWatcher(customPath?: string) {
+  if (watcher) return;
+  const dir = customPath ?? await getSetting("obsidian.vault_path");
+  if (!dir) { lastError = "No vault path configured"; return; }
+  vaultPath = dir;
+  lastError = null;
   const embedder = getEmbedder();
-  const { default: chokidar } = await import("chokidar");
-  await indexVaultOnce(dir, embedder);
+  try {
+    await indexVaultOnce(dir, embedder);
+    lastSync = new Date();
+  } catch (e) {
+    lastError = (e as Error).message;
+  }
   await sweepUnindexedNotes(embedder);
+
+  const { default: chokidar } = await import("chokidar");
+  watcher = chokidar.watch(dir, { ignoreInitial: true });
   const debounce = new Map<string, NodeJS.Timeout>();
   const reindex = (path: string) => {
     clearTimeout(debounce.get(path));
     debounce.set(path, setTimeout(async () => {
-      try { await reindexFile(path, embedder); }
-      catch (e) { console.error(`ingest failed for ${path}:`, (e as Error).message); }
+      try { await reindexFile(path, embedder); lastSync = new Date(); lastError = null; }
+      catch (e) { lastError = (e as Error).message; console.error(`ingest failed for ${path}:`, (e as Error).message); }
     }, 300));
   };
-  chokidar.watch(dir, { ignoreInitial: true })
-    .on("add", reindex).on("change", reindex)
-    .on("unlink", (p) => handleUnlink(p).catch(() => {}));
-  console.log(`watching ${dir}`);
+  watcher.on("add", reindex).on("change", reindex).on("unlink", (p) => handleUnlink(p).catch(() => {}));
 }
+
+export async function stopWatcher() {
+  if (watcher) {
+    await watcher.close();
+    watcher = null;
+  }
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.env.VAULT_PATH && await startWatcher(process.env.VAULT_PATH);
+}
+

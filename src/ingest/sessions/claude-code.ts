@@ -14,6 +14,8 @@ function extractText(raw: string): string {
     if (typeof content === "string") { if (content.trim()) out.push(content.trim()); continue; }
     if (!Array.isArray(content)) continue;
     for (const block of content) {
+      // Bare-string array elements: no current format emits these; kept defensively.
+      // Do NOT extend this to structured blocks — only {type:"text"} may pass below.
       if (typeof block === "string") { if (block.trim()) out.push(block.trim()); continue; }
       if (block?.type === "text" && typeof block.text === "string" && block.text.trim()) out.push(block.text.trim());
     }

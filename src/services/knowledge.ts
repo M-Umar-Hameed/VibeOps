@@ -24,20 +24,22 @@ export async function upsertSourceDoc(
 ): Promise<number> {
   const chunks = chunkMarkdown(text);
   const hash = contentHash ?? fileHash(text);
-  await db.delete(embeddings)
-    .where(and(eq(embeddings.sourceKind, kind), eq(embeddings.sourceRef, ref)));
-  if (chunks.length === 0) return 0;
-  const vecs = await embedder.embed(chunks.map((c) => c.content));
+  const vecs = chunks.length ? await embedder.embed(chunks.map((c) => c.content)) : [];
   const rows = chunks.map((c, i) => ({
     sourceKind: kind, sourceRef: ref, chunkIndex: c.index,
     content: c.content, embedding: vecs[i], model: embedder.model, dim: embedder.dim,
     contentHash: hash,
   }));
-  // Batched inserts: a multi-thousand-row insert with vector literals overflows
-  // PGlite's WASM memory ("memory access out of bounds") on large docs.
-  for (let i = 0; i < rows.length; i += 100) {
-    await db.insert(embeddings).values(rows.slice(i, i + 100));
-  }
+  // One transaction so a mid-batch failure rolls everything back — a partial write
+  // would leave rows carrying the new hash and wedge the doc as skipped-forever.
+  // Batched inserts: a multi-thousand-row statement overflows PGlite's WASM memory.
+  await db.transaction(async (tx) => {
+    await tx.delete(embeddings)
+      .where(and(eq(embeddings.sourceKind, kind), eq(embeddings.sourceRef, ref)));
+    for (let i = 0; i < rows.length; i += 100) {
+      await tx.insert(embeddings).values(rows.slice(i, i + 100));
+    }
+  });
   return chunks.length;
 }
 

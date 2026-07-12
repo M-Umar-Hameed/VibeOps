@@ -33,20 +33,27 @@ export function padTo(v: number[], width: number): number[] {
   return v.length >= width ? v : [...v, ...new Array(width - v.length).fill(0)];
 }
 
+// Xenova/all-MiniLM-L6-v2 main branch commit sha, verified 2026-07-12. Bump deliberately.
+const PINNED_REVISION = "751bff37182d3f1213fa05d7196b954e230abad9";
+
+// Module-scoped so all LocalEmbedder instances share one pipeline load (dedupes
+// concurrent first-embed downloads) and a failed load (e.g. offline first-run)
+// doesn't stay cached as a rejection forever.
+let pipePromise: Promise<(texts: string[], opts: object) => Promise<{ tolist(): number[][] }>> | undefined;
+
 // Zero-key local model. `dim` is the TRUE model dim — the search discriminator —
 // while returned vectors are zero-padded to the vector(1024) column width
 // (padding shared zeros does not change cosine similarity).
 export class LocalEmbedder implements Embedder {
   model = "all-MiniLM-L6-v2";
   dim = 384;
-  private pipe?: Promise<(texts: string[], opts: object) => Promise<{ tolist(): number[][] }>>;
   private load() {
     // Lazy: the server must boot without loading ONNX; first embed pays the cost.
-    this.pipe ??= import("@huggingface/transformers").then((t) => {
+    pipePromise ??= import("@huggingface/transformers").then((t) => {
       t.env.cacheDir = join(homedir(), ".vibeops", "models");
-      return t.pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", { dtype: "q8" }) as never;
-    });
-    return this.pipe;
+      return t.pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", { dtype: "q8", revision: PINNED_REVISION }) as never;
+    }).catch((e) => { pipePromise = undefined; throw e; });
+    return pipePromise;
   }
   async embed(texts: string[]): Promise<number[][]> {
     const pipe = await this.load();

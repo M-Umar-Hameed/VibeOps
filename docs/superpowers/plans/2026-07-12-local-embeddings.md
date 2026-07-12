@@ -6,7 +6,7 @@
 
 **Architecture:** New `LocalEmbedder` behind the existing pluggable `Embedder` seam (`src/knowledge/embedder.ts`). Lazy dynamic import of `@huggingface/transformers` so the server boots without loading ONNX. Vectors are zero-padded to 1024 (cosine similarity is unchanged by shared zero components); the `dim` column stores the true dim (384) as the model discriminator the existing `where dim = ...` filter uses. No schema change, no migration, no service changes. Provider default chain: explicit `EMBED_PROVIDER` → `VOYAGE_API_KEY` present → voyage → else local.
 
-**Tech Stack:** `@huggingface/transformers` (transformers.js v3, ONNX runtime), model `Xenova/all-MiniLM-L6-v2` quantized (`dtype: "q8"`, ~23MB), cached in `~/.vibeops/models`.
+**Tech Stack:** `@huggingface/transformers` (transformers.js v4.2.0, ONNX runtime), model `Xenova/all-MiniLM-L6-v2` quantized (`dtype: "q8"`, ~23MB), cached in `~/.vibeops/models`.
 
 ## Global Constraints
 

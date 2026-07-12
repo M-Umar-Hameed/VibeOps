@@ -46,3 +46,26 @@ test("REST notes: create, patch (stale + ok), delete, get-after-delete, list", a
   const after = await listedAfter.json();
   expect(after.some((n: { id: string }) => n.id === note.id)).toBe(false);
 });
+
+test("REST notes: validation errors return 400", async () => {
+  const { apiKey } = await createActor({ name: `notes-api-val-${Date.now()}`, kind: "human" });
+  const h = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+
+  const created = await app.request("/notes", {
+    method: "POST", headers: h,
+    body: JSON.stringify({ body: "draft", scope: "global" }),
+  });
+  const note = await created.json();
+
+  const deleteNoVersion = await app.request(`/notes/${note.id}`, { method: "DELETE", headers: h });
+  expect(deleteNoVersion.status).toBe(400);
+
+  const patchBadVersion = await app.request(`/notes/${note.id}`, {
+    method: "PATCH", headers: h,
+    body: JSON.stringify({ expectedVersion: "not-a-number", body: "x" }),
+  });
+  expect(patchBadVersion.status).toBe(400);
+
+  const badScope = await app.request(`/notes?scope=bogus`, { headers: h });
+  expect(badScope.status).toBe(400);
+});

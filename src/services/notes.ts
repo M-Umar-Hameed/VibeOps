@@ -64,6 +64,7 @@ export async function updateNote(
     const clean = Object.fromEntries(
       Object.entries(patch).filter(([k, v]) => (ALLOWED as readonly string[]).includes(k) && v !== undefined),
     );
+    if (Object.keys(clean).length === 0) return current;
     const changes: Record<string, { from: unknown; to: unknown }> = {};
     for (const [k, v] of Object.entries(clean)) {
       if ((current as Record<string, unknown>)[k] !== v) changes[k] = { from: (current as Record<string, unknown>)[k], to: v };
@@ -78,9 +79,19 @@ export async function updateNote(
     return updated;
   });
 
+  if (note.version === expectedVersion) return note; // no-op patch: nothing to re-embed
+
   try {
     await insertNoteEmbedding(note.id, note.body, embedder);
-    const [indexed] = await db.update(notes).set({ indexed: true }).where(eq(notes.id, note.id)).returning();
+    const [indexed] = await db.update(notes).set({ indexed: true })
+      .where(and(eq(notes.id, note.id), isNull(notes.deletedAt)))
+      .returning();
+    if (!indexed) {
+      // Deleted during the embed window — our chunks are stale, remove them.
+      await db.delete(embeddings)
+        .where(and(eq(embeddings.sourceKind, "note"), eq(embeddings.sourceRef, note.id)));
+      return note;
+    }
     return indexed;
   } catch {
     return note; // sweep re-embeds

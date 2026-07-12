@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
+import { db } from "../src/db/client.js";
+import { notes } from "../src/db/schema.js";
 import { createActor } from "../src/services/actors.js";
 import { saveNote, updateNote, deleteNote, listNotes, getNote, sweepUnindexedNotes } from "../src/services/notes.js";
 import { searchKnowledge, getKnowledgeSource } from "../src/services/knowledge.js";
-import { FakeEmbedder } from "../src/knowledge/embedder.js";
+import { FakeEmbedder, type Embedder } from "../src/knowledge/embedder.js";
 import { StaleVersionError, NotFoundError } from "../src/services/errors.js";
 
 const emb = new FakeEmbedder(1024);
@@ -57,5 +60,46 @@ describe("notes workspace", () => {
     await deleteNote(actor.id, note.id, 1);
     await expect(updateNote(actor.id, note.id, 2, { body: "x" }, emb)).rejects.toBeInstanceOf(NotFoundError);
     await expect(updateNote(actor.id, "00000000-0000-0000-0000-000000000000", 1, { body: "x" }, emb)).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("empty patch is a no-op: no version bump, no event, no re-embed", async () => {
+    const { actor } = await createActor({ name: uniq(), kind: "agent" });
+    const note = await saveNote(actor.id, { body: uniq(), scope: "global" }, emb);
+    const result = await updateNote(actor.id, note.id, 1, {}, emb);
+    expect(result.version).toBe(1);
+    expect(result.id).toBe(note.id);
+  });
+
+  it("update/delete race does not resurrect embeddings for a deleted note", async () => {
+    const { actor } = await createActor({ name: uniq(), kind: "agent" });
+    const oldBody = `race original ${uniq()}`;
+    const note = await saveNote(actor.id, { body: oldBody, scope: "global" }, emb);
+
+    let embedStarted!: () => void;
+    const started = new Promise<void>((resolve) => { embedStarted = resolve; });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const newBody = `race updated ${uniq()}`;
+    const latchEmbedder: Embedder = {
+      model: "latch",
+      dim: 1024,
+      async embed(texts: string[]) {
+        embedStarted(); // signals updateNote's txn already committed (embed runs post-commit)
+        await gate;
+        return emb.embed(texts);
+      },
+    };
+
+    const updatePromise = updateNote(actor.id, note.id, 1, { body: newBody }, latchEmbedder);
+    await started; // update's txn has committed (version now 2); it's now blocked embedding
+    await deleteNote(actor.id, note.id, 2);
+    release();
+    await updatePromise;
+
+    const hits = await searchKnowledge(newBody, { limit: 5 }, emb);
+    expect(hits.some((h) => h.sourceRef === note.id)).toBe(false);
+
+    const [row] = await db.select().from(notes).where(eq(notes.id, note.id)).limit(1);
+    expect(row?.deletedAt).not.toBeNull();
   });
 });

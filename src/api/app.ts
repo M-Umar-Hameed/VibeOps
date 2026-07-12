@@ -60,18 +60,28 @@ app.post("/notes", async (c) => {
   const { body, scope, refId, title } = await c.req.json();
   return c.json(await saveNote(c.get("actor").id, { body, scope, refId, title }), 201);
 });
-app.get("/notes", async (c) => c.json(await listNotes({
-  scope: c.req.query("scope") as never, refId: c.req.query("refId"),
-  limit: Number(c.req.query("limit")) || undefined,
-})));
+app.get("/notes", async (c) => {
+  const scope = c.req.query("scope");
+  if (scope && !["global", "project", "ticket"].includes(scope)) {
+    return c.json({ error: "invalid scope" }, 400);
+  }
+  return c.json(await listNotes({
+    scope: scope as never, refId: c.req.query("refId"),
+    limit: Number(c.req.query("limit")) || undefined,
+  }));
+});
 app.get("/notes/:id", async (c) => c.json(await getNote(c.req.param("id"))));
 app.patch("/notes/:id", async (c) => {
   const { expectedVersion, title, body } = await c.req.json();
-  return c.json(await updateNote(c.get("actor").id, c.req.param("id"), expectedVersion, { title, body }));
+  const v = Number(expectedVersion);
+  if (!Number.isInteger(v)) return c.json({ error: "expectedVersion required" }, 400);
+  return c.json(await updateNote(c.get("actor").id, c.req.param("id"), v, { title, body }));
 });
 app.delete("/notes/:id", async (c) => {
   const { expectedVersion } = await c.req.json().catch(() => ({}));
-  await deleteNote(c.get("actor").id, c.req.param("id"), Number(expectedVersion ?? c.req.query("expectedVersion")));
+  const v = Number(expectedVersion ?? c.req.query("expectedVersion"));
+  if (!Number.isInteger(v)) return c.json({ error: "expectedVersion required" }, 400);
+  await deleteNote(c.get("actor").id, c.req.param("id"), v);
   return c.json({ ok: true });
 });
 

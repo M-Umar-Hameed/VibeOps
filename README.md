@@ -7,7 +7,16 @@ A self-hosted ticketing engine with a built-in knowledge/RAG layer, reachable ov
 - **One service layer** backs both a REST API and an MCP server, so every mutation — from a human in the desktop app or an AI agent over MCP — lands in the same audit trail.
 - A **Tauri desktop app** (`app/`) is a pure client over the REST API.
 
-## Prerequisites
+## Install (one file)
+
+Build the installer once (`npm run build:sidecar`, then `npm run tauri build` in `app/` — requires Rust) and you get a single artifact per platform (NSIS `.exe` on Windows; `deb`/`AppImage` config on Linux). Installing and launching VibeOps:
+
+- The app spawns its own bundled server (portable Node + embedded database) on `127.0.0.1:8787` — unless something is already serving there (a dev server or another VibeOps instance), in which case it attaches instead of double-spawning.
+- First launch self-creates the Inbox project, an owner API key, and `~/.vibeops/credentials.json`; the app auto-connects.
+- Quitting the app stops the bundled server. Data lives in `~/.vibeops` and is never touched by install or uninstall — backup/restore rules below apply unchanged.
+- Linux: the server payload is verified on Ubuntu (x64); deb/AppImage bundle configs are included. macOS config exists but is unverified.
+
+## Prerequisites (running from source)
 
 - Node 20+ and npm
 

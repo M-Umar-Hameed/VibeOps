@@ -1,0 +1,119 @@
+import { expect, test } from "vitest";
+import { createActor } from "../src/services/actors.js";
+import { app } from "../src/api/app.js";
+
+function uniq(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+test("guarded routes: 403 for member, non-403 for admin", async () => {
+  const { apiKey: adminKey } = await createActor({ name: uniq("authz-admin"), kind: "human", role: "admin" });
+  const { apiKey: memberKey } = await createActor({ name: uniq("authz-member"), kind: "agent" });
+  const adminH = { Authorization: `Bearer ${adminKey}`, "Content-Type": "application/json" };
+  const memberH = { Authorization: `Bearer ${memberKey}`, "Content-Type": "application/json" };
+
+  const settingsKey = uniq("authz.setting");
+
+  const adminGet = await app.request(`/settings/${settingsKey}`, { headers: adminH });
+  expect(adminGet.status).toBe(200);
+  expect(await adminGet.json()).toEqual({ value: null });
+
+  expect((await app.request(`/settings/${settingsKey}`, {
+    method: "PATCH", headers: adminH, body: JSON.stringify({ value: "x" }),
+  })).status).toBe(200);
+
+  expect((await app.request("/knowledge/obsidian/start", {
+    method: "POST", headers: adminH, body: JSON.stringify({}),
+  })).status).toBe(200);
+
+  expect((await app.request("/knowledge/obsidian/stop", {
+    method: "POST", headers: adminH, body: JSON.stringify({}),
+  })).status).toBe(200);
+
+  expect((await app.request("/mcp/install", {
+    method: "POST", headers: adminH, body: JSON.stringify({ client: "bogus" }),
+  })).status).toBe(400);
+
+  expect((await app.request("/ingest/sessions", {
+    method: "POST", headers: adminH, body: JSON.stringify({ sinceDays: 0 }),
+  })).status).toBe(200);
+
+  expect((await app.request("/system/logs", { headers: adminH })).status).toBe(200);
+
+  expect((await app.request("/actors", {
+    method: "POST", headers: adminH, body: JSON.stringify({ name: uniq("authz-minted"), kind: "agent" }),
+  })).status).toBe(201);
+
+  const memberChecks: [string, RequestInit][] = [
+    [`/settings/${settingsKey}`, { headers: memberH }],
+    [`/settings/${settingsKey}`, { method: "PATCH", headers: memberH, body: JSON.stringify({ value: "x" }) }],
+    ["/knowledge/obsidian/start", { method: "POST", headers: memberH, body: JSON.stringify({}) }],
+    ["/knowledge/obsidian/stop", { method: "POST", headers: memberH, body: JSON.stringify({}) }],
+    ["/mcp/install", { method: "POST", headers: memberH, body: JSON.stringify({ client: "bogus" }) }],
+    ["/ingest/sessions", { method: "POST", headers: memberH, body: JSON.stringify({ sinceDays: 0 }) }],
+    ["/system/logs", { headers: memberH }],
+    ["/actors", { method: "POST", headers: memberH, body: JSON.stringify({ name: uniq("authz-nope"), kind: "agent" }) }],
+  ];
+  for (const [path, init] of memberChecks) {
+    const res = await app.request(path, init);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "forbidden" });
+  }
+});
+
+test("member work surface stays intact", async () => {
+  const { apiKey } = await createActor({ name: uniq("authz-worker"), kind: "human" });
+  const h = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+
+  const proj = await (await app.request("/projects", {
+    method: "POST", headers: h, body: JSON.stringify({ key: uniq("authz-proj"), name: "Authz Proj" }),
+  })).json();
+
+  const ticket = await app.request("/tickets", {
+    method: "POST", headers: h, body: JSON.stringify({ projectId: proj.id, title: "member can still work" }),
+  });
+  expect(ticket.status).toBe(201);
+
+  expect((await app.request("/knowledge?q=x", { headers: h })).status).toBe(200);
+
+  const note = await app.request("/notes", {
+    method: "POST", headers: h, body: JSON.stringify({ body: "hi", scope: "global", title: "n" }),
+  });
+  expect(note.status).toBe(201);
+});
+
+test("POST /actors: mints keys, defaults role member, validates input", async () => {
+  const { apiKey: adminKey } = await createActor({ name: uniq("authz-minter"), kind: "human", role: "admin" });
+  const adminH = { Authorization: `Bearer ${adminKey}`, "Content-Type": "application/json" };
+
+  const res = await app.request("/actors", {
+    method: "POST", headers: adminH, body: JSON.stringify({ name: uniq("authz-minted-member"), kind: "agent" }),
+  });
+  expect(res.status).toBe(201);
+  const { actor, apiKey } = await res.json();
+  expect(actor.role).toBe("member");
+  expect(apiKey).toMatch(/^[0-9a-f]{48}$/);
+
+  const mintedH = { Authorization: `Bearer ${apiKey}` };
+  expect((await app.request("/projects", { headers: mintedH })).status).toBe(200);
+  expect((await app.request("/system/logs", { headers: mintedH })).status).toBe(403);
+
+  const badRole = await app.request("/actors", {
+    method: "POST", headers: adminH, body: JSON.stringify({ name: uniq("authz-bad-role"), kind: "agent", role: "bogus" }),
+  });
+  expect(badRole.status).toBe(400);
+
+  const adminMinted = await app.request("/actors", {
+    method: "POST", headers: adminH, body: JSON.stringify({ name: uniq("authz-minted-admin"), kind: "agent", role: "admin" }),
+  });
+  expect(adminMinted.status).toBe(201);
+  expect((await adminMinted.json()).actor.role).toBe("admin");
+});
+
+test("guarded routes require auth: 401 beats 403", async () => {
+  expect((await app.request("/settings/authz-noauth")).status).toBe(401);
+  expect((await app.request("/system/logs")).status).toBe(401);
+  expect((await app.request("/actors", {
+    method: "POST", body: JSON.stringify({ name: "x", kind: "agent" }),
+  })).status).toBe(401);
+});

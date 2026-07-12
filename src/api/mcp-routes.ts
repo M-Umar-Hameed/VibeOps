@@ -3,6 +3,7 @@ import { RESPONSE_ALREADY_SENT } from "@hono/node-server/utils/response";
 import type { Actor } from "../db/schema.js";
 import { buildServer } from "../mcp/server.js";
 import { buildMcpConfig, installClientConfig, type InstallableClient } from "../mcp/clients.js";
+import { requireAdmin } from "./auth.js";
 
 type AppEnv = { Variables: { actor: Actor } };
 
@@ -17,7 +18,7 @@ export function registerMcpRoutes(app: Hono<AppEnv>): void {
     return c.json(buildMcpConfig(url, bearer(c.req.header("authorization"))));
   });
 
-  app.post("/mcp/install", async (c) => {
+  app.post("/mcp/install", requireAdmin, async (c) => {
     const { client } = await c.req.json().catch(() => ({}));
     if (client !== "cursor" && client !== "gemini") {
       return c.json({ error: `unknown client: ${String(client)}` }, 400);

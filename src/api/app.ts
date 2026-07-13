@@ -148,5 +148,10 @@ app.get("/system/metrics", async (c) => c.json(await getSystemMetrics()));
 app.get("/system/logs", requireAdmin, async (c) => c.json(await getSystemLogs()));
 app.get("/system/topology", async (c) => c.json(await getSystemTopology()));
 app.get("/system/ai-usage", async (c) => c.json(await getAiUsage()));
+app.get("/system/agents", requireAdmin, async (c) => {
+  const { getAgents } = await import("../system/agents.js");
+  const n = Number(c.req.query("sinceDays"));
+  return c.json(await getAgents(Number.isFinite(n) && n >= 0 ? n : 7));
+});
 
 registerMcpRoutes(app);

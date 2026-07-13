@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "../src/db/client.js";
-import { notes } from "../src/db/schema.js";
+import { embeddings, notes } from "../src/db/schema.js";
 import { createActor } from "../src/services/actors.js";
 import { saveNote, updateNote, deleteNote, listNotes, getNote, sweepUnindexedNotes } from "../src/services/notes.js";
 import { searchKnowledge, getKnowledgeSource } from "../src/services/knowledge.js";
@@ -24,10 +24,13 @@ describe("notes workspace", () => {
     expect(updated.version).toBe(2);
     expect(updated.body).toBe(newBody);
 
-    const hits = await searchKnowledge(newBody, { limit: 5 }, emb);
-    expect(hits.some((h) => h.sourceRef === note.id)).toBe(true);
-    const oldHits = await searchKnowledge(oldBody, { limit: 5 }, emb);
-    expect(oldHits.filter((h) => h.sourceRef === note.id && h.content === oldBody)).toHaveLength(0);
+    // Assert the re-embed deterministically against the index rows: ANN top-k
+    // under full-suite parallel inserts is approximate and flaked repeatedly.
+    // Semantic retrieval itself is covered by tests/e2e-memory.test.ts.
+    const rows = await db.select({ content: embeddings.content }).from(embeddings)
+      .where(and(eq(embeddings.sourceKind, "note"), eq(embeddings.sourceRef, note.id)));
+    expect(rows.some((r) => r.content === newBody)).toBe(true);
+    expect(rows.some((r) => r.content === oldBody)).toBe(false);
   });
 
   it("stale update and stale delete throw StaleVersionError", async () => {

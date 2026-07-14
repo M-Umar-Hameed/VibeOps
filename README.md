@@ -56,6 +56,44 @@ Give each agent its own key (Settings → Local Node → Actors) so the audit tr
 
 Make agents actually use the shared brain: add a few lines to your agent instructions (CLAUDE.md / AGENTS.md / GEMINI.md) — search knowledge before starting, save decisions after finishing, track multi-step work as tickets. This repo's `AGENTS.md` has the canonical block.
 
+## Cross-model pipeline (relay)
+
+Ticket work has three roles — plan, work, review — and each can run against a different agent or model, so the expensive reasoning model touches a ticket only twice (writing the plan, then reviewing the diff) while a cheap or local model grinds through the actual implementation loop in between.
+
+- **plan**: reads the ticket and relevant knowledge, posts a `plan` comment, moves the ticket to `planned`.
+- **work**: claims a `planned` ticket (optimistic-locked — two workers racing for the same ticket never both claim it), implements the plan, posts a `report` comment, moves the ticket to `review`.
+- **review**: reads the plan, the report, and the real `git diff`, then closes the ticket on `VERDICT: PASS` or bounces it back to `planned` with findings on `VERDICT: FAIL`.
+
+### Quickstart
+
+Create `~/.vibeops/relay.json`:
+
+```json
+{
+  "workdir": "D:/Github/myproject",
+  "agents": {
+    "fable": { "cmd": ["claude", "-p", "{promptFile}"], "roles": ["plan", "review"] },
+    "codex": { "cmd": ["codex", "exec", "--oss", "-C", "{workdir}", "{prompt}"], "roles": ["work"] }
+  }
+}
+```
+
+`codex exec --oss` runs the work loop against a local open-weights model through Codex's own runtime — you don't need Ollama installed until you want `work` on a model Codex doesn't bundle.
+
+Run one pass per role:
+
+```bash
+npm run relay -- --role plan --agent fable
+npm run relay -- --role work --agent codex
+npm run relay -- --role review --agent fable
+```
+
+Add `--watch` to poll continuously instead of running once, and `--ticket <id>` to target a specific ticket instead of the oldest one in that role's queue.
+
+### Security note
+
+`relay.json` — including the exact command each agent runs — lives in a local file, never the settings table. An admin API key can already read and write ticket data; if command templates lived in the DB too, that same key would amount to arbitrary command execution on whatever machine runs the relay. Keeping it filesystem-only means compromising the API can't compromise the shell.
+
 ## Architecture
 
 ```text

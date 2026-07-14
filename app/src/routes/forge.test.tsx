@@ -48,7 +48,8 @@ test("Run pipeline posts the selected agents and ticketId", async () => {
     if (path === "/forge/agents") return [
       { name: "PlanGPT", roles: ["plan"] },
       { name: "WorkGPT", roles: ["work"] },
-      { name: "ReviewGPT", roles: ["review"] }
+      { name: "ReviewGPT", roles: ["review"] },
+      { name: "MultiGPT", roles: ["plan", "work", "review"] }
     ];
     if (path === "/forge/skills") return [];
     if (path.includes("/sandbox")) return { exists: false };
@@ -62,13 +63,17 @@ test("Run pipeline posts the selected agents and ticketId", async () => {
   
   await waitFor(() => expect(screen.getByRole("button", { name: /Run pipeline/i })).not.toBeDisabled());
   
+  // Change Plan Model selection
+  const planSelect = screen.getAllByRole("combobox")[0]; // Plan Model select
+  fireEvent.change(planSelect, { target: { value: "MultiGPT" } });
+  
   fireEvent.click(screen.getByRole("button", { name: /Run pipeline/i }));
   
   await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/forge/pipeline", {
     method: "POST",
     body: {
       ticketId: "t1",
-      planAgent: "PlanGPT",
+      planAgent: "MultiGPT",
       workAgent: "WorkGPT",
       reviewAgent: "ReviewGPT",
       extraPrompt: ""
@@ -151,4 +156,12 @@ test("console appends polled chunks (mock two successive output responses, use f
     const pre = document.querySelector("pre");
     expect(pre?.textContent).toBe("starting...done!");
   });
+  
+  const callCountAfterSettle = pollCount;
+  
+  await act(async () => {
+    vi.advanceTimersByTime(2000);
+  });
+  
+  expect(pollCount).toBe(callCountAfterSettle);
 });

@@ -40,9 +40,12 @@ export async function sweepUnindexedNotes(embedder: Embedder = getEmbedder()): P
   let done = 0;
   for (const n of pending) {
     try {
-      await insertNoteEmbedding(n.id, n.body, embedder);
-      await db.update(notes).set({ indexed: true }).where(eq(notes.id, n.id));
-      done++;
+      // Flip only when the embedding actually wrote — a stale-body no-op must
+      // leave indexed=false so a later sweep retries with fresh data.
+      if (await insertNoteEmbedding(n.id, n.body, embedder)) {
+        await db.update(notes).set({ indexed: true }).where(eq(notes.id, n.id));
+        done++;
+      }
     } catch { /* leave for next sweep */ }
   }
   return done;

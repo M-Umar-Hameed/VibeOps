@@ -50,8 +50,11 @@ export function composeReviewPrompt(
 }
 
 // Fail-closed: no VERDICT line, or anything other than PASS, means the ticket
-// does not close.
+// does not close. Take the LAST line-anchored verdict — reviewers narrate
+// ("I would pass this, but...") before their final line, and a first-match
+// scan turned that prose into a fail-open close.
 export function parseVerdict(output: string): { pass: boolean; raw: string } {
-  const match = output.match(/VERDICT:\s*(PASS|FAIL)/i);
-  return { pass: match?.[1].toUpperCase() === "PASS", raw: output };
+  const matches = [...output.matchAll(/^\s*VERDICT:\s*(PASS|FAIL)\b/gim)];
+  const last = matches.at(-1);
+  return { pass: last?.[1].toUpperCase() === "PASS", raw: output };
 }

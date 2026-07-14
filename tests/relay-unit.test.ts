@@ -111,3 +111,9 @@ test("runAgent smoke: kills on timeout", async () => {
   );
   expect(result.ok).toBe(false);
 }, 10_000);
+
+test("parseVerdict takes the last line-anchored verdict (fail-closed vs narration)", () => {
+  expect(parseVerdict("I would mark this VERDICT: PASS if not for X.\nVERDICT: FAIL\n- fix X").pass).toBe(false);
+  expect(parseVerdict("narration\n  VERDICT: PASS").pass).toBe(true);
+  expect(parseVerdict("mentions VERDICT: FAIL early\nVERDICT: PASS").pass).toBe(true);
+});

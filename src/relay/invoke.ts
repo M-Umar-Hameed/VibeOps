@@ -30,7 +30,7 @@ export async function runAgent(
 ): Promise<{ ok: boolean; output: string }> {
   const promptFile = join(tmpdir(), `vibeops-relay-${randomUUID()}.txt`);
   const needsFile = agent.cmd.some((p) => p.includes("{promptFile}"));
-  if (needsFile) await writeFile(promptFile, prompt, "utf-8");
+  if (needsFile) await writeFile(promptFile, prompt, { encoding: "utf-8", mode: 0o600 });
 
   const [cmd0, ...rest] = substituteCmd(agent.cmd, { prompt, promptFile, workdir });
 

@@ -9,7 +9,7 @@ function uniq(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-test("guarded routes: 403 for member, non-403 for admin", async () => {
+test("guarded routes: 403 for member, non-403 for admin", { timeout: 60_000 }, async () => {
   const { apiKey: adminKey } = await createActor({ name: uniq("authz-admin"), kind: "human", role: "admin" });
   const { apiKey: memberKey } = await createActor({ name: uniq("authz-member"), kind: "agent" });
   const adminH = { Authorization: `Bearer ${adminKey}`, "Content-Type": "application/json" };

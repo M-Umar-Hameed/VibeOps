@@ -13,6 +13,7 @@
     "ingest:sessions": "tsx src/ingest/sessions/cli.ts",
     "key": "tsx src/api/generate-key.ts",
     "dev": "tsx watch src/api/server.ts",
+    "serve": "tsx src/api/server.ts",
     "mcp": "tsx src/mcp/stdio.ts",
     "relay": "tsx src/relay/runner.ts",
     "sync:github": "tsx src/sync/cli.ts",

@@ -36,7 +36,8 @@ export async function runAgent(
 
   try {
     return await new Promise((resolve) => {
-      const child = spawn(cmd0, rest, { cwd: workdir });
+      // stdin ignored: headless CLIs (codex exec) otherwise block reading it.
+      const child = spawn(cmd0, rest, { cwd: workdir, stdio: ["ignore", "pipe", "pipe"] });
       let output = "";
       let settled = false;
 

@@ -58,8 +58,15 @@ export function addComment(config: RelayConfig, id: string, body: string, kind?:
   return req(config, `/tickets/${id}/comments`, { method: "POST", body: JSON.stringify({ body, kind }) });
 }
 
-export function getKnowledge(
+export async function getKnowledge(
   config: RelayConfig, q: string, limit = 5,
 ): Promise<{ content: string; citation: string }[]> {
-  return req(config, `/knowledge?q=${encodeURIComponent(q)}&limit=${limit}`);
+  // Context is a bonus, not a dependency: an embedder hiccup (rate limit,
+  // cold model) must not abort a plan/work pass.
+  try {
+    return await req(config, `/knowledge?q=${encodeURIComponent(q)}&limit=${limit}`);
+  } catch (e) {
+    console.warn(`knowledge lookup skipped: ${(e as Error).message}`);
+    return [];
+  }
 }

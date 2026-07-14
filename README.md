@@ -73,7 +73,7 @@ Create `~/.vibeops/relay.json`:
   "workdir": "D:/Github/myproject",
   "agents": {
     "fable": { "cmd": ["claude", "-p", "{promptFile}"], "roles": ["plan", "review"] },
-    "codex": { "cmd": ["codex", "exec", "--oss", "-C", "{workdir}", "{prompt}"], "roles": ["work"] }
+    "codex": { "cmd": ["codex", "exec", "--oss", "--sandbox", "workspace-write", "-C", "{workdir}", "{prompt}"], "roles": ["work"] }
   }
 }
 ```

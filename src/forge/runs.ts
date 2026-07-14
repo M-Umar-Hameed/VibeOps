@@ -21,6 +21,12 @@ const NARRATION =
   "you are about to do and why. Your narration is read live by the supervisor " +
   "and by the reviewing model.";
 
+// Plan/review agents run in the REAL workdir; a permissive CLI would happily
+// write there (live incident: claude acceptEdits implemented during planning).
+const PLAN_ONLY =
+  "\n\nOutput the plan as text only. Do NOT create, modify, or delete any files; " +
+  "implementation happens later in an isolated workspace.";
+
 type Stage = "plan" | "work" | "review";
 type Status = "running" | "passed" | "failed" | "stopped";
 
@@ -110,7 +116,7 @@ async function pipeline(
   if (ticket.status === "open") {
     append(run, `=== FORGE plan (${run.agents.plan}) ===\n`);
     const knowledge = await getKnowledgeSafe(ticket.title);
-    const res = await runAgent(agents.plan, composePlanPrompt({ ticket, knowledge }) + extra, config.workdir, onData);
+    const res = await runAgent(agents.plan, composePlanPrompt({ ticket, knowledge }) + PLAN_ONLY + extra, config.workdir, onData);
     if (run.stopped) return settle(run, "stopped");
     if (!res.ok) { await bounce(run, actorId, "planner failed", res.output); return settle(run, "failed"); }
     await addComment(actorId, ticket.id, res.output, "plan");

@@ -86,8 +86,11 @@ export async function startPipeline(
   };
   runs.set(run.id, run);
   trim();
-  run.done = pipeline(run, actorId, config, agents, opts.extraPrompt).catch((e) => {
+  run.done = pipeline(run, actorId, config, agents, opts.extraPrompt).catch(async (e) => {
     append(run, `\nforge: pipeline error: ${(e as Error).message}\n`);
+    // Uphold the never-stuck-in_progress invariant even for unexpected throws
+    // (forgeCommit/addComment failures land here, after the claim).
+    await bounce(run, actorId, "pipeline error", (e as Error).message);
     run.status = "failed";
     run.finishedAt = new Date().toISOString();
   });

@@ -40,9 +40,14 @@ app.patch("/tickets/:id", async (c) => {
   return c.json(t);
 });
 
+const COMMENT_KINDS = ["comment", "plan", "report", "review"] as const;
+
 app.post("/tickets/:id/comments", async (c) => {
-  const { body } = await c.req.json();
-  return c.json(await addComment(c.get("actor").id, c.req.param("id"), body), 201);
+  const { body, kind } = await c.req.json();
+  if (kind !== undefined && !COMMENT_KINDS.includes(kind)) {
+    return c.json({ error: "kind must be comment|plan|report|review" }, 400);
+  }
+  return c.json(await addComment(c.get("actor").id, c.req.param("id"), body, kind), 201);
 });
 
 app.get("/tickets/:id/history", async (c) => c.json(await getTicketHistory(c.req.param("id"))));

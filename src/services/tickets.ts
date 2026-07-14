@@ -8,7 +8,7 @@ export async function createTicket(
   input: {
     projectId: string; title: string; body?: string;
     priority?: "low" | "normal" | "high"; assigneeId?: string;
-    status?: "open" | "in_progress" | "closed";
+    status?: "open" | "in_progress" | "closed" | "planned" | "review";
   },
 ): Promise<Ticket> {
   return db.transaction(async (tx) => {
@@ -30,7 +30,7 @@ export async function updateTicket(
   expectedVersion: number,
   patch: Partial<{
     title: string; body: string;
-    status: "open" | "in_progress" | "closed";
+    status: "open" | "in_progress" | "closed" | "planned" | "review";
     priority: "low" | "normal" | "high";
     assigneeId: string | null;
   }>,

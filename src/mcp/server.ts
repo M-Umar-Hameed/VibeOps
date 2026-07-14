@@ -16,14 +16,14 @@ export async function buildServer(apiKey: string) {
     async (a) => ({ content: [{ type: "text", text: JSON.stringify(await createTicket(actor.id, a)) }] }));
 
   server.registerTool("update_ticket",
-    { inputSchema: { id: z.string(), expectedVersion: z.number(), status: z.enum(["open", "in_progress", "closed"]).optional(), title: z.string().optional() } },
+    { inputSchema: { id: z.string(), expectedVersion: z.number(), status: z.enum(["open", "in_progress", "closed", "planned", "review"]).optional(), title: z.string().optional() } },
     async ({ id, expectedVersion, ...patch }) => ({
       content: [{ type: "text", text: JSON.stringify(await updateTicket(actor.id, id, expectedVersion, patch)) }],
     }));
 
   server.registerTool("comment",
-    { inputSchema: { ticketId: z.string(), body: z.string() } },
-    async ({ ticketId, body }) => ({ content: [{ type: "text", text: JSON.stringify(await addComment(actor.id, ticketId, body)) }] }));
+    { inputSchema: { ticketId: z.string(), body: z.string(), kind: z.enum(["comment", "plan", "report", "review"]).optional() } },
+    async ({ ticketId, body, kind }) => ({ content: [{ type: "text", text: JSON.stringify(await addComment(actor.id, ticketId, body, kind)) }] }));
 
   server.registerTool("search_tickets",
     { inputSchema: { q: z.string() } },

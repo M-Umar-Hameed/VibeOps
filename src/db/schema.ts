@@ -3,7 +3,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
-export const ticketStatus = pgEnum("ticket_status", ["open", "in_progress", "closed"]);
+export const ticketStatus = pgEnum("ticket_status", ["open", "in_progress", "closed", "planned", "review"]);
 export const ticketPriority = pgEnum("ticket_priority", ["low", "normal", "high"]);
 export const actorKind = pgEnum("actor_kind", ["human", "agent"]);
 
@@ -41,6 +41,7 @@ export const comments = pgTable("comments", {
   ticketId: uuid("ticket_id").notNull().references(() => tickets.id),
   authorId: uuid("author_id").notNull().references(() => actors.id),
   body: text("body").notNull(),
+  kind: text("kind").notNull().default("comment"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({ ticketIdx: index("comments_ticket_idx").on(t.ticketId) }));
 

@@ -16,4 +16,11 @@ if (!out) {
   console.error(`fake-agent: unknown FAKE_MODE "${process.env.FAKE_MODE}"`);
   process.exit(1);
 }
+
+if (process.env.FAKE_WRITE) {
+  const { writeFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  writeFileSync(join(process.cwd(), "forge-made.txt"), "made by fake agent\n");
+}
+
 console.log(out);

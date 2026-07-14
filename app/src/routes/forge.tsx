@@ -28,6 +28,7 @@ export function ForgeScreen() {
   const [autocompleteCursor, setAutocompleteCursor] = useState(0);
 
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [runOutput, setRunOutput] = useState("");
   const [runStage, setRunStage] = useState("");
   const [runStatus, setRunStatus] = useState("");
@@ -98,6 +99,7 @@ export function ForgeScreen() {
       setRunStatus("");
       setRunError("");
       setActiveRunId(null);
+      setIsSubmitting(false);
       nextOffsetRef.current = 0;
       setViewDiff(false);
     }
@@ -148,6 +150,7 @@ export function ForgeScreen() {
 
   const handleRun = async () => {
     if (!selectedTicket) return;
+    setIsSubmitting(true);
     setRunError("");
     setRunOutput("");
     setRunStage("");
@@ -165,6 +168,8 @@ export function ForgeScreen() {
     } catch (e: any) {
       setRunError(e.message || "Pipeline start failed");
       setRunStatus("error");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -336,7 +341,7 @@ export function ForgeScreen() {
               <div className="flex items-center gap-4 pt-2">
                 <button
                   onClick={handleRun}
-                  disabled={!!activeRunId || !planAgent || !workAgent || !reviewAgent}
+                  disabled={!!activeRunId || isSubmitting || !planAgent || !workAgent || !reviewAgent}
                   className="px-6 py-2 rounded bg-primary hover:brightness-110 text-on-primary text-sm font-bold uppercase tracking-widest transition-all disabled:opacity-50 cursor-pointer"
                 >
                   Run pipeline

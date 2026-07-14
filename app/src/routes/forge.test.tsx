@@ -132,9 +132,9 @@ test("console appends polled chunks (mock two successive output responses, use f
     if (path === "/forge/pipeline") return { runId: "run123" };
     if (path.includes("/output")) {
       pollCount++;
-      if (pollCount === 1) return { chunk: "starting...", next: 10, stage: "planning", status: "running" };
-      if (pollCount === 2) return { chunk: "done!", next: 15, stage: "reviewing", status: "success" };
-      return { chunk: "", next: 15, stage: "reviewing", status: "success" };
+      if (pollCount === 1) return { chunk: "starting...", next: 10, stage: "plan", status: "running" };
+      if (pollCount === 2) return { chunk: "done!", next: 15, stage: "review", status: "passed" };
+      return { chunk: "", next: 15, stage: "review", status: "passed" };
     }
     return {};
   });

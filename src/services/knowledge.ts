@@ -55,15 +55,23 @@ export async function deleteVaultFile(path: string): Promise<void> {
 export async function insertNoteEmbedding(noteId: string, body: string, embedder: Embedder): Promise<void> {
   const chunks = chunkMarkdown(body);
   const hash = fileHash(body);
-  await db.delete(embeddings)
-    .where(and(eq(embeddings.sourceKind, "note"), eq(embeddings.sourceRef, noteId)));
   const parts = chunks.length ? chunks : [{ index: 0, content: body }];
   const vecs = await embedder.embed(parts.map((c) => c.content));
-  await db.insert(embeddings).values(parts.map((c, i) => ({
-    sourceKind: "note" as const, sourceRef: noteId, chunkIndex: c.index,
-    content: c.content, embedding: vecs[i], model: embedder.model, dim: embedder.dim,
-    contentHash: hash,
-  })));
+  // All writers (save, update, sweep) route through here with a body they read
+  // earlier. Verify it is STILL the note's body inside the write transaction —
+  // otherwise a slow sweep clobbers a fresh re-embed with a stale snapshot.
+  await db.transaction(async (tx) => {
+    const [current] = await tx.select({ body: notes.body, deletedAt: notes.deletedAt })
+      .from(notes).where(eq(notes.id, noteId)).limit(1);
+    if (!current || current.deletedAt || current.body !== body) return; // stale writer: no-op
+    await tx.delete(embeddings)
+      .where(and(eq(embeddings.sourceKind, "note"), eq(embeddings.sourceRef, noteId)));
+    await tx.insert(embeddings).values(parts.map((c, i) => ({
+      sourceKind: "note" as const, sourceRef: noteId, chunkIndex: c.index,
+      content: c.content, embedding: vecs[i], model: embedder.model, dim: embedder.dim,
+      contentHash: hash,
+    })));
+  });
 }
 
 export async function searchKnowledge(

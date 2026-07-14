@@ -41,6 +41,12 @@ if (mode === "leaky") {
   console.log("token sk-abcdefghij0123456789");
   process.exit(0);
 }
+if (mode === "echo-stdin") {
+  let data = "";
+  for await (const chunk of process.stdin) data += chunk;
+  console.log(`STDIN:${data}`);
+  process.exit(0);
+}
 
 const out = OUTPUTS[mode];
 if (!out) {

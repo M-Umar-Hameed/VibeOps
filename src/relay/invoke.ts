@@ -31,14 +31,23 @@ export async function runAgent(
 ): Promise<{ ok: boolean; output: string }> {
   const promptFile = join(tmpdir(), `vibeops-relay-${randomUUID()}.txt`);
   const needsFile = agent.cmd.some((p) => p.includes("{promptFile}"));
+  // No placeholder at all -> deliver the prompt on stdin. Windows argv tops out
+  // near 32k; long prompts (review diffs) die with ENAMETOOLONG as {prompt}.
+  const viaStdin = !needsFile && !agent.cmd.some((p) => p.includes("{prompt}"));
   if (needsFile) await writeFile(promptFile, prompt, { encoding: "utf-8", mode: 0o600 });
 
   const [cmd0, ...rest] = substituteCmd(agent.cmd, { prompt, promptFile, workdir });
 
   try {
     return await new Promise((resolve) => {
-      // stdin ignored: headless CLIs (codex exec) otherwise block reading it.
-      const child = spawn(cmd0, rest, { cwd: workdir, stdio: ["ignore", "pipe", "pipe"] });
+      // stdin ignored unless piping the prompt: headless CLIs (codex exec)
+      // otherwise block reading an open stdin.
+      const child = spawn(cmd0, rest, { cwd: workdir, stdio: [viaStdin ? "pipe" : "ignore", "pipe", "pipe"] });
+      if (viaStdin) {
+        child.stdin?.on("error", () => {});
+        child.stdin?.write(prompt);
+        child.stdin?.end();
+      }
       let output = "";
       let settled = false;
 

@@ -128,3 +128,16 @@ test("runAgent streams chunks to onData as they arrive", async () => {
   expect(res.output).toContain("do the thing");
   delete process.env.FAKE_MODE;
 });
+
+test("runAgent pipes the prompt over stdin when cmd has no placeholder", async () => {
+  process.env.FAKE_MODE = "echo-stdin";
+  // No {prompt}/{promptFile} in cmd: Windows argv caps at ~32k, so long prompts
+  // (review diffs) must arrive on stdin instead.
+  const agent = { cmd: [process.execPath, "tests/fixtures/fake-agent.mjs"], roles: ["review"] };
+  const big = "stdin-roundtrip " + "x".repeat(40_000);
+  const res = await runAgent(agent, big, process.cwd());
+  expect(res.ok).toBe(true);
+  expect(res.output).toContain("STDIN:stdin-roundtrip");
+  expect(res.output.length).toBeGreaterThan(40_000);
+  delete process.env.FAKE_MODE;
+});

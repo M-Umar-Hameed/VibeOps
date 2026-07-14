@@ -117,3 +117,14 @@ test("parseVerdict takes the last line-anchored verdict (fail-closed vs narratio
   expect(parseVerdict("narration\n  VERDICT: PASS").pass).toBe(true);
   expect(parseVerdict("mentions VERDICT: FAIL early\nVERDICT: PASS").pass).toBe(true);
 });
+
+test("runAgent streams chunks to onData as they arrive", async () => {
+  process.env.FAKE_MODE = "plan";
+  const chunks: string[] = [];
+  const agent = { cmd: [process.execPath, "tests/fixtures/fake-agent.mjs", "{prompt}"], roles: ["plan"] };
+  const res = await runAgent(agent, "hi", process.cwd(), (c) => chunks.push(c));
+  expect(res.ok).toBe(true);
+  expect(chunks.join("")).toContain("do the thing");
+  expect(res.output).toContain("do the thing");
+  delete process.env.FAKE_MODE;
+});

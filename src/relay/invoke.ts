@@ -27,6 +27,7 @@ function killTree(child: ChildProcess): void {
 
 export async function runAgent(
   agent: RelayAgent, prompt: string, workdir: string,
+  onData?: (chunk: string) => void,
 ): Promise<{ ok: boolean; output: string }> {
   const promptFile = join(tmpdir(), `vibeops-relay-${randomUUID()}.txt`);
   const needsFile = agent.cmd.some((p) => p.includes("{promptFile}"));
@@ -44,7 +45,9 @@ export async function runAgent(
       const timer = setTimeout(() => killTree(child), agent.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
       const capture = (chunk: Buffer) => {
-        if (output.length < OUTPUT_CAP) output += chunk.toString("utf-8");
+        const s = chunk.toString("utf-8");
+        if (output.length < OUTPUT_CAP) output += s;
+        onData?.(s);
       };
       child.stdout?.on("data", capture);
       child.stderr?.on("data", capture);

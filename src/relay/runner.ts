@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { loadRelayConfig, type RelayAgent, type RelayConfig } from "./config.js";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict } from "./prompts.js";
@@ -122,6 +123,11 @@ function sleep(ms: number): Promise<void> {
 }
 
 export async function main(): Promise<void> {
+  if (process.argv.includes("--version")) {
+    const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf-8"));
+    console.log(pkg.version);
+    return;
+  }
   const args = parseArgs(process.argv.slice(2));
   const config = loadRelayConfig(args.config);
   const fn = ROLE_FNS[args.role];

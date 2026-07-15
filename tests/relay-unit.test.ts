@@ -1,4 +1,4 @@
-import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
@@ -141,3 +141,15 @@ test("runAgent pipes the prompt over stdin when cmd has no placeholder", async (
   expect(res.output.length).toBeGreaterThan(40_000);
   delete process.env.FAKE_MODE;
 });
+
+test("relay --version prints package version and exits 0", async () => {
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8"));
+  const res = await runAgent(
+    { cmd: [process.execPath, "node_modules/tsx/dist/cli.mjs", "src/relay/runner.ts", "--version"], roles: [] },
+    "unused",
+    process.cwd(),
+  );
+  expect(res.ok).toBe(true);
+  expect(res.output.trim()).toBe(pkg.version);
+});
+

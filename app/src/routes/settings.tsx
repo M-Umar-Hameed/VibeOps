@@ -4,8 +4,9 @@ import { LocalNodeTab } from "../components/settings/LocalNodeTab.js";
 import { IntegrationsTab } from "../components/settings/IntegrationsTab.js";
 import { AIModelsTab } from "../components/settings/AIModelsTab.js";
 import { MCPTab } from "../components/settings/MCPTab.js";
+import { PluginsTab } from "../components/settings/PluginsTab.js";
 
-type TabId = "node" | "integrations" | "ai" | "mcp";
+type TabId = "node" | "integrations" | "ai" | "mcp" | "plugins";
 
 export function SettingsScreen() {
   const [activeTab, setActiveTab] = useState<TabId>("integrations");
@@ -15,6 +16,7 @@ export function SettingsScreen() {
     { id: "integrations", label: "Integrations", icon: "hub" },
     { id: "ai", label: "AI Models", icon: "psychology" },
     { id: "mcp", label: "MCP Servers", icon: "extension" },
+    { id: "plugins", label: "Plugins", icon: "extension" },
     { id: "node", label: "Local Node", icon: "dns" },
   ];
 
@@ -45,6 +47,7 @@ export function SettingsScreen() {
         {activeTab === "integrations" && <IntegrationsTab />}
         {activeTab === "ai" && <AIModelsTab />}
         {activeTab === "mcp" && <MCPTab />}
+        {activeTab === "plugins" && <PluginsTab />}
       </div>
     </div>
   );

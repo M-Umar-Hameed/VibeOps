@@ -56,6 +56,18 @@ Give each agent its own key (Settings → Local Node → Actors) so the audit tr
 
 Make agents actually use the shared brain: add a few lines to your agent instructions (CLAUDE.md / AGENTS.md / GEMINI.md) — search knowledge before starting, save decisions after finishing, track multi-step work as tickets. This repo's `AGENTS.md` has the canonical block.
 
+## Auto-priming
+
+Give a fresh agent session a head start instead of starting cold: `scripts/prime.mjs` calls `GET /prime?q=<query>` and prints a compact plain-text digest of the most relevant knowledge (vault, notes, sessions) for that query. It reads `~/.vibeops/credentials.json` itself — no config needed — and defaults the query to the current directory name if you don't pass one.
+
+Wire it into Claude Code as a `SessionStart` hook so every new session opens with relevant context already injected:
+
+```json
+{ "hooks": { "SessionStart": [ { "hooks": [ { "type": "command", "command": "node D:/Github/tickets/scripts/prime.mjs" } ] } ] } }
+```
+
+Any agent with its own hook system (or a shell alias run before starting a session) can call the same script — `/prime` is member-level and read-only, so no admin key is required.
+
 ## Cross-model pipeline (relay)
 
 Ticket work has three roles — plan, work, review — and each can run against a different agent or model, so the expensive reasoning model touches a ticket only twice (writing the plan, then reviewing the diff) while a cheap or local model grinds through the actual implementation loop in between.

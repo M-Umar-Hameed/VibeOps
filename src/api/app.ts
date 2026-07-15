@@ -118,6 +118,22 @@ app.get("/knowledge/source", async (c) => {
   return c.json({ text: await getKnowledgeSource(kind, ref) });
 });
 
+// Session-start primer: a compact plain-text digest for agent hooks to inject
+// as context. Member-level (just `auth`, no requireAdmin) — every agent primes.
+app.get("/prime", async (c) => {
+  const q = c.req.query("q") ?? "";
+  const n = Number(c.req.query("limit"));
+  const limit = Math.min(Number.isFinite(n) && n > 0 ? n : 5, 10);
+  const hits = await searchKnowledge(q, { limit });
+  if (!hits.length) return c.text(`VibeOps primer: no relevant knowledge for "${q}".`);
+  const lines = [`VibeOps primer for "${q}" (${hits.length} hits):`];
+  for (const h of hits) {
+    const content = h.content.replace(/\r?\n/g, " ").slice(0, 400);
+    lines.push(`- [${h.sourceKind} ${h.score.toFixed(2)} ${h.createdAt.slice(0, 10)}] ${content}`);
+  }
+  return c.text(lines.join("\n").slice(0, 4000));
+});
+
 app.get("/settings/:key", requireAdmin, async (c) => c.json({ value: await getSetting(c.req.param("key")) }));
 app.patch("/settings/:key", requireAdmin, async (c) => {
   const { value } = await c.req.json();

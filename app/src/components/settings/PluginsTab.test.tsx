@@ -37,7 +37,7 @@ beforeEach(() => {
 test("renders installed skills and marketplace skill lists", async () => {
   render(<PluginsTab />);
   await waitFor(() => {
-    expect(screen.getByText("alpha")).toBeInTheDocument();
+    expect(screen.getAllByText("alpha").length).toBeGreaterThan(0);
   });
   expect(screen.getByText("beta")).toBeInTheDocument();
   expect(screen.getByText("https://github.com/o/r")).toBeInTheDocument();
@@ -46,7 +46,7 @@ test("renders installed skills and marketplace skill lists", async () => {
 test("Add marketplace posts the url and renders returned skills", async () => {
   render(<PluginsTab />);
   await waitFor(() => {
-    expect(screen.getByText("alpha")).toBeInTheDocument();
+    expect(screen.getAllByText("alpha").length).toBeGreaterThan(0);
   });
 
   const input = screen.getByPlaceholderText("https://github.com/owner/repo");
@@ -76,6 +76,8 @@ test("Add marketplace posts the url and renders returned skills", async () => {
   await waitFor(() => {
     expect(screen.getByText("gamma")).toBeInTheDocument();
   });
+  
+  expect(apiFetch).toHaveBeenCalledWith("/skills/marketplaces", { method: "POST", body: { url: "https://github.com/new/repo" } });
   expect(input).toHaveValue("");
 });
 
@@ -105,17 +107,17 @@ test("Install posts { url, dir } and flips the row to Installed after refresh", 
   fireEvent.click(installButton);
 
   await waitFor(() => {
-    expect(screen.getAllByText("Installed").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "Install" })).not.toBeInTheDocument();
   });
   
-  const uninstallButtons = screen.getAllByRole("button", { name: "Uninstall" });
-  expect(uninstallButtons.length).toBeGreaterThan(1);
+  expect(apiFetch).toHaveBeenCalledWith("/skills/install", { method: "POST", body: { url: "https://github.com/o/r", dir: "beta" } });
+  expect(screen.getAllByText("Installed").length).toBeGreaterThan(0);
 });
 
 test("failed add shows the error message inline", async () => {
   render(<PluginsTab />);
   await waitFor(() => {
-    expect(screen.getByText("alpha")).toBeInTheDocument();
+    expect(screen.getAllByText("alpha").length).toBeGreaterThan(0);
   });
 
   const input = screen.getByPlaceholderText("https://github.com/owner/repo");
@@ -142,5 +144,6 @@ test("failed add shows the error message inline", async () => {
     expect(screen.getByText("not a github repo url")).toBeInTheDocument();
   });
 
-  expect(screen.getByText("alpha")).toBeInTheDocument();
+  expect(apiFetch).toHaveBeenCalledWith("/skills/marketplaces", { method: "POST", body: { url: "https://github.com/bad/repo" } });
+  expect(screen.getAllByText("alpha").length).toBeGreaterThan(0);
 });

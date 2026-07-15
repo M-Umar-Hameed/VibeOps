@@ -87,7 +87,6 @@ export function PluginsTab() {
         </div>
       )}
 
-      {/* Installed skills card */}
       <div className="glass-card rounded-xl overflow-hidden border border-white/10 flex flex-col group mb-6">
         <div className="p-6 border-b border-white/5 bg-surface-container/30">
           <h3 className="font-headline-sm text-on-surface font-bold">Installed skills</h3>
@@ -131,7 +130,6 @@ export function PluginsTab() {
         </div>
       </div>
 
-      {/* Add marketplace */}
       <div className="glass-card rounded-xl overflow-hidden border border-white/10 flex flex-col group mb-6">
         <div className="p-6 bg-surface-container/30">
           <form onSubmit={handleAddMarketplace} className="flex flex-col gap-3">
@@ -158,7 +156,6 @@ export function PluginsTab() {
         </div>
       </div>
 
-      {/* Marketplaces */}
       <div className="flex flex-col gap-6">
         {marketplaces.map((mkt) => {
           const refreshKey = `refresh:${mkt.url}`;

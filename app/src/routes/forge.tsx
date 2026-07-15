@@ -41,6 +41,33 @@ export function ForgeScreen() {
   const [sandboxError, setSandboxError] = useState("");
   const [viewDiff, setViewDiff] = useState(false);
 
+  const [newTask, setNewTask] = useState("");
+  const [newTaskError, setNewTaskError] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  const createTask = async () => {
+    const text = newTask.trim();
+    if (!text) return;
+    setCreating(true);
+    setNewTaskError("");
+    try {
+      const projects = await api.get("/projects") as { id: string; key: string }[];
+      const project = projects.find(p => p.key === "inbox") ?? projects[0];
+      if (!project) throw new Error("no project available");
+      const [title, ...rest] = text.split("\n");
+      const t = await api.post("/tickets", {
+        projectId: project.id, title: title.slice(0, 200), body: rest.join("\n"),
+      }) as Ticket;
+      setNewTask("");
+      await loadTickets();
+      setSelectedTicket(t);
+    } catch (e: any) {
+      setNewTaskError(e.message || "Failed to create task");
+    } finally {
+      setCreating(false);
+    }
+  };
+
   const loadTickets = async () => {
     try {
       const t = await api.get("/tickets") as Ticket[];
@@ -249,10 +276,28 @@ export function ForgeScreen() {
   const filteredSkills = skills.filter(s => s.name.toLowerCase().includes(autocompleteFilter));
 
   return (
-    <div className="flex h-[calc(100vh-64px)] overflow-hidden">
+    // -m cancels the outlet padding so this screen owns its own scrolling —
+    // otherwise the outer scroller and the columns double up scrollbars.
+    <div className="flex h-full overflow-hidden -m-4 md:-m-margin-desktop">
       <div className="w-80 border-r border-white/10 bg-surface-container/30 overflow-y-auto flex flex-col">
-        <div className="p-4 border-b border-white/5">
+        <div className="p-4 border-b border-white/5 space-y-3">
           <h2 className="font-headline-sm text-on-surface font-bold">Forge Tickets</h2>
+          <div className="space-y-2">
+            <textarea
+              className="w-full bg-surface-container/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface outline-none min-h-[56px] resize-y"
+              placeholder="New task: first line is the title, the rest is the brief."
+              value={newTask}
+              onChange={e => setNewTask(e.target.value)}
+            />
+            <button
+              onClick={createTask}
+              disabled={creating || !newTask.trim()}
+              className="w-full px-3 py-2 rounded bg-surface-container-highest hover:bg-white/10 text-on-surface text-xs font-bold uppercase tracking-widest transition-all disabled:opacity-50 cursor-pointer"
+            >
+              Create task
+            </button>
+            {newTaskError && <div className="text-error text-xs">{newTaskError}</div>}
+          </div>
         </div>
         {ticketsError && <div className="text-error text-xs p-4">{ticketsError}</div>}
         <div className="flex-1 p-4 space-y-6">

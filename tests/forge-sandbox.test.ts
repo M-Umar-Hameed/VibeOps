@@ -1,15 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync, rmdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import {
-  assertTicketId, sandboxPath, sandboxExists, ensureSandbox,
+  assertTicketId, sandboxPath, sandboxExists, ensureSandbox, branchName,
   forgeCommit, sandboxDiff, sandboxDiffSummary, promoteSandbox, discardSandbox,
+  unlinkDeps,
 } from "../src/forge/sandbox.js";
 import { ConflictError } from "../src/services/errors.js";
 
 const TID = "11111111-2222-3333-4444-555555555555";
+const TID2 = "22222222-3333-4444-5555-666666666666";
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf-8" });
@@ -26,6 +28,9 @@ beforeEach(() => {
   git(workdir, "config", "user.email", "t@t");
   git(workdir, "config", "user.name", "t");
   writeFileSync(join(workdir, "a.txt"), "hello\n");
+  writeFileSync(join(workdir, ".gitignore"), "node_modules/\n");
+  mkdirSync(join(workdir, "node_modules"));
+  writeFileSync(join(workdir, "node_modules", "marker.txt"), "base-marker\n");
   git(workdir, "add", "-A");
   git(workdir, "commit", "-m", "base");
 });
@@ -107,5 +112,54 @@ describe("forge sandbox", () => {
     expect(sandboxExists(TID)).toBe(false);
     expect(git(workdir, "branch", "--list", `forge/${TID}`).trim()).toBe("");
     expect(existsSync(join(workdir, "b.txt"))).toBe(false);
+  });
+
+  it("ensureSandbox links base node_modules into the sandbox", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    const marker = join(sp, "node_modules", "marker.txt");
+    expect(existsSync(marker)).toBe(true);
+    expect(readFileSync(marker, "utf-8")).toBe(
+      readFileSync(join(workdir, "node_modules", "marker.txt"), "utf-8")
+    );
+  });
+
+  it("SAFETY: cleanup unlinks deps before removing the worktree, base node_modules survives", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    writeFileSync(join(sp, "b.txt"), "x\n");
+    await forgeCommit(TID, "b");
+    await discardSandbox(workdir, TID);
+    expect(sandboxExists(TID)).toBe(false);
+    expect(existsSync(join(workdir, "node_modules", "marker.txt"))).toBe(true);
+
+    // same guarantee via promoteSandbox on a second ticket
+    const sp2 = await ensureSandbox(workdir, TID2);
+    writeFileSync(join(sp2, "c.txt"), "y\n");
+    await forgeCommit(TID2, "c");
+    await promoteSandbox(workdir, TID2);
+    expect(sandboxExists(TID2)).toBe(false);
+    expect(existsSync(join(workdir, "node_modules", "marker.txt"))).toBe(true);
+  });
+
+  it("forgeCommit does not stage the linked node_modules (gitignored)", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    writeFileSync(join(sp, "b.txt"), "x\n");
+    expect(await forgeCommit(TID, "b")).toBe(true);
+    const tree = git(sp, "ls-tree", "-r", "--name-only", branchName(TID));
+    expect(tree).not.toContain("node_modules");
+  });
+
+  it("unlinkDeps on a real node_modules directory leaves it untouched; cleanup still works", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    // simulate a sandbox where node_modules is a REAL directory, not a link
+    rmdirSync(join(sp, "node_modules")); // removes the junction/symlink node only
+    mkdirSync(join(sp, "node_modules"));
+    writeFileSync(join(sp, "node_modules", "real.txt"), "real\n");
+
+    unlinkDeps(TID);
+    expect(existsSync(join(sp, "node_modules", "real.txt"))).toBe(true);
+
+    await discardSandbox(workdir, TID);
+    expect(sandboxExists(TID)).toBe(false);
+    expect(existsSync(join(workdir, "node_modules", "marker.txt"))).toBe(true);
   });
 });

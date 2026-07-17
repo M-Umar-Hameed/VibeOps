@@ -168,8 +168,8 @@ export async function createTicketFromCouncil(
   const decision = session.verdict?.decision || "NEEDS-INFO";
   const title = session.verdict?.title || "Untitled";
 
-  const body = `${spec}\n\n---\nCouncil verdict: ${rating}/10 ${decision} (round ${session.round})`;
-  
+  const formatPersona = (text?: string) => text ? text.split("\n")[0].trim().substring(0, 100) : "N/A";
+  const body = `${spec}\n\n---\nCouncil verdict: ${rating}/10 ${decision} (round ${session.round})\n- Believer: ${formatPersona(session.believer)}\n- Investor: ${formatPersona(session.investor)}\n- Skeptic: ${formatPersona(session.skeptic)}`;  
   const ticket = await createTicket(actorId, { projectId, title, body, status: "open" });
   session.status = "consumed";
   session.finishedAt = new Date().toISOString();
@@ -179,8 +179,8 @@ export async function createTicketFromCouncil(
 export function getCouncil(id: string) {
   const session = sessions.get(id);
   if (!session) throw new NotFoundError("council not found");
-  const { output, ...summary } = session;
-  return summary;
+  const { output, verdict, ...rest } = session;
+  return { ...rest, ...(verdict || {}) };
 }
 
 export function getCouncilOutput(id: string, after: number) {

@@ -3,7 +3,7 @@
 // falling back to stdin) and prints a canned response selected by FAKE_MODE, or, when
 // FAKE_SCRIPT is set, by a comma list consumed left-to-right via FAKE_COUNTER_FILE
 // (clamped to the last entry once the script is exhausted).
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
 
 const prompt = process.argv[2] ?? "";
@@ -15,6 +15,9 @@ const OUTPUTS = {
   "review-pass": "looks good\nVERDICT: PASS",
   "review-fail": "broken\nVERDICT: FAIL\n- fix y",
   "persona": "persona view: fine idea",
+  "believer": "believer view: fine idea",
+  "investor": "investor view: fine idea",
+  "skeptic": "skeptic view: fine idea",
   "chairman-go": "looks good\nRATING: 8/10\nDECISION: GO\nTITLE: Council test ticket\nSPEC:\nspec line 1\nspec line 2",
   "chairman-questions": "need info\nRATING: 5/10\nDECISION: NEEDS-INFO\nQUESTIONS:\n- q1\n- q2\nTITLE: Council test ticket\nSPEC:\nspec line 1",
 };
@@ -24,12 +27,31 @@ function selectMode() {
   if (!script) return process.env.FAKE_MODE;
   const steps = script.split(",");
   const counterFile = process.env.FAKE_COUNTER_FILE;
-  const i = existsSync(counterFile) ? Number(readFileSync(counterFile, "utf-8")) : 0;
-  writeFileSync(counterFile, String(i + 1));
+  const lockDir = counterFile + ".lock";
+  let i = 0;
+  const start = Date.now();
+  while (true) {
+    try {
+      mkdirSync(lockDir);
+      i = existsSync(counterFile) ? Number(readFileSync(counterFile, "utf-8")) : 0;
+      writeFileSync(counterFile, String(i + 1));
+      rmdirSync(lockDir);
+      break;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      if (Date.now() - start > 5000) throw new Error("Timeout acquiring fake-agent lock");
+    }
+  }
   return steps[Math.min(i, steps.length - 1)];
 }
 
-const mode = selectMode();
+let mode = selectMode();
+
+if (mode === "persona" || mode === "believer" || mode === "investor" || mode === "skeptic") {
+  if (prompt.includes("optimist")) mode = "believer";
+  else if (prompt.includes("realist")) mode = "investor";
+  else if (prompt.includes("roaster")) mode = "skeptic";
+}
 
 if (mode === "exit") {
   console.error("boom");

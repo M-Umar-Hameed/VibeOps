@@ -88,8 +88,8 @@ describe("council engine", () => {
     const { councilId } = await startCouncil(actor.id, relayConfig(), { prompt: "a prompt long enough to pass" });
     const c = await waitForStatus(councilId, ["decided"]);
     
-    expect(c.verdict?.rating).toBe(8);
-    expect(c.verdict?.decision).toBe("GO");
+    expect((c as any).rating).toBe(8);
+    expect((c as any).decision).toBe("GO");
     
     const out = getCouncilOutput(councilId, 0);
     expect(out?.chunk).toContain("=== COUNCIL believer ===");
@@ -105,7 +105,7 @@ describe("council engine", () => {
     const { councilId } = await startCouncil(actor.id, relayConfig(), { prompt: "a prompt long enough to pass" });
     const c = await waitForStatus(councilId, ["awaiting-answers"]);
     
-    expect(c.verdict?.questions).toHaveLength(2);
+    expect((c as any).questions).toHaveLength(2);
     expect(c.status).toBe("awaiting-answers");
 
     // After submitAnswers, the next run will be chairman-go
@@ -113,7 +113,7 @@ describe("council engine", () => {
     await submitAnswers(councilId, relayConfig(), ["a", "b"]);
     const c2 = await waitForStatus(councilId, ["decided"]);
     expect(c2.status).toBe("decided");
-    expect(c2.verdict?.decision).toBe("GO");
+    expect((c2 as any).decision).toBe("GO");
   });
 
   it("(c) create-ticket on GO creates a ticket, session consumed, second create ConflictError", async () => {

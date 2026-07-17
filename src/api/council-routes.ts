@@ -2,6 +2,7 @@ import type { Hono } from "hono";
 import { loadRelayConfig } from "../relay/config.js";
 import { requireAdmin } from "./auth.js";
 import { startCouncil, submitAnswers, createTicketFromCouncil, getCouncil, getCouncilOutput } from "../council/runs.js";
+import { ConflictError, NotFoundError } from "../services/errors.js";
 import type { Actor } from "../db/schema.js";
 
 type AppEnv = { Variables: { actor: Actor } };
@@ -18,6 +19,7 @@ export function registerCouncilRoutes(app: Hono<AppEnv>): void {
       const res = await startCouncil(c.get("actor").id, config(), { prompt, projectId });
       return c.json(res, 201);
     } catch (e: any) {
+      if (e instanceof ConflictError || e instanceof NotFoundError) throw e;
       return c.json({ error: e.message }, 400);
     }
   });
@@ -44,6 +46,7 @@ export function registerCouncilRoutes(app: Hono<AppEnv>): void {
       await submitAnswers(c.req.param("id"), config(), answers);
       return c.json({ ok: true });
     } catch (e: any) {
+      if (e instanceof ConflictError || e instanceof NotFoundError) throw e;
       return c.json({ error: e.message }, 400);
     }
   });
@@ -55,7 +58,8 @@ export function registerCouncilRoutes(app: Hono<AppEnv>): void {
       const ticket = await createTicketFromCouncil(c.get("actor").id, c.req.param("id"), projectId, !!force);
       return c.json(ticket, 201);
     } catch (e: any) {
-      return c.json({ error: e.message }, 409);
+      if (e instanceof ConflictError || e instanceof NotFoundError) throw e;
+      return c.json({ error: e.message }, 400);
     }
   });
 }

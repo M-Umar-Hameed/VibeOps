@@ -14,6 +14,8 @@ const wrap = (ui: any) => <QueryClientProvider client={new QueryClient()}>{ui}</
 
 test("creating a ticket posts and navigates to detail", async () => {
   render(wrap(<CreateScreen />));
+  // Council is the default mode now; the classic form lives behind the toggle.
+  fireEvent.click(screen.getByText(/Quick create/i));
   await waitFor(() => screen.getByText("Proj"));
   fireEvent.change(screen.getAllByRole("combobox")[0], { target: { value: "p1" } });
   fireEvent.change(screen.getByPlaceholderText(/Define process scope/i), { target: { value: "Hello" } });

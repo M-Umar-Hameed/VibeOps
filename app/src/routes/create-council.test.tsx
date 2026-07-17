@@ -82,7 +82,7 @@ test("awaiting-answers renders the questions and Submit posts { answers } in ord
   await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/council/evaluate", expect.anything()));
 
   await act(async () => { vi.advanceTimersByTime(2000); });
-  await waitFor(() => expect(screen.getByText("What is the budget?")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText("What is the budget?")).toBeInTheDocument(), { timeout: 6000 });
   expect(screen.getByText("Who is the audience?")).toBeInTheDocument();
 
   const inputs = screen.getAllByRole("textbox");

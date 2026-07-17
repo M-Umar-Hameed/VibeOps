@@ -45,6 +45,12 @@ export function composeReviewPrompt(
     `\nWorker report:\n${report}`,
     `\nDiff:\n${diff}`,
     `\nReview whether the diff satisfies the plan's acceptance criteria.`,
+    // Reviewers run in the base repo, NOT the worker's isolated sandbox; a
+    // reviewer that checks its own filesystem sees a clean tree and falsely
+    // FAILs real work (live incident). The diff text above is the evidence.
+    `Judge ONLY the diff text above. Your working directory is NOT the worker's ` +
+    `workspace — do not use git status or file reads to decide whether work ` +
+    `landed; absence of changes in your own directory is expected and meaningless.`,
     `End with exactly one line VERDICT: PASS or VERDICT: FAIL followed by findings if FAIL.`,
   ].join("\n");
 }

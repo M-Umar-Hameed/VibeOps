@@ -47,7 +47,7 @@ async function lastVerdict(ticketId: string): Promise<"pass" | "fail" | null> {
 export function registerForgeRoutes(app: Hono<AppEnv>): void {
   app.get("/forge/agents", requireAdmin, async (c) => {
     const config = forgeConfig();
-    return c.json(Object.entries(config.agents).map(([name, a]) => ({ name, roles: a.roles })));
+    return c.json(Object.entries(config.agents).map(([name, a]) => ({ name, roles: a.roles, models: a.models ?? [] })));
   });
 
   app.get("/forge/skills", requireAdmin, async (c) => {
@@ -61,7 +61,7 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
 
   app.post("/forge/pipeline", requireAdmin, async (c) => {
     const body = await c.req.json().catch(() => ({}));
-    const { ticketId, planAgent, workAgent, reviewAgent, extraPrompt } = body;
+    const { ticketId, planAgent, workAgent, reviewAgent, extraPrompt, planModel, workModel, reviewModel } = body;
     if (typeof ticketId !== "string" || !ticketId) return c.json({ error: "ticketId required" }, 400);
     if (typeof planAgent !== "string" || !planAgent) return c.json({ error: "planAgent required" }, 400);
     if (typeof workAgent !== "string" || !workAgent) return c.json({ error: "workAgent required" }, 400);
@@ -69,10 +69,13 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     if (extraPrompt !== undefined && typeof extraPrompt !== "string") {
       return c.json({ error: "extraPrompt must be a string" }, 400);
     }
+    for (const [key, val] of Object.entries({ planModel, workModel, reviewModel })) {
+      if (val !== undefined && typeof val !== "string") return c.json({ error: `${key} must be a string` }, 400);
+    }
 
     try {
       const { runId } = await startPipeline(c.get("actor").id, forgeConfig(), {
-        ticketId, planAgent, workAgent, reviewAgent, extraPrompt,
+        ticketId, planAgent, workAgent, reviewAgent, extraPrompt, planModel, workModel, reviewModel,
       });
       return c.json({ runId }, 201);
     } catch (e) {

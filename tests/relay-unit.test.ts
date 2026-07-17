@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict } from "../src/relay/prompts.js";
-import { loadRelayConfig } from "../src/relay/config.js";
+import { loadRelayConfig, resolveCmd } from "../src/relay/config.js";
 import { substituteCmd, runAgent } from "../src/relay/invoke.js";
 
 test("parseVerdict: PASS/FAIL/missing/garbage are fail-closed", () => {
@@ -151,5 +151,112 @@ test("relay --version prints package version and exits 0", async () => {
   );
   expect(res.ok).toBe(true);
   expect(res.output.trim()).toBe(pkg.version);
+});
+
+test("loadRelayConfig accepts a valid models list", () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-cfg-"));
+  const path = join(dir, "relay.json");
+  writeFileSync(path, JSON.stringify({
+    workdir: dir,
+    agents: {
+      claude: {
+        cmd: ["claude", "-p", "{promptFile}", "--model", "{model}"],
+        roles: ["plan"],
+        models: [{ name: "opus", tier: "expensive", quality: 5 }, { name: "haiku", tier: "free", quality: 3 }],
+      },
+    },
+  }));
+  try {
+    const config = loadRelayConfig(path);
+    expect(config.agents.claude.models).toEqual([
+      { name: "opus", tier: "expensive", quality: 5 }, { name: "haiku", tier: "free", quality: 3 },
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("loadRelayConfig rejects an empty models array", () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-cfg-"));
+  const path = join(dir, "relay.json");
+  writeFileSync(path, JSON.stringify({
+    workdir: dir,
+    agents: { bad: { cmd: ["claude"], roles: ["plan"], models: [] } },
+  }));
+  try {
+    expect(() => loadRelayConfig(path)).toThrow(/models must be a non-empty array/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("loadRelayConfig rejects a model with an invalid tier", () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-cfg-"));
+  const path = join(dir, "relay.json");
+  writeFileSync(path, JSON.stringify({
+    workdir: dir,
+    agents: { bad: { cmd: ["claude"], roles: ["plan"], models: [{ name: "x", tier: "gold", quality: 3 }] } },
+  }));
+  try {
+    expect(() => loadRelayConfig(path)).toThrow(/invalid tier/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("loadRelayConfig rejects a model with an out-of-range quality", () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-cfg-"));
+  const path = join(dir, "relay.json");
+  writeFileSync(path, JSON.stringify({
+    workdir: dir,
+    agents: { bad: { cmd: ["claude"], roles: ["plan"], models: [{ name: "x", tier: "free", quality: 9 }] } },
+  }));
+  try {
+    expect(() => loadRelayConfig(path)).toThrow(/quality must be an integer 1-5/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("resolveCmd substitutes {model} with the requested model, validating membership", () => {
+  const agent = {
+    cmd: ["claude", "-p", "{promptFile}", "--model", "{model}"], roles: ["plan"],
+    models: [{ name: "opus", tier: "expensive" as const, quality: 5 }, { name: "haiku", tier: "free" as const, quality: 3 }],
+  };
+  expect(resolveCmd(agent, "haiku")).toEqual(["claude", "-p", "{promptFile}", "--model", "haiku"]);
+});
+
+test("resolveCmd defaults to the first model when none is requested", () => {
+  const agent = {
+    cmd: ["claude", "--model", "{model}"], roles: ["plan"],
+    models: [{ name: "opus", tier: "expensive" as const, quality: 5 }, { name: "haiku", tier: "free" as const, quality: 3 }],
+  };
+  expect(resolveCmd(agent)).toEqual(["claude", "--model", "opus"]);
+});
+
+test("resolveCmd leaves cmd untouched when the agent has no models and none was requested", () => {
+  const agent = { cmd: ["codex", "exec", "{prompt}"], roles: ["work"] };
+  expect(resolveCmd(agent)).toEqual(["codex", "exec", "{prompt}"]);
+});
+
+test("resolveCmd throws when a model is requested but the agent has no models", () => {
+  const agent = { cmd: ["codex", "exec", "{prompt}"], roles: ["work"] };
+  expect(() => resolveCmd(agent, "gpt-5")).toThrow(/does not support model selection/);
+});
+
+test("resolveCmd throws when a model is requested but cmd has no {model} placeholder", () => {
+  const agent = {
+    cmd: ["claude", "-p", "{promptFile}"], roles: ["plan"],
+    models: [{ name: "opus", tier: "expensive" as const, quality: 5 }],
+  };
+  expect(() => resolveCmd(agent, "opus")).toThrow(/does not support model selection/);
+});
+
+test("resolveCmd throws for a model unknown to the agent", () => {
+  const agent = {
+    cmd: ["claude", "--model", "{model}"], roles: ["plan"],
+    models: [{ name: "opus", tier: "expensive" as const, quality: 5 }],
+  };
+  expect(() => resolveCmd(agent, "nope")).toThrow(/unknown model "nope"/);
 });
 

@@ -99,7 +99,7 @@ describe("forge API", () => {
     const res = await app.request("/forge/agents", { headers: h });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual([{ name: "fake", roles: ["plan", "work", "review"] }]);
+    expect(body).toEqual([{ name: "fake", roles: ["plan", "work", "review"], models: [] }]);
     expect(JSON.stringify(body)).not.toContain("cmd");
   });
 
@@ -244,5 +244,48 @@ describe("forge API", () => {
       body: JSON.stringify({ ticketId: ticket.id, planAgent: "nope", workAgent: "fake", reviewAgent: "fake" }),
     });
     expect(unknownAgent.status).toBe(400);
+  });
+
+  it("GET /forge/agents includes each agent's models array", async () => {
+    writeFileSync(relayConfigPath, JSON.stringify({
+      workdir,
+      agents: {
+        fake: {
+          cmd: [process.execPath, FAKE_AGENT, "{prompt}", "--model", "{model}"],
+          roles: ["plan", "work", "review"],
+          models: [{ name: "fast", tier: "free", quality: 2 }, { name: "smart", tier: "expensive", quality: 5 }],
+        },
+      },
+    }));
+    const h = await adminHeaders();
+    const res = await app.request("/forge/agents", { headers: h });
+    const body = await res.json();
+    expect(body).toEqual([{
+      name: "fake", roles: ["plan", "work", "review"],
+      models: [{ name: "fast", tier: "free", quality: 2 }, { name: "smart", tier: "expensive", quality: 5 }],
+    }]);
+  });
+
+  it("POST /forge/pipeline returns 400 for a model unknown to the agent", async () => {
+    writeFileSync(relayConfigPath, JSON.stringify({
+      workdir,
+      agents: {
+        fake: {
+          cmd: [process.execPath, FAKE_AGENT, "{prompt}", "--model", "{model}"],
+          roles: ["plan", "work", "review"],
+          models: [{ name: "fast", tier: "free", quality: 2 }, { name: "smart", tier: "expensive", quality: 5 }],
+        },
+      },
+    }));
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+
+    const res = await app.request("/forge/pipeline", {
+      method: "POST", headers: h,
+      body: JSON.stringify({
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake", workModel: "nope",
+      }),
+    });
+    expect(res.status).toBe(400);
   });
 });

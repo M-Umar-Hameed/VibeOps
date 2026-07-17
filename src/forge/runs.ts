@@ -1,14 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type { ChildProcess } from "node:child_process";
-import type { RelayConfig, RelayAgent } from "../relay/config.js";
+import { resolveCmd, type RelayConfig, type RelayAgent } from "../relay/config.js";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict } from "../relay/prompts.js";
 import { runAgent, killTree } from "../relay/invoke.js";
 import { redactSecrets } from "./redact.js";
 import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary } from "./sandbox.js";
+import { pickAgents, escalate, pairsForRole, type Pick, type RoutingStrategy } from "./router.js";
 import { updateTicket } from "../services/tickets.js";
 import { addComment, listComments } from "../services/comments.js";
 import { getTicket } from "../services/history.js";
 import { searchKnowledge } from "../services/knowledge.js";
+import { getSetting } from "../services/settings.js";
 import { ConflictError } from "../services/errors.js";
 import { logAgentUse, startAgentSession, endAgentSession } from "../services/usage.js";
 import { desc } from "drizzle-orm";
@@ -93,16 +95,51 @@ function getAgent(config: RelayConfig, name: string, role: Stage): RelayAgent {
   return a;
 }
 
+// "agent:model" when a model was chosen, plain agent name otherwise -- this
+// composite is what's stored in run.agents / forge_runs (no schema change).
+function composite(pick: Pick): string {
+  return pick.model ? `${pick.agent}:${pick.model}` : pick.agent;
+}
+
+async function countFailedReviews(ticketId: string): Promise<number> {
+  const comments = await listComments(ticketId);
+  return comments.filter((c) => c.kind === "review" && !parseVerdict(c.body).pass).length;
+}
+
 export async function startPipeline(
   actorId: string, config: RelayConfig,
-  opts: { ticketId: string; planAgent: string; workAgent: string; reviewAgent: string; extraPrompt?: string },
+  opts: {
+    ticketId: string; planAgent: string; workAgent: string; reviewAgent: string; extraPrompt?: string;
+    planModel?: string; workModel?: string; reviewModel?: string;
+  },
 ): Promise<{ runId: string }> {
   if ((opts.extraPrompt ?? "").length > MAX_EXTRA_PROMPT) throw new Error("extraPrompt too long");
+
+  const strategyRaw = await getSetting("ai.routing_strategy");
+  const strategy: RoutingStrategy =
+    strategyRaw === "cheapest-first" || strategyRaw === "quality-first" ? strategyRaw : "balanced";
+  let auto: { plan: Pick; work: Pick; review: Pick } | undefined;
+  const getAuto = () => (auto ??= pickAgents(config, strategy));
+
+  let planPick: Pick = opts.planAgent === "auto" ? getAuto().plan : { agent: opts.planAgent, model: opts.planModel };
+  let workPick: Pick = opts.workAgent === "auto" ? getAuto().work : { agent: opts.workAgent, model: opts.workModel };
+  const reviewPick: Pick =
+    opts.reviewAgent === "auto" ? getAuto().review : { agent: opts.reviewAgent, model: opts.reviewModel };
+
+  if (opts.workAgent === "auto") {
+    const attempts = await countFailedReviews(opts.ticketId);
+    workPick = escalate(pairsForRole(config, "work"), workPick, attempts);
+  }
+
   const agents = {
-    plan: getAgent(config, opts.planAgent, "plan"),
-    work: getAgent(config, opts.workAgent, "work"),
-    review: getAgent(config, opts.reviewAgent, "review"),
+    plan: { ...getAgent(config, planPick.agent, "plan") },
+    work: { ...getAgent(config, workPick.agent, "work") },
+    review: { ...getAgent(config, reviewPick.agent, "review") },
   };
+  agents.plan.cmd = resolveCmd(agents.plan, planPick.model);
+  agents.work.cmd = resolveCmd(agents.work, workPick.model);
+  agents.review.cmd = resolveCmd(agents.review, reviewPick.model);
+
   if (activeRuns().some((r) => r.ticketId === opts.ticketId)) {
     throw new ConflictError(`ticket ${opts.ticketId} already has an active run`);
   }
@@ -115,7 +152,7 @@ export async function startPipeline(
 
   const run: Run = {
     id: randomUUID(), ticketId: opts.ticketId, stage: "plan", status: "running",
-    agents: { plan: opts.planAgent, work: opts.workAgent, review: opts.reviewAgent },
+    agents: { plan: composite(planPick), work: composite(workPick), review: composite(reviewPick) },
     output: "", startedAt: new Date().toISOString(), stopped: false,
     done: Promise.resolve(),
   };

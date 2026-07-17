@@ -13,6 +13,7 @@ import { createTicket } from "../src/services/tickets.js";
 import { updateTicket } from "../src/services/tickets.js";
 import { addComment, listComments } from "../src/services/comments.js";
 import { getTicket } from "../src/services/history.js";
+import { getSetting, setSetting } from "../src/services/settings.js";
 import { ConflictError } from "../src/services/errors.js";
 import { db } from "../src/db/client.js";
 import { forgeRuns } from "../src/db/schema.js";
@@ -72,7 +73,13 @@ afterEach(() => {
 function relayConfig(): RelayConfig {
   return {
     workdir,
-    agents: { fake: { cmd: [process.execPath, FAKE_AGENT, "{prompt}"], roles: ["plan", "work", "review"] } },
+    agents: {
+      fake: {
+        cmd: [process.execPath, FAKE_AGENT, "{prompt}", "--model", "{model}"],
+        roles: ["plan", "work", "review"],
+        models: [{ name: "fast", tier: "free", quality: 2 }, { name: "smart", tier: "expensive", quality: 5 }],
+      },
+    },
   };
 }
 
@@ -267,5 +274,38 @@ describe("forge run manager", () => {
     await awaitRun(runId);
 
     expect(stopRun(runId)).toBe(false);
+  });
+
+  it("explicit workModel is recorded as an agent:model composite", async () => {
+    const { actorId, ticket } = await seedTicket("Model select path");
+    setScript("plan,work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake", workModel: "fast",
+    });
+    await awaitRun(runId);
+
+    expect(getRunOutput(runId, 0)?.status).toBe("passed");
+    expect(listRuns().find((r) => r.id === runId)?.agents.work).toBe("fake:fast");
+  });
+
+  it("auto agent picks resolve via the configured routing strategy", async () => {
+    const { actorId, ticket } = await seedTicket("Auto cheapest path");
+    const priorStrategy = await getSetting("ai.routing_strategy");
+    await setSetting("ai.routing_strategy", "cheapest-first");
+    setScript("plan,work,review-pass", true);
+    try {
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+      });
+      await awaitRun(runId);
+
+      expect(getRunOutput(runId, 0)?.status).toBe("passed");
+      const summary = listRuns().find((r) => r.id === runId);
+      // cheapest-first: lowest tier wins for every role -> the free "fast" model.
+      expect(summary?.agents).toEqual({ plan: "fake:fast", work: "fake:fast", review: "fake:fast" });
+    } finally {
+      await setSetting("ai.routing_strategy", priorStrategy ?? "balanced");
+    }
   });
 });

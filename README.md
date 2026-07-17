@@ -56,6 +56,10 @@ Give each agent its own key (Settings → Local Node → Actors) so the audit tr
 
 Make agents actually use the shared brain: add a few lines to your agent instructions (CLAUDE.md / AGENTS.md / GEMINI.md) — search knowledge before starting, save decisions after finishing, track multi-step work as tickets. This repo's `AGENTS.md` has the canonical block.
 
+## Agent pack
+
+This repo doubles as a Claude Code skills marketplace: `vibeops-pack/` packages the ticket, knowledge, forge, SDD, and ponytail conventions above as installable skills. From the VibeOps app: Settings → Plugins → Add marketplace → paste this repo's URL, or a local path if you're running from source. Install any of the `vibeops-*` skills and it lands in `~/.claude/skills/<name>`, where Claude Code and Forge's `/`-autocomplete pick it up natively.
+
 ## Auto-priming
 
 Give a fresh agent session a head start instead of starting cold: `scripts/prime.mjs` calls `GET /prime?q=<query>` and prints a compact plain-text digest of the most relevant knowledge (vault, notes, sessions) for that query. It reads `~/.vibeops/credentials.json` itself — no config needed — and defaults the query to the current directory name if you don't pass one.

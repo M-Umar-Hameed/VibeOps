@@ -1,0 +1,11 @@
+{
+  "name": "vibeops-pack",
+  "owner": { "name": "VibeOps" },
+  "plugins": [
+    {
+      "name": "vibeops",
+      "source": "./plugins/vibeops",
+      "description": "VibeOps workflow skills: tickets, knowledge, forge, SDD, ponytail"
+    }
+  ]
+}

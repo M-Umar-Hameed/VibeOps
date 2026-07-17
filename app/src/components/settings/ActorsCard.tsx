@@ -10,6 +10,24 @@ export function ActorsCard() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [newKey, setNewKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
+
+  async function onRevoke(id: string) {
+    if (confirmingId !== id) {
+      setConfirmingId(id);
+      return;
+    }
+    setRevokeError(null);
+    try {
+      await actors.revoke(id);
+      setConfirmingId(null);
+      load();
+    } catch (err) {
+      setRevokeError(err instanceof Error ? err.message : "Failed to revoke actor");
+      setConfirmingId(null);
+    }
+  }
 
   function load() {
     actors
@@ -63,12 +81,28 @@ export function ActorsCard() {
         )}
 
         <div className="flex flex-col">
+          {revokeError && (
+            <div className="bg-error-container/20 border border-error p-3 rounded text-error text-xs font-code-sm mb-2">
+              {revokeError}
+            </div>
+          )}
           {list.map((a) => (
             <div key={a.id} className="flex items-center justify-between gap-4 py-3 border-b border-white/5 last:border-0">
               <span className="text-sm text-on-surface font-medium">{a.name}</span>
               <div className="flex items-center gap-2">
                 <span className="text-xs px-2 py-1 rounded bg-white/5 text-on-surface-variant">{a.kind}</span>
                 <span className="text-xs px-2 py-1 rounded bg-white/5 text-on-surface-variant">{a.role}</span>
+                {a.revoked ? (
+                  <span className="text-xs px-2 py-1 rounded bg-white/5 text-on-surface-variant/60">revoked</span>
+                ) : a.name !== "owner" ? (
+                  <button
+                    type="button"
+                    onClick={() => onRevoke(a.id)}
+                    className="text-xs px-2 py-1 rounded bg-error-container/20 hover:bg-error-container/40 text-error font-medium transition-all"
+                  >
+                    {confirmingId === a.id ? "Confirm revoke?" : "Revoke"}
+                  </button>
+                ) : null}
               </div>
             </div>
           ))}

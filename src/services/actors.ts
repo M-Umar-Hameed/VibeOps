@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { actors, type Actor } from "../db/schema.js";
-import { AuthError } from "./errors.js";
+import { AuthError, NotFoundError } from "./errors.js";
 
 export function hashKey(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");
@@ -26,6 +26,13 @@ export async function resolveActor(rawKey: string): Promise<Actor> {
   return actor;
 }
 
-export async function listActors(): Promise<{ id: string; name: string; kind: string; role: string }[]> {
-  return db.select({ id: actors.id, name: actors.name, kind: actors.kind, role: actors.role }).from(actors);
+export async function listActors(): Promise<{ id: string; name: string; kind: string; role: string; revoked: boolean }[]> {
+  return db.select({ id: actors.id, name: actors.name, kind: actors.kind, role: actors.role, revoked: actors.revoked }).from(actors);
+}
+
+export async function revokeActor(id: string): Promise<{ id: string; revoked: boolean }> {
+  const [actor] = await db.update(actors).set({ revoked: true })
+    .where(eq(actors.id, id)).returning();
+  if (!actor) throw new NotFoundError(`actor not found: ${id}`);
+  return { id: actor.id, revoked: actor.revoked };
 }

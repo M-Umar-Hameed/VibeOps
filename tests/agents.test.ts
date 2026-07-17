@@ -36,7 +36,10 @@ test("reads claude + codex accounts and sums their tokens, never leaks secrets",
   expect(claude.connected).toBe(true);
   expect(claude.account).toBe("me@example.com");
   expect(claude.plan).toBe("max");
-  expect(claude.tokens).toEqual({ inputTokens: 150, outputTokens: 30, totalTokens: 180, sessions: 1 });
+  expect(claude.tokens).toEqual({
+    inputTokens: 150, outputTokens: 30, totalTokens: 180, sessions: 1,
+    freshTokens: 150, cacheReadTokens: 0,
+  });
 
   expect(codex.connected).toBe(true);
   expect(codex.account).toBe("codex@example.com");
@@ -56,7 +59,11 @@ test("missing auth files → connected:false, tokens null, never throws", async 
     // connected status is machine-dependent; only claude/codex are pinned here.
     if (a.agent === "antigravity") continue;
     expect(a.connected).toBe(false);
-    expect(a.tokens).toEqual({ inputTokens: 0, outputTokens: 0, totalTokens: 0, sessions: 0 });
+    if (a.agent === "codex") {
+      expect(a.tokens).toEqual({ inputTokens: 0, outputTokens: 0, totalTokens: 0, sessions: 0 });
+    } else {
+      expect(a.tokens).toEqual({ inputTokens: 0, outputTokens: 0, totalTokens: 0, sessions: 0, freshTokens: 0, cacheReadTokens: 0 });
+    }
   }
 });
 
@@ -71,4 +78,22 @@ test("token mtime window excludes old sessions", async () => {
   writeFileSync(join(home, ".claude.json"), JSON.stringify({ oauthAccount: { emailAddress: "x@y.z" } }));
   const { agents } = await getAgents(7, home);
   expect(agents.find((a) => a.agent === "claude")!.tokens!.totalTokens).toBe(0);
+});
+
+test("splits fresh vs cache-read tokens for claude", async () => {
+  const home = mkdtempSync(join(tmpdir(), "agents-split-"));
+  writeFileSync(join(home, ".claude.json"), JSON.stringify({ oauthAccount: { emailAddress: "split@example.com" } }));
+  const proj = join(home, ".claude", "projects", "p1");
+  mkdirSync(proj, { recursive: true });
+  writeFileSync(join(proj, "s1.jsonl"),
+    JSON.stringify({ type: "assistant", message: { usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 5000 } } }) + "\n" +
+    JSON.stringify({ type: "assistant", message: { usage: { input_tokens: 50, output_tokens: 10, cache_creation_input_tokens: 200 } } }));
+
+  const { agents } = await getAgents(30, home);
+  const claude = agents.find((a) => a.agent === "claude")!;
+  expect(claude.tokens!.freshTokens).toBe(380); // (100+20) + (50+200+10)
+  expect(claude.tokens!.cacheReadTokens).toBe(5000);
+  expect(claude.tokens!.freshTokens! + claude.tokens!.cacheReadTokens!).toBeLessThan(claude.tokens!.totalTokens + claude.tokens!.cacheReadTokens!);
+  // freshTokens excludes cache reads; totalTokens still includes them (unchanged compat field).
+  expect(claude.tokens!.totalTokens).toBe(100 + 20 + 5000 + 50 + 200 + 10);
 });

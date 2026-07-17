@@ -7,7 +7,7 @@ import { saveNote, updateNote, deleteNote, listNotes, getNote } from "../service
 import { searchKnowledge, getKnowledgeSource, upsertSourceDoc } from "../services/knowledge.js";
 import { AuthError, ConflictError, ForbiddenError, NotFoundError, StaleVersionError } from "../services/errors.js";
 import { listProjects, createProject, updateProjectRepo, gitInitProject } from "../services/projects.js";
-import { listActors, createActor } from "../services/actors.js";
+import { listActors, createActor, revokeActor } from "../services/actors.js";
 import { requireAdmin } from "./auth.js";
 import { getSystemMetrics, getSystemLogs, getSystemTopology, getAiUsage } from "../services/system.js";
 import { getSetting, setSetting } from "../services/settings.js";
@@ -87,6 +87,8 @@ app.post("/actors", requireAdmin, async (c) => {
   // Never serialize apiKeyHash — the plaintext key below is the one-time secret.
   return c.json({ actor: { id: actor.id, name: actor.name, kind: actor.kind, role: actor.role }, apiKey }, 201);
 });
+
+app.post("/actors/:id/revoke", requireAdmin, async (c) => c.json(await revokeActor(c.req.param("id"))));
 
 app.post("/notes", async (c) => {
   const { body, scope, refId, title } = await c.req.json();

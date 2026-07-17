@@ -6,11 +6,14 @@ import type { Actor } from "../db/schema.js";
 export const auth = createMiddleware<{ Variables: { actor: Actor } }>(async (c, next) => {
   const header = c.req.header("Authorization") ?? "";
   const key = header.replace(/^Bearer\s+/i, "");
+  let actor: Actor;
   try {
-    c.set("actor", await resolveActor(key));
+    actor = await resolveActor(key);
   } catch {
     throw new AuthError("unauthorized");
   }
+  if (actor.revoked) throw new AuthError("unauthorized");
+  c.set("actor", actor);
   await next();
 });
 

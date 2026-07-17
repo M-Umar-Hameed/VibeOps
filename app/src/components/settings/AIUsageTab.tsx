@@ -1,7 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/api.js";
 
-type AgentTokens = { inputTokens: number; outputTokens: number; totalTokens: number; sessions: number };
+type AgentTokens = {
+  inputTokens: number; outputTokens: number; totalTokens: number; sessions: number;
+  freshTokens?: number; cacheReadTokens?: number;
+};
 type AgentInfo = {
   agent: string;
   connected: boolean;
@@ -137,7 +140,11 @@ export function AIUsageTab() {
                   <div className="text-sm font-bold text-on-surface font-code-sm">
                     {agent.tokens ? formatTokens(agent.tokens.totalTokens) : "—"}
                   </div>
-                  {agent.tokens ? (
+                  {agent.tokens && agent.tokens.freshTokens !== undefined && agent.tokens.cacheReadTokens !== undefined ? (
+                    <div className="text-[11px] text-on-surface-variant/70 font-code-sm mt-0.5">
+                      {formatTokens(agent.tokens.freshTokens)} fresh / {formatTokens(agent.tokens.cacheReadTokens)} cache
+                    </div>
+                  ) : agent.tokens ? (
                     <div className="text-[11px] text-on-surface-variant/70 font-code-sm mt-0.5">
                       {formatTokens(agent.tokens.inputTokens)} in / {formatTokens(agent.tokens.outputTokens)} out
                     </div>

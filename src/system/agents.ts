@@ -2,7 +2,10 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export type AgentTokens = { inputTokens: number; outputTokens: number; totalTokens: number; sessions: number };
+export type AgentTokens = {
+  inputTokens: number; outputTokens: number; totalTokens: number; sessions: number;
+  freshTokens?: number; cacheReadTokens?: number;
+};
 export type AgentInfo = {
   agent: "claude" | "codex" | "antigravity";
   connected: boolean; account: string | null; plan?: string | null; authMode: string; note?: string;
@@ -31,7 +34,7 @@ function* walkJsonl(dir: string): Generator<string> {
 function sumClaudeTokens(sinceDays: number, homeDir: string): AgentTokens {
   const dir = join(homeDir, ".claude", "projects");
   const cutoff = Date.now() - sinceDays * 24 * 3600 * 1000;
-  const t: AgentTokens = { inputTokens: 0, outputTokens: 0, totalTokens: 0, sessions: 0 };
+  const t: AgentTokens = { inputTokens: 0, outputTokens: 0, totalTokens: 0, sessions: 0, freshTokens: 0, cacheReadTokens: 0 };
   for (const path of walkJsonl(dir)) {
     try {
       if (statSync(path).mtimeMs < cutoff) continue;
@@ -41,8 +44,12 @@ function sumClaudeTokens(sinceDays: number, homeDir: string): AgentTokens {
         let d: any; try { d = JSON.parse(line); } catch { continue; }
         const u = d?.message?.usage;
         if (!u) continue;
-        t.inputTokens += (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+        const cacheRead = u.cache_read_input_tokens || 0;
+        const fresh = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.output_tokens || 0);
+        t.inputTokens += (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + cacheRead;
         t.outputTokens += u.output_tokens || 0;
+        t.cacheReadTokens! += cacheRead;
+        t.freshTokens! += fresh;
         hit = true;
       }
       if (hit) t.sessions++;

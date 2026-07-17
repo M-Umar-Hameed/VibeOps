@@ -21,6 +21,7 @@ export const actors = pgTable("actors", {
   kind: actorKind("kind").notNull(),
   role: text("role").notNull().default("member"),
   apiKeyHash: text("api_key_hash").notNull().unique(),
+  revoked: boolean("revoked").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

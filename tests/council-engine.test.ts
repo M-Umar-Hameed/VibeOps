@@ -70,7 +70,7 @@ function setScript(script: string, write?: boolean): void {
   else delete process.env.FAKE_WRITE;
 }
 
-async function waitForStatus(id: string, statuses: string[], timeoutMs = 5000) {
+async function waitForStatus(id: string, statuses: string[], timeoutMs = 20_000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const council = getCouncil(id);

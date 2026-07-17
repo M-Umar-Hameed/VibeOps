@@ -46,7 +46,7 @@ test("MCP over HTTP: 401 keyless, tools listed with key, config + install endpoi
     await client.connect(transport);
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name).sort();
-    expect(names).toEqual(["comment", "create_ticket", "delete_note", "get_ticket_history", "list_notes", "save_note", "search_knowledge", "search_tickets", "update_note", "update_ticket"].sort());
+    expect(names).toEqual(["comment", "create_ticket", "delete_note", "fetch_docs", "get_ticket_history", "list_notes", "save_note", "search_knowledge", "search_tickets", "update_note", "update_ticket"].sort());
     await client.close();
 
     // install endpoint writes into (temp) HOME

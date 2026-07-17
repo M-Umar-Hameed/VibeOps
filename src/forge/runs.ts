@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
 import { resolveCmd, type RelayConfig, type RelayAgent } from "../relay/config.js";
+import { styleClause } from "../relay/style.js";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict } from "../relay/prompts.js";
 import { runAgent, killTree } from "../relay/invoke.js";
 import { redactSecrets } from "./redact.js";
@@ -140,6 +141,7 @@ export async function startPipeline(
   const strategyRaw = await getSetting("ai.routing_strategy");
   const strategy: RoutingStrategy =
     strategyRaw === "cheapest-first" || strategyRaw === "quality-first" ? strategyRaw : "balanced";
+  const style = styleClause(await getSetting("agents.commProfile"));
   let auto: { plan: Pick; work: Pick; review: Pick } | undefined;
   const getAuto = () => (auto ??= pickAgents(config, strategy));
 
@@ -181,7 +183,7 @@ export async function startPipeline(
   };
   runs.set(run.id, run);
   trim();
-  run.done = pipeline(run, actorId, agents, workdir, opts.extraPrompt).catch(async (e) => {
+  run.done = pipeline(run, actorId, agents, workdir, style, opts.extraPrompt).catch(async (e) => {
     append(run, `\nforge: pipeline error: ${(e as Error).message}\n`);
     // Uphold the never-stuck-in_progress invariant even for unexpected throws
     // (forgeCommit/addComment failures land here, after the claim).
@@ -193,7 +195,7 @@ export async function startPipeline(
 
 async function pipeline(
   run: Run, actorId: string,
-  agents: { plan: RelayAgent; work: RelayAgent; review: RelayAgent }, workdir: string, extraPrompt?: string,
+  agents: { plan: RelayAgent; work: RelayAgent; review: RelayAgent }, workdir: string, style: string, extraPrompt?: string,
 ): Promise<void> {
   const extra = extraPrompt ? `\n\nOperator instructions:\n${extraPrompt}` : "";
   const onData = (c: string) => append(run, c);
@@ -205,7 +207,7 @@ async function pipeline(
     append(run, `=== FORGE plan (${run.agents.plan}) ===\n`);
     const knowledge = await getKnowledgeSafe(ticket.title);
     const res = await track(actorId, ticket.id, "plan", run.agents.plan, () => runAgent(
-      agents.plan, composePlanPrompt({ ticket, knowledge }) + PLAN_ONLY + extra, workdir, onData,
+      agents.plan, composePlanPrompt({ ticket, knowledge }) + PLAN_ONLY + style + extra, workdir, onData,
       (child) => { run.child = child; },
     ));
     run.child = undefined;
@@ -231,7 +233,7 @@ async function pipeline(
   const lastReview = [...(await listComments(ticket.id))].reverse().find((c) => c.kind === "review");
   const findings = lastReview ? `\n\nPrevious review findings (address ALL of these):\n${lastReview.body}` : "";
   const workPrompt = composeWorkPrompt({ ticket, plan, knowledge, workdir: sandbox })
-    + findings + NARRATION + "\n\nDo NOT run git commit; the supervisor commits for you." + extra;
+    + findings + NARRATION + style + "\n\nDo NOT run git commit; the supervisor commits for you." + extra;
   const workRes = await track(actorId, ticket.id, "work", run.agents.work, () =>
     runAgent(agents.work, workPrompt, sandbox, onData, (child) => { run.child = child; }));
   run.child = undefined;

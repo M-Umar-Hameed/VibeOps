@@ -6,6 +6,7 @@ import { AIUsageTab } from "./AIUsageTab.js";
 
 type SubTab = "providers" | "usage";
 type Strategy = "cost" | "max";
+type CommProfile = "off" | "caveman" | "humanizer";
 
 export function AIModelsTab() {
   const [activeTab, setActiveTab] = useState<SubTab>("providers");
@@ -22,6 +23,19 @@ export function AIModelsTab() {
   const setStrategy = useMutation({
     mutationFn: (value: Strategy) => api.patch("/settings/ai.routing_strategy", { value }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings", "ai.routing_strategy"] }),
+  });
+
+  const { data: commProfile } = useQuery({
+    queryKey: ["settings", "agents.commProfile"],
+    queryFn: async () => {
+      const res = await api.get("/settings/agents.commProfile");
+      return (res.value as CommProfile) || "off";
+    },
+  });
+
+  const setCommProfile = useMutation({
+    mutationFn: (value: CommProfile) => api.patch("/settings/agents.commProfile", { value }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings", "agents.commProfile"] }),
   });
 
   return (
@@ -102,6 +116,29 @@ export function AIModelsTab() {
               </label>
             </div>
             <p className="text-[11px] text-on-surface-variant/60 mt-1">Stored preference — automatic routing enforcement ships with the LLM proxy.</p>
+          </div>
+
+          {/* Communication Profile Card */}
+          <div className="glass-card rounded-xl border border-white/10 p-6 flex flex-col gap-4 relative overflow-hidden">
+            <div>
+              <h3 className="font-headline-sm text-on-surface font-bold flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary text-xl">forum</span>
+                Communication Profile
+              </h3>
+              <p className="text-xs text-on-surface-variant mt-1">Adjust how the AI communicates its plans and progress.</p>
+            </div>
+            
+            <div className="mt-2">
+              <select
+                className="w-full sm:w-auto bg-surface-container-highest border border-white/10 rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:border-primary transition-colors"
+                value={commProfile ?? "off"}
+                onChange={(e) => setCommProfile.mutate(e.target.value as CommProfile)}
+              >
+                <option value="off">Off</option>
+                <option value="caveman">Caveman</option>
+                <option value="humanizer">Humanizer</option>
+              </select>
+            </div>
           </div>
 
           <div className="space-y-6">

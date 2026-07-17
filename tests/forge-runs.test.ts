@@ -309,6 +309,22 @@ describe("forge run manager", () => {
     }
   });
 
+  it("commProfile setting does not break the pipeline", async () => {
+    const { actorId, ticket } = await seedTicket("Comm profile path");
+    const prior = await getSetting("agents.commProfile");
+    await setSetting("agents.commProfile", "caveman");
+    setScript("plan,work,review-pass", true);
+    try {
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+      expect(getRunOutput(runId, 0)?.status).toBe("passed");
+    } finally {
+      await setSetting("agents.commProfile", prior ?? "off");
+    }
+  });
+
   it("pipeline sandboxes the ticket's OWN project repo, not config.workdir, and promote merges into it", async () => {
     const projectRepo = initRepo();
     const { actor } = await createActor({ name: uniq("forge-actor"), kind: "human" });

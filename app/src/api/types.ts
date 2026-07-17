@@ -8,7 +8,7 @@ export type Event = {
   id: string; actorId: string; ticketId: string | null; noteId: string | null;
   action: string; changes: Record<string, { from: unknown; to: unknown }> | null; at: string;
 };
-export type Project = { id: string; key: string; name: string; createdAt: string };
+export type Project = { id: string; key: string; name: string; createdAt: string; repoPath?: string | null; isGit?: boolean };
 export type Actor = { id: string; name: string; kind: string; role: string };
 export type Note = {
   id: string; actorId: string; body: string; title: string | null; scope: string; refId: string | null;

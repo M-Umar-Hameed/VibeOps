@@ -23,7 +23,7 @@ test("renders agent dropdowns from /forge/agents data", async () => {
       { name: "PlanGPT", roles: ["plan"] },
       { name: "WorkGPT", roles: ["work"] },
       { name: "ReviewGPT", roles: ["review"] },
-      { name: "MultiGPT", roles: ["plan", "work", "review"] }
+      { name: "MultiGPT", roles: ["plan", "work", "review"], models: [{name:"big"}] }
     ];
     if (path === "/forge/skills") return [];
     return {};
@@ -37,9 +37,11 @@ test("renders agent dropdowns from /forge/agents data", async () => {
   await waitFor(() => expect(screen.getByText("Pipeline Settings")).toBeInTheDocument());
   
   const planOpts = screen.getAllByRole("option").filter((o: any) => o.parentElement?.previousElementSibling?.textContent === "Plan Model").map((o: any) => o.value);
-  expect(planOpts).toContain("PlanGPT");
-  expect(planOpts).toContain("MultiGPT");
-  expect(planOpts).not.toContain("WorkGPT");
+  expect(planOpts).toContain("auto::");
+  expect(planOpts).toContain("PlanGPT::");
+  expect(planOpts).toContain("MultiGPT::big");
+  expect(planOpts).not.toContain("WorkGPT::");
+  expect(screen.getAllByRole("combobox")[0]).toHaveValue("auto::");
 });
 
 test("Run pipeline posts the selected agents and ticketId", async () => {
@@ -49,7 +51,7 @@ test("Run pipeline posts the selected agents and ticketId", async () => {
       { name: "PlanGPT", roles: ["plan"] },
       { name: "WorkGPT", roles: ["work"] },
       { name: "ReviewGPT", roles: ["review"] },
-      { name: "MultiGPT", roles: ["plan", "work", "review"] }
+      { name: "MultiGPT", roles: ["plan", "work", "review"], models: [{name:"big"}] }
     ];
     if (path === "/forge/skills") return [];
     if (path.includes("/sandbox")) return { exists: false };
@@ -65,7 +67,7 @@ test("Run pipeline posts the selected agents and ticketId", async () => {
   
   // Change Plan Model selection
   const planSelect = screen.getAllByRole("combobox")[0]; // Plan Model select
-  fireEvent.change(planSelect, { target: { value: "MultiGPT" } });
+  fireEvent.change(planSelect, { target: { value: "MultiGPT::big" } });
   
   fireEvent.click(screen.getByRole("button", { name: /Run pipeline/i }));
   
@@ -74,10 +76,36 @@ test("Run pipeline posts the selected agents and ticketId", async () => {
     body: {
       ticketId: "t1",
       planAgent: "MultiGPT",
-      workAgent: "WorkGPT",
-      reviewAgent: "ReviewGPT",
+      planModel: "big",
+      workAgent: "auto",
+      reviewAgent: "auto",
       extraPrompt: ""
     }
+  }));
+});
+
+test("Run pipeline posts untouched defaults without model keys", async () => {
+  apiFetch.mockImplementation(async (path) => {
+    if (path === "/tickets") return [{ id: "t1", title: "My Ticket", status: "open" }];
+    if (path === "/forge/agents") return [
+      { name: "MultiGPT", roles: ["plan", "work", "review"], models: [{name:"big"}] }
+    ];
+    if (path === "/forge/skills") return [];
+    if (path.includes("/sandbox")) return { exists: false };
+    if (path === "/forge/pipeline") return { runId: "run123" };
+    return {};
+  });
+
+  render(<ForgeScreen />);
+  await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
+  fireEvent.click(screen.getByText("My Ticket"));
+  
+  await waitFor(() => expect(screen.getByRole("button", { name: /Run pipeline/i })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole("button", { name: /Run pipeline/i }));
+  
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/forge/pipeline", {
+    method: "POST",
+    body: { ticketId: "t1", planAgent: "auto", workAgent: "auto", reviewAgent: "auto", extraPrompt: "" }
   }));
 });
 

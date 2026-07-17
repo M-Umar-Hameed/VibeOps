@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { api } from "../lib/api.js";
 
 type Ticket = { id: string; title: string; status: string };
-type Agent = { name: string; roles: string[] };
+type Agent = { name: string; roles: string[]; models?: { name: string }[] };
 type Skill = { name: string };
 type SandboxStatus = { exists: boolean; branch?: string; lastVerdict?: string };
 type Diff = { diff: string };
@@ -18,9 +18,9 @@ export function ForgeScreen() {
   
   const [skills, setSkills] = useState<Skill[]>([]);
 
-  const [planAgent, setPlanAgent] = useState("");
-  const [workAgent, setWorkAgent] = useState("");
-  const [reviewAgent, setReviewAgent] = useState("");
+  const [planAgent, setPlanAgent] = useState("auto::");
+  const [workAgent, setWorkAgent] = useState("auto::");
+  const [reviewAgent, setReviewAgent] = useState("auto::");
   const [extraPrompt, setExtraPrompt] = useState("");
 
   const [autocompleteOpen, setAutocompleteOpen] = useState(false);
@@ -92,12 +92,6 @@ export function ForgeScreen() {
        .then(a => {
          const ags = a as Agent[];
          setAgents(ags);
-         const p = ags.find(x => x.roles.includes("plan"));
-         if (p) setPlanAgent(p.name);
-         const w = ags.find(x => x.roles.includes("work"));
-         if (w) setWorkAgent(w.name);
-         const r = ags.find(x => x.roles.includes("review"));
-         if (r) setReviewAgent(r.name);
        })
        .catch((err: any) => setAgentsError(err.message || "Failed to load agents"));
        
@@ -185,13 +179,17 @@ export function ForgeScreen() {
     setRunStatus("running");
     nextOffsetRef.current = 0;
     try {
-      const res = await api.post("/forge/pipeline", {
+      const parseSel = (s: string) => { const [agent, model] = s.split("::"); return { agent, model }; };
+      const plan = parseSel(planAgent), work = parseSel(workAgent), review = parseSel(reviewAgent);
+      const body: Record<string, string> = {
         ticketId: selectedTicket.id,
-        planAgent,
-        workAgent,
-        reviewAgent,
-        extraPrompt
-      }) as { runId: string };
+        planAgent: plan.agent, workAgent: work.agent, reviewAgent: review.agent,
+        extraPrompt,
+      };
+      if (plan.model) body.planModel = plan.model;
+      if (work.model) body.workModel = work.model;
+      if (review.model) body.reviewModel = review.model;
+      const res = await api.post("/forge/pipeline", body) as { runId: string };
       setActiveRunId(res.runId);
     } catch (e: any) {
       setRunError(e.message || "Pipeline start failed");
@@ -273,6 +271,15 @@ export function ForgeScreen() {
   const workAgents = agents.filter(a => a.roles.includes("work"));
   const reviewAgents = agents.filter(a => a.roles.includes("review"));
 
+  type ModelOption = { agent: string; model: string; label: string };
+  function roleOptions(list: Agent[]): ModelOption[] {
+    return list.flatMap(a =>
+      a.models && a.models.length > 0
+        ? a.models.map(m => ({ agent: a.name, model: m.name, label: `${a.name} - ${m.name}` }))
+        : [{ agent: a.name, model: "", label: a.name }]
+    );
+  }
+
   const filteredSkills = skills.filter(s => s.name.toLowerCase().includes(autocompleteFilter));
 
   return (
@@ -341,19 +348,28 @@ export function ForgeScreen() {
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-code-sm text-on-surface-variant uppercase">Plan Model</label>
                   <select value={planAgent} onChange={e => setPlanAgent(e.target.value)} className="bg-surface-container/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface outline-none cursor-pointer">
-                    {planAgents.map(a => <option key={a.name} value={a.name}>{a.name}</option>)}
+                    <option value="auto::">Auto (routing strategy)</option>
+                    {roleOptions(planAgents).map(o => (
+                      <option key={`${o.agent}::${o.model}`} value={`${o.agent}::${o.model}`}>{o.label}</option>
+                    ))}
                   </select>
                 </div>
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-code-sm text-on-surface-variant uppercase">Work Model</label>
                   <select value={workAgent} onChange={e => setWorkAgent(e.target.value)} className="bg-surface-container/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface outline-none cursor-pointer">
-                    {workAgents.map(a => <option key={a.name} value={a.name}>{a.name}</option>)}
+                    <option value="auto::">Auto (routing strategy)</option>
+                    {roleOptions(workAgents).map(o => (
+                      <option key={`${o.agent}::${o.model}`} value={`${o.agent}::${o.model}`}>{o.label}</option>
+                    ))}
                   </select>
                 </div>
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-code-sm text-on-surface-variant uppercase">Review Model</label>
                   <select value={reviewAgent} onChange={e => setReviewAgent(e.target.value)} className="bg-surface-container/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface outline-none cursor-pointer">
-                    {reviewAgents.map(a => <option key={a.name} value={a.name}>{a.name}</option>)}
+                    <option value="auto::">Auto (routing strategy)</option>
+                    {roleOptions(reviewAgents).map(o => (
+                      <option key={`${o.agent}::${o.model}`} value={`${o.agent}::${o.model}`}>{o.label}</option>
+                    ))}
                   </select>
                 </div>
               </div>

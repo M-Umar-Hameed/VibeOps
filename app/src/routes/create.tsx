@@ -1,14 +1,16 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { projects } from "../api/projects.js";
 import { actors } from "../api/actors.js";
 import { tickets } from "../api/tickets.js";
 import { Avatar } from "../components/Avatar.js";
+import { api } from "../lib/api.js";
 
 export function CreateScreen() {
   const qc = useQueryClient();
   const nav = useNavigate();
+  const [mode, setMode] = useState<"council" | "quick">("council");
   const pq = useQuery({ queryKey: ["projects"], queryFn: projects.list });
   const aq = useQuery({ queryKey: ["actors"], queryFn: actors.list });
   const [projectId, setProjectId] = useState("");
@@ -23,10 +25,31 @@ export function CreateScreen() {
   });
 
   return (
-    <div className="w-full max-w-3xl glass-card rounded-lg p-8 relative overflow-hidden mx-auto mt-8">
-      <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-primary-fixed-dim via-transparent to-transparent opacity-50"></div>
-      
-      <div className="mb-10 text-center">
+    <div className="w-full max-w-3xl mx-auto mt-8">
+      <div className="flex gap-2 mb-6 justify-center">
+        <button
+          type="button"
+          onClick={() => setMode("council")}
+          className={`px-6 py-2 font-code-label text-code-label uppercase tracking-widest rounded-sm cursor-pointer ${mode === "council" ? "bg-primary-fixed-dim text-on-primary" : "bg-surface-container-lowest text-on-surface-variant border border-white/10"}`}
+        >
+          Council
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("quick")}
+          className={`px-6 py-2 font-code-label text-code-label uppercase tracking-widest rounded-sm cursor-pointer ${mode === "quick" ? "bg-primary-fixed-dim text-on-primary" : "bg-surface-container-lowest text-on-surface-variant border border-white/10"}`}
+        >
+          Quick create
+        </button>
+      </div>
+
+      {mode === "council" && <CouncilPanel projects={pq.data ?? []} nav={nav} />}
+
+      {mode === "quick" && (
+        <div className="glass-card rounded-lg p-8 relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-primary-fixed-dim via-transparent to-transparent opacity-50"></div>
+          
+          <div className="mb-10 text-center">
         <h2 className="font-code-label text-2xl text-primary-fixed-dim tracking-[0.2em] uppercase terminal-cursor">INITIALIZE_NEW_TICKET</h2>
         <div className="h-[1px] w-24 bg-primary-fixed-dim/30 mx-auto mt-4"></div>
       </div>
@@ -161,6 +184,284 @@ export function CreateScreen() {
       <div className="absolute bottom-4 left-8 pointer-events-none opacity-20">
         <span className="font-code-sm text-[9px] uppercase tracking-tighter">TS: {new Date().toISOString().substring(0, 19).replace('T', ' ')}</span>
       </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type Project = { id: string; name: string };
+type CouncilStatus = "idle" | "running" | "awaiting-answers" | "decided" | "consumed" | "failed";
+type Decision = "GO" | "NO-GO" | "NEEDS-INFO";
+
+function CouncilPanel({ projects, nav }: { projects: Project[]; nav: ReturnType<typeof useNavigate> }) {
+  const [ideaPrompt, setIdeaPrompt] = useState("");
+  const [councilProjectId, setCouncilProjectId] = useState("");
+  const [councilId, setCouncilId] = useState<string | null>(null);
+  const [councilStatus, setCouncilStatus] = useState<CouncilStatus>("idle");
+  const [councilOutput, setCouncilOutput] = useState("");
+  const [councilRating, setCouncilRating] = useState<number | undefined>(undefined);
+  const [councilDecision, setCouncilDecision] = useState<Decision | undefined>(undefined);
+  const [councilQuestions, setCouncilQuestions] = useState<string[]>([]);
+  const [councilTitle, setCouncilTitle] = useState("");
+  const [councilSpec, setCouncilSpec] = useState("");
+  const [answers, setAnswers] = useState<string[]>([]);
+  const [forceCreate, setForceCreate] = useState(false);
+  const [evaluating, setEvaluating] = useState(false);
+  const [submittingAnswers, setSubmittingAnswers] = useState(false);
+  const [creatingTicket, setCreatingTicket] = useState(false);
+  const [councilError, setCouncilError] = useState("");
+  const nextOffsetRef = useRef(0);
+  const outputRef = useRef<HTMLPreElement>(null);
+
+  useEffect(() => {
+    if (!councilId || councilStatus !== "running") return;
+    let running = true;
+    const poll = async () => {
+      try {
+        const res = await api.get(`/council/${councilId}/output?after=${nextOffsetRef.current}`) as { chunk: string; next: number; status: string };
+        if (!running) return;
+        if (res.chunk) {
+          setCouncilOutput(prev => prev + res.chunk);
+          setTimeout(() => {
+            if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
+          }, 10);
+        }
+        nextOffsetRef.current = res.next;
+        if (res.status !== "running") running = false;
+      } catch (e: any) {
+        if (!running) return;
+        setCouncilError(e.message || "Failed to poll output");
+        running = false;
+      }
+    };
+    const interval = setInterval(poll, 1000);
+    poll();
+    return () => { running = false; clearInterval(interval); };
+  }, [councilId, councilStatus]);
+
+  useEffect(() => {
+    if (!councilId || councilStatus !== "running") return;
+    let running = true;
+    const poll = async () => {
+      try {
+        const res = await api.get(`/council/${councilId}`) as {
+          status: CouncilStatus; rating?: number; decision?: Decision;
+          questions?: string[]; title?: string; spec?: string;
+        };
+        if (!running) return;
+        setCouncilStatus(res.status);
+        if (res.rating !== undefined) setCouncilRating(res.rating);
+        if (res.decision !== undefined) setCouncilDecision(res.decision);
+        if (res.questions !== undefined) {
+          setCouncilQuestions(res.questions);
+          setAnswers(res.questions.map(() => ""));
+        }
+        if (res.title !== undefined) setCouncilTitle(res.title);
+        if (res.spec !== undefined) setCouncilSpec(res.spec);
+        if (res.status !== "running") running = false;
+      } catch (e: any) {
+        if (!running) return;
+        setCouncilError(e.message || "Failed to poll council status");
+        running = false;
+      }
+    };
+    const interval = setInterval(poll, 2000);
+    poll();
+    return () => { running = false; clearInterval(interval); };
+  }, [councilId, councilStatus]);
+
+  const handleEvaluate = async () => {
+    const prompt = ideaPrompt.trim();
+    if (!prompt || !councilProjectId) return;
+    setEvaluating(true);
+    setCouncilError("");
+    try {
+      const res = await api.post("/council/evaluate", { prompt, projectId: councilProjectId }) as { councilId: string };
+      setCouncilId(res.councilId);
+      setCouncilStatus("running");
+      setCouncilOutput("");
+      setCouncilQuestions([]);
+      setAnswers([]);
+      setCouncilRating(undefined);
+      setCouncilDecision(undefined);
+      setCouncilSpec("");
+      setCouncilTitle("");
+      setForceCreate(false);
+      nextOffsetRef.current = 0;
+    } catch (e: any) {
+      setCouncilError(e.message || "Failed to start council");
+    } finally {
+      setEvaluating(false);
+    }
+  };
+
+  const handleSubmitAnswers = async () => {
+    if (!councilId) return;
+    setSubmittingAnswers(true);
+    setCouncilError("");
+    try {
+      await api.post(`/council/${councilId}/answers`, { answers });
+      setCouncilStatus("running");
+    } catch (e: any) {
+      setCouncilError(e.message || "Failed to submit answers");
+    } finally {
+      setSubmittingAnswers(false);
+    }
+  };
+
+  const handleCreateTicket = async () => {
+    if (!councilId || !councilProjectId) return;
+    setCreatingTicket(true);
+    setCouncilError("");
+    try {
+      const body: { projectId: string; force?: boolean } = { projectId: councilProjectId };
+      if (councilDecision !== "GO" && forceCreate) body.force = true;
+      const ticket = await api.post(`/council/${councilId}/create-ticket`, body) as { id: string };
+      nav({ to: "/tickets/$id", params: { id: ticket.id } });
+    } catch (e: any) {
+      setCouncilError(e.message || "Failed to create ticket");
+    } finally {
+      setCreatingTicket(false);
+    }
+  };
+
+  const handleStartOver = () => {
+    setCouncilId(null);
+    setCouncilStatus("idle");
+    setCouncilOutput("");
+    setCouncilQuestions([]);
+    setAnswers([]);
+    setCouncilRating(undefined);
+    setCouncilDecision(undefined);
+    setCouncilSpec("");
+    setCouncilTitle("");
+    setForceCreate(false);
+    setCouncilError("");
+    nextOffsetRef.current = 0;
+  };
+
+  return (
+    <div className="glass-card rounded-lg p-8 relative overflow-hidden space-y-6">
+      {councilStatus === "idle" && (
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <label className="font-code-sm text-on-surface-variant uppercase tracking-widest">Idea</label>
+            <textarea
+              className="w-full bg-surface-container-lowest border border-white/5 p-6 font-code-label text-on-surface rounded-sm outline-none resize-y"
+              placeholder="Describe the idea for the council to evaluate..."
+              rows={6}
+              value={ideaPrompt}
+              onChange={(e) => setIdeaPrompt(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="font-code-sm text-on-surface-variant uppercase tracking-widest">Project</label>
+            <select
+              className="w-full bg-surface-container-lowest border border-white/5 px-4 py-4 font-code-label text-on-surface rounded-sm outline-none cursor-pointer"
+              value={councilProjectId}
+              onChange={(e) => setCouncilProjectId(e.target.value)}
+            >
+              <option value="">Select target namespace</option>
+              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+          <button
+            type="button"
+            onClick={handleEvaluate}
+            disabled={evaluating || !ideaPrompt.trim() || !councilProjectId}
+            className="w-full px-10 py-4 bg-primary-fixed-dim text-on-primary font-code-label font-bold uppercase tracking-[0.15em] rounded-sm disabled:opacity-50 cursor-pointer"
+          >
+            Convene council
+          </button>
+        </div>
+      )}
+
+      {councilId && councilStatus === "running" && (
+        <div className="glass-card rounded-xl border border-white/10 overflow-hidden flex flex-col">
+          <div className="p-3 bg-surface-container/50 border-b border-white/5 text-xs uppercase tracking-widest text-on-surface-variant">Live Console</div>
+          <pre ref={outputRef} className="p-4 h-64 overflow-y-auto bg-background/80 text-code-sm text-on-surface font-mono whitespace-pre-wrap">
+            {councilOutput}
+          </pre>
+        </div>
+      )}
+
+      {councilId && councilStatus === "awaiting-answers" && (
+        <div className="space-y-4">
+          <VerdictCard rating={councilRating} decision={councilDecision} />
+          <details>
+            <summary className="cursor-pointer text-xs uppercase tracking-widest text-on-surface-variant">Full console</summary>
+            <pre className="p-4 h-64 overflow-y-auto bg-background/80 text-code-sm text-on-surface font-mono whitespace-pre-wrap">{councilOutput}</pre>
+          </details>
+          {councilQuestions.map((q, i) => (
+            <div key={i} className="space-y-1">
+              <label className="text-sm text-on-surface-variant">{q}</label>
+              <input
+                className="w-full bg-surface-container-lowest border border-white/5 px-4 py-3 text-on-surface rounded-sm outline-none"
+                value={answers[i] ?? ""}
+                onChange={(e) => setAnswers(prev => { const next = [...prev]; next[i] = e.target.value; return next; })}
+              />
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={handleSubmitAnswers}
+            disabled={submittingAnswers}
+            className="w-full px-10 py-4 bg-primary-fixed-dim text-on-primary font-code-label font-bold uppercase tracking-[0.15em] rounded-sm disabled:opacity-50 cursor-pointer"
+          >
+            Submit answers
+          </button>
+        </div>
+      )}
+
+      {councilId && councilStatus === "decided" && (
+        <div className="space-y-4">
+          <VerdictCard rating={councilRating} decision={councilDecision} />
+          <pre className="p-4 h-64 overflow-y-auto bg-background/80 text-code-sm text-on-surface font-mono whitespace-pre-wrap border border-white/10 rounded-lg">{councilSpec}</pre>
+          {councilDecision !== "GO" && (
+            <label className="flex items-center gap-2 text-sm text-on-surface-variant">
+              <input type="checkbox" checked={forceCreate} onChange={(e) => setForceCreate(e.target.checked)} />
+              Create anyway
+            </label>
+          )}
+          <button
+            type="button"
+            onClick={handleCreateTicket}
+            disabled={creatingTicket || (councilDecision !== "GO" && !forceCreate)}
+            className="w-full px-10 py-4 bg-primary-fixed-dim text-on-primary font-code-label font-bold uppercase tracking-[0.15em] rounded-sm disabled:opacity-50 cursor-pointer"
+          >
+            Create ticket
+          </button>
+        </div>
+      )}
+
+      {councilId && councilStatus === "failed" && (
+        <div className="space-y-4">
+          <div className="text-error text-sm">{councilError || "Council run failed."}</div>
+          <button
+            type="button"
+            onClick={handleStartOver}
+            className="px-6 py-2 bg-surface-container-highest text-on-surface font-code-label uppercase tracking-widest rounded-sm cursor-pointer"
+          >
+            Start over
+          </button>
+        </div>
+      )}
+
+      {councilError && councilStatus !== "failed" && <div className="text-error text-sm">{councilError}</div>}
+    </div>
+  );
+}
+
+function VerdictCard({ rating, decision }: { rating?: number; decision?: Decision }) {
+  return (
+    <div className="flex items-center gap-4 p-4 border border-white/10 rounded-sm">
+      <span className="px-3 py-1 bg-primary-fixed-dim/20 text-primary-fixed-dim rounded-sm font-code-label text-sm">
+        {rating ?? 0}/10
+      </span>
+      <span className="px-3 py-1 bg-surface-container-highest text-on-surface rounded-sm font-code-label text-sm uppercase">
+        {decision ?? "PENDING"}
+      </span>
     </div>
   );
 }

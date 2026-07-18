@@ -6,17 +6,26 @@ import { notes } from "../api/notes.js";
 import { apiFetch } from "../api/client.js";
 import { NotesPanel } from "../components/NotesPanel.js";
 
+function hashString(str: string) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = Math.imul(31, hash) + str.charCodeAt(i) | 0;
+  }
+  return hash;
+}
+
 export function KnowledgeScreen() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [submitted, setSubmitted] = useState("");
   const [activeSource, setActiveSource] = useState<{kind: string, ref: string, citation: string} | null>(null);
-  const [tab, setTab] = useState<"Search" | "Sessions">("Search");
+  const [tab, setTab] = useState<"Search" | "Sessions" | "Graph">("Search");
   const [sessionFilter, setSessionFilter] = useState("");
   
   const sq = useQuery({ queryKey: ["knowledge", submitted], queryFn: () => knowledge.search(submitted), enabled: !!submitted });
   const sessionsQuery = useQuery({ queryKey: ["sessions"], queryFn: () => apiFetch("/knowledge/sessions") as Promise<{ref: string, chunkCount: number, created_at: string, excerpt: string}[]>, enabled: tab === "Sessions" });
+  const graphQuery = useQuery({ queryKey: ["graph"], queryFn: () => apiFetch("/knowledge/graph") as Promise<{nodes: any[], edges: any[]}>, enabled: tab === "Graph" });
   
   const sourceQuery = useQuery({
     queryKey: ["source", activeSource?.kind, activeSource?.ref],
@@ -59,6 +68,10 @@ export function KnowledgeScreen() {
                 className={`font-code-label text-sm uppercase tracking-widest pb-2 border-b-2 transition-colors cursor-pointer ${tab === "Sessions" ? "border-primary text-primary" : "border-transparent text-on-surface-variant hover:text-on-surface"}`}
                 onClick={() => setTab("Sessions")}
               >Sessions</button>
+              <button 
+                className={`font-code-label text-sm uppercase tracking-widest pb-2 border-b-2 transition-colors cursor-pointer ${tab === "Graph" ? "border-primary text-primary" : "border-transparent text-on-surface-variant hover:text-on-surface"}`}
+                onClick={() => setTab("Graph")}
+              >Graph</button>
             </div>
             <div className="flex items-center justify-center gap-3 pt-4">
               <button
@@ -73,7 +86,56 @@ export function KnowledgeScreen() {
             </div>
           </div>
           
-          {tab === "Search" ? (
+          {tab === "Graph" ? (
+            <div className="w-full mt-12 bg-surface-container-lowest border border-white/10 rounded-lg p-4 relative overflow-hidden" style={{ height: "600px" }}>
+              {graphQuery.isPending && <div className="text-center mt-8 text-primary-fixed-dim neon-pulse font-code-sm uppercase tracking-widest">Loading graph...</div>}
+              {graphQuery.data && (
+                <>
+                  <svg width="100%" height="100%" viewBox="-400 -400 800 800" className="w-full h-full">
+                    <g className="edges">
+                      {graphQuery.data.edges.map((e, i) => {
+                        const nA = graphQuery.data.nodes.find(n => n.id === e.a);
+                        const nB = graphQuery.data.nodes.find(n => n.id === e.b);
+                        if (!nA || !nB) return null;
+                        const getPos = (n: any) => {
+                          const r = n.kind === 'vault' ? 140 : n.kind === 'note' ? 220 : n.kind === 'session' ? 300 : 380;
+                          const angle = (Math.abs(hashString(n.id)) % 10000 / 10000) * 2 * Math.PI;
+                          return { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
+                        };
+                        const posA = getPos(nA);
+                        const posB = getPos(nB);
+                        const opacity = Math.min(Math.max((e.w - 0.4) * 1.5, 0.1), 0.9);
+                        return <line key={i} x1={posA.x} y1={posA.y} x2={posB.x} y2={posB.y} stroke="currentColor" className="text-primary" strokeOpacity={opacity} strokeWidth={1.5} />;
+                      })}
+                    </g>
+                    <g className="nodes">
+                      {graphQuery.data.nodes.map((n, i) => {
+                        const r = n.kind === 'vault' ? 140 : n.kind === 'note' ? 220 : n.kind === 'session' ? 300 : 380;
+                        const angle = (Math.abs(hashString(n.id)) % 10000 / 10000) * 2 * Math.PI;
+                        const x = Math.cos(angle) * r;
+                        const y = Math.sin(angle) * r;
+                        const colorClass = n.kind === 'vault' ? 'fill-primary' : n.kind === 'note' ? 'fill-secondary' : n.kind === 'session' ? 'fill-amber-500' : 'fill-on-surface';
+                        return (
+                          <circle 
+                            key={i} cx={x} cy={y} r={6} 
+                            className={`${colorClass} hover:stroke-white stroke-[2px] cursor-pointer transition-all`} 
+                            onClick={() => setActiveSource({ kind: n.kind, ref: n.id, citation: n.id })}
+                          >
+                            <title>{n.id}</title>
+                          </circle>
+                        );
+                      })}
+                    </g>
+                  </svg>
+                  <div className="absolute bottom-4 left-4 flex gap-4 font-code-label text-[10px] uppercase text-on-surface-variant bg-surface-container-high/80 p-2 rounded backdrop-blur border border-white/5">
+                    <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-primary"></span> Vault</span>
+                    <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-secondary"></span> Note</span>
+                    <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-500"></span> Session</span>
+                  </div>
+                </>
+              )}
+            </div>
+          ) : tab === "Search" ? (
             <>
               {/* Large Search Bar */}
               <div className="relative group w-full">

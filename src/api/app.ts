@@ -4,7 +4,7 @@ import { createTicket, updateTicket } from "../services/tickets.js";
 import { addComment, listComments } from "../services/comments.js";
 import { getTicket, getTicketHistory, listTickets, searchTickets } from "../services/history.js";
 import { saveNote, updateNote, deleteNote, listNotes, getNote } from "../services/notes.js";
-import { searchKnowledge, getKnowledgeSource, upsertSourceDoc, listSessionDocs } from "../services/knowledge.js";
+import { searchKnowledge, getKnowledgeSource, upsertSourceDoc, listSessionDocs, knowledgeGraph } from "../services/knowledge.js";
 import { AuthError, ConflictError, ForbiddenError, NotFoundError, StaleVersionError } from "../services/errors.js";
 import { listProjects, createProject, updateProjectRepo, gitInitProject } from "../services/projects.js";
 import { listActors, createActor, revokeActor } from "../services/actors.js";
@@ -134,6 +134,16 @@ app.get("/knowledge/sessions", async (c) => {
   const n = Number(c.req.query("limit"));
   const limit = Number.isFinite(n) && n > 0 ? n : undefined;
   return c.json(await listSessionDocs(limit));
+});
+
+app.get("/knowledge/graph", async (c) => {
+  const actor = c.get("actor");
+  if (!actor || (actor.role !== "member" && actor.role !== "admin")) {
+    throw new ForbiddenError("forbidden");
+  }
+  const n = Number(c.req.query("limit"));
+  const limit = Number.isFinite(n) && n > 0 ? n : 60;
+  return c.json(await knowledgeGraph(limit));
 });
 
 app.get("/knowledge/source", async (c) => {

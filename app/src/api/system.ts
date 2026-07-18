@@ -1,5 +1,13 @@
 import { apiFetch } from "./client.js";
 
+export type SystemComponentStatus = {
+  name: string;
+  status: "up" | "down" | "off" | "unknown";
+  detail: string;
+};
+
+export type SystemStatus = { components: SystemComponentStatus[] };
+
 export type SystemMetrics = {
   uptime: number; // in hours
   ping: number; // in ms
@@ -23,5 +31,6 @@ export type SystemTopology = {
 export const system = {
   getMetrics: () => apiFetch("/system/metrics", {}) as Promise<SystemMetrics>,
   getLogs: () => apiFetch("/system/logs", {}) as Promise<SystemLog[]>,
-  getTopology: () => apiFetch("/system/topology", {}) as Promise<SystemTopology>
+  getTopology: () => apiFetch("/system/topology", {}) as Promise<SystemTopology>,
+  getStatus: () => apiFetch("/system/status", {}) as Promise<SystemStatus>,
 };

@@ -18,9 +18,9 @@ import { getSetting } from "../services/settings.js";
 import { projectWorkdir } from "../services/projects.js";
 import { ConflictError } from "../services/errors.js";
 import { logAgentUse, startAgentSession, endAgentSession } from "../services/usage.js";
-import { desc, isNull } from "drizzle-orm";
+import { desc, isNull, sum, eq, gte } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { forgeRuns } from "../db/schema.js";
+import { forgeRuns, aiUsageLogs } from "../db/schema.js";
 
 const OUTPUT_CAP = 400_000;
 const MAX_ACTIVE = 3;
@@ -134,10 +134,15 @@ export async function startPipeline(
   actorId: string, config: RelayConfig,
   opts: {
     ticketId: string; planAgent: string; workAgent: string; reviewAgent: string; extraPrompt?: string;
-    planModel?: string; workModel?: string; reviewModel?: string;
+    planModel?: string; workModel?: string; reviewModel?: string; force?: boolean;
   },
 ): Promise<{ runId: string }> {
   if ((opts.extraPrompt ?? "").length > MAX_EXTRA_PROMPT) throw new Error("extraPrompt too long");
+
+  if (!opts.force) {
+    const budget = await checkBudget(opts.ticketId);
+    if (!budget.ok) throw new ConflictError(budget.reason);
+  }
 
   const strategyRaw = await getSetting("ai.routing_strategy");
   // The settings UI stores cost/max; the router speaks cheapest-first/
@@ -346,6 +351,34 @@ function trim(): void {
   const finished = [...runs.values()].filter((r) => r.status !== "running")
     .sort((a, b) => (b.finishedAt ?? "").localeCompare(a.finishedAt ?? ""));
   for (const r of finished.slice(KEEP_FINISHED)) runs.delete(r.id);
+}
+
+export async function checkBudget(ticketId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const perTicketSetting = await getSetting("ai.budget.perTicketTokens");
+  const perDaySetting = await getSetting("ai.budget.perDayTokens");
+
+  const perTicketCap = parseInt(perTicketSetting || "", 10);
+  const perDayCap = parseInt(perDaySetting || "", 10);
+
+  if (!isNaN(perTicketCap)) {
+    const [row] = await db.select({ total: sum(aiUsageLogs.tokens) }).from(aiUsageLogs).where(eq(aiUsageLogs.ticketId, ticketId));
+    const total = Number(row?.total || 0);
+    if (total > perTicketCap) {
+      return { ok: false, reason: `per-ticket token cap exceeded: ${total} > ${perTicketCap}` };
+    }
+  }
+
+  if (!isNaN(perDayCap)) {
+    const startOfDay = new Date();
+    startOfDay.setUTCHours(0, 0, 0, 0);
+    const [row] = await db.select({ total: sum(aiUsageLogs.tokens) }).from(aiUsageLogs).where(gte(aiUsageLogs.createdAt, startOfDay));
+    const total = Number(row?.total || 0);
+    if (total > perDayCap) {
+      return { ok: false, reason: `per-day token cap exceeded: ${total} > ${perDayCap}` };
+    }
+  }
+
+  return { ok: true };
 }
 
 export function listRuns(): RunSummary[] {

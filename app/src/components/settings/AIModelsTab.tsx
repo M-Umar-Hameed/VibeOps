@@ -51,6 +51,32 @@ export function AIModelsTab() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings", "prompts.selfImprove"] }),
   });
 
+  const { data: perTicketTokens } = useQuery({
+    queryKey: ["settings", "ai.budget.perTicketTokens"],
+    queryFn: async () => {
+      const res = await api.get("/settings/ai.budget.perTicketTokens");
+      return (res.value as string) || "";
+    },
+  });
+
+  const setPerTicketTokens = useMutation({
+    mutationFn: (value: string) => api.patch("/settings/ai.budget.perTicketTokens", { value }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings", "ai.budget.perTicketTokens"] }),
+  });
+
+  const { data: perDayTokens } = useQuery({
+    queryKey: ["settings", "ai.budget.perDayTokens"],
+    queryFn: async () => {
+      const res = await api.get("/settings/ai.budget.perDayTokens");
+      return (res.value as string) || "";
+    },
+  });
+
+  const setPerDayTokens = useMutation({
+    mutationFn: (value: string) => api.patch("/settings/ai.budget.perDayTokens", { value }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings", "ai.budget.perDayTokens"] }),
+  });
+
   return (
     <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
       <div className="mb-8 border-b border-white/10 pb-6">
@@ -129,6 +155,42 @@ export function AIModelsTab() {
               </label>
             </div>
             <p className="text-[11px] text-on-surface-variant/60 mt-1">Stored preference — automatic routing enforcement ships with the LLM proxy.</p>
+          </div>
+
+          {/* Budget Caps */}
+          <div className="glass-card rounded-xl border border-white/10 p-6 flex flex-col gap-4">
+            <div>
+              <h3 className="font-headline-sm text-on-surface font-bold flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary text-xl">account_balance_wallet</span>
+                Router Cost Caps
+              </h3>
+              <p className="text-xs text-on-surface-variant mt-1">
+                Estimates from logged usage; pipelines refuse to start past a cap (force overrides via API). Empty means no cap.
+              </p>
+            </div>
+            
+            <div className="flex gap-4">
+              <div className="flex flex-col gap-1 w-1/2">
+                <label className="text-sm text-on-surface">Per-ticket token cap</label>
+                <input
+                  type="number"
+                  className="bg-surface-container-highest border border-white/10 rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:border-primary transition-colors"
+                  value={perTicketTokens ?? ""}
+                  onChange={(e) => setPerTicketTokens.mutate(e.target.value)}
+                  placeholder="e.g. 500000"
+                />
+              </div>
+              <div className="flex flex-col gap-1 w-1/2">
+                <label className="text-sm text-on-surface">Daily token cap</label>
+                <input
+                  type="number"
+                  className="bg-surface-container-highest border border-white/10 rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:border-primary transition-colors"
+                  value={perDayTokens ?? ""}
+                  onChange={(e) => setPerDayTokens.mutate(e.target.value)}
+                  placeholder="e.g. 2000000"
+                />
+              </div>
+            </div>
           </div>
 
           {/* Communication Profile Card */}

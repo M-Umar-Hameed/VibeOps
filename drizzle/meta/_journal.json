@@ -57,6 +57,13 @@
       "when": 1784257244903,
       "tag": "0007_curly_blink",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784349303196,
+      "tag": "0008_nervous_bloodstrike",
+      "breakpoints": true
     }
   ]
 }

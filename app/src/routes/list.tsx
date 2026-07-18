@@ -97,12 +97,17 @@ export function ListScreen() {
       </section>
 
       <section className="glass-card overflow-hidden mb-4 md:mb-gutter">
-        <div className="px-4 md:px-6 py-4 border-b border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <h3 className="font-headline-sm md:font-headline-md text-headline-sm md:text-headline-md text-primary">Active Deployment Tickets</h3>
-          <Link to="/create" className="bg-primary-fixed-dim text-on-primary-fixed px-4 py-2 font-code-label text-code-label rounded-lg flex items-center gap-2 hover:brightness-110 active:scale-95 transition-all shadow-lg shadow-primary-fixed-dim/20 cursor-pointer inline-flex w-full sm:w-auto justify-center">
-            <span className="material-symbols-outlined text-sm">add</span>
-            NEW_TICKET
-          </Link>
+        <div className="px-4 md:px-6 py-4 border-b border-white/5">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+              <h3 className="font-headline-sm md:font-headline-md text-headline-sm md:text-headline-md text-primary">Active Deployment Tickets</h3>
+              <p className="text-sm text-on-surface-variant/70 mt-1">Track tickets from open through promoted.</p>
+            </div>
+            <Link to="/create" className="bg-primary-fixed-dim text-on-primary-fixed px-4 py-2 font-code-label text-code-label rounded-lg flex items-center gap-2 hover:brightness-110 active:scale-95 transition-all shadow-lg shadow-primary-fixed-dim/20 cursor-pointer inline-flex w-full sm:w-auto justify-center">
+              <span className="material-symbols-outlined text-sm">add</span>
+              NEW_TICKET
+            </Link>
+          </div>
         </div>
         <div className="overflow-x-auto w-full">
           <table className="w-full text-left font-body-sm text-on-surface-variant min-w-[800px]">

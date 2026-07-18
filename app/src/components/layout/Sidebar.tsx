@@ -21,6 +21,7 @@ export function Sidebar({ isOpen = false, setIsOpen = (_v: boolean) => {} }) {
   const [needsGitInitFor, setNeedsGitInitFor] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [canBrowse, setCanBrowse] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
 
   useEffect(() => {
     dialogAvailable().then(setCanBrowse);
@@ -107,31 +108,7 @@ export function Sidebar({ isOpen = false, setIsOpen = (_v: boolean) => {} }) {
             }`}
           >
             <span className="material-symbols-outlined" style={{ fontVariationSettings: isActive("/") ? "'FILL' 1" : "" }}>dashboard</span>
-            <span className="font-body-md">Dashboard</span>
-          </Link>
-          <Link
-            to="/create"
-            onClick={() => setIsOpen(false)}
-            className={`flex items-center gap-3 px-4 py-3 transition-all duration-200 active:scale-[0.98] ${
-              isActive("/create")
-                ? "border-l-2 border-primary-fixed-dim bg-primary-fixed-dim/5 text-primary-fixed-dim"
-                : "text-on-surface-variant hover:bg-white/5 hover:text-on-surface"
-            }`}
-          >
-            <span className="material-symbols-outlined" style={{ fontVariationSettings: isActive("/create") ? "'FILL' 1" : "" }}>confirmation_number</span>
-            <span className="font-body-md">New Ticket</span>
-          </Link>
-          <Link
-            to="/knowledge"
-            onClick={() => setIsOpen(false)}
-            className={`flex items-center gap-3 px-4 py-3 transition-all duration-200 active:scale-[0.98] ${
-              isActive("/knowledge")
-                ? "border-l-2 border-primary-fixed-dim bg-primary-fixed-dim/5 text-primary-fixed-dim"
-                : "text-on-surface-variant hover:bg-white/5 hover:text-on-surface"
-            }`}
-          >
-            <span className="material-symbols-outlined" style={{ fontVariationSettings: isActive("/knowledge") ? "'FILL' 1" : "" }}>analytics</span>
-            <span className="font-body-md">Knowledge</span>
+            <span className="font-body-md">Board</span>
           </Link>
           <Link
             to="/forge"
@@ -147,6 +124,19 @@ export function Sidebar({ isOpen = false, setIsOpen = (_v: boolean) => {} }) {
           </Link>
           <Link
             to="/settings"
+            search={{ tab: "ai" }}
+            onClick={() => setIsOpen(false)}
+            className={`flex items-center gap-3 px-4 py-3 transition-all duration-200 active:scale-[0.98] ${
+              isActive("/settings")
+                ? "border-l-2 border-primary-fixed-dim bg-primary-fixed-dim/5 text-primary-fixed-dim"
+                : "text-on-surface-variant hover:bg-white/5 hover:text-on-surface"
+            }`}
+          >
+            <span className="material-symbols-outlined" style={{ fontVariationSettings: isActive("/settings") ? "'FILL' 1" : "" }}>insights</span>
+            <span className="font-body-md">Usage</span>
+          </Link>
+          <Link
+            to="/settings"
             onClick={() => setIsOpen(false)}
             className={`flex items-center gap-3 px-4 py-3 transition-all duration-200 active:scale-[0.98] ${
               isActive("/settings")
@@ -158,6 +148,42 @@ export function Sidebar({ isOpen = false, setIsOpen = (_v: boolean) => {} }) {
             <span className="font-body-md">Settings</span>
           </Link>
         </nav>
+
+        <button
+          onClick={() => setLibraryOpen(!libraryOpen)}
+          className="w-full px-4 mb-2 flex items-center justify-between text-on-surface-variant hover:text-on-surface transition-colors"
+        >
+          <span className="text-xs font-bold uppercase tracking-wider pl-2">Library</span>
+          <span className={`material-symbols-outlined text-sm transition-transform duration-200 ${libraryOpen ? "rotate-180" : ""}`}>expand_more</span>
+        </button>
+        {libraryOpen && (
+          <nav className="space-y-1 mb-8">
+            <Link
+              to="/knowledge"
+              onClick={() => setIsOpen(false)}
+              className={`flex items-center gap-3 px-4 py-3 transition-all duration-200 active:scale-[0.98] ${
+                isActive("/knowledge")
+                  ? "border-l-2 border-primary-fixed-dim bg-primary-fixed-dim/5 text-primary-fixed-dim"
+                  : "text-on-surface-variant hover:bg-white/5 hover:text-on-surface"
+              }`}
+            >
+              <span className="material-symbols-outlined" style={{ fontVariationSettings: isActive("/knowledge") ? "'FILL' 1" : "" }}>analytics</span>
+              <span className="font-body-md">Knowledge</span>
+            </Link>
+            <Link
+              to="/create"
+              onClick={() => setIsOpen(false)}
+              className={`flex items-center gap-3 px-4 py-3 transition-all duration-200 active:scale-[0.98] ${
+                isActive("/create")
+                  ? "border-l-2 border-primary-fixed-dim bg-primary-fixed-dim/5 text-primary-fixed-dim"
+                  : "text-on-surface-variant hover:bg-white/5 hover:text-on-surface"
+              }`}
+            >
+              <span className="material-symbols-outlined" style={{ fontVariationSettings: isActive("/create") ? "'FILL' 1" : "" }}>confirmation_number</span>
+              <span className="font-body-md">New Ticket</span>
+            </Link>
+          </nav>
+        )}
 
         <div className="px-4 mb-2">
           <h2 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider pl-2">Projects</h2>

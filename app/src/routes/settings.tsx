@@ -9,7 +9,8 @@ import { PluginsTab } from "../components/settings/PluginsTab.js";
 type TabId = "node" | "integrations" | "ai" | "mcp" | "plugins";
 
 export function SettingsScreen() {
-  const [activeTab, setActiveTab] = useState<TabId>("integrations");
+  const initTab = (new URLSearchParams(window.location.search).get("tab") as TabId) || "integrations";
+  const [activeTab, setActiveTab] = useState<TabId>(initTab);
   const [rejected] = useState(isAuthRejected);
 
   const tabs: { id: TabId; label: string; icon: string }[] = [
@@ -21,10 +22,15 @@ export function SettingsScreen() {
   ];
 
   return (
-    <div className="max-w-6xl mx-auto pt-8 flex flex-col md:flex-row gap-8 h-[calc(100vh-8rem)]">
-      {/* Settings Sidebar */}
-      <div className="w-full md:w-64 flex-shrink-0 flex md:block overflow-x-auto md:overflow-visible space-x-2 md:space-x-0 md:space-y-2 pb-2 md:pb-0 hide-scrollbar">
-        <h2 className="hidden md:block text-xs font-code-label text-on-surface-variant/60 uppercase tracking-wider mb-4 px-4">Settings Menu</h2>
+    <div className="absolute inset-0 flex flex-col overflow-hidden bg-surface-container-lowest">
+      <div className="shrink-0 p-6 md:px-8 md:pt-8">
+        <h1 className="font-headline-sm text-on-surface font-bold">Settings</h1>
+        <p className="text-sm text-on-surface-variant/70 mt-1">Configure integrations, models, and connections.</p>
+      </div>
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+        {/* Settings Sidebar */}
+        <div className="w-full md:w-64 flex-shrink-0 flex md:block overflow-x-auto md:overflow-visible space-x-2 md:space-x-0 md:space-y-2 p-6 md:p-8 pt-0 md:pt-0 hide-scrollbar">
+          <h2 className="hidden md:block text-xs font-code-label text-on-surface-variant/60 uppercase tracking-wider mb-4 px-4">Settings Menu</h2>
         {tabs.map(tab => (
           <button
             key={tab.id}
@@ -42,7 +48,7 @@ export function SettingsScreen() {
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 overflow-y-auto pr-4 terminal-scroll">
+      <div className="flex-1 overflow-y-auto px-6 md:px-8 pb-8 terminal-scroll">
         {activeTab === "node" && <LocalNodeTab rejected={rejected} />}
         {activeTab === "integrations" && <IntegrationsTab />}
         {activeTab === "ai" && <AIModelsTab />}
@@ -50,5 +56,6 @@ export function SettingsScreen() {
         {activeTab === "plugins" && <PluginsTab />}
       </div>
     </div>
+  </div>
   );
 }

@@ -136,7 +136,10 @@ export function DetailScreen({ id }: { id: string }) {
               </select>
             </div>
           </div>
-          <h2 className="font-headline-md md:font-headline-lg text-headline-md md:text-headline-lg text-primary leading-tight">{t.title}</h2>
+          <div>
+            <h2 className="font-headline-md md:font-headline-lg text-headline-md md:text-headline-lg text-primary leading-tight">{t.title}</h2>
+            <p className="text-sm text-on-surface-variant/70 mt-1">Ticket details, history, and comments.</p>
+          </div>
           
           {/* Metadata Bar */}
           <div className="flex flex-wrap items-center gap-6 py-4 border-y border-white/5">

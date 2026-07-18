@@ -429,7 +429,10 @@ export function ForgeScreen() {
     <div className="absolute inset-0 flex overflow-hidden">
       <div className="w-80 border-r border-white/10 bg-surface-container/30 overflow-y-auto flex flex-col">
         <div className="p-4 border-b border-white/5 space-y-3">
-          <h2 className="font-headline-sm text-on-surface font-bold">Forge Tickets</h2>
+          <div>
+            <h2 className="font-headline-sm text-on-surface font-bold">Forge Tickets</h2>
+            <p className="text-xs text-on-surface-variant/70 mt-1">Plan, run, and promote agent work per ticket.</p>
+          </div>
           <div className="space-y-2">
             <textarea
               className="w-full bg-surface-container/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface outline-none min-h-[56px] resize-y"
@@ -565,7 +568,7 @@ export function ForgeScreen() {
                 )}
               </div>
 
-              <div className="flex items-center gap-4 pt-2">
+              <div className="flex items-center flex-wrap gap-4 gap-y-2 pt-2">
                 <button
                   onClick={() => handleRun()}
                   disabled={!!activeRunId || isSubmitting || !planAgent || !workAgent || !reviewAgent}

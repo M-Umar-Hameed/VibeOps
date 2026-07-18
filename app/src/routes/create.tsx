@@ -33,6 +33,7 @@ export function CreateScreen() {
 
   return (
     <div className="w-full max-w-3xl mx-auto mt-8">
+      <p className="text-sm text-on-surface-variant/70 text-center mb-4">Council-review or quick-create a new ticket.</p>
       <div className="flex gap-2 mb-6 justify-center">
         <button
           type="button"

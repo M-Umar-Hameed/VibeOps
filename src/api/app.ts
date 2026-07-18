@@ -127,6 +127,10 @@ app.get("/knowledge", async (c) => {
 });
 
 app.get("/knowledge/sessions", async (c) => {
+  const actor = c.get("actor");
+  if (!actor || (actor.role !== "member" && actor.role !== "admin")) {
+    throw new ForbiddenError("forbidden");
+  }
   const n = Number(c.req.query("limit"));
   const limit = Number.isFinite(n) && n > 0 ? n : undefined;
   return c.json(await listSessionDocs(limit));

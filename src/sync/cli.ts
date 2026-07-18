@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { Octokit } from "@octokit/rest";
 import { makeGithubConnector } from "./connectors/github.js";
+import { makeGitLabConnector } from "./connectors/gitlab.js";
 import { runSync } from "./import.js";
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -14,5 +15,16 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   } catch (e) {
     console.error("sync run failed:", (e as Error).message);
     process.exit(1);
+  }
+
+  const gitlabProjectId = process.env.SYNC_GITLAB_TARGET_PROJECT;
+  if (gitlabProjectId) {
+    try {
+      const result = await runSync(makeGitLabConnector(), { projectId: gitlabProjectId });
+      console.log(JSON.stringify(result));
+    } catch (e) {
+      console.error("gitlab sync run failed:", (e as Error).message);
+      process.exit(1);
+    }
   }
 }

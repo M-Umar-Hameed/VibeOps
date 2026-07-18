@@ -122,7 +122,7 @@ test("decided GO renders spec and Create ticket posts { projectId } then navigat
   fireEvent.click(screen.getByText(/Create ticket/i));
 
   await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/council/c1/create-ticket", {
-    method: "POST", body: { projectId: "p1" },
+    method: "POST", body: { projectId: "p1", requiresVerification: false },
   }));
   await waitFor(() => expect(nav).toHaveBeenCalledWith({ to: "/tickets/$id", params: { id: "t9" } }));
 });
@@ -157,6 +157,6 @@ test("NEEDS-INFO shows the Create-anyway checkbox and posts force: true when che
   fireEvent.click(createBtn);
 
   await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/council/c1/create-ticket", {
-    method: "POST", body: { projectId: "p1", force: true },
+    method: "POST", body: { projectId: "p1", requiresVerification: false, force: true },
   }));
 });

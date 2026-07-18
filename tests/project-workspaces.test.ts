@@ -36,6 +36,21 @@ describe("project workspaces", () => {
     expect(missingRes.status).toBe(400);
   });
 
+  it("PATCH /projects/:id rejects paths with .. segments with 400", async () => {
+    const h = await adminHeaders();
+    const project = await createProject({ key: uniq("pw-proj-dots"), name: "PW" });
+
+    const winRes = await app.request(`/projects/${project.id}`, {
+      method: "PATCH", headers: h, body: JSON.stringify({ repoPath: "C:\\real\\path\\..\\..\\Windows" }),
+    });
+    expect(winRes.status).toBe(400);
+
+    const posixRes = await app.request(`/projects/${project.id}`, {
+      method: "PATCH", headers: h, body: JSON.stringify({ repoPath: "/real/path/../../etc" }),
+    });
+    expect(posixRes.status).toBe(400);
+  });
+
   it("PATCH sets repoPath, reports isGit, and clears back to null", async () => {
     const h = await adminHeaders();
     const project = await createProject({ key: uniq("pw-proj"), name: "PW" });

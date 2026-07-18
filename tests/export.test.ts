@@ -67,3 +67,21 @@ test("export brief routes", async () => {
   const text = await res3.text();
   expect(text).toContain(`body ${uniq}`);
 });
+
+test("export brief filename sanitization", async () => {
+  const uniq = "exp-san-" + randomUUID().slice(0, 8);
+  const { actor, apiKey } = await createActor({ name: uniq, kind: "human", role: "member" });
+  const [note] = await db.insert(notes).values({
+    actorId: actor.id, scope: "global", body: "body", title: "note\"\r\ntitle😀", indexed: false, version: 1
+  }).returning();
+
+  const res = await app.request(`/export/brief?kind=note&id=${note.id}`, {
+    headers: { Authorization: `Bearer ${apiKey}` }
+  });
+  expect(res.status).toBe(200);
+  const disposition = res.headers.get("Content-Disposition") || "";
+  expect(disposition).not.toContain('"');
+  expect(disposition).not.toContain('\r');
+  expect(disposition).not.toContain('\n');
+  expect(disposition).not.toContain('😀');
+});

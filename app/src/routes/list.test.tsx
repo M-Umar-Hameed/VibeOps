@@ -5,6 +5,8 @@ import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 const apiFetch = vi.fn();
 vi.mock("../api/client.js", () => ({ apiFetch: (...a: any[]) => apiFetch(...a) }));
 
+
+
 vi.mock("../api/tickets.js", () => ({ tickets: {
   list: vi.fn(async () => [{ id: "t1", title: "First", status: "open", priority: "normal", assigneeId: null }]),
   search: vi.fn(async () => []),
@@ -31,6 +33,13 @@ import { projects } from "../api/projects.js";
 beforeEach(() => {
   apiFetch.mockReset();
   vi.clearAllMocks();
+  apiFetch.mockImplementation((path: string) => {
+    if (path === "/system/status") return Promise.resolve({ components: [
+      { name: "database", status: "up", detail: "" },
+      { name: "connector github", status: "off", detail: "not configured" },
+    ] });
+    return Promise.resolve(undefined);
+  });
 });
 
 function TestHarness() {
@@ -83,3 +92,10 @@ test("renders tickets and handles project switching & creation", async () => {
     expect(tickets.list).toHaveBeenCalledWith({ projectId: "p2", status: undefined });
   });
 });
+
+test("renders system status components", async () => {
+  render(<TestHarness />);
+  await waitFor(() => expect(screen.getByText("database")).toBeInTheDocument());
+  expect(screen.getByText("connector github")).toBeInTheDocument();
+});
+

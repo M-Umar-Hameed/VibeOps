@@ -29,7 +29,7 @@ export function ListScreen() {
 
   const metricsQ = useQuery({ queryKey: ["systemMetrics"], queryFn: system.getMetrics, refetchInterval: 10000 });
   const logsQ = useQuery({ queryKey: ["systemLogs"], queryFn: system.getLogs, refetchInterval: 5000 });
-  const topoQ = useQuery({ queryKey: ["systemTopology"], queryFn: system.getTopology, refetchInterval: 15000 });
+  const statusQ = useQuery({ queryKey: ["systemStatus"], queryFn: system.getStatus });
 
   return (
     <>
@@ -185,29 +185,31 @@ export function ListScreen() {
         </div>
         
         <div className="glass-card p-6 flex flex-col space-y-6">
-          <h4 className="font-code-label text-xs uppercase tracking-widest text-on-surface-variant">Network Topology</h4>
-          <div className="relative flex-1 rounded bg-black/40 border border-white/5 overflow-hidden flex items-center justify-center group">
-            <div className="relative z-10 flex flex-col items-center text-center p-4">
-              <span className="material-symbols-outlined text-primary-fixed-dim text-4xl mb-2">hub</span>
-              <span className="text-xs font-code-label text-on-surface">{topoQ.data?.nodes ?? "--"} ACTIVE NODES</span>
-              <span className="text-[10px] text-primary-fixed-dim/60">{topoQ.data?.regions.join(", ") ?? "--"}</span>
-            </div>
+          <div className="flex items-center justify-between">
+            <h4 className="font-code-label text-xs uppercase tracking-widest text-on-surface-variant">System Status</h4>
+            <button
+              onClick={() => statusQ.refetch()}
+              className="text-on-surface-variant/60 hover:text-on-surface"
+              aria-label="Refresh system status"
+            >
+              <span className="material-symbols-outlined text-sm">refresh</span>
+            </button>
           </div>
-          <div className="space-y-3">
-            <div className="flex justify-between items-center text-xs">
-              <span className="text-on-surface-variant">Cluster Health</span>
-              <span className="text-primary-fixed-dim">{metricsQ.data?.clusterHealth ?? "--"}%</span>
-            </div>
-            <div className="w-full h-1 bg-surface-container-highest rounded-full overflow-hidden">
-              <div className="h-full bg-primary-fixed-dim shadow-[0_0_8px_rgba(0,219,233,0.5)] transition-all duration-1000" style={{ width: `${metricsQ.data?.clusterHealth ?? 0}%` }}></div>
-            </div>
-            <div className="flex justify-between items-center text-xs">
-              <span className="text-on-surface-variant">CPU Load</span>
-              <span className="text-secondary">{metricsQ.data?.cpuLoad ?? "--"}%</span>
-            </div>
-            <div className="w-full h-1 bg-surface-container-highest rounded-full overflow-hidden">
-              <div className="h-full bg-secondary shadow-[0_0_8px_rgba(207,92,255,0.5)] transition-all duration-1000" style={{ width: `${metricsQ.data?.cpuLoad ?? 0}%` }}></div>
-            </div>
+          <div className="flex-1 space-y-2 overflow-y-auto max-h-[260px]">
+            {statusQ.data?.components.map((c) => (
+              <div key={c.name} className="flex items-center justify-between text-xs gap-2">
+                <span className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full ${
+                    c.status === "up" ? "bg-green-500/80"
+                    : c.status === "down" ? "bg-red-500/80"
+                    : c.status === "unknown" ? "bg-amber-500/80"
+                    : "bg-white/20"
+                  }`}></span>
+                  <span className="text-on-surface">{c.name}</span>
+                </span>
+                <span className="text-on-surface-variant/60 text-right truncate max-w-[140px]">{c.detail}</span>
+              </div>
+            ))}
           </div>
         </div>
       </section>

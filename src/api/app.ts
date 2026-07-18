@@ -9,7 +9,7 @@ import { AuthError, ConflictError, ForbiddenError, NotFoundError, StaleVersionEr
 import { listProjects, createProject, updateProjectRepo, gitInitProject } from "../services/projects.js";
 import { listActors, createActor, revokeActor } from "../services/actors.js";
 import { requireAdmin } from "./auth.js";
-import { getSystemMetrics, getSystemLogs, getSystemTopology, getAiUsage } from "../services/system.js";
+import { getSystemMetrics, getSystemLogs, getSystemTopology, getAiUsage, getSystemStatus } from "../services/system.js";
 import { getSetting, setSetting } from "../services/settings.js";
 import { getVaultStatus, startWatcher, stopWatcher } from "../ingest/watch.js";
 import { fetchDocs } from "../knowledge/docs.js";
@@ -194,6 +194,7 @@ app.post("/ingest/sessions", requireAdmin, async (c) => {
 });
 
 app.get("/system/metrics", async (c) => c.json(await getSystemMetrics()));
+app.get("/system/status", async (c) => c.json(await getSystemStatus()));
 app.get("/system/logs", requireAdmin, async (c) => c.json(await getSystemLogs()));
 app.get("/system/topology", async (c) => c.json(await getSystemTopology()));
 app.get("/system/ai-usage", async (c) => c.json(await getAiUsage()));

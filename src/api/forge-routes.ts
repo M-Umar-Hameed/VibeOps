@@ -61,7 +61,7 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
 
   app.post("/forge/pipeline", requireAdmin, async (c) => {
     const body = await c.req.json().catch(() => ({}));
-    const { ticketId, planAgent, workAgent, reviewAgent, extraPrompt, planModel, workModel, reviewModel } = body;
+    const { ticketId, planAgent, workAgent, reviewAgent, extraPrompt, planModel, workModel, reviewModel, force } = body;
     if (typeof ticketId !== "string" || !ticketId) return c.json({ error: "ticketId required" }, 400);
     if (typeof planAgent !== "string" || !planAgent) return c.json({ error: "planAgent required" }, 400);
     if (typeof workAgent !== "string" || !workAgent) return c.json({ error: "workAgent required" }, 400);
@@ -75,7 +75,7 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
 
     try {
       const { runId } = await startPipeline(c.get("actor").id, forgeConfig(), {
-        ticketId, planAgent, workAgent, reviewAgent, extraPrompt, planModel, workModel, reviewModel,
+        ticketId, planAgent, workAgent, reviewAgent, extraPrompt, planModel, workModel, reviewModel, force,
       });
       return c.json({ runId }, 201);
     } catch (e) {

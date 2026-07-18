@@ -183,7 +183,7 @@ export function ForgeScreen() {
     return () => { running = false; clearInterval(interval); };
   }, [activeRunId, selectedTicket]);
 
-  const handleRun = async () => {
+  const handleRun = async (force = false) => {
     if (!selectedTicket) return;
     setIsSubmitting(true);
     setRunError("");
@@ -194,10 +194,11 @@ export function ForgeScreen() {
     try {
       const parseSel = (s: string) => { const [agent, model] = s.split("::"); return { agent, model }; };
       const plan = parseSel(planAgent), work = parseSel(workAgent), review = parseSel(reviewAgent);
-      const body: Record<string, string> = {
+      const body: Record<string, any> = {
         ticketId: selectedTicket.id,
         planAgent: plan.agent, workAgent: work.agent, reviewAgent: review.agent,
         extraPrompt,
+        force,
       };
       if (plan.model) body.planModel = plan.model;
       if (work.model) body.workModel = work.model;
@@ -448,12 +449,21 @@ export function ForgeScreen() {
 
               <div className="flex items-center gap-4 pt-2">
                 <button
-                  onClick={handleRun}
+                  onClick={() => handleRun()}
                   disabled={!!activeRunId || isSubmitting || !planAgent || !workAgent || !reviewAgent}
                   className="px-6 py-2 rounded bg-primary hover:brightness-110 text-on-primary text-sm font-bold uppercase tracking-widest transition-all disabled:opacity-50 cursor-pointer"
                 >
                   Run pipeline
                 </button>
+                {runStatus === "error" && runError.includes("token cap exceeded") && (
+                  <button
+                    onClick={() => handleRun(true)}
+                    disabled={isSubmitting}
+                    className="px-4 py-2 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-400 text-sm font-bold uppercase tracking-widest transition-all cursor-pointer"
+                  >
+                    Run anyway (force)
+                  </button>
+                )}
                 {activeRunId && (
                   <button
                     onClick={handleStop}

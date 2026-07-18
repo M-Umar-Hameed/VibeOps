@@ -6,9 +6,9 @@ import type { Actor } from "../db/schema.js";
 import { loadRelayConfig } from "../relay/config.js";
 import { runDoctor } from "../relay/doctor.js";
 import { parseVerdict } from "../relay/prompts.js";
-import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, reviewDiffPayload } from "../forge/runs.js";
+import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, reviewDiffPayload, activeStageForTicket } from "../forge/runs.js";
 import {
-  sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash
+  sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash, sandboxActivity, sandboxWorkingDiff
 } from "../forge/sandbox.js";
 import { pickAgents } from "../forge/router.js";
 import { runAgent } from "../relay/invoke.js";
@@ -126,6 +126,15 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     });
   });
 
+  app.get("/forge/tickets/:id/sandbox/activity", requireAdmin, async (c) => {
+    const ticketId = c.req.param("id");
+    if (!sandboxExists(ticketId)) return c.json({ error: "no sandbox for ticket" }, 404);
+    const ticket = await getTicket(ticketId);
+    const workdir = await resolveWorkdir(ticket.projectId, forgeConfig());
+    const activity = await sandboxActivity(workdir, ticketId);
+    return c.json({ stage: activeStageForTicket(ticketId) ?? "review", ...activity });
+  });
+
   app.post("/forge/tickets/:id/resume", requireAdmin, async (c) => {
     const ticketId = c.req.param("id");
     const ticket = await getTicket(ticketId);
@@ -143,7 +152,9 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     if (!sandboxExists(ticketId)) return c.json({ error: "no sandbox for ticket" }, 404);
     const ticket = await getTicket(ticketId);
     const workdir = await resolveWorkdir(ticket.projectId, forgeConfig());
-    const diff = await sandboxDiff(workdir, ticketId);
+    const diff = c.req.query("worktree") === "true"
+      ? await sandboxWorkingDiff(workdir, ticketId)
+      : await sandboxDiff(workdir, ticketId);
     return c.json({ diff });
   });
 

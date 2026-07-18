@@ -10,6 +10,8 @@ type Skill = { name: string };
 type SandboxStatus = { exists: boolean; branch?: string; lastVerdict?: string };
 type Diff = { diff: string };
 type DoctorStatus = { name: string; binary: string; probe: { ok: boolean; error?: string }; auth: { known: boolean; connected: boolean | null }; lastChecked: string };
+type SandboxActivityFile = { path: string; status: "A" | "M" | "D"; additions: number; deletions: number };
+type SandboxActivityData = { stage: string; files: SandboxActivityFile[]; totalAdditions: number; totalDeletions: number; lastChangeAt: string };
 
 export function ForgeScreen() {
   const { activeProjectId } = useProject();
@@ -50,6 +52,8 @@ export function ForgeScreen() {
   const [explaining, setExplaining] = useState(false);
   const [selectedDiffFile, setSelectedDiffFile] = useState<DiffFile | null>(null);
   const [sandboxError, setSandboxError] = useState("");
+  const [sandboxActivity, setSandboxActivity] = useState<SandboxActivityData | null>(null);
+  const [selectedActivityFile, setSelectedActivityFile] = useState<string | null>(null);
   const [viewDiff, setViewDiff] = useState(false);
 
   const [interruptedRun, setInterruptedRun] = useState(false);
@@ -159,13 +163,17 @@ export function ForgeScreen() {
       setDiff(null);
       setDiffParsed([]);
       setDiffExplain(null);
+      setSandboxActivity(null);
       setConfirmApprove(false); // never carry an armed confirm across tickets
     }
   }, [selectedTicket]);
 
   useEffect(() => {
     if (viewDiff && selectedTicket && diff === null) {
-      api.get(`/forge/tickets/${selectedTicket.id}/diff`)
+      const path = runStatus === "running"
+        ? `/forge/tickets/${selectedTicket.id}/diff?worktree=true`
+        : `/forge/tickets/${selectedTicket.id}/diff`;
+      api.get(path)
          .then(d => {
            const text = (d as Diff).diff;
            setDiff(text);
@@ -183,7 +191,17 @@ export function ForgeScreen() {
             }
          });
     }
-  }, [viewDiff, selectedTicket, diff]);
+  }, [viewDiff, selectedTicket, diff, runStatus]);
+
+  // Once a targeted file diff finishes loading (triggered from the activity
+  // panel), select it -- runs after the effect above's default files[0] pick.
+  useEffect(() => {
+    if (selectedActivityFile && diffParsed.length > 0) {
+      const match = diffParsed.find(f => f.path === selectedActivityFile);
+      if (match) setSelectedDiffFile(match);
+      setSelectedActivityFile(null);
+    }
+  }, [selectedActivityFile, diffParsed]);
 
   const fetchExplain = async (fresh = false) => {
     if (!selectedTicket) return;
@@ -222,6 +240,15 @@ export function ForgeScreen() {
           setActiveRunId(null);
           if (selectedTicket) loadSandbox(selectedTicket.id);
           loadTickets(); // ticket status moved server-side; refresh the columns
+        }
+
+        if (selectedTicket) {
+          try {
+            const act = await api.get(`/forge/tickets/${selectedTicket.id}/sandbox/activity`) as SandboxActivityData;
+            if (running) setSandboxActivity(act);
+          } catch (e: any) {
+            if (running && e instanceof NotFoundError) setSandboxActivity(null);
+          }
         }
       } catch (e: any) {
         if (!running) return;
@@ -328,6 +355,14 @@ export function ForgeScreen() {
     } catch (e: any) {
       setSandboxError(e.message || "Failed to discard");
     }
+  };
+
+  const openActivityFile = (path: string) => {
+    setDiffMode("sbs");
+    setSelectedActivityFile(path);
+    setDiff(null);
+    setDiffParsed([]);
+    setViewDiff(true);
   };
 
   const handlePromptChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -586,6 +621,42 @@ export function ForgeScreen() {
                 <pre ref={outputRef} className="p-4 h-64 overflow-y-auto bg-background/80 text-code-sm text-on-surface font-mono whitespace-pre-wrap custom-scrollbar">
                   {runOutput}
                 </pre>
+              </div>
+            )}
+
+            {runStatus === "running" && sandboxActivity && (
+              <div className="glass-card rounded-xl border border-white/10 p-6 flex flex-col gap-4">
+                <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                  <h3 className="font-headline-sm text-on-surface font-bold">Sandbox activity</h3>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-code-sm">
+                      <span className="text-green-400">+{sandboxActivity.totalAdditions ?? 0}</span>{" "}
+                      <span className="text-red-400">-{sandboxActivity.totalDeletions ?? 0}</span>
+                    </span>
+                    <span className="px-2 py-1 bg-surface-container border border-white/10 rounded text-[10px] font-code-label text-on-surface-variant uppercase">{sandboxActivity.stage}</span>
+                  </div>
+                </div>
+                {(sandboxActivity.files ?? []).length === 0 ? (
+                  <div className="text-sm text-on-surface-variant italic">
+                    {sandboxActivity.stage === "plan" ? "planning, no file changes expected" : "no file changes yet"}
+                  </div>
+                ) : (
+                  <div className="max-h-64 overflow-y-auto border border-white/10 rounded-lg bg-surface-container-lowest">
+                    {sandboxActivity.files.map(f => (
+                      <button
+                        key={f.path}
+                        onClick={() => openActivityFile(f.path)}
+                        className="w-full text-left p-2 text-xs font-mono border-b border-white/5 truncate flex items-center justify-between text-on-surface hover:bg-white/5"
+                      >
+                        <span className="truncate" title={f.path}>{f.status} {f.path}</span>
+                        <span className="flex-shrink-0 flex gap-1 ml-2">
+                          {f.additions > 0 && <span className="text-green-400">+{f.additions}</span>}
+                          {f.deletions > 0 && <span className="text-red-400">-{f.deletions}</span>}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 

@@ -243,3 +243,45 @@ test("shows empty-state when diff 404s", async () => {
   await waitFor(() => expect(screen.getByText("No sandbox / no changes yet")).toBeInTheDocument());
 });
 
+test("sandbox activity panel appears only while running, and hides on 404", async () => {
+  let activityCalls = 0;
+  apiFetch.mockImplementation(async (path) => {
+    if (path === "/tickets") return [{ id: "t1", title: "My Ticket", status: "open" }];
+    if (path === "/forge/agents") return [
+      { name: "PlanGPT", roles: ["plan"] },
+      { name: "WorkGPT", roles: ["work"] },
+      { name: "ReviewGPT", roles: ["review"] },
+    ];
+    if (path === "/forge/skills") return [];
+    if (path === "/forge/tickets/t1/sandbox") return { exists: false };
+    if (path === "/forge/pipeline") return { runId: "run123" };
+    if (path === "/forge/tickets/t1/sandbox/activity") {
+      activityCalls++;
+      if (activityCalls === 1) throw new NotFoundError("no sandbox for ticket");
+      return {
+        stage: "work",
+        files: [{ path: "src/a.ts", status: "M", additions: 3, deletions: 1 }],
+        totalAdditions: 3, totalDeletions: 1, lastChangeAt: "2026-07-18T00:00:00.000Z",
+      };
+    }
+    if (path.includes("/output")) return { chunk: "", next: 0, stage: "plan", status: "running" };
+    return {};
+  });
+
+  render(<ProjectProvider><ForgeScreen /></ProjectProvider>);
+  await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
+  fireEvent.click(screen.getByText("My Ticket"));
+  expect(screen.queryByText("Sandbox activity")).not.toBeInTheDocument();
+
+  await waitFor(() => expect(screen.getByRole("button", { name: /Run pipeline/i })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole("button", { name: /Run pipeline/i }));
+
+  await waitFor(() => expect(activityCalls).toBe(1));
+  expect(screen.queryByText("Sandbox activity")).not.toBeInTheDocument(); // 404 -> hidden
+
+  await act(async () => { vi.advanceTimersByTime(1000); });
+
+  await waitFor(() => expect(screen.getByText("Sandbox activity")).toBeInTheDocument());
+  expect(screen.getByText(/a\.ts/)).toBeInTheDocument();
+});
+

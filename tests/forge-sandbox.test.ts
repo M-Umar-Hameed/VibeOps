@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import {
   assertTicketId, sandboxPath, sandboxExists, ensureSandbox, branchName,
   forgeCommit, sandboxDiff, sandboxDiffSummary, promoteSandbox, discardSandbox,
-  unlinkDeps, hasCommitsToPromote,
+  unlinkDeps, hasCommitsToPromote, sandboxActivity, sandboxWorkingDiff,
 } from "../src/forge/sandbox.js";
 import { ConflictError } from "../src/services/errors.js";
 
@@ -170,5 +170,35 @@ describe("forge sandbox", () => {
     writeFileSync(join(sp, "b.txt"), "x\n");
     await forgeCommit(TID, "b");
     expect(await hasCommitsToPromote(workdir, TID)).toBe(true);
+  });
+
+  it("sandboxActivity reports committed and uncommitted changes vs the base branch", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    writeFileSync(join(sp, "b.txt"), "line1\nline2\n"); // new file
+    await forgeCommit(TID, "add b"); // committed
+    writeFileSync(join(sp, "a.txt"), "goodbye\n"); // uncommitted edit (was "hello\n")
+
+    const activity = await sandboxActivity(workdir, TID);
+    const byPath = Object.fromEntries(activity.files.map(f => [f.path, f]));
+    expect(byPath["b.txt"]).toEqual({ path: "b.txt", status: "A", additions: 2, deletions: 0 });
+    expect(byPath["a.txt"]).toEqual({ path: "a.txt", status: "M", additions: 1, deletions: 1 });
+    expect(activity.totalAdditions).toBe(3);
+    expect(activity.totalDeletions).toBe(1);
+  });
+
+  it("sandboxActivity caches for ~2s: a file written after the first call is invisible to the second", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    writeFileSync(join(sp, "b.txt"), "x\n");
+    const first = await sandboxActivity(workdir, TID);
+    writeFileSync(join(sp, "c.txt"), "y\n");
+    const second = await sandboxActivity(workdir, TID);
+    expect(second).toEqual(first);
+  });
+
+  it("sandboxWorkingDiff includes uncommitted changes, unlike sandboxDiff", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    writeFileSync(join(sp, "a.txt"), "uncommitted edit\n");
+    expect(await sandboxDiff(workdir, TID)).not.toContain("uncommitted edit");
+    expect(await sandboxWorkingDiff(workdir, TID)).toContain("uncommitted edit");
   });
 });

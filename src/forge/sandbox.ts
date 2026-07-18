@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readlinkSync, rmdirSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readlinkSync, rmdirSync, symlinkSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { ConflictError } from "../services/errors.js";
@@ -113,6 +113,97 @@ export async function sandboxDiff(workdir: string, ticketId: string): Promise<st
 
 export async function sandboxDiffSummary(workdir: string, ticketId: string): Promise<string> {
   const { out } = await git(workdir, "diff", "--stat", `HEAD...${branchName(ticketId)}`);
+  return out.slice(0, DIFF_CAP);
+}
+
+export type SandboxActivityFile = { path: string; status: "A" | "M" | "D"; additions: number; deletions: number };
+export type SandboxActivity = {
+  files: SandboxActivityFile[];
+  totalAdditions: number;
+  totalDeletions: number;
+  lastChangeAt: string;
+};
+
+const ACTIVITY_CACHE_MS = 2_000;
+// ponytail: cache never evicted, keyed by resolved sandbox path (not raw
+// ticketId) so it can't leak stale data across sandboxes. Grows for the
+// process lifetime -- ticket volume is small enough this never matters.
+// Upgrade path: evict on discardSandbox/promoteSandbox cleanup() if it ever does.
+const activityCache = new Map<string, { at: number; data: SandboxActivity }>();
+
+async function baseCommit(workdir: string): Promise<string> {
+  return (await must(workdir, "rev-parse", "HEAD")).trim();
+}
+
+function stripCR(s: string): string {
+  return s.replace(/\r$/, "");
+}
+
+// Read-only: status --porcelain (untracked files) + diff --numstat/--name-status
+// against the base commit, run from inside the worktree so uncommitted edits
+// are included alongside anything already committed to the forge branch.
+export async function sandboxActivity(workdir: string, ticketId: string): Promise<SandboxActivity> {
+  const path = sandboxPath(ticketId);
+  const cached = activityCache.get(path);
+  if (cached && Date.now() - cached.at < ACTIVITY_CACHE_MS) return cached.data;
+
+  const base = await baseCommit(workdir);
+  const [numstat, nameStatus, status] = await Promise.all([
+    git(path, "diff", "--no-renames", "--numstat", base),
+    git(path, "diff", "--no-renames", "--name-status", base),
+    git(path, "status", "--porcelain"),
+  ]);
+
+  const counts = new Map<string, { additions: number; deletions: number }>();
+  for (const raw of numstat.out.split("\n")) {
+    const line = stripCR(raw);
+    const m = line.match(/^(\d+|-)\t(\d+|-)\t(.+)$/);
+    if (!m) continue;
+    counts.set(m[3], { additions: m[1] === "-" ? 0 : parseInt(m[1], 10), deletions: m[2] === "-" ? 0 : parseInt(m[2], 10) });
+  }
+
+  const files: SandboxActivityFile[] = [];
+  for (const raw of nameStatus.out.split("\n")) {
+    const line = stripCR(raw);
+    const m = line.match(/^([AMD])\t(.+)$/);
+    if (!m) continue;
+    const filePath = m[2];
+    const c = counts.get(filePath) ?? { additions: 0, deletions: 0 };
+    files.push({ path: filePath, status: m[1] as "A" | "M" | "D", ...c });
+  }
+
+  // Untracked files: no baseline to diff against, so counts land at 0 until
+  // forgeCommit's `git add -A` stages them -- read-only means no `git add -N` here.
+  const seen = new Set(files.map((f) => f.path));
+  for (const raw of status.out.split("\n")) {
+    const line = stripCR(raw);
+    if (!line.startsWith("?? ")) continue;
+    const filePath = line.slice(3).trim();
+    if (seen.has(filePath)) continue;
+    files.push({ path: filePath, status: "A", additions: 0, deletions: 0 });
+  }
+
+  let lastChangeAt = 0;
+  for (const f of files) {
+    if (f.status === "D") continue;
+    try { lastChangeAt = Math.max(lastChangeAt, statSync(join(path, f.path)).mtimeMs); } catch { /* deleted/renamed mid-poll */ }
+  }
+
+  const data: SandboxActivity = {
+    files,
+    totalAdditions: files.reduce((s, f) => s + f.additions, 0),
+    totalDeletions: files.reduce((s, f) => s + f.deletions, 0),
+    lastChangeAt: new Date(lastChangeAt || Date.now()).toISOString(),
+  };
+  activityCache.set(path, { at: Date.now(), data });
+  return data;
+}
+
+// Same base-commit comparison as sandboxActivity, but returns the raw unified
+// diff text for the diff viewer instead of a per-file summary.
+export async function sandboxWorkingDiff(workdir: string, ticketId: string): Promise<string> {
+  const base = await baseCommit(workdir);
+  const { out } = await git(sandboxPath(ticketId), "diff", "--no-renames", base);
   return out.slice(0, DIFF_CAP);
 }
 

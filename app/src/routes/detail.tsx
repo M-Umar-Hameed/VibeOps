@@ -52,6 +52,31 @@ export function DetailScreen({ id }: { id: string }) {
     onError: (e) => setError(e instanceof Error ? e.message : "Failed to record verification"),
   });
 
+  const handleExport = async () => {
+    try {
+      const { getSettings } = await import("../settings.js");
+      const { baseUrl, apiKey } = await getSettings();
+      const res = await fetch(`${baseUrl}/export/brief?kind=ticket&id=${id}`, {
+        headers: { Authorization: `Bearer ${apiKey}` }
+      });
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const disp = res.headers.get("Content-Disposition");
+      let filename = `ticket-${id.substring(0,8)}.md`;
+      if (disp && disp.includes("filename=")) {
+        filename = disp.split("filename=")[1].replace(/"/g, "");
+      }
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   if (tq.isLoading) return <div className="p-8 text-primary-fixed-dim neon-pulse font-code-sm">Loading ticket data...</div>;
   if (tq.isError && !tq.data) return <div className="p-8 text-error font-code-sm" role="alert">Failed to load ticket</div>;
   const t = tq.data!;
@@ -73,6 +98,16 @@ export function DetailScreen({ id }: { id: string }) {
                   Verification Required
                 </span>
               )}
+              <a href="https://notebooklm.google.com/" target="_blank" rel="noreferrer" className="text-primary-fixed-dim hover:underline font-code-sm text-[10px] uppercase tracking-wider">
+                Open NotebookLM
+              </a>
+              <button
+                type="button"
+                onClick={handleExport}
+                className="px-2 py-0.5 rounded font-code-sm text-[10px] uppercase tracking-wider bg-primary/20 text-primary hover:bg-primary/30 border border-primary/30 cursor-pointer transition-colors"
+              >
+                Export brief
+              </button>
               {t.requiresVerification && (
                 <button
                   type="button"

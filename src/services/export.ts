@@ -32,7 +32,7 @@ export async function buildBrief(kind: "ticket" | "council" | "note", id: string
     if (council.investor) markdown += `\n## Investor\n${council.investor}\n`;
     if (council.skeptic) markdown += `\n## Skeptic\n${council.skeptic}\n`;
     
-    // cast to any since we know getCouncil returns spread verdict
+    // ponytail: full council session type ceiling
     const c = council as any;
     if (c.spec || (c.questions && c.questions.length > 0) || c.decision) {
       markdown += `\n## Chairman Verdict\n`;

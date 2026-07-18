@@ -3,6 +3,7 @@ import { app } from "../src/api/app.js";
 import { db } from "../src/db/client.js";
 import { tickets, comments, notes } from "../src/db/schema.js";
 import { buildBrief } from "../src/services/export.js";
+import { startCouncil } from "../src/council/runs.js";
 import { randomUUID } from "node:crypto";
 import { createActor } from "../src/services/actors.js";
 
@@ -22,6 +23,20 @@ test("export brief ticket", async () => {
   expect(markdown).toContain(uniq); // author name
   expect(markdown).toContain("comment [REDACTED]");
   expect(markdown).not.toContain("sk-test123456789");
+});
+
+test("export brief council", async () => {
+  const uniq = "exp-cncl-" + randomUUID().slice(0, 8);
+  const { actor } = await createActor({ name: uniq, kind: "human", role: "admin" });
+
+  const { councilId } = await startCouncil(actor.id, {} as any, { prompt: `a prompt long enough to pass the check ${uniq}` });
+
+  const { filename, markdown } = await buildBrief("council", councilId);
+  expect(filename).toBe(`council-${councilId.slice(0, 8)}.md`);
+  expect(markdown).toContain("Council Run");
+  expect(markdown).toContain(uniq);
+  
+  await expect(buildBrief("council", "unknown-id")).rejects.toThrow();
 });
 
 test("export brief routes", async () => {

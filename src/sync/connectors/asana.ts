@@ -15,7 +15,7 @@ export function makeAsanaConnector(fetchImpl: typeof fetch = fetch): SourceConne
       results.push(...data.data);
       pages++;
       if (data.next_page?.offset) {
-        const url = new URL(currentUrl);
+        const url: URL = new URL(currentUrl);
         url.searchParams.set("offset", data.next_page.offset);
         currentUrl = url.toString();
       } else {

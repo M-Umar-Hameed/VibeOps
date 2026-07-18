@@ -46,7 +46,8 @@ import { existsSync } from "node:fs";
 // {model}) -- only cmd0 plus a static, per-basename --version-style arg vector.
 // This is what keeps the probe from ever sending a paid prompt.
 async function probeBinary(cmd0: string): Promise<ProbeStatus> {
-  if (!existsSync(cmd0)) {
+  const hasSeparator = cmd0.includes("/") || cmd0.includes("\\");
+  if (hasSeparator && !existsSync(cmd0)) {
     return { ok: false, error: "spawn ENOENT", spawnFailed: true };
   }
   const bin = binBasename(cmd0);

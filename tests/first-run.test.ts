@@ -11,7 +11,7 @@ let apiKey = "";
 beforeEach(async () => {
   tempHome = path.join(os.tmpdir(), "vibeops-test-" + Math.random().toString(36).slice(2));
   fs.mkdirSync(tempHome, { recursive: true });
-  process.env.VIBEOPS_SANDBOX_ROOT = tempHome;
+  process.env.VIBEOPS_RELAY_CONFIG = path.join(tempHome, "relay.json");
   
   const actor = await createActor({ name: "test", kind: "human", role: "admin" });
   apiKey = actor.apiKey;
@@ -19,7 +19,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   fs.rmSync(tempHome, { recursive: true, force: true });
-  delete process.env.VIBEOPS_SANDBOX_ROOT;
+  delete process.env.VIBEOPS_RELAY_CONFIG;
 });
 
 vi.mock("../src/relay/doctor.js", () => ({

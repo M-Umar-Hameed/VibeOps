@@ -270,6 +270,7 @@ app.post("/relay/bootstrap", requireAdmin, async (c) => {
   const templates: Record<string, any> = {
     claude: { cmd: ["claude", "-p", "{promptFile}"], roles: ["plan", "review"] },
     agy: { cmd: ["agy", "exec", "-C", "{workdir}", "{prompt}"], roles: ["work", "plan"] },
+    agy_local: { cmd: [join(homedir(), "AppData", "Local", "agy", "bin", "agy.exe"), "exec", "-C", "{workdir}", "{prompt}"], roles: ["work", "plan"] },
     codex: { cmd: ["codex", "exec", "-C", "{workdir}", "{prompt}"], roles: ["work"] },
     gemini: { cmd: ["gemini", "prompt", "--", "{prompt}"], roles: ["plan", "review"] }
   };
@@ -280,7 +281,13 @@ app.post("/relay/bootstrap", requireAdmin, async (c) => {
 
   const passedAgents: Record<string, any> = {};
   for (const s of statuses) {
-    if (s.probe.ok) passedAgents[s.name] = templates[s.name];
+    if (s.probe.ok) {
+      if (s.name === "agy" || s.name === "agy_local") {
+        if (!passedAgents.agy) passedAgents.agy = templates[s.name];
+      } else {
+        passedAgents[s.name] = templates[s.name];
+      }
+    }
   }
 
   const newConfig = { workdir: join(homedir(), ".vibeops", "sandbox"), agents: passedAgents };

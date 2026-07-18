@@ -417,7 +417,9 @@ it("hasActiveRun is true mid-run and false after settle", async () => {
   const { runId } = await startPipeline(actorId, relayConfig(), {
     ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
   });
-  await waitForStage(runId, "work");
+  // Assert immediately after start: FAKE_SCRIPT is process-global env, so a
+  // parallel test file can overwrite "slow" between spawns and settle this
+  // run before a stage-wait completes.
   expect(await hasActiveRun(ticket.id)).toBe(true);
 
   stopRun(runId);

@@ -196,11 +196,12 @@ async function newProject() {
 
 test("(f) engine e2e, idempotent second run", async () => {
   const proj = `p${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
+  const ukey = `E${Date.now().toString(36)}-1`; // comment external ids embed the issue key; must be unique per execution too
   __setSettingsForTest({ "jira.baseUrl": "https://t", "jira.email": "t", "jira.apiToken": "t", "jira.project": proj });
   const projectId = await newProject();
   
   const responses = [
-    { data: { total: 1, issues: [{ key: "E-1", fields: { summary: "Title", status: {}, updated: "2026-01-01T00:00:00Z" } }] } },
+    { data: { total: 1, issues: [{ key: ukey, fields: { summary: "Title", status: {}, updated: "2026-01-01T00:00:00Z" } }] } },
     { data: { comments: [{ id: "100", body: { content: [] }, created: "2026-01-01T01:00:00Z" }] } }
   ];
   
@@ -212,7 +213,7 @@ test("(f) engine e2e, idempotent second run", async () => {
   expect(result.commentsAdded).toBe(1);
 
   const responses2 = [
-    { data: { total: 1, issues: [{ key: "E-1", fields: { summary: "Title", status: {}, updated: "2026-01-01T00:00:00Z" } }] } },
+    { data: { total: 1, issues: [{ key: ukey, fields: { summary: "Title", status: {}, updated: "2026-01-01T00:00:00Z" } }] } },
     { data: { comments: [{ id: "100", body: { content: [] }, created: "2026-01-01T01:00:00Z" }] } }
   ];
   fetchImpl = makeFetch(responses2);

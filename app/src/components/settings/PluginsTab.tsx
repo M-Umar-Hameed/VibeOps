@@ -7,6 +7,7 @@ type InstalledSkill = { name: string; dir: string; url: string; installedAt: str
 
 export function PluginsTab() {
   const [installed, setInstalled] = useState<InstalledSkill[]>([]);
+  const [localSkills, setLocalSkills] = useState<{ name: string; managed: boolean }[]>([]);
   const [marketplaces, setMarketplaces] = useState<Marketplace[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -18,12 +19,14 @@ export function PluginsTab() {
 
   async function loadAll() {
     try {
-      const [inst, mkts] = await Promise.all([
+      const [inst, mkts, loc] = await Promise.all([
         api.get("/skills/installed") as Promise<InstalledSkill[]>,
-        api.get("/skills/marketplaces") as Promise<Marketplace[]>
+        api.get("/skills/marketplaces") as Promise<Marketplace[]>,
+        api.get("/skills/local") as Promise<{ name: string; managed: boolean }[]>
       ]);
       setInstalled(inst);
       setMarketplaces(mkts);
+      setLocalSkills(loc);
       setListError(null);
     } catch (e) {
       setListError(e instanceof Error ? e.message : "Failed to load skills");
@@ -92,6 +95,20 @@ export function PluginsTab() {
           <h3 className="font-headline-sm text-on-surface font-bold">Installed skills</h3>
         </div>
         <div className="p-6 flex flex-col">
+          {localSkills.length > 0 && (
+            <div className="mb-4 pb-4 border-b border-white/5">
+              <div className="text-xs font-code-sm uppercase tracking-widest text-on-surface-variant/60 mb-2">
+                Detected in ~/.claude/skills (what your agents load today)
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {localSkills.map((s) => (
+                  <span key={s.name} className={`px-2 py-1 rounded text-xs border ${s.managed ? "border-primary/40 text-primary" : "border-white/10 text-on-surface-variant"}`}>
+                    {s.name}{s.managed ? "" : " (unmanaged)"}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
           {installed.length === 0 ? (
             <p className="text-sm text-on-surface-variant">No skills installed.</p>
           ) : (

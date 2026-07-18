@@ -3,12 +3,9 @@ import { db } from "../db/client.js";
 import { aiUsageLogs, agentSessions } from "../db/schema.js";
 
 // ponytail: ai_usage_logs only has provider/model/tokens/cost columns (see
-// drizzle/0004_friendly_gorgon.sql) — there is no actorId/ticketId/ok/durationMs
-// column to hold the rest of a headless-CLI call. We keep the fuller entry shape
-// for call-site clarity but only persist what the table can hold: agent -> provider,
-// role -> model, and an estimated token count (headless CLIs don't report real usage).
-// actorId/ticketId/durationMs are accepted and dropped; ok is tracked separately via
-// agent_sessions.status (see endAgentSession below).
+// drizzle/0004_friendly_gorgon.sql) — wait, we added ticketId/actorId/durationMs.
+// We keep the fuller entry shape for call-site clarity. Headless CLIs don't report
+// real usage, so tokens are estimated. ok is tracked separately via agent_sessions.status.
 export type UsageEntry = {
   actorId: string;
   agent: string;
@@ -25,6 +22,9 @@ export async function logAgentUse(entry: UsageEntry): Promise<void> {
       provider: entry.agent,
       model: entry.role,
       tokens: Math.round(entry.outputChars / 4), // estimated: headless CLIs report no token counts
+      ticketId: entry.ticketId,
+      actorId: entry.actorId,
+      durationMs: entry.durationMs,
     });
   } catch (e) {
     console.warn("logAgentUse failed:", (e as Error).message);

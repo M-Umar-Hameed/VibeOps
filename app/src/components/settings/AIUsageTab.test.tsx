@@ -132,3 +132,27 @@ test("Overview sums tokens across multiple agents", async () => {
   // 600,000 + 400,000 = 1,000,000 -> "1.0M"
   await waitFor(() => expect(screen.getByText("1.0M")).toBeInTheDocument());
 });
+
+test("renders By Ticket list when perTicket data is present", async () => {
+  apiFetch.mockReset().mockImplementation((path: string) => {
+    if (path === "/system/ai-usage") {
+      return Promise.resolve({
+        overview: {}, usage: [], agents: [],
+        perTicket: [
+          { ticketId: "t-1", title: "Implement Auth", tokens: 12000, calls: 5 },
+          { ticketId: "t-2", title: "Fix Dashboard", tokens: 5000, calls: 2 },
+        ]
+      });
+    }
+    return Promise.resolve({ agents: [] });
+  });
+
+  render(wrap(<AIUsageTab />));
+  await waitFor(() => expect(screen.getByText("By Ticket")).toBeInTheDocument());
+  expect(screen.getByText("Implement Auth")).toBeInTheDocument();
+  expect(screen.getByText("12.0K tokens")).toBeInTheDocument();
+  expect(screen.getByText("5 calls")).toBeInTheDocument();
+  expect(screen.getByText("Fix Dashboard")).toBeInTheDocument();
+  expect(screen.getByText("5.0K tokens")).toBeInTheDocument();
+  expect(screen.getByText("2 calls")).toBeInTheDocument();
+});

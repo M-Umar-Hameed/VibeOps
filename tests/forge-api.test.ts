@@ -296,6 +296,59 @@ describe("forge API", () => {
     });
     expect(res.status).toBe(400);
   });
+
+  it("promote and approve 409 while the pipeline is running, then succeed after settle+commit", async () => {
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+    setScript("plan,slow");
+
+    const startRes = await app.request("/forge/pipeline", {
+      method: "POST", headers: h,
+      body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+    });
+    const { runId } = await startRes.json();
+
+    // wait for work stage (sandbox now exists, run still "running")
+    const deadline = Date.now() + 5000;
+    let stage = "";
+    while (stage !== "work" && Date.now() < deadline) {
+      const out = await app.request(`/forge/runs/${runId}/output?after=0`, { headers: h });
+      stage = (await out.json()).stage;
+      if (stage !== "work") await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(stage).toBe("work");
+
+    const promoteMidRun = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
+    expect(promoteMidRun.status).toBe(409);
+    expect((await promoteMidRun.json()).error).toBe("run in progress for this ticket");
+
+    const approveMidRun = await app.request(`/forge/tickets/${ticket.id}/approve`, { method: "POST", headers: h });
+    expect(approveMidRun.status).toBe(409);
+    expect((await approveMidRun.json()).error).toBe("run in progress for this ticket");
+
+    await app.request(`/forge/runs/${runId}/stop`, { method: "POST", headers: h });
+    await pollUntilDone(h, runId);
+  });
+
+  it("promote 409s when the sandbox has no commits, even with a passing review", async () => {
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+    setScript("plan,work,review-pass"); // no FAKE_WRITE -- work stage makes no file changes
+
+    const startRes = await app.request("/forge/pipeline", {
+      method: "POST", headers: h,
+      body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+    });
+    const { runId } = await startRes.json();
+    await pollUntilDone(h, runId);
+
+    const sandboxRes = await app.request(`/forge/tickets/${ticket.id}/sandbox`, { headers: h });
+    expect((await sandboxRes.json()).lastVerdict).toBe("pass");
+
+    const promoteRes = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
+    expect(promoteRes.status).toBe(409);
+    expect((await promoteRes.json()).error).toBe("sandbox has no commits to promote");
+  });
 });
 
 it("GET /forge/doctor returns per-agent probe/auth status for the configured relay agents", async () => {

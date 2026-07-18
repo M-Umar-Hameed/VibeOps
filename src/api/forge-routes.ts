@@ -6,9 +6,9 @@ import type { Actor } from "../db/schema.js";
 import { loadRelayConfig } from "../relay/config.js";
 import { runDoctor } from "../relay/doctor.js";
 import { parseVerdict } from "../relay/prompts.js";
-import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir } from "../forge/runs.js";
+import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun } from "../forge/runs.js";
 import {
-  sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId,
+  sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote,
 } from "../forge/sandbox.js";
 import { updateTicket } from "../services/tickets.js";
 import { getTicket } from "../services/history.js";
@@ -149,6 +149,7 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
   // trusts. Deliberate that this is a human action in the UI, not automation.
   app.post("/forge/tickets/:id/approve", requireAdmin, async (c) => {
     const ticketId = c.req.param("id");
+    if (await hasActiveRun(ticketId)) return c.json({ error: "run in progress for this ticket" }, 409);
     if (!sandboxExists(ticketId)) return c.json({ error: "no sandbox for ticket" }, 404);
     const actor = c.get("actor");
     await addComment(actor.id, ticketId,
@@ -159,12 +160,16 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
 
   app.post("/forge/tickets/:id/promote", requireAdmin, async (c) => {
     const ticketId = c.req.param("id");
+    if (await hasActiveRun(ticketId)) return c.json({ error: "run in progress for this ticket" }, 409);
     const verdict = await lastVerdict(ticketId);
     if (!sandboxExists(ticketId) || verdict !== "pass") {
       return c.json({ error: "sandbox must exist and have a passing review before promoting" }, 409);
     }
     const ticket = await getTicket(ticketId);
     const workdir = await resolveWorkdir(ticket.projectId, forgeConfig());
+    if (!(await hasCommitsToPromote(workdir, ticketId))) {
+      return c.json({ error: "sandbox has no commits to promote" }, 409);
+    }
     await promoteSandbox(workdir, ticketId);
     await addComment(c.get("actor").id, ticketId, "forge: promoted", "comment");
     const fresh = await getTicket(ticketId);

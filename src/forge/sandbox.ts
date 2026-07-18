@@ -116,6 +116,11 @@ export async function sandboxDiffSummary(workdir: string, ticketId: string): Pro
   return out.slice(0, DIFF_CAP);
 }
 
+export async function hasCommitsToPromote(workdir: string, ticketId: string): Promise<boolean> {
+  const { out } = await git(workdir, "rev-list", "--count", `HEAD..${branchName(ticketId)}`);
+  return parseInt(out.trim(), 10) > 0;
+}
+
 export async function promoteSandbox(workdir: string, ticketId: string): Promise<void> {
   const dirty = await git(workdir, "status", "--porcelain");
   if (dirty.out.trim()) {

@@ -46,6 +46,7 @@ export function ForgeScreen() {
   const [viewDiff, setViewDiff] = useState(false);
 
   const [interruptedRun, setInterruptedRun] = useState(false);
+  const [ticketRunActive, setTicketRunActive] = useState(false);
 
   const [newTask, setNewTask] = useState("");
   const [newTaskError, setNewTaskError] = useState("");
@@ -136,7 +137,8 @@ export function ForgeScreen() {
         const ticketRuns = r.filter((run: any) => run.ticketId === selectedTicket.id);
         const latest = ticketRuns.sort((a: any, b: any) => b.startedAt.localeCompare(a.startedAt))[0];
         setInterruptedRun(latest?.status === "interrupted");
-      }).catch(() => setInterruptedRun(false));
+        setTicketRunActive(latest?.status === "running");
+      }).catch(() => { setInterruptedRun(false); setTicketRunActive(false); });
       setRunOutput("");
       setRunStage("");
       setRunStatus("");
@@ -344,6 +346,7 @@ export function ForgeScreen() {
   }
 
   const filteredSkills = skills.filter(s => s.name.toLowerCase().includes(autocompleteFilter));
+  const runActiveForTicket = runStatus === "running" || ticketRunActive;
 
   return (
     // -m cancels the outlet padding so this screen owns its own scrolling —
@@ -566,8 +569,14 @@ export function ForgeScreen() {
                     </button>
                     <button
                       onClick={handlePromote}
-                      disabled={sandbox.lastVerdict !== "pass"}
-                      title={sandbox.lastVerdict !== "pass" ? "Needs a passing review — inspect the diff, then use Approve override" : undefined}
+                      disabled={sandbox.lastVerdict !== "pass" || runActiveForTicket}
+                      title={
+                        runActiveForTicket
+                          ? "Pipeline run in progress for this ticket"
+                          : sandbox.lastVerdict !== "pass"
+                            ? "Needs a passing review — inspect the diff, then use Approve override"
+                            : undefined
+                      }
                       className="px-4 py-2 rounded bg-green-500/20 hover:bg-green-500/40 text-green-400 text-sm font-bold uppercase transition-all disabled:opacity-50 cursor-pointer"
                     >
                       Promote
@@ -575,7 +584,9 @@ export function ForgeScreen() {
                     {sandbox.lastVerdict !== "pass" && (
                       <button
                         onClick={handleApprove}
-                        className="px-4 py-2 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-400 text-sm font-bold uppercase transition-all cursor-pointer"
+                        disabled={runActiveForTicket}
+                        title={runActiveForTicket ? "Pipeline run in progress for this ticket" : undefined}
+                        className="px-4 py-2 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-400 text-sm font-bold uppercase transition-all disabled:opacity-50 cursor-pointer"
                       >
                         {confirmApprove ? "Confirm approve?" : "Approve override"}
                       </button>

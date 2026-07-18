@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import {
   assertTicketId, sandboxPath, sandboxExists, ensureSandbox, branchName,
   forgeCommit, sandboxDiff, sandboxDiffSummary, promoteSandbox, discardSandbox,
-  unlinkDeps,
+  unlinkDeps, hasCommitsToPromote,
 } from "../src/forge/sandbox.js";
 import { ConflictError } from "../src/services/errors.js";
 
@@ -161,5 +161,14 @@ describe("forge sandbox", () => {
     await discardSandbox(workdir, TID);
     expect(sandboxExists(TID)).toBe(false);
     expect(existsSync(join(workdir, "node_modules", "marker.txt"))).toBe(true);
+  });
+
+  it("hasCommitsToPromote is false for a fresh sandbox with no work commit, true after one", async () => {
+    await ensureSandbox(workdir, TID);
+    expect(await hasCommitsToPromote(workdir, TID)).toBe(false);
+    const sp = sandboxPath(TID);
+    writeFileSync(join(sp, "b.txt"), "x\n");
+    await forgeCommit(TID, "b");
+    expect(await hasCommitsToPromote(workdir, TID)).toBe(true);
   });
 });

@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { eq } from "drizzle-orm";
-import { startPipeline, getRunOutput, awaitRun, stopRun, listRuns, resolveWorkdir } from "../src/forge/runs.js";
+import { startPipeline, getRunOutput, awaitRun, stopRun, listRuns, resolveWorkdir, hasActiveRun } from "../src/forge/runs.js";
 import { sandboxExists, branchName, promoteSandbox } from "../src/forge/sandbox.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject, updateProjectRepo } from "../src/services/projects.js";
@@ -409,4 +409,19 @@ it("startPipeline throws (400 upstream) when the cached probe is a spawn-level f
     ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
   })).rejects.toThrow(/cannot be spawned/);
 });
+
+it("hasActiveRun is true mid-run and false after settle", async () => {
+  const { actorId, ticket } = await seedTicket("Active run check");
+  setScript("plan,slow");
+
+  const { runId } = await startPipeline(actorId, relayConfig(), {
+    ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+  });
+  await waitForStage(runId, "work");
+  expect(await hasActiveRun(ticket.id)).toBe(true);
+
+  stopRun(runId);
+  await awaitRun(runId);
+  expect(await hasActiveRun(ticket.id)).toBe(false);
+}, 15_000);
 

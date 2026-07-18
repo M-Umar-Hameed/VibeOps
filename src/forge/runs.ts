@@ -19,7 +19,7 @@ import { getSetting } from "../services/settings.js";
 import { projectWorkdir } from "../services/projects.js";
 import { ConflictError } from "../services/errors.js";
 import { logAgentUse, startAgentSession, endAgentSession } from "../services/usage.js";
-import { desc, isNull, sum, eq, gte } from "drizzle-orm";
+import { desc, isNull, sum, eq, gte, and } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { forgeRuns, aiUsageLogs } from "../db/schema.js";
 
@@ -398,6 +398,14 @@ export async function checkBudget(
 
 export function listRuns(): RunSummary[] {
   return [...runs.values()].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).map(summarize);
+}
+
+export async function hasActiveRun(ticketId: string): Promise<boolean> {
+  if (activeRuns().some((r) => r.ticketId === ticketId)) return true;
+  const [row] = await db.select({ id: forgeRuns.id }).from(forgeRuns)
+    .where(and(eq(forgeRuns.ticketId, ticketId), isNull(forgeRuns.finishedAt)))
+    .limit(1);
+  return !!row;
 }
 
 export type RunListItem = RunSummary & { persisted?: boolean };

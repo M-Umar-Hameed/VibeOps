@@ -232,17 +232,7 @@ export function ListScreen() {
                   </span>
                   <span className="text-on-surface-variant/60 text-right truncate max-w-[140px]">{statusQ.data.activeRuns} active runs</span>
                 </div>
-                {statusQ.data.agents && (
-                  <div className="flex items-center justify-between text-xs gap-2">
-                    <span className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-green-500/80"></span>
-                      <span className="text-on-surface">agents</span>
-                    </span>
-                    <span className="text-on-surface-variant/60 text-right truncate max-w-[140px]">
-                      {statusQ.data.agents.healthy} healthy, {statusQ.data.agents.failing} failing
-                    </span>
-                  </div>
-                )}
+
                 <div className="flex items-center justify-between text-xs gap-2">
                   <span className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-green-500/80"></span>

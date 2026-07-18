@@ -2,17 +2,12 @@ import os from "os";
 import { db } from "../db/client.js";
 import { aiUsageLogs, agentSessions, tickets } from "../db/schema.js";
 import { sql, eq, isNotNull, desc } from "drizzle-orm";
-import { existsSync } from "node:fs";
-import { isAbsolute } from "node:path";
-import { forgeRuns } from "../db/schema.js";
+
 import { getEmbedder } from "../knowledge/embedder.js";
 import { getVaultStatus } from "../ingest/watch.js";
-import { getSetting } from "./settings.js";
-import { loadRelayConfig } from "../relay/config.js";
-import { listRuns, listRunsWithHistory } from "../forge/runs.js";
-import { listMarketplaces } from "../skills/marketplace.js";
 
-type ComponentStatus = { name: string; status: "up" | "down" | "off" | "unknown"; detail: string };
+import { listRuns, listRunsWithHistory } from "../forge/runs.js";
+
 
 export async function getSystemMetrics() {
   const uptime = os.uptime();

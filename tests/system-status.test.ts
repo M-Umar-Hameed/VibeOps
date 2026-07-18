@@ -8,11 +8,6 @@ import { eq } from "drizzle-orm";
 
 process.env.EMBED_PROVIDER = "fake";
 
-import { expect, test } from "vitest";
-import { app } from "../src/api/app.js";
-import { createActor } from "../src/services/actors.js";
-
-process.env.EMBED_PROVIDER = "fake";
 
 test("GET /system/status returns 200 with new shape for admin, 403 for member", async () => {
   const { apiKey: memberKey } = await createActor({ name: "status-test-member", kind: "human", role: "member" });

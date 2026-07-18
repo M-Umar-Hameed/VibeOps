@@ -9,8 +9,9 @@ export function registerExportRoutes(app: Hono<{ Variables: { actor: Actor } }>)
     if (!kind || !id) return c.json({ error: "Missing kind or id" }, 400);
 
     const { filename, markdown } = await buildBrief(kind, id);
+    // c.text() would stamp text/plain over the header; c.body() keeps it.
     c.header("Content-Type", "text/markdown");
     c.header("Content-Disposition", `attachment; filename="${filename}"`);
-    return c.text(markdown);
+    return c.body(markdown);
   });
 }

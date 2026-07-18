@@ -6,23 +6,25 @@ import { buildBrief } from "../src/services/export.js";
 import { startCouncil } from "../src/council/runs.js";
 import { randomUUID } from "node:crypto";
 import { createActor } from "../src/services/actors.js";
+import { createProject } from "../src/services/projects.js";
 
 test("export brief ticket", async () => {
   const uniq = "exp-tkt-" + randomUUID().slice(0, 8);
   const { actor } = await createActor({ name: uniq, kind: "human", role: "admin" });
+  const project = await createProject({ key: uniq, name: "Export test" });
   const [ticket] = await db.insert(tickets).values({
-    projectId: "inbox", title: `title ${uniq}`, body: "body test", status: "open", priority: "normal", requiresVerification: false
+    projectId: project.id, title: `title ${uniq}`, body: "body test", status: "open", priority: "normal", requiresVerification: false
   }).returning();
   await db.insert(comments).values({
-    ticketId: ticket.id, authorId: actor.id, body: "comment sk-test123456789", kind: "comment"
+    ticketId: ticket.id, authorId: actor.id, body: "comment sk-test1234567890abcdefgh", kind: "comment"
   });
 
   const { filename, markdown } = await buildBrief("ticket", ticket.id);
   expect(filename).toBe(`ticket-${ticket.id.slice(0, 8)}.md`);
   expect(markdown).toContain(`title ${uniq}`);
   expect(markdown).toContain(uniq); // author name
-  expect(markdown).toContain("comment [REDACTED]");
-  expect(markdown).not.toContain("sk-test123456789");
+  expect(markdown).toContain("comment [redacted]");
+  expect(markdown).not.toContain("sk-test1234567890abcdefgh");
 });
 
 test("export brief council", async () => {
@@ -50,8 +52,8 @@ test("export brief routes", async () => {
   const res1 = await app.request(`/export/brief?kind=note&id=${note.id}`);
   expect(res1.status).toBe(401);
 
-  // 404 unknown id
-  const res2 = await app.request(`/export/brief?kind=note&id=unknown`, {
+  // 404 unknown id (must be uuid-shaped; a non-uuid string 500s at the PG layer)
+  const res2 = await app.request(`/export/brief?kind=note&id=${randomUUID()}`, {
     headers: { Authorization: `Bearer ${apiKey}` }
   });
   expect(res2.status).toBe(404);

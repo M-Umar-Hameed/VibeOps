@@ -119,9 +119,12 @@ function applyVerification(res: { ok: boolean; output: string }, compositeName: 
   const [agentName, requestedModel] = compositeName.split(":");
   // Match on the actual BINARY, not the relay.json key — users key agents
   // freely ("fable", "agy-gemini"), the CLI's output format follows the exe.
-  const cmd0 = config.agents[agentName]?.cmd[0] ?? agentName;
-  const base = cmd0.replace(/\\/g, "/").split("/").pop() ?? agentName;
-  const binary = base.replace(/\.(exe|cmd|bat)$/i, "");
+  const cmd = config.agents[agentName]?.cmd ?? [agentName];
+  const strip = (p0: string) => (p0.replace(/\\/g, "/").split("/").pop() ?? p0).replace(/\.(exe|cmd|bat|mjs|cjs|js|py)$/i, "");
+  // Generic interpreters carry no identity — the script they run does.
+  const INTERPRETERS = new Set(["node", "python", "python3", "deno", "bun"]);
+  const first = strip(cmd[0]);
+  const binary = INTERPRETERS.has(first.toLowerCase()) && cmd[1] ? strip(cmd[1]) : first;
   const status = verifyModel(binary, requestedModel, res.output);
   if (status !== "unknown") {
     const marker = `\n\n[forge: verification=${status}]`;

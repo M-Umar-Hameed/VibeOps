@@ -5,7 +5,8 @@ export const MISMATCH_WARNING = "WARNING: Model routing mismatch. The agent repo
 export function verifyModel(agentName: string, requestedModel: string | undefined, output: string): "verified" | "mismatch" | "unknown" {
   if (!requestedModel) return "unknown";
 
-  if (agentName === "fake") {
+  // test fixture scripts strip to "fake-agent" via interpreter resolution
+  if (agentName.startsWith("fake")) {
     const m = output.match(/\[FAKE-MODEL:\s*([^\]]+)\]/);
     if (m) return m[1].trim() === requestedModel ? "verified" : "mismatch";
     return "unknown";

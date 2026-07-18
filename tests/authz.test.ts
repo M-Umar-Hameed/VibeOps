@@ -3,6 +3,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createActor } from "../src/services/actors.js";
+import { createProject } from "../src/services/projects.js";
+import { createTicket } from "../src/services/tickets.js";
 import { app } from "../src/api/app.js";
 
 function uniq(prefix: string) {
@@ -140,4 +142,28 @@ test("guarded routes require auth: 401 beats 403", async () => {
   expect((await app.request("/actors", {
     method: "POST", body: JSON.stringify({ name: "x", kind: "agent" }),
   })).status).toBe(401);
+});
+
+test("verification comments and council export are admin-only surfaces", async () => {
+  const { apiKey: adminKey, actor: admin } = await createActor({ name: uniq("authz-ver-admin"), kind: "human", role: "admin" });
+  const { apiKey: memberKey } = await createActor({ name: uniq("authz-ver-member"), kind: "agent" });
+  const adminH = { Authorization: `Bearer ${adminKey}`, "Content-Type": "application/json" };
+  const memberH = { Authorization: `Bearer ${memberKey}`, "Content-Type": "application/json" };
+
+  const project = await createProject({ key: uniq("authz-ver"), name: "Authz verification" });
+  const ticket = await createTicket(admin.id, { projectId: project.id, title: "authz verification target" });
+
+  const memberPost = await app.request(`/tickets/${ticket.id}/comments`, {
+    method: "POST", headers: memberH, body: JSON.stringify({ body: "VERIFICATION: PASS", kind: "verification" }),
+  });
+  expect(memberPost.status).toBe(403);
+
+  const adminPost = await app.request(`/tickets/${ticket.id}/comments`, {
+    method: "POST", headers: adminH, body: JSON.stringify({ body: "VERIFICATION: PASS", kind: "verification" }),
+  });
+  expect(adminPost.status).toBe(201);
+
+  // council export must not widen the admin-only council read surface
+  const memberExport = await app.request(`/export/brief?kind=council&id=${uniq("cid")}`, { headers: memberH });
+  expect(memberExport.status).toBe(403);
 });

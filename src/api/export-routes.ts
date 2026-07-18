@@ -13,6 +13,11 @@ export function registerExportRoutes(app: Hono<{ Variables: { actor: Actor } }>)
     const kind = c.req.query("kind") as "ticket" | "council" | "note";
     const id = c.req.query("id");
     if (!kind || !id) return c.json({ error: "Missing kind or id" }, 400);
+    // Council reads are admin-only elsewhere (GET /council/:id); the export
+    // path must not widen that surface. Tickets/notes are member-readable.
+    if (kind === "council" && c.get("actor").role !== "admin") {
+      return c.json({ error: "council export requires admin" }, 403);
+    }
 
     const { filename, markdown } = await buildBrief(kind, id);
     // c.text() would stamp text/plain over the header; c.body() keeps it.

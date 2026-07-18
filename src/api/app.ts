@@ -52,6 +52,11 @@ app.post("/tickets/:id/comments", async (c) => {
   if (kind !== undefined && !COMMENT_KINDS.includes(kind)) {
     return c.json({ error: "kind must be comment|plan|report|review" }, 400);
   }
+  // The close-gate already ignores non-admin verification comments; blocking
+  // them here too keeps members from posting misleading gate-shaped noise.
+  if (kind === "verification" && c.get("actor").role !== "admin") {
+    return c.json({ error: "verification comments require admin" }, 403);
+  }
   return c.json(await addComment(c.get("actor").id, c.req.param("id"), body, kind), 201);
 });
 

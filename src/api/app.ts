@@ -19,6 +19,7 @@ import { registerMcpRoutes } from "./mcp-routes.js";
 import { registerForgeRoutes } from "./forge-routes.js";
 import { registerSkillsRoutes } from "./skills-routes.js";
 import { registerCouncilRoutes } from "./council-routes.js";
+import { registerExportRoutes } from "./export-routes.js";
 
 export const app = new Hono<{ Variables: { actor: Actor } }>();
 
@@ -252,3 +253,4 @@ registerMcpRoutes(app);
 registerForgeRoutes(app);
 registerSkillsRoutes(app);
 registerCouncilRoutes(app);
+registerExportRoutes(app);

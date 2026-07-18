@@ -411,7 +411,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
 
       {councilId && councilStatus === "awaiting-answers" && (
         <div className="space-y-4">
-          <VerdictCard rating={councilRating} decision={councilDecision} />
+          <VerdictCard rating={councilRating} decision={councilDecision} councilId={councilId} />
           <details>
             <summary className="cursor-pointer text-xs uppercase tracking-widest text-on-surface-variant">Full console</summary>
             <pre className="p-4 h-64 overflow-y-auto bg-background/80 text-code-sm text-on-surface font-mono whitespace-pre-wrap">{councilOutput}</pre>
@@ -439,7 +439,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
 
       {councilId && councilStatus === "decided" && (
         <div className="space-y-4">
-          <VerdictCard rating={councilRating} decision={councilDecision} />
+          <VerdictCard rating={councilRating} decision={councilDecision} councilId={councilId} />
           <pre className="p-4 h-64 overflow-y-auto bg-background/80 text-code-sm text-on-surface font-mono whitespace-pre-wrap border border-white/10 rounded-lg">{councilSpec}</pre>
           {councilDecision !== "GO" && (
             <label className="flex items-center gap-2 text-sm text-on-surface-variant">
@@ -480,15 +480,59 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
   );
 }
 
-function VerdictCard({ rating, decision }: { rating?: number; decision?: Decision }) {
+function VerdictCard({ rating, decision, councilId }: { rating?: number; decision?: Decision; councilId?: string }) {
+  const handleExport = async () => {
+    if (!councilId) return;
+    try {
+      const { getSettings } = await import("../settings.js");
+      const { baseUrl, apiKey } = await getSettings();
+      const res = await fetch(`${baseUrl}/export/brief?kind=council&id=${councilId}`, {
+        headers: { Authorization: `Bearer ${apiKey}` }
+      });
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const disp = res.headers.get("Content-Disposition");
+      let filename = `council-${councilId.substring(0,8)}.md`;
+      if (disp && disp.includes("filename=")) {
+        filename = disp.split("filename=")[1].replace(/"/g, "");
+      }
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   return (
-    <div className="flex items-center gap-4 p-4 border border-white/10 rounded-sm">
-      <span className="px-3 py-1 bg-primary-fixed-dim/20 text-primary-fixed-dim rounded-sm font-code-label text-sm">
-        {rating ?? 0}/10
-      </span>
-      <span className="px-3 py-1 bg-surface-container-highest text-on-surface rounded-sm font-code-label text-sm uppercase">
-        {decision ?? "PENDING"}
-      </span>
+    <div className="flex flex-col gap-4 p-4 border border-white/10 rounded-sm">
+      <div className="flex justify-between items-center w-full">
+        <div className="flex items-center gap-4">
+          <span className="px-3 py-1 bg-primary-fixed-dim/20 text-primary-fixed-dim rounded-sm font-code-label text-sm">
+            {rating ?? 0}/10
+          </span>
+          <span className="px-3 py-1 bg-surface-container-highest text-on-surface rounded-sm font-code-label text-sm uppercase">
+            {decision ?? "PENDING"}
+          </span>
+        </div>
+        {councilId && (
+          <div className="flex items-center gap-3">
+            <a href="https://notebooklm.google.com/" target="_blank" rel="noreferrer" className="text-primary-fixed-dim hover:underline font-code-sm text-[10px] uppercase tracking-wider">
+              Open NotebookLM
+            </a>
+            <button
+              type="button"
+              onClick={handleExport}
+              className="px-2 py-0.5 rounded font-code-sm text-[10px] uppercase tracking-wider bg-primary/20 text-primary hover:bg-primary/30 border border-primary/30 cursor-pointer transition-colors"
+            >
+              Export brief
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

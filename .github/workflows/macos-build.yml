@@ -23,7 +23,7 @@ jobs:
       - name: Build sidecar server
         run: npm run build:sidecar:server
       - name: Copy dist-server
-        run: cp -R dist-server app/src-tauri/resources/server
+        run: mkdir -p app/src-tauri/resources && cp -R dist-server app/src-tauri/resources/server
       - name: Build Tauri app
         run: cd app && npx tauri build --debug
         # env:

@@ -304,7 +304,7 @@ export function ForgeScreen() {
   return (
     // -m cancels the outlet padding so this screen owns its own scrolling —
     // otherwise the outer scroller and the columns double up scrollbars.
-    <div className="flex h-full overflow-hidden -m-4 md:-m-margin-desktop">
+    <div className="absolute inset-0 flex overflow-hidden">
       <div className="w-80 border-r border-white/10 bg-surface-container/30 overflow-y-auto flex flex-col">
         <div className="p-4 border-b border-white/5 space-y-3">
           <h2 className="font-headline-sm text-on-surface font-bold">Forge Tickets</h2>

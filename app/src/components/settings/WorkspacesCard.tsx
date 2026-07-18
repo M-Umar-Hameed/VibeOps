@@ -115,7 +115,7 @@ export function WorkspacesCard() {
                   <form onSubmit={(e) => handleSave(e, p)} className="flex gap-2">
                     <input
                       type="text"
-                      className="flex-1 bg-surface-container-lowest/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface focus:border-primary outline-none transition-colors"
+                      className="flex-1 min-w-0 bg-surface-container-lowest/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface focus:border-primary outline-none transition-colors"
                       placeholder="Absolute folder path"
                       value={editValue}
                       onChange={(e) => setEditBuffers((prev) => ({ ...prev, [p.id]: e.target.value }))}
@@ -123,7 +123,7 @@ export function WorkspacesCard() {
                     <button
                       type="submit"
                       disabled={!isDirty || savePath.isPending}
-                      className="px-4 py-2 rounded bg-white/5 hover:bg-primary hover:text-on-primary text-on-surface text-sm font-medium transition-all disabled:opacity-50"
+                      className="shrink-0 px-4 py-2 rounded bg-white/5 hover:bg-primary hover:text-on-primary text-on-surface text-sm font-medium transition-all disabled:opacity-50"
                     >
                       Save
                     </button>

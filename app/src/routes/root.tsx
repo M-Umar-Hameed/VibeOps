@@ -21,7 +21,7 @@ export function Root() {
 
       <main className="md:ml-[280px] flex-1 flex flex-col h-screen overflow-hidden w-full transition-all duration-300">
         <TopBar onMenuClick={() => setIsSidebarOpen(true)} />
-        <div className="flex-1 overflow-y-auto p-4 md:p-margin-desktop space-y-4 md:space-y-gutter terminal-scroll">
+        <div className="relative flex-1 overflow-y-auto p-4 md:p-margin-desktop space-y-4 md:space-y-gutter terminal-scroll">
           <Outlet />
         </div>
       </main>

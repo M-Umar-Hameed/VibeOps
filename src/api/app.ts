@@ -239,7 +239,7 @@ app.post("/ingest/sessions", requireAdmin, async (c) => {
 });
 
 app.get("/system/metrics", async (c) => c.json(await getSystemMetrics()));
-app.get("/system/status", async (c) => c.json(await getSystemStatus()));
+app.get("/system/status", requireAdmin, async (c) => c.json(await getSystemStatus()));
 app.get("/system/logs", requireAdmin, async (c) => c.json(await getSystemLogs()));
 app.get("/system/topology", async (c) => c.json(await getSystemTopology()));
 app.get("/system/ai-usage", async (c) => c.json(await getAiUsage()));

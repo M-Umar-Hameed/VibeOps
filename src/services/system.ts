@@ -2,17 +2,12 @@ import os from "os";
 import { db } from "../db/client.js";
 import { aiUsageLogs, agentSessions, tickets } from "../db/schema.js";
 import { sql, eq, isNotNull, desc } from "drizzle-orm";
-import { existsSync } from "node:fs";
-import { isAbsolute } from "node:path";
-import { forgeRuns } from "../db/schema.js";
+
 import { getEmbedder } from "../knowledge/embedder.js";
 import { getVaultStatus } from "../ingest/watch.js";
-import { getSetting } from "./settings.js";
-import { loadRelayConfig } from "../relay/config.js";
-import { listRuns } from "../forge/runs.js";
-import { listMarketplaces } from "../skills/marketplace.js";
 
-type ComponentStatus = { name: string; status: "up" | "down" | "off" | "unknown"; detail: string };
+import { listRuns, listRunsWithHistory } from "../forge/runs.js";
+
 
 export async function getSystemMetrics() {
   const uptime = os.uptime();
@@ -48,8 +43,33 @@ export async function getSystemTopology() {
   };
 }
 
+const BOOT_TIME = new Date().toISOString();
+
 export async function getSystemLogs() {
-  return [];
+  const logs: { at: string; level: string; message: string }[] = [];
+  logs.push({ at: BOOT_TIME, level: "info", message: "Server booted" });
+  
+  try {
+    const runs = await listRunsWithHistory();
+    for (const r of runs.slice(0, 20)) {
+      logs.push({
+        at: r.startedAt,
+        level: "info",
+        message: `Forge run ${r.id.substring(0, 8)} started (ticket: ${r.ticketId}, stage: ${r.stage})`
+      });
+      if (r.finishedAt) {
+        logs.push({
+          at: r.finishedAt,
+          level: r.status === "failed" ? "error" : r.status === "interrupted" ? "warn" : "info",
+          message: `Forge run ${r.id.substring(0, 8)} settled (ticket: ${r.ticketId}, status: ${r.status})`
+        });
+      }
+    }
+  } catch (e) {
+    // Ignore error if runs cannot be listed
+  }
+  
+  return logs.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 50);
 }
 
 // perTicketLimit widened only by tests: fixture tickets can never crack the
@@ -96,85 +116,40 @@ export async function getAiUsage(perTicketLimit = 10) {
   };
 }
 
-export async function getSystemStatus(): Promise<{ components: ComponentStatus[] }> {
-  const components: ComponentStatus[] = [];
-
+export async function getSystemStatus() {
+  let dbStatus = "ok";
   try {
     await db.execute(sql`select 1`);
-    components.push({ name: "database", status: "up", detail: "" });
   } catch (e) {
-    components.push({ name: "database", status: "down", detail: (e as Error).message });
+    dbStatus = "error";
   }
 
+  let embedderName = "unknown";
   try {
-    const e = getEmbedder();
-    components.push({ name: "embedder", status: "up", detail: `${e.model} (${e.dim}d)` });
-  } catch (e) {
-    components.push({ name: "embedder", status: "down", detail: (e as Error).message });
-  }
+    embedderName = getEmbedder().model;
+  } catch (e) {}
 
+  let watcherState = { status: "stopped", indexed: 0 };
   try {
     const v = await getVaultStatus();
-    components.push({
-      name: "vault watcher",
-      status: v.isRunning ? "up" : "off",
-      detail: v.isRunning ? v.vaultPath : "stopped",
-    });
-  } catch (e) {
-    components.push({ name: "vault watcher", status: "down", detail: (e as Error).message });
-  }
+    watcherState = {
+      status: v.isRunning ? "running" : "stopped",
+      indexed: v.indexedCount ?? 0,
+    };
+  } catch (e) {}
 
+  let activeRuns = 0;
   try {
-    const off = (await getSetting("sessions.autoSync")) === "false";
-    components.push({ name: "sessions auto-sync", status: off ? "off" : "up", detail: "6h interval" });
-  } catch (e) {
-    components.push({ name: "sessions auto-sync", status: "down", detail: (e as Error).message });
-  }
+    activeRuns = listRuns().filter((r) => r.status === "running").length;
+  } catch (e) {}
 
-  try {
-    const config = loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG);
-    for (const [name, agent] of Object.entries(config.agents)) {
-      const bin = agent.cmd[0];
-      if (isAbsolute(bin)) {
-        const up = existsSync(bin);
-        components.push({ name: `agent ${name}`, status: up ? "up" : "down", detail: up ? "found" : "not found" });
-      } else {
-        components.push({ name: `agent ${name}`, status: "unknown", detail: "resolved via PATH" });
-      }
-    }
-  } catch (e) {
-    components.push({ name: "relay config", status: "down", detail: (e as Error).message });
-  }
+  const uptimeMs = process.uptime() * 1000;
 
-  try {
-    const [row] = await db.select({ count: sql<number>`cast(count(*) as int)` }).from(forgeRuns);
-    const active = listRuns().filter((r) => r.status === "running").length;
-    components.push({ name: "forge", status: "up", detail: `${active} active, ${row?.count ?? 0} total runs` });
-  } catch (e) {
-    components.push({ name: "forge", status: "down", detail: (e as Error).message });
-  }
-
-  try {
-    const n = (await listMarketplaces()).length;
-    components.push({ name: "marketplaces", status: "up", detail: n === 0 ? "none added" : `${n} added` });
-  } catch (e) {
-    components.push({ name: "marketplaces", status: "down", detail: (e as Error).message });
-  }
-
-  const CONNECTORS: { name: string; key: string }[] = [
-    { name: "connector github", key: "github.token" },
-    { name: "connector gitlab", key: "gitlab.token" },
-    { name: "connector jira", key: "jira.apiToken" },
-    { name: "connector asana", key: "asana.pat" },
-  ];
-  for (const c of CONNECTORS) {
-    try {
-      const v = await getSetting(c.key);
-      components.push({ name: c.name, status: v ? "up" : "off", detail: v ? "configured" : "not configured" });
-    } catch (e) {
-      components.push({ name: c.name, status: "down", detail: (e as Error).message });
-    }
-  }
-
-  return { components };
+  return {
+    db: dbStatus,
+    embedder: embedderName,
+    watcher: watcherState,
+    activeRuns,
+    uptimeMs
+  };
 }

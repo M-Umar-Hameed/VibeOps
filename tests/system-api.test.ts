@@ -1,6 +1,21 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { createActor } from "../src/services/actors.js";
 import { app } from "../src/api/app.js";
+
+vi.mock("../src/forge/runs.js", () => ({
+  listRuns: () => [],
+  listRunsWithHistory: async () => [
+    {
+      id: "fake-run-123456",
+      ticketId: "t1",
+      status: "passed",
+      stage: "review",
+      agents: { plan: "a", work: "b", review: "c" },
+      startedAt: new Date("2026-07-18T10:00:00Z").toISOString(),
+      finishedAt: new Date("2026-07-18T10:05:00Z").toISOString()
+    }
+  ]
+}));
 
 test("REST: retrieve system endpoints", async () => {
   const { apiKey } = await createActor({ name: "sys", kind: "human", role: "admin" });
@@ -23,4 +38,16 @@ test("REST: retrieve system endpoints", async () => {
   expect(res.status).toBe(200);
   data = await res.json();
   expect(Array.isArray(data)).toBe(true);
+  
+  // Verify derived rows
+  const bootLog = data.find((l: any) => l.message === "Server booted");
+  expect(bootLog).toBeDefined();
+  
+  const startLog = data.find((l: any) => l.message.includes("Forge run fake-run started"));
+  expect(startLog).toBeDefined();
+  expect(startLog.level).toBe("info");
+
+  const settleLog = data.find((l: any) => l.message.includes("Forge run fake-run settled"));
+  expect(settleLog).toBeDefined();
+  expect(settleLog.level).toBe("info");
 });

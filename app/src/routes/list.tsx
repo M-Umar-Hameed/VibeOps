@@ -170,17 +170,20 @@ export function ListScreen() {
             <span className="font-code-label text-[10px] uppercase text-on-surface-variant/60">System_Log_v2.0.4</span>
           </div>
           <div className="p-4 font-code-sm text-xs space-y-2 overflow-y-auto terminal-scroll max-h-[250px] flex-1">
+            {/* boot entry guarantees at least one row, so no empty-state branch */}
             {logsQ.data?.map((log, i) => (
-              <div key={i} className="flex gap-4">
-                <span className="text-on-surface-variant/40">[{log.time}]</span>
-                <span className={log.level === 'DEBUG' ? "text-on-surface-variant" : "text-primary-fixed-dim"}>{log.level}:</span>
-                <span className="text-on-surface/80">{log.msg}</span>
+                <div key={i} className="flex gap-4">
+                  <span className="text-on-surface-variant/40">[{log.at}]</span>
+                  <span className={log.level === 'info' ? "text-on-surface-variant" : "text-primary-fixed-dim"}>{log.level}:</span>
+                  <span className="text-on-surface/80">{log.message}</span>
+                </div>
+              ))}
+            {logsQ.data && logsQ.data.length > 0 && (
+              <div className="flex gap-4 animate-pulse mt-2">
+                <span className="text-on-surface-variant/40">[_CURSOR_]</span>
+                <span className="text-primary-fixed-dim inline-block w-1 h-3 bg-primary-fixed-dim ml-[-12px]"></span>
               </div>
-            ))}
-            <div className="flex gap-4 animate-pulse mt-2">
-              <span className="text-on-surface-variant/40">[_CURSOR_]</span>
-              <span className="text-primary-fixed-dim inline-block w-1 h-3 bg-primary-fixed-dim ml-[-12px]"></span>
-            </div>
+            )}
           </div>
         </div>
         
@@ -196,20 +199,46 @@ export function ListScreen() {
             </button>
           </div>
           <div className="flex-1 space-y-2 overflow-y-auto max-h-[260px]">
-            {statusQ.data?.components.map((c) => (
-              <div key={c.name} className="flex items-center justify-between text-xs gap-2">
-                <span className="flex items-center gap-2">
-                  <span className={`w-2 h-2 rounded-full ${
-                    c.status === "up" ? "bg-green-500/80"
-                    : c.status === "down" ? "bg-red-500/80"
-                    : c.status === "unknown" ? "bg-amber-500/80"
-                    : "bg-white/20"
-                  }`}></span>
-                  <span className="text-on-surface">{c.name}</span>
-                </span>
-                <span className="text-on-surface-variant/60 text-right truncate max-w-[140px]">{c.detail}</span>
-              </div>
-            ))}
+            {statusQ.data && (
+              <>
+                <div className="flex items-center justify-between text-xs gap-2">
+                  <span className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${statusQ.data.db === "ok" ? "bg-green-500/80" : "bg-red-500/80"}`}></span>
+                    <span className="text-on-surface">database</span>
+                  </span>
+                  <span className="text-on-surface-variant/60 text-right truncate max-w-[140px]">{statusQ.data.db}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs gap-2">
+                  <span className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-green-500/80"></span>
+                    <span className="text-on-surface">embedder</span>
+                  </span>
+                  <span className="text-on-surface-variant/60 text-right truncate max-w-[140px]">{statusQ.data.embedder}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs gap-2">
+                  <span className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${statusQ.data.watcher?.status === "running" ? "bg-green-500/80" : "bg-white/20"}`}></span>
+                    <span className="text-on-surface">watcher</span>
+                  </span>
+                  <span className="text-on-surface-variant/60 text-right truncate max-w-[140px]">{statusQ.data.watcher?.status} ({statusQ.data.watcher?.indexed} indexed)</span>
+                </div>
+                <div className="flex items-center justify-between text-xs gap-2">
+                  <span className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-green-500/80"></span>
+                    <span className="text-on-surface">forge</span>
+                  </span>
+                  <span className="text-on-surface-variant/60 text-right truncate max-w-[140px]">{statusQ.data.activeRuns} active runs</span>
+                </div>
+
+                <div className="flex items-center justify-between text-xs gap-2">
+                  <span className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-green-500/80"></span>
+                    <span className="text-on-surface">uptime</span>
+                  </span>
+                  <span className="text-on-surface-variant/60 text-right truncate max-w-[140px]">{Math.floor(statusQ.data.uptimeMs / 1000)}s</span>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </section>

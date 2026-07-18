@@ -34,10 +34,9 @@ beforeEach(() => {
   apiFetch.mockReset();
   vi.clearAllMocks();
   apiFetch.mockImplementation((path: string) => {
-    if (path === "/system/status") return Promise.resolve({ components: [
-      { name: "database", status: "up", detail: "" },
-      { name: "connector github", status: "off", detail: "not configured" },
-    ] });
+    if (path === "/system/status") return Promise.resolve({
+      db: "ok", embedder: "fake-embedder", watcher: { status: "running", indexed: 42 }, activeRuns: 0, uptimeMs: 123456
+    });
     return Promise.resolve(undefined);
   });
 });
@@ -96,6 +95,6 @@ test("renders tickets and handles project switching & creation", async () => {
 test("renders system status components", async () => {
   render(<TestHarness />);
   await waitFor(() => expect(screen.getByText("database")).toBeInTheDocument());
-  expect(screen.getByText("connector github")).toBeInTheDocument();
+  expect(screen.getByText("fake-embedder")).toBeInTheDocument();
 });
 

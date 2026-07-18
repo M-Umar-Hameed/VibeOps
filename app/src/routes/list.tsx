@@ -170,17 +170,14 @@ export function ListScreen() {
             <span className="font-code-label text-[10px] uppercase text-on-surface-variant/60">System_Log_v2.0.4</span>
           </div>
           <div className="p-4 font-code-sm text-xs space-y-2 overflow-y-auto terminal-scroll max-h-[250px] flex-1">
-            {logsQ.data?.length === 0 ? (
-              <div className="text-on-surface-variant/40 italic">no events yet</div>
-            ) : (
-              logsQ.data?.map((log, i) => (
+            {/* boot entry guarantees at least one row, so no empty-state branch */}
+            {logsQ.data?.map((log, i) => (
                 <div key={i} className="flex gap-4">
                   <span className="text-on-surface-variant/40">[{log.at}]</span>
                   <span className={log.level === 'info' ? "text-on-surface-variant" : "text-primary-fixed-dim"}>{log.level}:</span>
                   <span className="text-on-surface/80">{log.message}</span>
                 </div>
-              ))
-            )}
+              ))}
             {logsQ.data && logsQ.data.length > 0 && (
               <div className="flex gap-4 animate-pulse mt-2">
                 <span className="text-on-surface-variant/40">[_CURSOR_]</span>

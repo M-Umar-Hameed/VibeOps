@@ -69,7 +69,7 @@ export function ActorsCard() {
         </div>
         <div>
           <h3 className="font-headline-sm text-on-surface font-bold">Actors</h3>
-          <p className="text-xs text-on-surface-variant">Identities and API keys. Every human and AI agent acts under an actor: its key authenticates REST/MCP calls, every ticket change is attributed to it in the audit trail, and its role (admin/member) gates powerful actions. Mint one key per agent; revoke any key to cut that agent off. Applies to ALL projects.</p>
+          <p className="text-xs text-on-surface-variant">Identities and API keys. Every human and AI agent acts under an actor: its key authenticates REST/MCP calls, every work order change is attributed to it in the audit trail, and its role (admin/member) gates powerful actions. Mint one key per agent; revoke any key to cut that agent off. Applies to ALL projects.</p>
         </div>
       </div>
 

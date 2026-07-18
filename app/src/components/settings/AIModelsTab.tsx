@@ -172,7 +172,7 @@ export function AIModelsTab() {
             
             <div className="flex gap-4">
               <div className="flex flex-col gap-1 w-1/2">
-                <label className="text-sm text-on-surface">Per-ticket token cap</label>
+                <label className="text-sm text-on-surface">Per-work-order token cap</label>
                 <input
                   type="number"
                   className="bg-surface-container-highest border border-white/10 rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:border-primary transition-colors"

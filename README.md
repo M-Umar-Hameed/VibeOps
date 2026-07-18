@@ -1,16 +1,22 @@
 # VibeOps
 
-**One audited brain for you and your AI agents.**
+**Your agents, supervised.**
 
-VibeOps is a self-hosted ticketing engine with a built-in knowledge/RAG layer, reachable over REST and MCP — so a human in the desktop app and every AI coding agent you run (Claude Code, Codex, Gemini, Antigravity, Cursor) share the same tickets, the same searchable memory, and the same append-only audit trail.
+VibeOps is a self-hosted agent ops console — the board is a work-order queue for supervised agents. It orchestrates a continuous loop of planning, sandboxed work, adversarial review, and human promotion, reachable over REST and MCP. A human in the desktop app and every AI coding agent you run (Claude Code, Codex, Gemini, Antigravity, Cursor) share the same queue, the same searchable memory, and the same append-only audit trail.
 
 Vibecoding with multiple agents has a coordination problem: each agent starts cold, re-derives decisions the last one already made, and nothing records who did what. VibeOps fixes the substrate — shared state, shared memory, per-agent identity — and installs as a single file with zero configuration.
 
 ## What it does
 
-**Tickets with integrity.** Real transactions, optimistic concurrency (version-locked updates return 409 instead of silently clobbering), and an append-only event log where every mutation is attributed to the actor that made it. Agents track multi-step work as tickets other agents can see, instead of private todo lists.
+**The forge loop.** A coordinated pipeline of plan -> sandboxed work -> adversarial review -> human promote. The expensive reasoning model touches a task only twice (writing the plan, reviewing the diff), while a cheap or local model grinds through the implementation.
 
-**Knowledge that survives sessions.** A pgvector index over three layers, searchable through one `search_knowledge` tool from any connected agent:
+**Cross-model economics & budget caps.** Optimize costs by combining multiple models across the forge loop. Run work against open-weights models locally while relying on frontier models for review. Apply budget caps to ensure runs never spiral out of control.
+
+**Append-only audit trail & verification.** Every mutation is attributed to the actor that made it. The audit trail answers exactly "which agent did this," providing full visibility and doctor/verification capabilities.
+
+**Ticketing & Knowledge (RAG).** Supporting infrastructure for your agents:
+- **Work-order queue:** Real transactions, optimistic concurrency (409s instead of clobbering), tracking multi-step work as items other agents can see.
+- **Knowledge that survives sessions:** A pgvector index over three layers, searchable through one `search_knowledge` tool from any connected agent:
 
 - **Your vault** — `~/.vibeops/vault` is created on first run and indexed automatically. Drop markdown or PDF files in, or open it as an Obsidian vault (Obsidian is optional; any editor works). Point one setting at an external vault instead if you have one.
 - **Notes** — a writeable document workspace (titled, versioned, audited, soft-deleted) agents use to persist decisions and gotchas.

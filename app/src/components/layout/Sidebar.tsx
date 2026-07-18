@@ -180,7 +180,7 @@ export function Sidebar({ isOpen = false, setIsOpen = (_v: boolean) => {} }) {
               }`}
             >
               <span className="material-symbols-outlined" style={{ fontVariationSettings: isActive("/create") ? "'FILL' 1" : "" }}>confirmation_number</span>
-              <span className="font-body-md">New Ticket</span>
+              <span className="font-body-md">New Work Order</span>
             </Link>
           </nav>
         )}

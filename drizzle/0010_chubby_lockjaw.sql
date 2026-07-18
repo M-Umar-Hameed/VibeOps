@@ -1,0 +1,1 @@
+ALTER TABLE "tickets" ADD COLUMN "requires_verification" boolean DEFAULT false NOT NULL;

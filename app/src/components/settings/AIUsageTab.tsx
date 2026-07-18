@@ -160,14 +160,14 @@ export function AIUsageTab() {
       </div>
 
       <p className="text-xs text-on-surface-variant/60 italic mt-3 ml-1">
-        Usage observed by VibeOps from local session logs, across ALL projects (per-ticket now available). Provider quotas and reset limits live with each provider and aren't visible here.
+        Usage observed by VibeOps from local session logs, across ALL projects (per-work-order now available). Provider quotas and reset limits live with each provider and aren't visible here.
       </p>
 
       <h3 className="font-code-sm uppercase tracking-widest text-on-surface-variant/70 text-xs mb-4 ml-1 mt-8">Logged AI Usage</h3>
 
       {realUsageData?.perTicket && realUsageData.perTicket.length > 0 && (
         <div className="mb-6">
-          <h4 className="font-code-sm uppercase tracking-widest text-on-surface-variant/70 text-[10px] mb-2 ml-1">By Ticket</h4>
+          <h4 className="font-code-sm uppercase tracking-widest text-on-surface-variant/70 text-[10px] mb-2 ml-1">By Work Order</h4>
           <div className="space-y-2">
             {realUsageData.perTicket.map((row: any) => (
               <div key={row.ticketId} className="glass-card rounded-lg p-4 border border-white/5 flex justify-between items-center text-sm">

@@ -95,7 +95,7 @@ export function IntegrationsTab() {
       <div className="mb-8 border-b border-white/10 pb-6">
         <h2 className="font-headline-md text-headline-md text-on-surface mb-2">Global connections</h2>
         <p className="text-on-surface-variant text-sm max-w-2xl">
-          Sync your tickets, issues, and projects seamlessly. VibeOps currently supports zero-config syncing from popular version control and issue tracking platforms.
+          Sync your work orders, issues, and projects seamlessly. VibeOps currently supports zero-config syncing from popular version control and issue tracking platforms.
         </p>
       </div>
 

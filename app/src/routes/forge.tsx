@@ -439,8 +439,8 @@ export function ForgeScreen() {
       <div className="w-80 border-r border-white/10 bg-surface-container/30 overflow-y-auto flex flex-col">
         <div className="p-4 border-b border-white/5 space-y-3">
           <div>
-            <h2 className="font-headline-sm text-on-surface font-bold">Forge Tickets</h2>
-            <p className="text-xs text-on-surface-variant/70 mt-1">Plan, run, and promote agent work per ticket.</p>
+            <h2 className="font-headline-sm text-on-surface font-bold">Forge Work Orders</h2>
+            <p className="text-xs text-on-surface-variant/70 mt-1">Plan, run, and promote agent work per work order.</p>
           </div>
           <div className="space-y-2">
             <textarea
@@ -695,7 +695,7 @@ export function ForgeScreen() {
                       disabled={sandbox.lastVerdict !== "pass" || runActiveForTicket}
                       title={
                         runActiveForTicket
-                          ? "Pipeline run in progress for this ticket"
+                          ? "Pipeline run in progress for this work order"
                           : sandbox.lastVerdict !== "pass"
                             ? "Needs a passing review — inspect the diff, then use Approve override"
                             : undefined
@@ -708,7 +708,7 @@ export function ForgeScreen() {
                       <button
                         onClick={handleApprove}
                         disabled={runActiveForTicket}
-                        title={runActiveForTicket ? "Pipeline run in progress for this ticket" : undefined}
+                        title={runActiveForTicket ? "Pipeline run in progress for this work order" : undefined}
                         className="px-4 py-2 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-400 text-sm font-bold uppercase transition-all disabled:opacity-50 cursor-pointer"
                       >
                         {confirmApprove ? "Confirm approve?" : "Approve override"}
@@ -862,12 +862,12 @@ export function ForgeScreen() {
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
             <span className="material-symbols-outlined text-6xl text-on-surface-variant/30 mb-6">construction</span>
             <div className="text-on-surface-variant max-w-md">
-              <p className="mb-6 text-lg">The Forge is where autonomous agents write and review code for your tickets.</p>
+              <p className="mb-6 text-lg">The Forge is where autonomous agents write and review code for your work orders.</p>
               <button onClick={() => document.querySelector('textarea')?.focus()} className="bg-primary text-on-primary px-6 py-2 rounded font-bold uppercase tracking-widest cursor-pointer hover:brightness-110">Create a task to start</button>
             </div>
           </div>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-on-surface-variant/50">Select a ticket to enter the Forge</div>
+          <div className="flex-1 flex items-center justify-center text-on-surface-variant/50">Select a work order to enter the Forge</div>
         )}
       </div>
     </div>

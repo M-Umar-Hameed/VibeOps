@@ -150,7 +150,7 @@ test("renders By Ticket list when perTicket data is present", async () => {
   });
 
   render(wrap(<AIUsageTab />));
-  await waitFor(() => expect(screen.getByText("By Ticket")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText("By Work Order")).toBeInTheDocument());
   expect(screen.getByText("Implement Auth")).toBeInTheDocument();
   expect(screen.getByText("12.0K tokens")).toBeInTheDocument();
   expect(screen.getByText("5 calls")).toBeInTheDocument();

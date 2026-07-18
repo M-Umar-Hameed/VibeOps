@@ -41,7 +41,7 @@ test("primary nav renders 4 links and Library section toggles", () => {
   expect(within(primaryNav).getByText("Settings")).toBeInTheDocument();
 
   expect(screen.queryByText("Knowledge")).not.toBeInTheDocument();
-  expect(screen.queryByText("New Ticket")).not.toBeInTheDocument();
+  expect(screen.queryByText("New Work Order")).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByText("Library"));
 
@@ -50,5 +50,5 @@ test("primary nav renders 4 links and Library section toggles", () => {
   
   const libraryNav = navsAfter[1];
   expect(within(libraryNav).getByText("Knowledge")).toBeInTheDocument();
-  expect(within(libraryNav).getByText("New Ticket")).toBeInTheDocument();
+  expect(within(libraryNav).getByText("New Work Order")).toBeInTheDocument();
 });

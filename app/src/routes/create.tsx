@@ -58,7 +58,7 @@ export function CreateScreen() {
           <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-primary-fixed-dim via-transparent to-transparent opacity-50"></div>
           
           <div className="mb-10 text-center">
-        <h2 className="font-code-label text-2xl text-primary-fixed-dim tracking-[0.2em] uppercase terminal-cursor">INITIALIZE_NEW_TICKET</h2>
+        <h2 className="font-code-label text-2xl text-primary-fixed-dim tracking-[0.2em] uppercase terminal-cursor">INITIALIZE_WORK_ORDER</h2>
         <div className="h-[1px] w-24 bg-primary-fixed-dim/30 mx-auto mt-4"></div>
       </div>
       

@@ -55,7 +55,7 @@ export function ListScreen() {
         </div>
         <input 
           className="bg-surface-container-highest border border-white/10 rounded px-3 py-1.5 text-xs text-on-surface placeholder-on-surface-variant/50 w-full sm:flex-1 sm:max-w-xs" 
-          placeholder="Filter active tickets..." 
+          placeholder="Filter active work orders..." 
           value={q} 
           onChange={(e) => setQ(e.target.value)} 
         />
@@ -64,7 +64,7 @@ export function ListScreen() {
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-gutter mb-4 md:mb-gutter">
         <div className="glass-card p-6 flex flex-col justify-between group hover:border-primary-fixed-dim/30 transition-all glow-blue">
           <div className="flex justify-between items-start mb-4">
-            <span className="text-on-surface-variant font-code-label text-xs uppercase tracking-widest">Active Tickets</span>
+            <span className="text-on-surface-variant font-code-label text-xs uppercase tracking-widest">Active Work Orders</span>
             <span className="material-symbols-outlined text-primary-fixed-dim">confirmation_number</span>
           </div>
           <div className="flex items-baseline gap-2">
@@ -100,12 +100,12 @@ export function ListScreen() {
         <div className="px-4 md:px-6 py-4 border-b border-white/5">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
-              <h3 className="font-headline-sm md:font-headline-md text-headline-sm md:text-headline-md text-primary">Active Deployment Tickets</h3>
-              <p className="text-sm text-on-surface-variant/70 mt-1">Track tickets from open through promoted.</p>
+              <h3 className="font-headline-sm md:font-headline-md text-headline-sm md:text-headline-md text-primary">Active Work Orders</h3>
+              <p className="text-sm text-on-surface-variant/70 mt-1">Track work orders from open through promoted.</p>
             </div>
             <Link to="/create" className="bg-primary-fixed-dim text-on-primary-fixed px-4 py-2 font-code-label text-code-label rounded-lg flex items-center gap-2 hover:brightness-110 active:scale-95 transition-all shadow-lg shadow-primary-fixed-dim/20 cursor-pointer inline-flex w-full sm:w-auto justify-center">
               <span className="material-symbols-outlined text-sm">add</span>
-              NEW_TICKET
+              NEW_WORK_ORDER
             </Link>
           </div>
         </div>
@@ -123,7 +123,7 @@ export function ListScreen() {
             </thead>
             <tbody className="divide-y divide-white/5">
               {listQ.isError && (
-                <tr><td colSpan={6} className="px-6 py-8 text-center text-error">Failed to load tickets</td></tr>
+                <tr><td colSpan={6} className="px-6 py-8 text-center text-error">Failed to load work orders</td></tr>
               )}
               {listQ.isLoading && (
                 <tr><td colSpan={6} className="px-6 py-8 text-center text-primary-fixed-dim neon-pulse">Loading vectors...</td></tr>
@@ -134,7 +134,7 @@ export function ListScreen() {
                     <span className="material-symbols-outlined text-5xl text-on-surface-variant/30">task</span>
                     <div className="text-on-surface-variant max-w-md">
                       <p className="mb-6 text-lg">The Board tracks tasks from planned to promoted.</p>
-                      <Link to="/create" className="bg-primary text-on-primary px-6 py-2 rounded font-bold uppercase tracking-widest">Create your first ticket</Link>
+                      <Link to="/create" className="bg-primary text-on-primary px-6 py-2 rounded font-bold uppercase tracking-widest">Create a work order for the forge</Link>
                     </div>
                   </div>
                 </td></tr>

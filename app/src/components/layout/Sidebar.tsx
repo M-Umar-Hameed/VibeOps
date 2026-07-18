@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "@tanstack/react-router";
 import { useProject } from "../../context/project.js";
 import { projects as projectsApi } from "../../api/projects.js";
 import { api } from "../../lib/api.js";
+import { pickFolder, dialogAvailable } from "../../lib/native-dialog.js";
 
 export function Sidebar({ isOpen = false, setIsOpen = (_v: boolean) => {} }) {
   const location = useLocation();
@@ -19,6 +20,11 @@ export function Sidebar({ isOpen = false, setIsOpen = (_v: boolean) => {} }) {
   const [addError, setAddError] = useState("");
   const [needsGitInitFor, setNeedsGitInitFor] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [canBrowse, setCanBrowse] = useState(false);
+
+  useEffect(() => {
+    dialogAvailable().then(setCanBrowse);
+  }, []);
 
   const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = e.target.value;
@@ -220,14 +226,29 @@ export function Sidebar({ isOpen = false, setIsOpen = (_v: boolean) => {} }) {
                   required
                   className="w-full bg-surface-container-lowest/50 border border-white/10 rounded px-2 py-1.5 text-sm text-on-surface focus:border-primary outline-none font-code-sm"
                 />
-                <input
-                  type="text"
-                  placeholder="Absolute folder path (optional)"
-                  value={addPath}
-                  onChange={(e) => setAddPath(e.target.value)}
-                  disabled={isSubmitting || !!needsGitInitFor}
-                  className="w-full bg-surface-container-lowest/50 border border-white/10 rounded px-2 py-1.5 text-sm text-on-surface focus:border-primary outline-none"
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Absolute folder path (optional)"
+                    value={addPath}
+                    onChange={(e) => setAddPath(e.target.value)}
+                    disabled={isSubmitting || !!needsGitInitFor}
+                    className="flex-1 min-w-0 bg-surface-container-lowest/50 border border-white/10 rounded px-2 py-1.5 text-sm text-on-surface focus:border-primary outline-none"
+                  />
+                  {canBrowse && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const dir = await pickFolder();
+                        if (dir) setAddPath(dir);
+                      }}
+                      disabled={isSubmitting || !!needsGitInitFor}
+                      className="shrink-0 px-3 py-1.5 rounded bg-white/10 hover:bg-primary hover:text-on-primary text-sm text-on-surface disabled:opacity-50"
+                    >
+                      Browse
+                    </button>
+                  )}
+                </div>
                 
                 {addError && <div className="text-xs text-error font-code-sm">{addError}</div>}
                 

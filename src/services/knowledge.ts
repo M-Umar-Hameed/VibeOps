@@ -175,3 +175,77 @@ export async function getKnowledgeSource(kind: string, ref: string): Promise<str
   }
   return `Error: Unknown source kind ${kind}`;
 }
+
+export async function knowledgeGraph(limit = 60): Promise<{ nodes: { id: string; kind: string; chunks: number; createdAt: string }[]; edges: { a: string; b: string; w: number }[] }> {
+  const aggRows: unknown = await db.execute(dsql`
+    SELECT source_ref, source_kind, count(id) as chunk_count, max(created_at) as created_at
+    FROM embeddings
+    GROUP BY source_ref, source_kind
+    ORDER BY max(created_at) DESC
+    LIMIT ${limit}
+  `);
+
+  const rows = (Array.isArray(aggRows) ? aggRows : (aggRows as { rows: unknown[] }).rows) as any[];
+  if (!rows.length) return { nodes: [], edges: [] };
+
+  const refs = rows.map(r => String(r.source_ref));
+  const chunkRows = await db.select({ sourceRef: embeddings.sourceRef, embedding: dsql<string>`${embeddings.embedding}::text` })
+    .from(embeddings)
+    .where(and(eq(embeddings.chunkIndex, 0), inArray(embeddings.sourceRef, refs)));
+
+  const embMap = new Map(chunkRows.map(c => {
+    let arr: number[] = [];
+    try {
+      arr = JSON.parse(c.embedding);
+    } catch (e) {
+      // In case the pgvector format is [1,2,3] string instead of array
+      const s = c.embedding.trim();
+      if (s.startsWith('[') && s.endsWith(']')) {
+        arr = s.slice(1, -1).split(',').map(Number);
+      }
+    }
+    return [c.sourceRef, arr];
+  }));
+
+  const nodes = rows.map(r => ({
+    id: String(r.source_ref),
+    kind: String(r.source_kind),
+    chunks: Number(r.chunk_count),
+    createdAt: new Date(r.created_at).toISOString()
+  }));
+
+  function dot(a: number[], b: number[]) {
+    let sum = 0;
+    for (let i = 0; i < a.length; i++) sum += a[i] * b[i];
+    return sum;
+  }
+  function mag(a: number[]) {
+    let sum = 0;
+    for (let i = 0; i < a.length; i++) sum += a[i] * a[i];
+    return Math.sqrt(sum);
+  }
+  function cosine(a: number[], b: number[]) {
+    const mA = mag(a);
+    const mB = mag(b);
+    if (mA === 0 || mB === 0) return 0;
+    return dot(a, b) / (mA * mB);
+  }
+
+  const edges: { a: string; b: string; w: number }[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const eA = embMap.get(nodes[i].id);
+      const eB = embMap.get(nodes[j].id);
+      if (eA && eB && eA.length > 0 && eA.length === eB.length) {
+        const w = cosine(eA, eB);
+        if (w >= 0.45) {
+          edges.push({ a: nodes[i].id, b: nodes[j].id, w });
+        }
+      }
+    }
+  }
+
+  edges.sort((a, b) => b.w - a.w);
+  
+  return { nodes, edges: edges.slice(0, 200) };
+}

@@ -190,6 +190,7 @@ export async function startPipeline(
   };
   runs.set(run.id, run);
   trim();
+  await persistRun(run);
   run.done = pipeline(run, actorId, agents, workdir, styleSetting ?? "", lessons, config, opts.extraPrompt).catch(async (e) => {
     append(run, `\nforge: pipeline error: ${(e as Error).message}\n`);
     // Uphold the never-stuck-in_progress invariant even for unexpected throws
@@ -287,6 +288,7 @@ function settle(run: Run, status: Status): void {
 // the durable plan/report/review record, this is just for the runs list.
 async function persistRun(run: Run): Promise<void> {
   try {
+    const finishedAt = run.finishedAt ? new Date(run.finishedAt) : undefined;
     await db.insert(forgeRuns).values({
       id: run.id,
       ticketId: run.ticketId,
@@ -296,7 +298,10 @@ async function persistRun(run: Run): Promise<void> {
       workAgent: run.agents.work,
       reviewAgent: run.agents.review,
       startedAt: new Date(run.startedAt),
-      finishedAt: run.finishedAt ? new Date(run.finishedAt) : undefined,
+      finishedAt,
+    }).onConflictDoUpdate({
+      target: forgeRuns.id,
+      set: { status: run.status, stage: run.stage, finishedAt }
     });
   } catch (e) {
     console.warn(`forge: failed to persist run ${run.id}:`, (e as Error).message);

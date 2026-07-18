@@ -5,7 +5,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { eq } from "drizzle-orm";
-import { markInterruptedRuns, awaitRun, getRunOutput } from "../src/forge/runs.js";
+import { markInterruptedRuns, awaitRun, getRunOutput, stopRun, startPipeline } from "../src/forge/runs.js";
+import { loadRelayConfig } from "../src/relay/config.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
 import { createTicket, updateTicket } from "../src/services/tickets.js";
@@ -86,22 +87,25 @@ function setScript(script: string, write?: boolean): void {
 }
 
 describe("forge run resume", () => {
-  it("markInterruptedRuns flips finished_at null directly via db and returns ticket id", async () => {
-    const { ticket } = await seedTicket("Interrupted path");
-    await db.insert(forgeRuns).values({
-      id: uniq("run"),
-      ticketId: ticket.id,
-      status: "running",
-      stage: "work",
-      planAgent: "auto:fast",
-      workAgent: "auto:fast",
-      reviewAgent: "auto:fast",
-      startedAt: new Date(),
+  it("startPipeline inserts running row, markInterruptedRuns flips it", async () => {
+    const { actorId, apiKey, ticket } = await seedTicket("Interrupted path via pipeline");
+    setScript("plan-hang", true);
+
+    const config = loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG!);
+    const { runId } = await startPipeline(actorId, config, {
+      ticketId: ticket.id, planAgent: "auto", workAgent: "auto", reviewAgent: "auto"
     });
+    
+    // give persistRun a moment to complete
+    await new Promise(r => setTimeout(r, 100));
+
     const marked = await markInterruptedRuns();
     expect(marked).toContain(ticket.id);
-    const [row] = await db.select().from(forgeRuns).where(eq(forgeRuns.ticketId, ticket.id));
+    const [row] = await db.select().from(forgeRuns).where(eq(forgeRuns.id, runId));
     expect(row.status).toBe("interrupted");
+    
+    stopRun(runId);
+    await awaitRun(runId);
   });
 
   it("resume route: seeded planned ticket -> 201 runId and pipeline completes; 409 on closed ticket", async () => {

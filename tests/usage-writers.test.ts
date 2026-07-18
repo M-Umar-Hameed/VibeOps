@@ -96,7 +96,12 @@ describe("usage writers", () => {
     const usageRows = await db.select().from(aiUsageLogs).where(eq(aiUsageLogs.provider, agentName));
     const roles = usageRows.map((r) => r.model).sort();
     expect(roles).toEqual(["plan", "review", "work"]);
-    for (const row of usageRows) expect(row.tokens).toBeGreaterThan(0);
+    for (const row of usageRows) {
+      expect(row.tokens).toBeGreaterThan(0);
+      expect(row.ticketId).toBe(ticket.id);
+      expect(row.actorId).toBe(actorId);
+      expect(row.durationMs).toBeGreaterThan(0);
+    }
 
     const sessionRows = await db.select().from(agentSessions)
       .where(like(agentSessions.agentName, `%:${agentName}`));
@@ -149,5 +154,10 @@ describe("usage writers", () => {
     expect(data.usage.length).toBeGreaterThan(0);
     expect(data.agents.length).toBeGreaterThan(0);
     expect(data.overview.totalTokens).toBeGreaterThan(0);
+    
+    const myTicket = data.perTicket.find((t: any) => t.ticketId === ticket.id);
+    expect(myTicket).toBeDefined();
+    expect(myTicket.tokens).toBeGreaterThan(0);
+    expect(myTicket.title).toBe("Usage endpoint path");
   });
 });

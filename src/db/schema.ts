@@ -145,6 +145,9 @@ export const aiUsageLogs = pgTable('ai_usage_logs', {
   model: text('model').notNull(),
   tokens: integer('tokens').notNull(),
   cost: integer('cost').notNull().default(0), // multiplied by 1e6 for fractional cents
+  ticketId: uuid('ticket_id'),
+  actorId: uuid('actor_id'),
+  durationMs: integer('duration_ms'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

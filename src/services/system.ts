@@ -1,7 +1,7 @@
 import os from "os";
 import { db } from "../db/client.js";
-import { aiUsageLogs, agentSessions } from "../db/schema.js";
-import { sql } from "drizzle-orm";
+import { aiUsageLogs, agentSessions, tickets } from "../db/schema.js";
+import { sql, eq, isNotNull, desc } from "drizzle-orm";
 import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { forgeRuns } from "../db/schema.js";
@@ -66,6 +66,19 @@ export async function getAiUsage() {
     count: sql<number>`cast(count(*) as integer)`
   }).from(agentSessions).groupBy(agentSessions.agentName, agentSessions.status);
   
+  const perTicket = await db.select({
+    ticketId: aiUsageLogs.ticketId,
+    title: sql<string>`coalesce(${tickets.title}, cast(${aiUsageLogs.ticketId} as text))`,
+    tokens: sql<number>`cast(sum(${aiUsageLogs.tokens}) as integer)`,
+    calls: sql<number>`cast(count(*) as integer)`
+  })
+  .from(aiUsageLogs)
+  .leftJoin(tickets, eq(aiUsageLogs.ticketId, tickets.id))
+  .where(isNotNull(aiUsageLogs.ticketId))
+  .groupBy(aiUsageLogs.ticketId, tickets.title)
+  .orderBy(desc(sql`sum(${aiUsageLogs.tokens})`))
+  .limit(10);
+
   const totalCost = usageStats.reduce((acc, curr) => acc + ((curr.cost || 0) / 1e6), 0);
   const totalTokens = usageStats.reduce((acc, curr) => acc + Number(curr.tokens || 0), 0);
 
@@ -76,7 +89,8 @@ export async function getAiUsage() {
       activeStrategy: "Cost-Optimized"
     },
     usage: usageStats,
-    agents: agentStats
+    agents: agentStats,
+    perTicket
   };
 }
 

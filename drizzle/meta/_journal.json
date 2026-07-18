@@ -78,6 +78,13 @@
       "when": 1784369430411,
       "tag": "0010_chubby_lockjaw",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1784369972169,
+      "tag": "0011_lush_nova",
+      "breakpoints": true
     }
   ]
 }

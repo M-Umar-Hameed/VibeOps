@@ -40,6 +40,9 @@ export async function updateProjectRepo(id: string, repoPath: string): Promise<P
     value = null;
   } else {
     if (!/^([a-zA-Z]:[\\/]|\/)/.test(value)) throw new Error(`repoPath must be an absolute path: ${value}`);
+    if (value.split(/[\\/]/).includes("..")) {
+      throw new Error(`repoPath must not contain ".." segments: ${value}`);
+    }
     if (!existsSync(value) || !statSync(value).isDirectory()) {
       throw new Error(`repoPath does not exist or is not a directory: ${value}`);
     }

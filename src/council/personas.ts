@@ -1,3 +1,5 @@
+import { fenceUntrusted, UNTRUSTED_CLAUSE } from "../relay/prompts.js";
+
 const PERSONA_ROLE: Record<"believer" | "investor" | "skeptic", string> = {
   believer: "optimist, best-case potential, cultural impact, enthusiastic",
   investor: "realist, economics, effort/cost, time-to-market, maintenance burden, skeptical of hype",
@@ -7,8 +9,9 @@ const PERSONA_ROLE: Record<"believer" | "investor" | "skeptic", string> = {
 export function composePersonaPrompt(persona: "believer" | "investor" | "skeptic", idea: string): string {
   return [
     `Role: ${PERSONA_ROLE[persona]}`,
-    `Idea: ${idea}`,
-    `Answer in under 300 words as plain text.`
+    `Idea: ${fenceUntrusted("idea", idea)}`,
+    `Answer in under 300 words as plain text.`,
+    UNTRUSTED_CLAUSE
   ].filter(Boolean).join("\n\n");
 }
 
@@ -20,7 +23,7 @@ export function composeChairmanPrompt(input: {
   qa?: { question: string; answer: string }[];
 }): string {
   const parts = [
-    `Idea: ${input.idea}`,
+    `Idea: ${fenceUntrusted("idea", input.idea)}`,
     `Believer:\n${input.believer}`,
     `Investor:\n${input.investor}`,
     `Skeptic:\n${input.skeptic}`
@@ -30,6 +33,8 @@ export function composeChairmanPrompt(input: {
     const qaBlock = input.qa.map(qa => `Q: ${qa.question}\nA: ${qa.answer}`).join("\n\n");
     parts.push(`Q&A:\n${qaBlock}`);
   }
+
+  parts.push(UNTRUSTED_CLAUSE);
 
   parts.push(
     [

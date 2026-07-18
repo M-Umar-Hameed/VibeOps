@@ -7,6 +7,7 @@ import { startCouncil } from "../src/council/runs.js";
 import { randomUUID } from "node:crypto";
 import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
+import { sanitizeFilename } from "../src/api/export-routes.js";
 
 test("export brief ticket", async () => {
   const uniq = "exp-tkt-" + randomUUID().slice(0, 8);
@@ -66,4 +67,29 @@ test("export brief routes", async () => {
   expect(res3.headers.get("Content-Type")).toContain("text/markdown");
   const text = await res3.text();
   expect(text).toContain(`body ${uniq}`);
+});
+
+// Filenames are id-derived today, so no attacker-controlled text reaches the
+// header; this pins the defense-in-depth sanitizer itself plus the header shape.
+test("export brief filename sanitization (defense-in-depth)", async () => {
+  expect(sanitizeFilename(`evil"
+name😀.md`)).toBe("evilname.md");
+  const uniq = "exp-san-" + randomUUID().slice(0, 8);
+  const { actor, apiKey } = await createActor({ name: uniq, kind: "human", role: "member" });
+  const [note] = await db.insert(notes).values({
+    actorId: actor.id, scope: "global", body: "body", title: "note\"\r\ntitle😀", indexed: false, version: 1
+  }).returning();
+
+  const res = await app.request(`/export/brief?kind=note&id=${note.id}`, {
+    headers: { Authorization: `Bearer ${apiKey}` }
+  });
+  expect(res.status).toBe(200);
+  const disposition = res.headers.get("Content-Disposition") || "";
+  // The header legitimately wraps the filename in quotes; judge the VALUE.
+  const fname = /filename="([^"]*)"/.exec(disposition)?.[1] ?? "";
+  expect(fname.length).toBeGreaterThan(0);
+  expect(fname).not.toContain('"');
+  expect(disposition).not.toContain('\r');
+  expect(disposition).not.toContain('\n');
+  expect(disposition).not.toContain('😀');
 });

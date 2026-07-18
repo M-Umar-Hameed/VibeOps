@@ -6,7 +6,7 @@ import type { ChildProcess } from "node:child_process";
 import { resolveCmd, type RelayConfig, type RelayAgent } from "../relay/config.js";
 import { pipelineStartWarnings, pipelineStartBlockingError } from "../relay/doctor.js";
 import { roleStyle } from "../relay/style.js";
-import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict } from "../relay/prompts.js";
+import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, fenceUntrusted } from "../relay/prompts.js";
 import { runAgent, killTree } from "../relay/invoke.js";
 import { redactSecrets } from "./redact.js";
 import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary } from "./sandbox.js";
@@ -257,7 +257,7 @@ async function pipeline(
   // Rework passes must see why the last review failed, or the worker repeats
   // the same mistakes (live-hit on the first dogfood ticket).
   const lastReview = [...(await listComments(ticket.id))].reverse().find((c) => c.kind === "review");
-  const findings = lastReview ? `\n\nPrevious review findings (address ALL of these):\n${lastReview.body}` : "";
+  const findings = lastReview ? `\n\nPrevious review findings (address ALL of these):\n${fenceUntrusted("prior-review-findings", lastReview.body)}` : "";
   const workPrompt = composeWorkPrompt({ ticket, plan, knowledge, workdir: sandbox })
     + findings + NARRATION + "\n\nDo NOT run git commit; the supervisor commits for you." + lessons + roleStyle("work", styleSetting) + extra;
   const workRes = await track(actorId, ticket.id, "work", run.agents.work, () =>

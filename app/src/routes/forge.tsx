@@ -58,6 +58,7 @@ export function ForgeScreen() {
 
   const [interruptedRun, setInterruptedRun] = useState(false);
   const [ticketRunActive, setTicketRunActive] = useState(false);
+  const [ticketRuns, setTicketRuns] = useState<any[]>([]);
 
   const [newTask, setNewTask] = useState("");
   const [newTaskError, setNewTaskError] = useState("");
@@ -147,11 +148,13 @@ export function ForgeScreen() {
     if (selectedTicket) {
       loadSandbox(selectedTicket.id);
       api.get("/forge/runs").then((r: any) => {
-        const ticketRuns = r.filter((run: any) => run.ticketId === selectedTicket.id);
-        const latest = ticketRuns.sort((a: any, b: any) => b.startedAt.localeCompare(a.startedAt))[0];
+        const tr = r.filter((run: any) => run.ticketId === selectedTicket.id);
+        const sorted = tr.sort((a: any, b: any) => b.startedAt.localeCompare(a.startedAt));
+        setTicketRuns(sorted);
+        const latest = sorted[0];
         setInterruptedRun(latest?.status === "interrupted");
         setTicketRunActive(latest?.status === "running");
-      }).catch(() => { setInterruptedRun(false); setTicketRunActive(false); });
+      }).catch(() => { setInterruptedRun(false); setTicketRunActive(false); setTicketRuns([]); });
       setRunOutput("");
       setRunStage("");
       setRunStatus("");
@@ -240,6 +243,12 @@ export function ForgeScreen() {
           setActiveRunId(null);
           if (selectedTicket) loadSandbox(selectedTicket.id);
           loadTickets(); // ticket status moved server-side; refresh the columns
+          
+          // Refresh runs list to get updated history
+          api.get("/forge/runs").then((r: any) => {
+            const tr = r.filter((run: any) => run.ticketId === selectedTicket?.id);
+            setTicketRuns(tr.sort((a: any, b: any) => b.startedAt.localeCompare(a.startedAt)));
+          }).catch(() => {});
         }
 
         if (selectedTicket) {
@@ -811,6 +820,43 @@ export function ForgeScreen() {
                 </div>
               )}
             </div>
+
+            {ticketRuns.length > 0 && (
+              <div className="glass-card rounded-xl border border-white/10 p-6 flex flex-col gap-4">
+                <h3 className="font-headline-sm text-on-surface font-bold border-b border-white/5 pb-2">Run History</h3>
+                <div className="space-y-2">
+                  {ticketRuns.map(run => (
+                    <div key={run.id} className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border border-white/5 bg-surface-container-lowest rounded-lg p-3">
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-code-sm text-sm text-on-surface">Run {run.id.substring(0, 8)}</span>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-code-label uppercase ${run.status === 'passed' ? 'bg-green-500/20 text-green-400' : run.status === 'failed' ? 'bg-red-500/20 text-red-400' : 'bg-surface-container text-on-surface-variant'}`}>
+                            {run.status}
+                          </span>
+                        </div>
+                        <span className="text-xs text-on-surface-variant/70 font-code-sm">
+                          {new Date(run.startedAt).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 text-right">
+                        <span className="text-xs text-on-surface-variant">
+                          Plan: {run.agents?.plan || 'auto'} | Work: {run.agents?.work || 'auto'} | Review: {run.agents?.review || 'auto'}
+                        </span>
+                        {run.modelVerified === false ? (
+                          <span className="px-2 py-0.5 border border-amber-500/30 bg-amber-500/10 text-amber-500 text-[10px] rounded font-code-label uppercase" title="Executed model did not match requested tier">
+                            Mismatch
+                          </span>
+                        ) : run.modelVerified === true ? (
+                          <span className="px-2 py-0.5 border border-green-500/30 bg-green-500/10 text-green-400 text-[10px] rounded font-code-label uppercase">
+                            Verified
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         ) : tickets.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">

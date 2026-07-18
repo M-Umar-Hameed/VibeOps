@@ -155,7 +155,7 @@ export function AIModelsTab() {
                 </div>
               </label>
             </div>
-            <p className="text-[11px] text-on-surface-variant/60 mt-1">Stored preference — automatic routing enforcement ships with the LLM proxy.</p>
+            <p className="text-[11px] text-on-surface-variant/60 mt-1">Enforced with verification for supported CLIs; stored preference elsewhere.</p>
           </div>
 
           {/* Budget Caps */}

@@ -6,7 +6,17 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { eq } from "drizzle-orm";
-import { startPipeline, getRunOutput, awaitRun, stopRun, listRuns, resolveWorkdir, hasActiveRun } from "../src/forge/runs.js";
+import { 
+  startPipeline, 
+  stopRun, 
+  listRuns, 
+  listRunsWithHistory,
+  getRunOutput, 
+  hasActiveRun, 
+  markInterruptedRuns,
+  resolveWorkdir,
+  awaitRun
+} from "../src/forge/runs.js";
 import { sandboxExists, branchName, promoteSandbox } from "../src/forge/sandbox.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject, updateProjectRepo } from "../src/services/projects.js";
@@ -430,4 +440,40 @@ it("hasActiveRun is true mid-run and false after settle", async () => {
   await awaitRun(runId);
   expect(await hasActiveRun(ticket.id)).toBe(false);
 }, 15_000);
+
+describe("model verification", () => {
+  it("warns when the agent reports a different model than requested", async () => {
+    const { actorId, ticket } = await seedTicket("Mismatch path");
+    setScript("plan-mismatch,work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", planModel: "fast", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).toContain("WARNING: Model routing mismatch");
+
+    const runs = await listRunsWithHistory();
+    const run = runs.find((r) => r.id === runId);
+    expect(run?.modelVerified).toBe(false);
+  });
+
+  it("marks as verified when the agent reports the requested model", async () => {
+    const { actorId, ticket } = await seedTicket("Match path");
+    setScript("plan-match,work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", planModel: "fast", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).not.toContain("WARNING: Model routing mismatch");
+
+    const runs = await listRunsWithHistory();
+    const run = runs.find((r) => r.id === runId);
+    expect(run?.modelVerified).toBe(true);
+  });
+});
 

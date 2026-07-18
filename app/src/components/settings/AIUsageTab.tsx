@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { api } from "../../lib/api.js";
 
 type AgentTokens = {
@@ -181,11 +182,14 @@ export function AIUsageTab() {
         </div>
       )}
 
-      {/* ai_usage_logs — honest empty state, no mock fallback */}
       <div className="space-y-2">
         {usageLogs.length === 0 ? (
-          <div className="glass-card rounded-xl p-6 border border-white/5 text-on-surface-variant font-code-sm text-center">
-            No usage logged yet
+          <div className="glass-card rounded-xl p-12 border border-white/5 flex flex-col items-center text-center">
+             <span className="material-symbols-outlined text-6xl text-on-surface-variant/30 mb-6">monitoring</span>
+             <div className="text-on-surface-variant max-w-md">
+               <p className="mb-6 text-lg">Usage tracks tokens and costs across all your agent pipelines.</p>
+               <Link to="/forge" className="bg-primary text-on-primary px-6 py-2 rounded font-bold uppercase tracking-widest inline-block hover:brightness-110">Run a pipeline in Forge</Link>
+             </div>
           </div>
         ) : (
           usageLogs.map((row: any, i: number) => (

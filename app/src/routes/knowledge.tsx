@@ -196,6 +196,15 @@ export function KnowledgeScreen() {
               {sq.data && sq.data.length === 0 && (
                 <div className="text-center mt-12 text-on-surface-variant font-code-sm uppercase tracking-widest opacity-50">0 matches found</div>
               )}
+              {!sq.data && !sq.isLoading && (
+                <div className="text-center mt-24 flex flex-col items-center">
+                  <span className="material-symbols-outlined text-6xl text-on-surface-variant/30 mb-6">analytics</span>
+                  <div className="text-on-surface-variant max-w-md">
+                    <p className="mb-6 text-lg">Knowledge is your centralized graph of code context and agent sessions.</p>
+                    <button onClick={() => setTerminalOpen(true)} className="bg-primary text-on-primary px-6 py-2 rounded font-bold uppercase tracking-widest cursor-pointer hover:brightness-110">Write a note</button>
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <div className="w-full space-y-6 mt-12">

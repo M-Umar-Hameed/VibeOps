@@ -4,8 +4,9 @@ import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 
 const apiFetch = vi.fn();
 vi.mock("../api/client.js", () => ({ apiFetch: (...a: any[]) => apiFetch(...a) }));
-vi.mock("../api/tickets.js", () => ({ tickets: { search: vi.fn(async () => []) } }));
-vi.mock("../api/projects.js", () => ({ projects: { list: vi.fn(async () => []) } }));
+vi.mock("../lib/api.js", () => ({ api: { get: vi.fn(), post: vi.fn(), patch: vi.fn() } }));
+vi.mock("../api/tickets.js", () => ({ tickets: { search: vi.fn(async () => []), create: vi.fn() } }));
+vi.mock("../api/projects.js", () => ({ projects: { list: vi.fn(async () => []), create: vi.fn() } }));
 
 vi.mock("@tanstack/react-router", () => ({
   Link: (p: any) => <a>{p.children}</a>,
@@ -36,4 +37,26 @@ test("hamburger opens and closes sidebar", () => {
   fireEvent.click(document.querySelector(".fixed.inset-0.bg-black\\/50")!);
   expect(aside.className).toContain("-translate-x-full");
   expect(document.querySelector(".fixed.inset-0.bg-black\\/50")).toBeFalsy();
+});
+
+import { api } from "../lib/api.js";
+import { waitFor } from "@testing-library/react";
+
+test("wizard renders when firstRun is true", async () => {
+  (api.get as any).mockImplementation((path: string) => {
+    if (path === "/system/first-run") return Promise.resolve({ firstRun: true });
+    return Promise.resolve({});
+  });
+  render(wrap(<Root />));
+  await waitFor(() => expect(screen.getByText("Welcome to VibeOps")).toBeInTheDocument());
+});
+
+test("wizard hidden when firstRun is false", async () => {
+  (api.get as any).mockImplementation((path: string) => {
+    if (path === "/system/first-run") return Promise.resolve({ firstRun: false });
+    return Promise.resolve({});
+  });
+  render(wrap(<Root />));
+  await new Promise(r => setTimeout(r, 100)); // wait for effect
+  expect(screen.queryByText("Welcome to VibeOps")).not.toBeInTheDocument();
 });

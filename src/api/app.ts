@@ -249,6 +249,45 @@ app.get("/system/agents", requireAdmin, async (c) => {
   return c.json(await getAgents(Number.isFinite(n) && n >= 0 ? n : 7));
 });
 
+app.get("/system/first-run", async (c) => {
+  const projs = await listProjects();
+  const nonInboxCount = projs.filter(p => p.key !== "inbox").length;
+  const { existsSync } = await import("node:fs");
+  const { homedir } = await import("node:os");
+  const { join } = await import("node:path");
+  const relayPath = process.env.VIBEOPS_RELAY_CONFIG ?? join(homedir(), ".vibeops", "relay.json");
+  return c.json({ firstRun: nonInboxCount === 0 && !existsSync(relayPath) });
+});
+
+app.post("/relay/bootstrap", requireAdmin, async (c) => {
+  const { existsSync, writeFileSync } = await import("node:fs");
+  const { homedir } = await import("node:os");
+  const { join } = await import("node:path");
+  const relayPath = process.env.VIBEOPS_RELAY_CONFIG ?? join(homedir(), ".vibeops", "relay.json");
+  
+  if (existsSync(relayPath)) return c.json({ error: "relay.json already exists" }, 409);
+
+  const templates: Record<string, any> = {
+    claude: { cmd: ["claude", "-p", "{promptFile}"], roles: ["plan", "review"] },
+    agy: { cmd: ["agy", "exec", "-C", "{workdir}", "{prompt}"], roles: ["work", "plan"] },
+    codex: { cmd: ["codex", "exec", "-C", "{workdir}", "{prompt}"], roles: ["work"] },
+    gemini: { cmd: ["gemini", "prompt", "--", "{prompt}"], roles: ["plan", "review"] }
+  };
+
+  const { runDoctor } = await import("../relay/doctor.js");
+  const mockConfig = { workdir: join(homedir(), ".vibeops", "sandbox"), agents: templates };
+  const statuses = await runDoctor(mockConfig as any, { fresh: true });
+
+  const passedAgents: Record<string, any> = {};
+  for (const s of statuses) {
+    if (s.probe.ok) passedAgents[s.name] = templates[s.name];
+  }
+
+  const newConfig = { workdir: join(homedir(), ".vibeops", "sandbox"), agents: passedAgents };
+  writeFileSync(relayPath, JSON.stringify(newConfig, null, 2), "utf-8");
+  return c.json({ config: newConfig });
+});
+
 registerMcpRoutes(app);
 registerForgeRoutes(app);
 registerSkillsRoutes(app);

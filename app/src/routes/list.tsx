@@ -123,6 +123,17 @@ export function ListScreen() {
               {listQ.isLoading && (
                 <tr><td colSpan={6} className="px-6 py-8 text-center text-primary-fixed-dim neon-pulse">Loading vectors...</td></tr>
               )}
+              {listQ.data?.length === 0 && (
+                <tr><td colSpan={6} className="px-6 py-16 text-center">
+                  <div className="flex flex-col items-center gap-4">
+                    <span className="material-symbols-outlined text-5xl text-on-surface-variant/30">task</span>
+                    <div className="text-on-surface-variant max-w-md">
+                      <p className="mb-6 text-lg">The Board tracks tasks from planned to promoted.</p>
+                      <Link to="/create" className="bg-primary text-on-primary px-6 py-2 rounded font-bold uppercase tracking-widest">Create your first ticket</Link>
+                    </div>
+                  </div>
+                </td></tr>
+              )}
               {listQ.data?.map((t) => (
                 <tr key={t.id} className="hover:bg-white/[0.03] transition-colors group">
                   <td className="px-6 py-4 font-code-sm text-primary/80">#{t.id.substring(0,8)}</td>

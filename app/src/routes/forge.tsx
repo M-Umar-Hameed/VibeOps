@@ -803,15 +803,22 @@ export function ForgeScreen() {
                   )}
                 </div>
               ) : (
-                <div className="text-sm text-on-surface-variant italic">No active sandbox.</div>
+                <div className="p-8 text-center text-on-surface-variant border border-white/10 rounded-lg bg-surface-container-highest/50 border-dashed">
+                  Sandbox not created yet. Run the pipeline to generate code.
+                </div>
               )}
             </div>
-
+          </div>
+        ) : tickets.length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+            <span className="material-symbols-outlined text-6xl text-on-surface-variant/30 mb-6">construction</span>
+            <div className="text-on-surface-variant max-w-md">
+              <p className="mb-6 text-lg">The Forge is where autonomous agents write and review code for your tickets.</p>
+              <button onClick={() => document.querySelector('textarea')?.focus()} className="bg-primary text-on-primary px-6 py-2 rounded font-bold uppercase tracking-widest cursor-pointer hover:brightness-110">Create a task to start</button>
+            </div>
           </div>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-on-surface-variant opacity-50 font-code-sm uppercase tracking-widest">
-            Select a ticket to open the Forge
-          </div>
+          <div className="flex-1 flex items-center justify-center text-on-surface-variant/50">Select a ticket to enter the Forge</div>
         )}
       </div>
     </div>

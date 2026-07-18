@@ -1,14 +1,24 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Outlet } from "@tanstack/react-router";
 import { Sidebar } from "../components/layout/Sidebar";
 import { TopBar } from "../components/layout/TopBar";
 import { ShortcutsPopup } from "../components/layout/ShortcutsPopup";
+import { Wizard } from "../components/Wizard";
+import { api } from "../lib/api";
 
 export function Root() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [showWizard, setShowWizard] = useState(false);
+
+  useEffect(() => {
+    api.get("/system/first-run").then((res: any) => {
+      if (res.firstRun) setShowWizard(true);
+    }).catch(() => {});
+  }, []);
 
   return (
     <div className="flex h-screen w-full relative overflow-hidden">
+      {showWizard && <Wizard onComplete={() => setShowWizard(false)} />}
       <Sidebar isOpen={isSidebarOpen} setIsOpen={setIsSidebarOpen} />
       
       {/* Mobile overlay */}

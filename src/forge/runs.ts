@@ -353,9 +353,15 @@ function trim(): void {
   for (const r of finished.slice(KEEP_FINISHED)) runs.delete(r.id);
 }
 
-export async function checkBudget(ticketId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const perTicketSetting = await getSetting("ai.budget.perTicketTokens");
-  const perDaySetting = await getSetting("ai.budget.perDayTokens");
+// capsOverride exists for tests: the per-day cap is inherently global, and a
+// test persisting it in the shared settings DB throttles every parallel
+// pipeline in the suite (live-hit).
+export async function checkBudget(
+  ticketId: string,
+  capsOverride?: { perTicket?: number; perDay?: number },
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const perTicketSetting = capsOverride ? String(capsOverride.perTicket ?? "") : (await getSetting("ai.budget.perTicketTokens"));
+  const perDaySetting = capsOverride ? String(capsOverride.perDay ?? "") : (await getSetting("ai.budget.perDayTokens"));
 
   const perTicketCap = parseInt(perTicketSetting || "", 10);
   const perDayCap = parseInt(perDaySetting || "", 10);

@@ -80,7 +80,8 @@ test("Run pipeline posts the selected agents and ticketId", async () => {
       planModel: "big",
       workAgent: "auto",
       reviewAgent: "auto",
-      extraPrompt: ""
+      extraPrompt: "",
+      force: false
     }
   }));
 });
@@ -106,7 +107,7 @@ test("Run pipeline posts untouched defaults without model keys", async () => {
   
   await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/forge/pipeline", {
     method: "POST",
-    body: { ticketId: "t1", planAgent: "auto", workAgent: "auto", reviewAgent: "auto", extraPrompt: "" }
+    body: { ticketId: "t1", planAgent: "auto", workAgent: "auto", reviewAgent: "auto", extraPrompt: "", force: false }
   }));
 });
 

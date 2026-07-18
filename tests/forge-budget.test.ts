@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { startPipeline, awaitRun } from "../src/forge/runs.js";
+import { startPipeline, awaitRun , checkBudget } from "../src/forge/runs.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
 import { createTicket } from "../src/services/tickets.js";
@@ -111,34 +111,17 @@ describe("forge pipeline budget enforcement", () => {
     }
   });
 
-  it("rejects when per-day budget is exceeded, proceeds with force:true", async () => {
+  it("per-day cap rejects via checkBudget override (global setting would throttle parallel suites)", async () => {
     const { actorId, ticket } = await seedTicket("Per-day budget");
-    const prior = await getSetting("ai.budget.perDayTokens");
-    await setSetting("ai.budget.perDayTokens", "2000");
-
-    try {
-      await db.insert(aiUsageLogs).values({
-        provider: "test", model: "test", tokens: 2500, ticketId: ticket.id, actorId, durationMs: 100,
-        createdAt: new Date(),
-      });
-
-      setScript("plan,work,review-pass");
-
-      await expect(startPipeline(actorId, relayConfig(), {
-        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
-      })).rejects.toThrow(ConflictError);
-
-      await expect(startPipeline(actorId, relayConfig(), {
-        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
-      })).rejects.toThrow(/per-day token cap exceeded/);
-
-      const { runId } = await startPipeline(actorId, relayConfig(), {
-        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake", force: true,
-      });
-      await awaitRun(runId);
-    } finally {
-      await setSetting("ai.budget.perDayTokens", prior ?? "");
-    }
+    await db.insert(aiUsageLogs).values({
+      provider: "test", model: "test", tokens: 2500, ticketId: ticket.id, actorId, durationMs: 100,
+      createdAt: new Date(),
+    });
+    const res = await checkBudget(ticket.id, { perDay: 2000 });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toMatch(/per-day token cap exceeded/);
+    const fine = await checkBudget(ticket.id, { perDay: 10_000_000 });
+    expect(fine.ok).toBe(true);
   });
 
   it("unset caps never block", async () => {

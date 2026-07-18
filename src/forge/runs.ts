@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { getLessons, setLessons, lessonsClause, composeAnalyzerPrompt, parseLessons } from "./lessons.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
@@ -142,6 +143,7 @@ export async function startPipeline(
   const strategy: RoutingStrategy =
     strategyRaw === "cheapest-first" || strategyRaw === "quality-first" ? strategyRaw : "balanced";
   const style = styleClause(await getSetting("agents.commProfile"));
+  const lessons = lessonsClause(await getLessons());
   let auto: { plan: Pick; work: Pick; review: Pick } | undefined;
   const getAuto = () => (auto ??= pickAgents(config, strategy));
 
@@ -183,19 +185,20 @@ export async function startPipeline(
   };
   runs.set(run.id, run);
   trim();
-  run.done = pipeline(run, actorId, agents, workdir, style, opts.extraPrompt).catch(async (e) => {
+  run.done = pipeline(run, actorId, agents, workdir, style, lessons, config, opts.extraPrompt).catch(async (e) => {
     append(run, `\nforge: pipeline error: ${(e as Error).message}\n`);
     // Uphold the never-stuck-in_progress invariant even for unexpected throws
     // (forgeCommit/addComment failures land here, after the claim).
     await bounce(run, actorId, "pipeline error", (e as Error).message);
-    settle(run, "failed");
+    settle(run, "failed", actorId, config);
   });
   return { runId: run.id };
 }
 
 async function pipeline(
   run: Run, actorId: string,
-  agents: { plan: RelayAgent; work: RelayAgent; review: RelayAgent }, workdir: string, style: string, extraPrompt?: string,
+  agents: { plan: RelayAgent; work: RelayAgent; review: RelayAgent }, workdir: string, style: string,
+  lessons: string, config: RelayConfig, extraPrompt?: string,
 ): Promise<void> {
   const extra = extraPrompt ? `\n\nOperator instructions:\n${extraPrompt}` : "";
   const onData = (c: string) => append(run, c);
@@ -207,12 +210,12 @@ async function pipeline(
     append(run, `=== FORGE plan (${run.agents.plan}) ===\n`);
     const knowledge = await getKnowledgeSafe(ticket.title);
     const res = await track(actorId, ticket.id, "plan", run.agents.plan, () => runAgent(
-      agents.plan, composePlanPrompt({ ticket, knowledge }) + PLAN_ONLY + style + extra, workdir, onData,
+      agents.plan, composePlanPrompt({ ticket, knowledge }) + PLAN_ONLY + lessons + style + extra, workdir, onData,
       (child) => { run.child = child; },
     ));
     run.child = undefined;
-    if (run.stopped) return settle(run, "stopped");
-    if (!res.ok) { await bounce(run, actorId, "planner failed", res.output); return settle(run, "failed"); }
+    if (run.stopped) return settle(run, "stopped", actorId, config);
+    if (!res.ok) { await bounce(run, actorId, "planner failed", res.output); return settle(run, "failed", actorId, config); }
     // Comments are the DURABLE record — redact them too, not just the console.
     await addComment(actorId, ticket.id, redactSecrets(res.output), "plan");
     ticket = await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });
@@ -233,12 +236,12 @@ async function pipeline(
   const lastReview = [...(await listComments(ticket.id))].reverse().find((c) => c.kind === "review");
   const findings = lastReview ? `\n\nPrevious review findings (address ALL of these):\n${lastReview.body}` : "";
   const workPrompt = composeWorkPrompt({ ticket, plan, knowledge, workdir: sandbox })
-    + findings + NARRATION + style + "\n\nDo NOT run git commit; the supervisor commits for you." + extra;
+    + findings + NARRATION + "\n\nDo NOT run git commit; the supervisor commits for you." + lessons + style + extra;
   const workRes = await track(actorId, ticket.id, "work", run.agents.work, () =>
     runAgent(agents.work, workPrompt, sandbox, onData, (child) => { run.child = child; }));
   run.child = undefined;
-  if (run.stopped) { await bounce(run, actorId, "run stopped", ""); return settle(run, "stopped"); }
-  if (!workRes.ok) { await bounce(run, actorId, "worker failed", workRes.output); return settle(run, "failed"); }
+  if (run.stopped) { await bounce(run, actorId, "run stopped", ""); return settle(run, "stopped", actorId, config); }
+  if (!workRes.ok) { await bounce(run, actorId, "worker failed", workRes.output); return settle(run, "failed", actorId, config); }
   await forgeCommit(ticket.id, ticket.title);
   await addComment(actorId, ticket.id, redactSecrets(workRes.output), "report");
   ticket = await updateTicket(actorId, ticket.id, ticket.version, { status: "review" });
@@ -255,7 +258,7 @@ async function pipeline(
     (child) => { run.child = child; },
   ));
   run.child = undefined;
-  if (run.stopped) return settle(run, "stopped");
+  if (run.stopped) return settle(run, "stopped", actorId, config);
   const verdict = parseVerdict(reviewRes.output);
   await addComment(actorId, ticket.id, redactSecrets(verdict.raw), "review");
   if (!verdict.pass) {
@@ -263,13 +266,14 @@ async function pipeline(
     await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });
   }
   // PASS: ticket STAYS in review — promotion is a human action.
-  settle(run, "passed");
+  settle(run, "passed", actorId, config);
 }
 
-function settle(run: Run, status: Status): void {
+function settle(run: Run, status: Status, actorId?: string, config?: RelayConfig): void {
   run.status = status;
   run.finishedAt = new Date().toISOString();
   void persistRun(run); // fire-and-forget: history must never break a pipeline
+  if (actorId && config) void analyzeRun(run, actorId, config);
 }
 
 // Single choke point for run-history rows. Best-effort: comments already hold
@@ -289,6 +293,28 @@ async function persistRun(run: Run): Promise<void> {
     });
   } catch (e) {
     console.warn(`forge: failed to persist run ${run.id}:`, (e as Error).message);
+  }
+}
+
+// Studies the settled run's narrated output and rewrites the shared
+// prompt-lessons document. Opt-in, fire-and-forget, never blocks a pipeline.
+async function analyzeRun(run: Run, actorId: string, config: RelayConfig): Promise<void> {
+  try {
+    if ((await getSetting("prompts.selfImprove")) !== "true") return;
+    const pick = pickAgents(config, "cheapest-first").plan;
+    const agent = { ...getAgent(config, pick.agent, "plan") };
+    agent.cmd = resolveCmd(agent, pick.model);
+    const current = await getLessons();
+    const prompt = composeAnalyzerPrompt({
+      output: run.output.slice(0, 30_000),
+      outcome: `status=${run.status} stage=${run.stage}`,
+      current,
+    });
+    const res = await runAgent(agent, prompt, config.workdir);
+    const parsed = parseLessons(res.output);
+    if (parsed !== null) await setLessons(actorId, parsed);
+  } catch (e) {
+    console.warn(`forge: analyzer failed for run ${run.id}:`, (e as Error).message);
   }
 }
 

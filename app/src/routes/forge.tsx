@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { api } from "../lib/api.js";
+import { NotFoundError } from "../api/errors.js";
 import { useProject } from "../context/project.js";
 import { parseUnifiedDiff, type DiffFile } from "../lib/diff-parse.js";
 
@@ -175,7 +176,7 @@ export function ForgeScreen() {
            }
          })
          .catch((e: any) => {
-            if (e.message?.includes("404") || e.message?.includes("no sandbox")) {
+            if (e instanceof NotFoundError) {
               setDiff("");
             } else {
               setSandboxError(e.message || "Failed to load diff");

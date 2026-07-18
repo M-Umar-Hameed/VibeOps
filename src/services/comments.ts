@@ -9,7 +9,7 @@ export async function listComments(ticketId: string): Promise<Comment[]> {
 
 export async function addComment(
   actorId: string, ticketId: string, body: string,
-  kind: "comment" | "plan" | "report" | "review" | "verification" = "comment",
+  kind: "comment" | "plan" | "report" | "review" | "verification" | "diff-summary" = "comment",
 ): Promise<Comment> {
   return db.transaction(async (tx) => {
     const [t] = await tx.select({ id: tickets.id }).from(tickets)

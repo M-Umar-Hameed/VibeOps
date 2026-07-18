@@ -418,17 +418,19 @@ it("explain-diff caches by hash (fake agent) and 404s without sandbox", async ()
   const { runId } = await startRes.json();
   await pollUntilDone(h, runId);
 
-  setScript("explain-result");
+  setScript("explain-diff");
   const explainRes = await app.request(`/forge/tickets/${ticket.id}/explain-diff`, { method: "POST", headers: h });
   expect(explainRes.status).toBe(200);
   const body1 = await explainRes.json();
-  expect(body1.summary).toContain("explain-result");
+  expect(body1.summary).toContain("explain-result-counter-");
+  const firstMarker = body1.summary.match(/explain-result-counter-\d+/)[0];
 
-  setScript("changed-explain-result");
   const cachedRes = await app.request(`/forge/tickets/${ticket.id}/explain-diff`, { method: "POST", headers: h });
-  expect((await cachedRes.json()).summary).toContain("explain-result");
+  expect((await cachedRes.json()).summary).toContain(firstMarker);
 
   const freshRes = await app.request(`/forge/tickets/${ticket.id}/explain-diff?fresh=true`, { method: "POST", headers: h });
-  expect((await freshRes.json()).summary).toContain("changed-explain-result");
+  const freshSummary = (await freshRes.json()).summary;
+  expect(freshSummary).toContain("explain-result-counter-");
+  expect(freshSummary).not.toContain(firstMarker);
 });
 

@@ -73,6 +73,11 @@ if (mode === "echo-stdin") {
   console.log(`STDIN:${data}`);
   process.exit(0);
 }
+if (mode === "explain-diff") {
+  const c = existsSync(process.env.FAKE_COUNTER_FILE) ? readFileSync(process.env.FAKE_COUNTER_FILE, "utf-8") : "0";
+  console.log(`explain-result-counter-${c}`);
+  process.exit(0);
+}
 
 const out = OUTPUTS[mode];
 if (!out) {

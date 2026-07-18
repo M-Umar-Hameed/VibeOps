@@ -3,6 +3,7 @@ import { Octokit } from "@octokit/rest";
 import { makeGithubConnector } from "./connectors/github.js";
 import { makeGitLabConnector } from "./connectors/gitlab.js";
 import { makeJiraConnector } from "./connectors/jira.js";
+import { makeAsanaConnector } from "./connectors/asana.js";
 import { runSync } from "./import.js";
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -36,6 +37,17 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
       console.log(JSON.stringify(result));
     } catch (e) {
       console.error("jira sync run failed:", (e as Error).message);
+      process.exit(1);
+    }
+  }
+
+  const asanaProjectId = process.env.SYNC_ASANA_TARGET_PROJECT;
+  if (asanaProjectId) {
+    try {
+      const result = await runSync(makeAsanaConnector(), { projectId: asanaProjectId });
+      console.log(JSON.stringify(result));
+    } catch (e) {
+      console.error("asana sync run failed:", (e as Error).message);
       process.exit(1);
     }
   }

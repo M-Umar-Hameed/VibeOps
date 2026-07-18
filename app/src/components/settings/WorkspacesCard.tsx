@@ -2,11 +2,17 @@ import { useState, useEffect, type FormEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api.js";
 import type { Project } from "../../api/types.js";
+import { pickFolder, dialogAvailable } from "../../lib/native-dialog.js";
 
 export function ProjectWorkspaceRow({ project }: { project: Project }) {
   const queryClient = useQueryClient();
   const [editValue, setEditValue] = useState("");
   const [error, setError] = useState("");
+  const [canBrowse, setCanBrowse] = useState(false);
+
+  useEffect(() => {
+    dialogAvailable().then(setCanBrowse);
+  }, []);
 
   useEffect(() => {
     setEditValue(project.repoPath || "");
@@ -70,6 +76,18 @@ export function ProjectWorkspaceRow({ project }: { project: Project }) {
           value={editValue}
           onChange={(e) => setEditValue(e.target.value)}
         />
+        {canBrowse && (
+          <button
+            type="button"
+            onClick={async () => {
+              const dir = await pickFolder();
+              if (dir) setEditValue(dir);
+            }}
+            className="shrink-0 px-4 py-2 rounded bg-white/5 hover:bg-primary hover:text-on-primary text-on-surface text-sm font-medium transition-all"
+          >
+            Browse
+          </button>
+        )}
         <button
           type="submit"
           disabled={!isDirty || savePath.isPending}

@@ -183,7 +183,7 @@ test("(f) engine e2e, idempotent second run", async () => {
   
   const responses = [
     { data: { data: [{ gid: "100", name: "Title", completed: false, modified_at: "2026-01-01T00:00:00Z" }] } },
-    { data: { data: [{ gid: "101", type: "comment", text: "c", created_by: { name: "u" }, created_at: "2026-01-01T01:00:00Z" }] } }
+    { data: { data: [{ gid: `${proj}-101`, type: "comment", text: "c", created_by: { name: "u" }, created_at: "2026-01-01T01:00:00Z" }] } }
   ];
   
   let fetchImpl = makeFetch(responses);
@@ -195,7 +195,7 @@ test("(f) engine e2e, idempotent second run", async () => {
 
   const responses2 = [
     { data: { data: [{ gid: "100", name: "Title", completed: false, modified_at: "2026-01-01T00:00:00Z" }] } },
-    { data: { data: [{ gid: "101", type: "comment", text: "c", created_by: { name: "u" }, created_at: "2026-01-01T01:00:00Z" }] } }
+    { data: { data: [{ gid: `${proj}-101`, type: "comment", text: "c", created_by: { name: "u" }, created_at: "2026-01-01T01:00:00Z" }] } }
   ];
   fetchImpl = makeFetch(responses2);
   conn = makeAsanaConnector(fetchImpl as any);

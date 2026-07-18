@@ -78,10 +78,15 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   );
 }
 
+// Safe defaults outside the provider (tests render screens bare; a screen
+// without the provider just behaves as "All projects").
+const FALLBACK: ProjectContextValue = {
+  projects: [],
+  activeProjectId: null,
+  setActiveProject: () => {},
+  refreshProjects: async () => {},
+};
+
 export function useProject() {
-  const ctx = useContext(ProjectContext);
-  if (ctx === undefined) {
-    throw new Error("useProject must be used within a ProjectProvider");
-  }
-  return ctx;
+  return useContext(ProjectContext) ?? FALLBACK;
 }

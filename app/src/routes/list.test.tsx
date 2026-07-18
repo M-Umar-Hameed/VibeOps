@@ -50,7 +50,8 @@ test("renders tickets and handles project switching & creation", async () => {
   
   await waitFor(() => expect(screen.getByText("First")).toBeInTheDocument());
   
-  fireEvent.click(screen.getByText("Existing Project"));
+  // Name renders in both the sidebar entry and the TopBar chip; click the first.
+  fireEvent.click(screen.getAllByText("Existing Project")[0]);
   await waitFor(() => {
     expect(tickets.list).toHaveBeenCalledWith({ projectId: "p1", status: undefined });
   });

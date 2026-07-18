@@ -60,6 +60,7 @@ test("guarded routes: 403 for member, non-403 for admin", { timeout: 60_000 }, a
     ["/forge/agents", { headers: memberH }],
     ["/forge/pipeline", { method: "POST", headers: memberH, body: JSON.stringify({}) }],
     ["/forge/runs", { headers: memberH }],
+    ["/forge/tickets/00000000-0000-0000-0000-000000000000/resume", { method: "POST", headers: memberH }],
     ["/forge/tickets/00000000-0000-0000-0000-000000000000/promote", { method: "POST", headers: memberH }],
     ["/forge/tickets/00000000-0000-0000-0000-000000000000/approve", { method: "POST", headers: memberH }],
     ["/council/evaluate", { method: "POST", headers: memberH, body: JSON.stringify({ prompt: "long enough prompt" }) }],

@@ -18,7 +18,7 @@ import { getSetting } from "../services/settings.js";
 import { projectWorkdir } from "../services/projects.js";
 import { ConflictError } from "../services/errors.js";
 import { logAgentUse, startAgentSession, endAgentSession } from "../services/usage.js";
-import { desc } from "drizzle-orm";
+import { desc, isNull } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { forgeRuns } from "../db/schema.js";
 
@@ -54,7 +54,7 @@ const PLAN_ONLY =
   "with repository-relative paths only (src/..., tests/...), never absolute paths.";
 
 type Stage = "plan" | "work" | "review";
-type Status = "running" | "passed" | "failed" | "stopped";
+type Status = "running" | "passed" | "failed" | "stopped" | "interrupted";
 
 type Run = {
   id: string; ticketId: string; stage: Stage; status: Status;
@@ -190,6 +190,7 @@ export async function startPipeline(
   };
   runs.set(run.id, run);
   trim();
+  await persistRun(run);
   run.done = pipeline(run, actorId, agents, workdir, styleSetting ?? "", lessons, config, opts.extraPrompt).catch(async (e) => {
     append(run, `\nforge: pipeline error: ${(e as Error).message}\n`);
     // Uphold the never-stuck-in_progress invariant even for unexpected throws
@@ -287,6 +288,7 @@ function settle(run: Run, status: Status): void {
 // the durable plan/report/review record, this is just for the runs list.
 async function persistRun(run: Run): Promise<void> {
   try {
+    const finishedAt = run.finishedAt ? new Date(run.finishedAt) : undefined;
     await db.insert(forgeRuns).values({
       id: run.id,
       ticketId: run.ticketId,
@@ -296,7 +298,10 @@ async function persistRun(run: Run): Promise<void> {
       workAgent: run.agents.work,
       reviewAgent: run.agents.review,
       startedAt: new Date(run.startedAt),
-      finishedAt: run.finishedAt ? new Date(run.finishedAt) : undefined,
+      finishedAt,
+    }).onConflictDoUpdate({
+      target: forgeRuns.id,
+      set: { status: run.status, stage: run.stage, finishedAt }
     });
   } catch (e) {
     console.warn(`forge: failed to persist run ${run.id}:`, (e as Error).message);
@@ -389,4 +394,17 @@ export function stopRun(id: string): boolean {
 
 export function awaitRun(id: string): Promise<void> {
   return runs.get(id)?.done ?? Promise.resolve();
+}
+
+export async function markInterruptedRuns(): Promise<string[]> {
+  try {
+    const rows = await db.update(forgeRuns)
+      .set({ status: "interrupted" })
+      .where(isNull(forgeRuns.finishedAt))
+      .returning({ ticketId: forgeRuns.ticketId });
+    return rows.map((r) => r.ticketId);
+  } catch (e) {
+    console.warn("forge: failed to mark interrupted runs:", (e as Error).message);
+    return [];
+  }
 }

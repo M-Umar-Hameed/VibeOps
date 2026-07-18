@@ -43,6 +43,8 @@ export function ForgeScreen() {
   const [sandboxError, setSandboxError] = useState("");
   const [viewDiff, setViewDiff] = useState(false);
 
+  const [interruptedRun, setInterruptedRun] = useState(false);
+
   const [newTask, setNewTask] = useState("");
   const [newTaskError, setNewTaskError] = useState("");
   const [creating, setCreating] = useState(false);
@@ -120,6 +122,11 @@ export function ForgeScreen() {
   useEffect(() => {
     if (selectedTicket) {
       loadSandbox(selectedTicket.id);
+      api.get("/forge/runs").then((r: any) => {
+        const ticketRuns = r.filter((run: any) => run.ticketId === selectedTicket.id);
+        const latest = ticketRuns.sort((a: any, b: any) => b.startedAt.localeCompare(a.startedAt))[0];
+        setInterruptedRun(latest?.status === "interrupted");
+      }).catch(() => setInterruptedRun(false));
       setRunOutput("");
       setRunStage("");
       setRunStatus("");
@@ -212,6 +219,26 @@ export function ForgeScreen() {
       } catch (e: any) {
         setRunError(e.message || "Failed to stop run");
       }
+    }
+  };
+
+  const handleResume = async () => {
+    if (!selectedTicket) return;
+    setIsSubmitting(true);
+    setRunError("");
+    setRunOutput("");
+    setRunStage("");
+    setRunStatus("running");
+    nextOffsetRef.current = 0;
+    try {
+      const res = await api.post(`/forge/tickets/${selectedTicket.id}/resume`) as { runId: string };
+      setActiveRunId(res.runId);
+      setInterruptedRun(false);
+    } catch (e: any) {
+      setRunError(e.message || "Pipeline resume failed");
+      setRunStatus("error");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -434,6 +461,18 @@ export function ForgeScreen() {
                   >
                     Stop
                   </button>
+                )}
+                {interruptedRun && !activeRunId && (
+                  <div className="flex items-center gap-3">
+                    <span className="text-amber-400 text-sm font-medium">Run interrupted (app restarted)</span>
+                    <button
+                      onClick={handleResume}
+                      disabled={isSubmitting}
+                      className="px-4 py-2 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-400 text-sm font-bold uppercase tracking-widest transition-all disabled:opacity-50 cursor-pointer"
+                    >
+                      Resume
+                    </button>
+                  </div>
                 )}
                 {runStage && (
                   <div className="flex items-center gap-2">

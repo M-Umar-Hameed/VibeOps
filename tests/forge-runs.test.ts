@@ -105,7 +105,7 @@ async function waitForPersistedRun(runId: string, timeoutMs = 5000) {
   const start = Date.now();
   for (;;) {
     const [row] = await db.select().from(forgeRuns).where(eq(forgeRuns.id, runId));
-    if (row) return row;
+    if (row && row.status !== "running") return row;
     if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for persisted run ${runId}`);
     await new Promise((r) => setTimeout(r, 20));
   }

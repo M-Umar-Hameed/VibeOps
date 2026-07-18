@@ -116,6 +116,18 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     });
   });
 
+  app.post("/forge/tickets/:id/resume", requireAdmin, async (c) => {
+    const ticketId = c.req.param("id");
+    const ticket = await getTicket(ticketId);
+    if (ticket.status !== "open" && ticket.status !== "planned") {
+      return c.json({ error: "ticket must be open or planned to resume" }, 409);
+    }
+    const { runId } = await startPipeline(c.get("actor").id, forgeConfig(), {
+      ticketId, planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+    });
+    return c.json({ runId }, 201);
+  });
+
   app.get("/forge/tickets/:id/diff", requireAdmin, async (c) => {
     const ticketId = c.req.param("id");
     if (!sandboxExists(ticketId)) return c.json({ error: "no sandbox for ticket" }, 404);

@@ -38,7 +38,7 @@ test("reads claude + codex accounts and sums their tokens, never leaks secrets",
   expect(claude.plan).toBe("max");
   expect(claude.tokens).toEqual({
     inputTokens: 150, outputTokens: 30, totalTokens: 180, sessions: 1,
-    freshTokens: 150, cacheReadTokens: 0,
+    freshTokens: 180, cacheReadTokens: 0,
   });
 
   expect(codex.connected).toBe(true);

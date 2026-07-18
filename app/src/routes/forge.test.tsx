@@ -219,3 +219,26 @@ test("renders a red health dot for an agent whose doctor probe failed", async ()
   const dot = await screen.findByTestId("doctor-dot-PlanGPT");
   expect(dot.className).toContain("bg-red-500");
 });
+
+test("shows empty-state when diff 404s", async () => {
+  apiFetch.mockImplementation(async (path) => {
+    if (path === "/tickets") return [{ id: "t1", title: "My Ticket", status: "review" }];
+    if (path === "/forge/agents") return [];
+    if (path === "/forge/skills") return [];
+    if (path.includes("/sandbox")) return { exists: true, branch: "forge/t1", lastVerdict: "none" };
+    if (path.includes("/diff")) throw new Error("404 no sandbox");
+    return {};
+  });
+
+  render(<ProjectProvider><ForgeScreen /></ProjectProvider>);
+  await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
+  fireEvent.click(screen.getByText("My Ticket"));
+  
+  await waitFor(() => expect(screen.getByText(/Branch:/)).toBeInTheDocument());
+  
+  const viewDiffBtn = screen.getByRole("button", { name: /View diff/i });
+  fireEvent.click(viewDiffBtn);
+  
+  await waitFor(() => expect(screen.getByText("No sandbox / no changes yet")).toBeInTheDocument());
+});
+

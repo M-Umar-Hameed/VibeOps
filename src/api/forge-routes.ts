@@ -6,10 +6,13 @@ import type { Actor } from "../db/schema.js";
 import { loadRelayConfig } from "../relay/config.js";
 import { runDoctor } from "../relay/doctor.js";
 import { parseVerdict } from "../relay/prompts.js";
-import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun } from "../forge/runs.js";
+import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, reviewDiffPayload } from "../forge/runs.js";
 import {
-  sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote,
+  sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash
 } from "../forge/sandbox.js";
+import { pickAgents } from "../forge/router.js";
+import { runAgent } from "../relay/invoke.js";
+import { resolveCmd } from "../relay/config.js";
 import { updateTicket } from "../services/tickets.js";
 import { getTicket } from "../services/history.js";
 import { addComment, listComments } from "../services/comments.js";
@@ -142,6 +145,45 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     const workdir = await resolveWorkdir(ticket.projectId, forgeConfig());
     const diff = await sandboxDiff(workdir, ticketId);
     return c.json({ diff });
+  });
+
+  app.post("/forge/tickets/:id/explain-diff", requireAdmin, async (c) => {
+    const ticketId = c.req.param("id");
+    const fresh = c.req.query("fresh") === "true";
+    if (!sandboxExists(ticketId)) return c.json({ error: "no sandbox for ticket" }, 404);
+
+    const ticket = await getTicket(ticketId);
+    const config = forgeConfig();
+    const workdir = await resolveWorkdir(ticket.projectId, config);
+    const hash = await sandboxHeadHash(workdir, ticketId);
+    const tag = `[hash:${hash}]`;
+
+    if (!fresh) {
+      const comments = await listComments(ticketId);
+      const cached = comments.find(com => com.kind === "diff-summary" && com.body.includes(tag));
+      if (cached) {
+        return c.json({ summary: cached.body.replace(tag, "").trim() });
+      }
+    }
+
+    const diff = await sandboxDiff(workdir, ticketId);
+    const stat = await sandboxDiffSummary(workdir, ticketId);
+    const payload = reviewDiffPayload(diff, stat);
+    
+    const pick = pickAgents(config, "cheapest-first").review;
+    const agentDef = config.agents[pick.agent];
+    if (!agentDef) return c.json({ error: "no review agent configured" }, 500);
+
+    const agent = { ...agentDef, cmd: resolveCmd(agentDef, pick.model) };
+    const prompt = `Summarize this diff for a non-programmer: what changed, where, and why it matters. No jargon, max 10 bullet-free sentences.\n\n${payload}`;
+    
+    const res = await runAgent(agent, prompt, workdir);
+    if (!res.ok) return c.json({ error: "agent failed to explain diff" }, 500);
+
+    const summary = res.output;
+    await addComment(c.get("actor").id, ticketId, `${tag}\n${summary}`, "diff-summary");
+
+    return c.json({ summary });
   });
 
   // Human override for a wrong or missing model verdict: the calling ADMIN

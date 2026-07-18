@@ -402,3 +402,33 @@ it("POST /forge/pipeline 400s naming the agent when the cached probe is a spawn-
   expect(res.status).toBe(400);
   expect((await res.json()).error).toContain("cannot be spawned");
 });
+
+it("explain-diff caches by hash (fake agent) and 404s without sandbox", async () => {
+  const h = await adminHeaders();
+  const ticket = await seedTicket();
+  
+  const res404 = await app.request(`/forge/tickets/${ticket.id}/explain-diff`, { method: "POST", headers: h });
+  expect(res404.status).toBe(404);
+
+  setScript("plan,work,review-pass", true);
+  const startRes = await app.request("/forge/pipeline", {
+    method: "POST", headers: h,
+    body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+  });
+  const { runId } = await startRes.json();
+  await pollUntilDone(h, runId);
+
+  setScript("explain-result");
+  const explainRes = await app.request(`/forge/tickets/${ticket.id}/explain-diff`, { method: "POST", headers: h });
+  expect(explainRes.status).toBe(200);
+  const body1 = await explainRes.json();
+  expect(body1.summary).toContain("explain-result");
+
+  setScript("changed-explain-result");
+  const cachedRes = await app.request(`/forge/tickets/${ticket.id}/explain-diff`, { method: "POST", headers: h });
+  expect((await cachedRes.json()).summary).toContain("explain-result");
+
+  const freshRes = await app.request(`/forge/tickets/${ticket.id}/explain-diff?fresh=true`, { method: "POST", headers: h });
+  expect((await freshRes.json()).summary).toContain("changed-explain-result");
+});
+

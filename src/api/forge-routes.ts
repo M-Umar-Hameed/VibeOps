@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Hono } from "hono";
@@ -242,5 +242,55 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
       updated = await updateTicket(c.get("actor").id, ticketId, updated.version, { status: "planned" });
     }
     return c.json(updated);
+  });
+
+  app.patch("/relay/agents/:name", requireAdmin, async (c) => {
+    const name = c.req.param("name");
+    const body = await c.req.json().catch(() => ({}));
+    const { roles, models, ...extra } = body;
+    
+    if (Object.keys(extra).length > 0) return c.json({ error: "extra fields not allowed" }, 400);
+
+    if (roles !== undefined) {
+      if (!Array.isArray(roles) || roles.length === 0) return c.json({ error: "roles must be a non-empty array" }, 400);
+      const validRoles = ["plan", "work", "review"];
+      if (!roles.every(r => validRoles.includes(r))) return c.json({ error: "invalid role" }, 400);
+    }
+
+    if (models !== undefined) {
+      if (!Array.isArray(models)) return c.json({ error: "models must be an array" }, 400);
+      for (const m of models) {
+        if (!m || typeof m !== "object") return c.json({ error: "invalid model" }, 400);
+        if (typeof m.name !== "string" || !m.name) return c.json({ error: "model name required" }, 400);
+        if (!["free", "cheap", "expensive"].includes(m.tier)) return c.json({ error: "invalid model tier" }, 400);
+        if (!Number.isInteger(m.quality) || m.quality < 1 || m.quality > 5) return c.json({ error: "invalid model quality" }, 400);
+      }
+    }
+
+    const configPath = process.env.VIBEOPS_RELAY_CONFIG ?? join(homedir(), ".vibeops", "relay.json");
+    let raw: string;
+    try {
+      raw = readFileSync(configPath, "utf-8");
+    } catch {
+      return c.json({ error: "relay.json not found" }, 404);
+    }
+
+    let cfg: Record<string, any>;
+    try {
+      cfg = JSON.parse(raw);
+    } catch {
+      return c.json({ error: "invalid relay.json" }, 500);
+    }
+
+    if (!cfg.agents || !cfg.agents[name]) {
+      return c.json({ error: "agent not found" }, 404);
+    }
+
+    if (roles !== undefined) cfg.agents[name].roles = roles;
+    if (models !== undefined) cfg.agents[name].models = models;
+
+    writeFileSync(configPath, JSON.stringify(cfg, null, 2), "utf-8");
+
+    return c.json({ name, roles: cfg.agents[name].roles, models: cfg.agents[name].models ?? [] });
   });
 }

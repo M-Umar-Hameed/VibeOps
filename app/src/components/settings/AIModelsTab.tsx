@@ -4,6 +4,7 @@ import { api } from "../../lib/api.js";
 import { ProviderCard } from "./ProviderCard.js";
 import { AIUsageTab } from "./AIUsageTab.js";
 import { AgentDoctorCard } from "./AgentDoctorCard.js";
+import { AgentsConfigCard } from "./AgentsConfigCard.js";
 
 type SubTab = "providers" | "usage";
 type Strategy = "cost" | "max";
@@ -109,6 +110,7 @@ export function AIModelsTab() {
       {activeTab === "providers" ? (
         <div className="space-y-8 max-w-3xl">
           <AgentDoctorCard />
+          <AgentsConfigCard />
 
           {/* Routing Strategy Card */}
           <div className="glass-card rounded-xl border border-white/10 p-6 flex flex-col gap-4 relative overflow-hidden">

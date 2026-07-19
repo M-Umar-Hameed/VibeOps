@@ -119,4 +119,32 @@ describe("project import: import", () => {
     });
     expect(res.status).toBe(400);
   });
+
+  it("rejects a mixed batch with 400 and creates nothing", async () => {
+    const h = await adminHeaders();
+    const root = tmpDir();
+    const dirA = join(root, "good");
+    mkdirSync(dirA, { recursive: true });
+    
+    // Check initial count to ensure no side effects
+    const initialRes = await app.request("/projects", { method: "GET", headers: h });
+    const initialProjects = await initialRes.json();
+
+    const res = await app.request("/projects/import", {
+      method: "POST", headers: h,
+      body: JSON.stringify({
+        items: [
+          { name: "Good", path: dirA },
+          { name: "Evil", path: "C:\\real\\..\\..\\Windows" }
+        ]
+      }),
+    });
+    expect(res.status).toBe(400);
+
+    const afterRes = await app.request("/projects", { method: "GET", headers: h });
+    const afterProjects = await afterRes.json();
+    expect(afterProjects).toHaveLength(initialProjects.length);
+
+    rmSync(root, { recursive: true, force: true });
+  });
 });

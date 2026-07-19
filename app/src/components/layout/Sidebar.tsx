@@ -4,6 +4,7 @@ import { useProject } from "../../context/project.js";
 import { projects as projectsApi } from "../../api/projects.js";
 import { api } from "../../lib/api.js";
 import { pickFolder, dialogAvailable } from "../../lib/native-dialog.js";
+import { ImportFromFolder } from "../projects/ImportFromFolder.js";
 
 export function Sidebar({ isOpen = false, setIsOpen = (_v: boolean) => {} }) {
   const location = useLocation();
@@ -225,13 +226,16 @@ export function Sidebar({ isOpen = false, setIsOpen = (_v: boolean) => {} }) {
 
           <div className="pt-2 px-2">
             {!isAdding ? (
-              <button
-                onClick={() => setIsAdding(true)}
-                className="w-full flex items-center gap-2 px-4 py-2 text-sm text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-all"
-              >
-                <span className="material-symbols-outlined text-sm">add</span>
-                Add project
-              </button>
+              <>
+                <button
+                  onClick={() => setIsAdding(true)}
+                  className="w-full flex items-center gap-2 px-4 py-2 text-sm text-on-surface-variant hover:text-primary hover:bg-primary/10 rounded transition-all"
+                >
+                  <span className="material-symbols-outlined text-sm">add</span>
+                  Add project
+                </button>
+                <ImportFromFolder />
+              </>
             ) : (
               <form onSubmit={handleSubmit} className="p-3 bg-white/5 rounded border border-white/10 flex flex-col gap-3">
                 <input

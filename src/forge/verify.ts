@@ -1,3 +1,6 @@
+import { eq } from "drizzle-orm";
+import { db } from "../db/client.js";
+import { actors } from "../db/schema.js";
 import { listComments } from "../services/comments.js";
 
 export const MISMATCH_WARNING = "WARNING: Model routing mismatch. The agent reported using a different model than requested.";
@@ -36,8 +39,16 @@ export async function computeVerificationStatus(
 ): Promise<boolean | "unknown"> {
   try {
     const comments = await listComments(ticketId);
+    // Markers are only trusted on pipeline-written comments (plan/report/
+    // review) authored by an admin — same trust rule as the verdict gate.
+    // Anyone can TYPE the marker string into a plain comment; it must not
+    // spoof the badge.
+    const adminRows = await db.select({ id: actors.id }).from(actors).where(eq(actors.role, "admin"));
+    const adminIds = new Set(adminRows.map((a) => a.id));
+    const PIPELINE_KINDS = new Set(["plan", "report", "review"]);
     let finalStatus: boolean | "unknown" = "unknown";
     for (const c of comments) {
+      if (!PIPELINE_KINDS.has(c.kind) || !adminIds.has(c.authorId)) continue;
       if (window) {
         const at = new Date(c.createdAt as any).getTime();
         if (at < window.from.getTime() - 5000) continue;

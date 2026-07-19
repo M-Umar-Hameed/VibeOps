@@ -282,7 +282,9 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
       return c.json({ error: "invalid relay.json" }, 500);
     }
 
-    if (!cfg.agents || !cfg.agents[name]) {
+    // Own-property check: agents["__proto__"] resolves to Object.prototype
+    // (truthy), and assigning through it would pollute every object.
+    if (!cfg.agents || !Object.prototype.hasOwnProperty.call(cfg.agents, name)) {
       return c.json({ error: "agent not found" }, 404);
     }
 

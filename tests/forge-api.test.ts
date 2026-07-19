@@ -506,3 +506,14 @@ it("PATCH /relay/agents/:name updates relay.json while keeping cmd untouched", a
   expect(agent.roles).toEqual(["plan", "work"]);
   expect(agent.models).toEqual([{ name: "fast", tier: "free", quality: 2 }]);
 });
+
+it("PATCH /relay/agents rejects prototype-polluting names", async () => {
+  const h = await adminHeaders();
+  for (const name of ["__proto__", "constructor", "prototype"]) {
+    const res = await app.request(`/relay/agents/${encodeURIComponent(name)}`, {
+      method: "PATCH", headers: h, body: JSON.stringify({ roles: ["plan"] }),
+    });
+    expect(res.status).toBe(404);
+  }
+  expect(({} as any).roles).toBeUndefined();
+});

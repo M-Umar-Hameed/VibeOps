@@ -40,7 +40,12 @@
     "resources": [
       "resources/server/**/*",
       "resources/node/**/*"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "windows/hooks.nsh"
+      }
+    }
   },
   "mainBinaryName": "VibeOps"
 }

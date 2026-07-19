@@ -17,3 +17,6 @@ To distribute a signed and notarized app with auto-update support, the owner nee
 2. **Notarytool**: Ensure the Apple credentials are correct so `tauri` can automatically notarize the app.
 3. **Updater Keygen**: Generate Tauri signing keys using `npx tauri signer generate`.
 4. **Tauri Config**: Add the updater endpoint and the generated public key to `app/src-tauri/tauri.conf.json`.
+
+## Windows Installer Notes
+The NSIS installer automatically closes any running `VibeOps.exe` and `node.exe` sidecar from the install directory before installing over an existing install — no manual close needed.

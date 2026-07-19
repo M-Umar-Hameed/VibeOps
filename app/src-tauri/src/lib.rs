@@ -56,7 +56,7 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
-            if let tauri::RunEvent::Exit = event {
+            if matches!(event, tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }) {
                 if let Some(mut child) = app.state::<Sidecar>().0.lock().unwrap().take() {
                     let _ = child.kill();
                 }

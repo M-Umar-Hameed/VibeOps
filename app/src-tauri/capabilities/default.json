@@ -17,6 +17,7 @@
       ]
     },
     "store:default",
+    "updater:default",
     {
       "identifier": "fs:allow-read-text-file",
       "allow": [{ "path": "$HOME/.vibeops/*" }]

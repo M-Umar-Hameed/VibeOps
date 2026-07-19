@@ -23,8 +23,17 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ1OTUzOENFN0Y5N0FGQUYKUldTdnI1ZC96amlWUmJOSVFYTUduUy9VZm0reGZXa29FT2VhbElRb1U2dm5qSC8xT3g0eDZnaXcK",
+      "endpoints": [
+        "https://github.com/M-Umar-Hameed/ARC/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": [
       "nsis",
       "deb",

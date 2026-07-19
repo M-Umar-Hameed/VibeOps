@@ -5,6 +5,7 @@ import { TopBar } from "../components/layout/TopBar";
 import { ShortcutsPopup } from "../components/layout/ShortcutsPopup";
 import { Wizard } from "../components/Wizard";
 import { api } from "../lib/api";
+import { checkForUpdate } from "../lib/updater";
 
 export function Root() {
   const [showWizard, setShowWizard] = useState(false);
@@ -13,6 +14,7 @@ export function Root() {
     api.get("/system/first-run").then((res: any) => {
       if (res.firstRun) setShowWizard(true);
     }).catch(() => {});
+    checkForUpdate();
   }, []);
 
   return (

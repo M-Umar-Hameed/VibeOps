@@ -42,7 +42,7 @@ test("Save PATCHes edited row and refreshes", async () => {
   
   apiFetch.mockClear();
   
-  const inputs = screen.getAllByPlaceholderText("Absolute folder path");
+  const inputs = screen.getAllByPlaceholderText("Choose a folder...");
   fireEvent.change(inputs[2], { target: { value: "/new/path" } });
   
   const saveButtons = screen.getAllByText("Save");
@@ -86,7 +86,7 @@ test("Failed PATCH shows inline error", async () => {
     return {};
   });
   
-  const inputs = screen.getAllByPlaceholderText("Absolute folder path");
+  const inputs = screen.getAllByPlaceholderText("Choose a folder...");
   fireEvent.change(inputs[2], { target: { value: "/forbidden" } });
   
   const saveButtons = screen.getAllByText("Save");

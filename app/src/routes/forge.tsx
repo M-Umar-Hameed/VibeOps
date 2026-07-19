@@ -72,7 +72,7 @@ export function ForgeScreen() {
   const loadComments = async (id: string) => {
     try {
       const res = await api.get(`/tickets/${id}/comments`);
-      setTicketComments(res as any[]);
+      setTicketComments(Array.isArray(res) ? res : []);
     } catch (e) {
       // ignore
     }

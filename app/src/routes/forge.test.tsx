@@ -4,9 +4,15 @@ import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
 const apiFetch = vi.fn();
 vi.mock("../api/client.js", () => ({ apiFetch: (...a: any[]) => apiFetch(...a) }));
 
+import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 import { ForgeScreen } from "./forge.js";
 import { NotFoundError } from "../api/errors.js";
 import { ProjectProvider } from "../context/project.js";
+
+// SpecEditor uses react-query; every render needs a client.
+const wrap = (ui: any) => (
+  <QueryClientProvider client={new QueryClient()}><ProjectProvider>{ui}</ProjectProvider></QueryClientProvider>
+);
 
 beforeEach(() => {
   apiFetch.mockReset();
@@ -31,7 +37,7 @@ test("renders agent dropdowns from /forge/agents data", async () => {
     return {};
   });
 
-  render(<ProjectProvider><ForgeScreen /></ProjectProvider>);
+  render(wrap(<ForgeScreen />));
   await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
   
   fireEvent.click(screen.getByText("My Ticket"));
@@ -61,7 +67,7 @@ test("Run pipeline posts the selected agents and ticketId", async () => {
     return {};
   });
 
-  render(<ProjectProvider><ForgeScreen /></ProjectProvider>);
+  render(wrap(<ForgeScreen />));
   await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
   fireEvent.click(screen.getByText("My Ticket"));
   
@@ -99,7 +105,7 @@ test("Run pipeline posts untouched defaults without model keys", async () => {
     return {};
   });
 
-  render(<ProjectProvider><ForgeScreen /></ProjectProvider>);
+  render(wrap(<ForgeScreen />));
   await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
   fireEvent.click(screen.getByText("My Ticket"));
   
@@ -121,7 +127,7 @@ test("Promote button disabled when lastVerdict is not pass and enabled when it i
     return {};
   });
 
-  const { unmount } = render(<ProjectProvider><ForgeScreen /></ProjectProvider>);
+  const { unmount } = render(wrap(<ForgeScreen />));
   await waitFor(() => expect(screen.getByText("Review Ticket")).toBeInTheDocument());
   fireEvent.click(screen.getByText("Review Ticket"));
   
@@ -140,7 +146,7 @@ test("Promote button disabled when lastVerdict is not pass and enabled when it i
     return {};
   });
 
-  render(<ProjectProvider><ForgeScreen /></ProjectProvider>);
+  render(wrap(<ForgeScreen />));
   await waitFor(() => expect(screen.getByText("Review Ticket")).toBeInTheDocument());
   fireEvent.click(screen.getByText("Review Ticket"));
   
@@ -170,7 +176,7 @@ test("console appends polled chunks (mock two successive output responses, use f
     return {};
   });
 
-  render(<ProjectProvider><ForgeScreen /></ProjectProvider>);
+  render(wrap(<ForgeScreen />));
   await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
   fireEvent.click(screen.getByText("My Ticket"));
   
@@ -212,7 +218,7 @@ test("renders a red health dot for an agent whose doctor probe failed", async ()
     return {};
   });
 
-  render(<ProjectProvider><ForgeScreen /></ProjectProvider>);
+  render(wrap(<ForgeScreen />));
   await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
   fireEvent.click(screen.getByText("My Ticket"));
   await waitFor(() => expect(screen.getByText("Pipeline Settings")).toBeInTheDocument());
@@ -231,7 +237,7 @@ test("shows empty-state when diff 404s", async () => {
     return {};
   });
 
-  render(<ProjectProvider><ForgeScreen /></ProjectProvider>);
+  render(wrap(<ForgeScreen />));
   await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
   fireEvent.click(screen.getByText("My Ticket"));
   
@@ -268,7 +274,7 @@ test("sandbox activity panel appears only while running, and hides on 404", asyn
     return {};
   });
 
-  render(<ProjectProvider><ForgeScreen /></ProjectProvider>);
+  render(wrap(<ForgeScreen />));
   await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
   fireEvent.click(screen.getByText("My Ticket"));
   expect(screen.queryByText("Sandbox activity")).not.toBeInTheDocument();
@@ -296,7 +302,7 @@ test("spec renders body, edit saves with expectedVersion", async () => {
     return {};
   });
 
-  render(<ProjectProvider><ForgeScreen /></ProjectProvider>);
+  render(wrap(<ForgeScreen />));
   await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
   fireEvent.click(screen.getByText("My Ticket"));
 
@@ -326,7 +332,7 @@ test("request-changes posts comment + bounces review->planned", async () => {
     return {};
   });
 
-  render(<ProjectProvider><ForgeScreen /></ProjectProvider>);
+  render(wrap(<ForgeScreen />));
   await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
   fireEvent.click(screen.getByText("My Ticket"));
 

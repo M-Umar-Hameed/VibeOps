@@ -168,16 +168,9 @@ External mode serves all interfaces (for LAN/VPS use) and does not auto-bootstra
 
 The vault watcher indexes `.md` and `.pdf` (PDF via a JVM-backed converter — needs Java 11+; without it PDFs are skipped with a warning). Files are hash-gated (unchanged files cost nothing on re-index) and deletions leave the index. Session ingestion (`npm run ingest:sessions` or the Sync button in the app) covers the last 30 days by default (`SESSIONS_SINCE_DAYS`), is hash-gated, and is safe to re-run. Run anything with `EMBED_PROVIDER=fake` for a no-network dry run.
 
-## Native folder picker (optional)
+## Native folder picker
 
-Browse buttons next to folder-path fields need the Tauri dialog plugin, not bundled by default. To enable (owner step):
-
-1. `npm i @tauri-apps/plugin-dialog` in `app/`
-2. `cargo add tauri-plugin-dialog` in `app/src-tauri`
-3. Register the plugin in `app/src-tauri/src/lib.rs` (or `main.rs`) builder chain
-4. Add dialog permissions to `app/src-tauri/capabilities/default.json`
-
-Without these steps the app works normally — Browse buttons stay hidden, paths still typed by hand.
+Browse buttons next to every folder-path field use the Tauri dialog plugin, bundled by default — no setup needed. Picking a folder fills the field; typing the path directly still works.
 
 ## License
 

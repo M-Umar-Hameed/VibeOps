@@ -72,7 +72,7 @@ export function ProjectWorkspaceRow({ project }: { project: Project }) {
         <input
           type="text"
           className="flex-1 min-w-0 bg-surface-container-lowest/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface focus:border-primary outline-none transition-colors"
-          placeholder="Absolute folder path"
+          placeholder="Choose a folder..."
           value={editValue}
           onChange={(e) => setEditValue(e.target.value)}
         />
@@ -83,7 +83,7 @@ export function ProjectWorkspaceRow({ project }: { project: Project }) {
               const dir = await pickFolder();
               if (dir) setEditValue(dir);
             }}
-            className="shrink-0 px-4 py-2 rounded bg-white/5 hover:bg-primary hover:text-on-primary text-on-surface text-sm font-medium transition-all"
+            className="shrink-0 px-4 py-2 rounded bg-primary text-on-primary hover:opacity-90 text-sm font-medium transition-all"
           >
             Browse
           </button>

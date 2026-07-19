@@ -255,7 +255,7 @@ export function Sidebar({ isOpen = false, setIsOpen = (_v: boolean) => {} }) {
                 <div className="flex gap-2">
                   <input
                     type="text"
-                    placeholder="Absolute folder path (optional)"
+                    placeholder="Choose a folder... (optional)"
                     value={addPath}
                     onChange={(e) => setAddPath(e.target.value)}
                     disabled={isSubmitting || !!needsGitInitFor}
@@ -269,7 +269,7 @@ export function Sidebar({ isOpen = false, setIsOpen = (_v: boolean) => {} }) {
                         if (dir) setAddPath(dir);
                       }}
                       disabled={isSubmitting || !!needsGitInitFor}
-                      className="shrink-0 px-3 py-1.5 rounded bg-white/10 hover:bg-primary hover:text-on-primary text-sm text-on-surface disabled:opacity-50"
+                      className="shrink-0 px-3 py-1.5 rounded bg-primary text-on-primary hover:opacity-90 text-sm font-medium disabled:opacity-50"
                     >
                       Browse
                     </button>

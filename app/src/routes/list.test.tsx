@@ -67,7 +67,7 @@ test("renders tickets and handles project switching & creation", async () => {
   fireEvent.click(screen.getByText("Add project"));
   
   const nameInput = screen.getByPlaceholderText("Project name");
-  const pathInput = screen.getByPlaceholderText("Absolute folder path (optional)");
+  const pathInput = screen.getByPlaceholderText("Choose a folder... (optional)");
   
   fireEvent.change(nameInput, { target: { value: "New Proj" } });
   fireEvent.change(pathInput, { target: { value: "/tmp/new" } });

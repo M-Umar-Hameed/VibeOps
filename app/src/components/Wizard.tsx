@@ -88,8 +88,8 @@ export function Wizard({ onComplete }: { onComplete: () => void }) {
             <p className="text-on-surface-variant">Step 1: Let's set up your first project workspace.</p>
             <input required placeholder="Project Name" value={name} onChange={e => setName(e.target.value)} className="bg-surface-container border border-white/10 p-2 rounded text-on-surface" />
             <div className="flex gap-2">
-              <input placeholder="Absolute folder path (optional)" value={path} onChange={e => setPath(e.target.value)} className="bg-surface-container border border-white/10 p-2 rounded text-on-surface flex-1" />
-              {canBrowse && <button type="button" onClick={async () => { const dir = await pickFolder(); if (dir) setPath(dir); }} className="px-4 bg-white/10 text-on-surface rounded hover:bg-white/20">Browse</button>}
+              <input placeholder="Choose a folder... (optional)" value={path} onChange={e => setPath(e.target.value)} className="bg-surface-container border border-white/10 p-2 rounded text-on-surface flex-1" />
+              {canBrowse && <button type="button" onClick={async () => { const dir = await pickFolder(); if (dir) setPath(dir); }} className="px-4 bg-primary text-on-primary rounded hover:opacity-90 font-medium">Browse</button>}
             </div>
             {createErr && <p className="text-error">{createErr}</p>}
             <button type="submit" disabled={!name || isSubmitting} className="bg-primary text-on-primary py-2 rounded font-bold uppercase tracking-widest disabled:opacity-50">Create Project</button>

@@ -1,3 +1,11 @@
+## Trust model
+The design is strictly single-owner-plus-their-agents. It is explicitly NOT multi-tenant.
+- **One human owner**: The system is designed for a single human operator.
+- **Agents as members**: Agents act as semi-trusted `member` actors.
+- **Blast radius**: A leaked `member` key can read workspace-wide tickets and notes (by design), but it cannot mutate settings, actors, budgets, forge gates, or access admin-only or council surfaces.
+- **Rotation**: Key rotation is done by revoking the actor and re-minting a new one.
+- **Secrets**: `relay.json` contains sensitive command templates and is never served by the API.
+
 ## Threat model
 Prompt injection via untrusted text (ticket bodies, synced comments, RAG knowledge chunks, session transcripts) concatenated into plan/work/review/council prompts is the primary injection surface here, not SQLi (parameterized queries throughout via drizzle).
 

@@ -1,4 +1,15 @@
-# Releasing VibeOps on macOS
+# Releasing VibeOps
+
+## Updater keys: where each half goes
+
+`npx tauri signer generate` produces a keypair. The two halves have very different handling:
+
+- **Private key + its password: never enter this repository.** Not in `.env`, not in `.env.example`, not in `tauri.conf.json`, not in any committed file. Keep them in your password manager, and add them to GitHub Actions secrets as `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` for CI builds. For local release builds, set the same two names as environment variables in the shell that runs `tauri build` — the Tauri CLI reads them automatically. Losing this key means shipped apps can never verify another update; treat it like a code-signing cert.
+- **Public key: committed to the repo.** It goes in `app/src-tauri/tauri.conf.json` under `plugins.updater.pubkey`, next to the update-manifest `endpoints` URL, once an update-hosting location exists (GitHub Releases works: point the endpoint at a `latest.json` asset). Until an endpoint exists, leave the updater unconfigured — a pubkey without an endpoint does nothing.
+
+Enable order when ready: add `tauri-plugin-updater` (Cargo + builder + capability, same pattern as the dialog plugin), set `pubkey` + `endpoints`, export the two env vars, build. The build output then includes `.sig` files that shipped apps verify against the committed pubkey.
+
+## Releasing on macOS
 
 ## Triggering a Build
 The macOS build pipeline can be triggered in two ways:

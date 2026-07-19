@@ -71,7 +71,7 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
 
   app.post("/forge/pipeline", requireAdmin, async (c) => {
     const body = await c.req.json().catch(() => ({}));
-    const { ticketId, planAgent, workAgent, reviewAgent, extraPrompt, planModel, workModel, reviewModel, force } = body;
+    const { ticketId, planAgent, workAgent, reviewAgent, extraPrompt, planModel, workModel, reviewModel, force, operatorNotes } = body;
     if (typeof ticketId !== "string" || !ticketId) return c.json({ error: "ticketId required" }, 400);
     if (typeof planAgent !== "string" || !planAgent) return c.json({ error: "planAgent required" }, 400);
     if (typeof workAgent !== "string" || !workAgent) return c.json({ error: "workAgent required" }, 400);
@@ -79,13 +79,16 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     if (extraPrompt !== undefined && typeof extraPrompt !== "string") {
       return c.json({ error: "extraPrompt must be a string" }, 400);
     }
+    if (operatorNotes !== undefined && typeof operatorNotes !== "string") {
+      return c.json({ error: "operatorNotes must be a string" }, 400);
+    }
     for (const [key, val] of Object.entries({ planModel, workModel, reviewModel })) {
       if (val !== undefined && typeof val !== "string") return c.json({ error: `${key} must be a string` }, 400);
     }
 
     try {
       const { runId, doctorWarnings } = await startPipeline(c.get("actor").id, forgeConfig(), {
-        ticketId, planAgent, workAgent, reviewAgent, extraPrompt, planModel, workModel, reviewModel, force,
+        ticketId, planAgent, workAgent, reviewAgent, extraPrompt, planModel, workModel, reviewModel, force, operatorNotes,
       });
       return c.json({ runId, doctorWarnings }, 201);
     } catch (e) {
@@ -141,8 +144,10 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     if (ticket.status !== "open" && ticket.status !== "planned") {
       return c.json({ error: "ticket must be open or planned to resume" }, 409);
     }
+    const body = await c.req.json().catch(() => ({}));
+    const operatorNotes = typeof body.operatorNotes === "string" ? body.operatorNotes : undefined;
     const { runId, doctorWarnings } = await startPipeline(c.get("actor").id, forgeConfig(), {
-      ticketId, planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+      ticketId, planAgent: "auto", workAgent: "auto", reviewAgent: "auto", operatorNotes,
     });
     return c.json({ runId, doctorWarnings }, 201);
   });

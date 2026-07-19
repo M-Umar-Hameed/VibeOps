@@ -28,6 +28,7 @@ const OUTPUT_CAP = 400_000;
 const MAX_ACTIVE = 3;
 const KEEP_FINISHED = 20;
 const MAX_EXTRA_PROMPT = 10_000;
+const MAX_OPERATOR_NOTES = 2000;
 export const DIFF_PROMPT_CAP = 40_000;
 
 // Large diffs blow the reviewer's context for little benefit; past the cap, a
@@ -61,6 +62,7 @@ type Status = "running" | "passed" | "failed" | "stopped" | "interrupted";
 type Run = {
   id: string; ticketId: string; stage: Stage; status: Status;
   agents: { plan: string; work: string; review: string };
+  operatorNotes?: string;
   output: string; startedAt: string; finishedAt?: string;
   child?: ChildProcess; // the in-flight agent CLI for the current stage, if any
   stopped: boolean;
@@ -157,7 +159,7 @@ export async function resolveWorkdir(ticketProjectId: string, config: RelayConfi
 export async function startPipeline(
   actorId: string, config: RelayConfig,
   opts: {
-    ticketId: string; planAgent: string; workAgent: string; reviewAgent: string; extraPrompt?: string;
+    ticketId: string; planAgent: string; workAgent: string; reviewAgent: string; extraPrompt?: string; operatorNotes?: string;
     planModel?: string; workModel?: string; reviewModel?: string; force?: boolean;
   },
 ): Promise<{ runId: string; doctorWarnings: string[] }> {
@@ -222,6 +224,7 @@ export async function startPipeline(
   const run: Run = {
     id: randomUUID(), ticketId: opts.ticketId, stage: "plan", status: "running",
     agents: { plan: composite(planPick), work: composite(workPick), review: composite(reviewPick) },
+    operatorNotes: opts.operatorNotes?.slice(0, MAX_OPERATOR_NOTES),
     output: "", startedAt: new Date().toISOString(), stopped: false,
     done: Promise.resolve(),
   };
@@ -310,7 +313,7 @@ async function pipeline(
   const stat = await sandboxDiffSummary(workdir, ticket.id);
   const reviewRes = await track(actorId, ticket.id, "review", run.agents.review, () => runAgent(
     agents.review,
-    composeReviewPrompt({ ticket, plan, report: workRes.output, diff: reviewDiffPayload(diff, stat) }) + roleStyle("review", styleSetting),
+    composeReviewPrompt({ ticket, plan, report: workRes.output, diff: reviewDiffPayload(diff, stat), operatorNotes: run.operatorNotes }) + roleStyle("review", styleSetting),
     workdir, onData,
     (child) => { run.child = child; },
   ));

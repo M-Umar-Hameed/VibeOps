@@ -21,6 +21,7 @@ Prompt injection via untrusted text (ticket bodies, synced comments, RAG knowled
 - repoPath/workdir validated absolute with no `..` segments before any git operation;
 - Export filenames stripped of CR/LF/quotes/non-ASCII;
 - No `dangerouslySetInnerHTML` anywhere in `app/src`.
+- Operator notes travel via `operatorNotes` API field only, rendered trusted/unfenced in the review prompt; nothing derived from ticket body, comments, or worker output ever populates it. Workers no longer need to relay supervisor context through REPORT — operator sets it once via the pipeline start call.
 
 ## Best-effort, not guaranteed
 Fencing and reviewer instructions raise the bar but a sufficiently crafted injection can still degrade WORK quality or bias a model's narrative — this is a property of LLMs reading text, not something a string wrapper can fully close. The backstop is structural, not persuasive: PASS never auto-closes a ticket; a human must call `/forge/tickets/:id/promote`, which mechanically requires an admin-authored comment (verified by `actors.role`, not by prompt content) and a non-empty sandbox diff. No amount of prompt injection can forge that row.

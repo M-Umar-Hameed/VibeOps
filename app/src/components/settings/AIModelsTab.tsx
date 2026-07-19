@@ -10,7 +10,34 @@ type SubTab = "providers" | "usage";
 type Strategy = "cost" | "max";
 type CommProfile = "off" | "auto" | "caveman" | "humanizer";
 
+const VOYAGE_MODELS = ["voyage-3", "voyage-3-lite", "voyage-3.5", "voyage-3.5-lite", "voyage-code-3"];
+
+function VoyageModelSelect() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["settings", "voyage.model"],
+    queryFn: async () => (await api.get("/settings/voyage.model")).value || "voyage-3",
+  });
+  const save = useMutation({
+    mutationFn: async (value: string) => { await api.patch("/settings/voyage.model", { value }); },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings", "voyage.model"] }),
+  });
+  return (
+    <div className="mt-2 flex items-center gap-2">
+      <label className="text-[11px] text-on-surface-variant/70 font-code-sm">Model</label>
+      <select
+        value={data ?? "voyage-3"}
+        onChange={(e) => save.mutate(e.target.value)}
+        className="bg-surface-container-lowest/50 border border-white/10 rounded px-2 py-1 text-xs text-on-surface outline-none"
+      >
+        {VOYAGE_MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+      </select>
+    </div>
+  );
+}
+
 export function AIModelsTab() {
+
   const [activeTab, setActiveTab] = useState<SubTab>("providers");
   const queryClient = useQueryClient();
 
@@ -274,13 +301,14 @@ export function AIModelsTab() {
                     </div>
                   }
                 />
-                <ProviderCard 
+                <ProviderCard
                   settingKey="voyage.api_key"
                   name="Voyage AI"
                   subtitle="Premium Knowledge Embeddings"
                   placeholder="pa-..."
                   borderColorClass="[#8B5CF6]/40"
                   note="Used only for semantic search embeddings over your tickets/knowledge. Optional — VibeOps falls back to a local, zero-key embedder if this is empty."
+                  extra={<VoyageModelSelect />}
                   icon={
                     <div className="w-12 h-12 bg-[#8B5CF6]/20 rounded-xl flex items-center justify-center">
                       <span className="material-symbols-outlined text-2xl text-[#8B5CF6]">explore</span>

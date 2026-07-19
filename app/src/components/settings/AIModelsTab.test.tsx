@@ -29,8 +29,10 @@ test("selecting Maximum Intelligence persists the routing strategy via PATCH", a
 
 test("switching the comm profile to Off persists via PATCH", async () => {
   render(wrap(<AIModelsTab />));
-  await waitFor(() => expect(screen.getByRole("combobox")).toBeInTheDocument());
-  fireEvent.change(screen.getByRole("combobox"), { target: { value: "off" } });
+  await waitFor(() => expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0));
+  // Multiple selects exist now (voyage model + comm profile); pick the comm one.
+  const commSelect = screen.getAllByRole("combobox").find((el) => el.querySelector('option[value="auto"]'))!;
+  fireEvent.change(commSelect, { target: { value: "off" } });
   await waitFor(() =>
     expect(apiFetch).toHaveBeenCalledWith("/settings/agents.commProfile", { method: "PATCH", body: { value: "off" } }),
   );

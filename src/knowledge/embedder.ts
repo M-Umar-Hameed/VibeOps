@@ -11,11 +11,18 @@ export interface Embedder {
 export const MODEL_DIMS: Record<string, number> = {
   "voyage-3": 1024,
   "voyage-3-lite": 512,
+  "voyage-3.5": 1024,
+  "voyage-3.5-lite": 1024,
+  "voyage-code-3": 1024,
   "text-embedding-3-small": 1536,
   "text-embedding-3-large": 3072,
   "text-embedding-004": 768,
   "all-MiniLM-L6-v2": 384,
 };
+
+// Matryoshka models accept output_dimension; we pin 1024 to match the vector
+// column. Models absent here use their fixed native dim.
+const OUTPUT_DIM_MODELS = new Set(["voyage-3.5", "voyage-3.5-lite", "voyage-code-3"]);
 
 // Deterministic pseudo-embedding for tests: hash-seeded unit-ish vector.
 export class FakeEmbedder implements Embedder {
@@ -70,14 +77,18 @@ export class VoyageEmbedder implements Embedder {
     this.dim = d;
   }
   async embed(texts: string[]): Promise<number[][]> {
+    const body: Record<string, unknown> = { input: texts, model: this.model };
+    if (OUTPUT_DIM_MODELS.has(this.model)) body.output_dimension = this.dim;
     const res = await fetch("https://api.voyageai.com/v1/embeddings", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey}` },
-      body: JSON.stringify({ input: texts, model: this.model }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`voyage embed failed: ${res.status}`);
     const data = (await res.json()) as { data: { embedding: number[] }[] };
-    return data.data.map((d) => d.embedding);
+    // Pad sub-1024 dims to the vector(1024) column width, same as the local
+    // embedder — shared zero padding preserves cosine similarity.
+    return data.data.map((d) => padTo(d.embedding, 1024));
   }
 }
 

@@ -15,6 +15,7 @@ export async function setSetting(key: string, value: string): Promise<void> {
   if (key === "openai.api_key") process.env.OPENAI_API_KEY = value;
   if (key === "anthropic.api_key") process.env.ANTHROPIC_API_KEY = value;
   if (key === "voyage.api_key") process.env.VOYAGE_API_KEY = value;
+  if (key === "voyage.model") process.env.EMBED_MODEL = value;
   if (key === "google.api_key") process.env.GEMINI_API_KEY = value;
 }
 
@@ -24,6 +25,7 @@ export async function applyEnvSettings(): Promise<void> {
     if (key === "openai.api_key") process.env.OPENAI_API_KEY = value;
     if (key === "anthropic.api_key") process.env.ANTHROPIC_API_KEY = value;
     if (key === "voyage.api_key") process.env.VOYAGE_API_KEY = value;
+    if (key === "voyage.model") process.env.EMBED_MODEL = value;
     if (key === "google.api_key") process.env.GEMINI_API_KEY = value;
   }
 }

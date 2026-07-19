@@ -10,7 +10,11 @@ export function AgentsConfigCard() {
 
   const { data: agents, isFetching } = useQuery({
     queryKey: ["forge", "agents"],
-    queryFn: () => api.get("/forge/agents") as Promise<AgentConfig[]>,
+    // Guard non-array responses (error bodies) — .map on them crashes the tab.
+    queryFn: async () => {
+      const res = await api.get("/forge/agents");
+      return (Array.isArray(res) ? res : []) as AgentConfig[];
+    },
   });
 
   return (

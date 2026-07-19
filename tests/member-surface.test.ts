@@ -31,7 +31,8 @@ test("member surface audit: admin surfaces return 403", async () => {
     ["/ingest/sessions", { method: "POST", headers: h, body: JSON.stringify({ sinceDays: 0 }) }],
     ["/knowledge/obsidian/start", { method: "POST", headers: h, body: JSON.stringify({ vaultPath: "x" }) }],
     ["/knowledge/obsidian/stop", { method: "POST", headers: h, body: JSON.stringify({}) }],
-    ["/mcp/install", { method: "POST", headers: h, body: JSON.stringify({ client: "x" }) }]
+    ["/mcp/install", { method: "POST", headers: h, body: JSON.stringify({ client: "x" }) }],
+    ["/relay/agents/x", { method: "PATCH", headers: h, body: JSON.stringify({ roles: ["plan"] }) }]
   ];
 
   for (const [path, init] of checks) {

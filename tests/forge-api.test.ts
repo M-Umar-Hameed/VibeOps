@@ -458,3 +458,51 @@ it("explain-diff caches by hash (fake agent) and 404s without sandbox", async ()
   expect(freshSummary).not.toContain(firstMarker);
 });
 
+it("PATCH /relay/agents/:name returns 400 for bad payloads and extra fields", async () => {
+  const h = await adminHeaders();
+  
+  const resExtra = await app.request("/relay/agents/fake", {
+    method: "PATCH", headers: h, body: JSON.stringify({ roles: ["plan"], extra: 1 }),
+  });
+  expect(resExtra.status).toBe(400);
+
+  const resRole = await app.request("/relay/agents/fake", {
+    method: "PATCH", headers: h, body: JSON.stringify({ roles: ["plan", "nope"] }),
+  });
+  expect(resRole.status).toBe(400);
+
+  const resTier = await app.request("/relay/agents/fake", {
+    method: "PATCH", headers: h, body: JSON.stringify({ models: [{ name: "x", tier: "nope", quality: 1 }] }),
+  });
+  expect(resTier.status).toBe(400);
+
+  const resQuality = await app.request("/relay/agents/fake", {
+    method: "PATCH", headers: h, body: JSON.stringify({ models: [{ name: "x", tier: "cheap", quality: 6 }] }),
+  });
+  expect(resQuality.status).toBe(400);
+});
+
+it("PATCH /relay/agents/:name updates relay.json while keeping cmd untouched", async () => {
+  const h = await adminHeaders();
+  const { readFileSync } = await import("node:fs");
+
+  const before = JSON.parse(readFileSync(relayConfigPath, "utf-8"));
+  expect(before.agents.fake.cmd).toBeDefined();
+
+  const res = await app.request("/relay/agents/fake", {
+    method: "PATCH", headers: h,
+    body: JSON.stringify({ roles: ["plan", "work"], models: [{ name: "fast", tier: "free", quality: 2 }] }),
+  });
+  expect(res.status).toBe(200);
+
+  const after = JSON.parse(readFileSync(relayConfigPath, "utf-8"));
+  expect(after.agents.fake.roles).toEqual(["plan", "work"]);
+  expect(after.agents.fake.models).toEqual([{ name: "fast", tier: "free", quality: 2 }]);
+  expect(after.agents.fake.cmd).toEqual(before.agents.fake.cmd);
+
+  const listRes = await app.request("/forge/agents", { headers: h });
+  const list = await listRes.json();
+  const agent = list.find((a: any) => a.name === "fake");
+  expect(agent.roles).toEqual(["plan", "work"]);
+  expect(agent.models).toEqual([{ name: "fast", tier: "free", quality: 2 }]);
+});

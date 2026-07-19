@@ -1,22 +1,30 @@
 import { getSetting } from "../../services/settings.js";
 import type { SourceConnector, ExternalTicket, ExternalComment } from "../connector.js";
 
+type GhIssue = {
+  number: number; title: string; body: string | null; state: string;
+  updated_at: string; pull_request?: unknown;
+};
+type GhComment = {
+  id: number; user?: { login?: string } | null; body?: string | null; created_at: string;
+};
+
 export function makeGithubConnector(fetchImpl: typeof fetch = fetch, bindingOverride?: string): SourceConnector {
-  async function paginatedGet(urlStr: string, headers: Record<string, string>): Promise<unknown[]> {
-    const results: unknown[] = [];
+  async function paginatedGet<T>(urlStr: string, headers: Record<string, string>): Promise<T[]> {
+    const results: T[] = [];
     let currentUrl: string | null = urlStr;
     let pages = 0;
     while (currentUrl && pages < 10) {
-      const res = await fetchImpl(currentUrl, { headers });
+      const res: Response = await fetchImpl(currentUrl, { headers });
       if (!res.ok) {
         throw new Error(`GitHub API error: ${res.status} ${res.statusText}`);
       }
-      const data = (await res.json()) as unknown[];
+      const data = (await res.json()) as T[];
       results.push(...data);
       pages++;
-      const link = res.headers.get("Link") ?? res.headers.get("link");
-      const next = link ? link.split(",").find((p) => p.includes('rel="next"')) : undefined;
-      const match = next ? next.match(/<([^>]+)>/) : null;
+      const link: string | null = res.headers.get("Link") ?? res.headers.get("link");
+      const next: string | undefined = link ? link.split(",").find((p: string) => p.includes('rel="next"')) : undefined;
+      const match: RegExpMatchArray | null = next ? next.match(/<([^>]+)>/) : null;
       currentUrl = match ? match[1] : null;
     }
     return results;
@@ -43,7 +51,7 @@ export function makeGithubConnector(fetchImpl: typeof fetch = fetch, bindingOver
       issuesUrl.searchParams.set("per_page", "100");
       if (since) issuesUrl.searchParams.set("since", since.toISOString());
 
-      const issues = await paginatedGet(issuesUrl.toString(), headers);
+      const issues = await paginatedGet<GhIssue>(issuesUrl.toString(), headers);
       const out: ExternalTicket[] = [];
 
       for (const issue of issues) {
@@ -51,9 +59,9 @@ export function makeGithubConnector(fetchImpl: typeof fetch = fetch, bindingOver
 
         const commentsUrl = new URL(`https://api.github.com/repos/${owner}/${name}/issues/${issue.number}/comments`);
         commentsUrl.searchParams.set("per_page", "100");
-        const rawComments = await paginatedGet(commentsUrl.toString(), headers);
+        const rawComments = await paginatedGet<GhComment>(commentsUrl.toString(), headers);
 
-        const comments: ExternalComment[] = rawComments.map((c: any) => ({
+        const comments: ExternalComment[] = rawComments.map((c) => ({
           externalId: `${repo}#comment-${c.id}`,
           author: c.user?.login ?? "unknown",
           body: c.body ?? "",

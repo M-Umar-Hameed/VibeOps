@@ -6,7 +6,7 @@ import { getTicket, getTicketHistory, listTickets, searchTickets } from "../serv
 import { saveNote, updateNote, deleteNote, listNotes, getNote } from "../services/notes.js";
 import { searchKnowledge, getKnowledgeSource, upsertSourceDoc, listSessionDocs, knowledgeGraph } from "../services/knowledge.js";
 import { AuthError, ConflictError, ForbiddenError, NotFoundError, StaleVersionError } from "../services/errors.js";
-import { listProjects, createProject, updateProjectRepo, gitInitProject, getProjectSettings, setProjectSetting } from "../services/projects.js";
+import { listProjects, createProject, updateProjectRepo, gitInitProject, getProjectSettings, setProjectSetting, scanFolder, importProjects } from "../services/projects.js";
 import { listActors, createActor, revokeActor } from "../services/actors.js";
 import { requireAdmin } from "./auth.js";
 import { getSystemMetrics, getSystemLogs, getSystemTopology, getAiUsage, getSystemStatus } from "../services/system.js";
@@ -90,6 +90,28 @@ app.patch("/projects/:id", requireAdmin, async (c) => {
   }
 });
 app.post("/projects/:id/git-init", requireAdmin, async (c) => c.json(await gitInitProject(c.req.param("id"))));
+
+app.post("/projects/scan", requireAdmin, async (c) => {
+  const { path } = await c.req.json().catch(() => ({}));
+  if (typeof path !== "string") return c.json({ error: "path must be a string" }, 400);
+  try {
+    return c.json(await scanFolder(path));
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 400);
+  }
+});
+
+app.post("/projects/import", requireAdmin, async (c) => {
+  const { items } = await c.req.json().catch(() => ({}));
+  if (!Array.isArray(items) || items.some((i) => typeof i?.name !== "string" || typeof i?.path !== "string")) {
+    return c.json({ error: "items must be an array of { name, path }" }, 400);
+  }
+  try {
+    return c.json(await importProjects(items));
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 400);
+  }
+});
 
 app.get("/projects/:id/settings", requireAdmin, async (c) => {
   return c.json(await getProjectSettings(c.req.param("id")));

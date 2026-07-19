@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api.js";
 import type { Project } from "../../api/types.js";
 import { pickFolder, dialogAvailable } from "../../lib/native-dialog.js";
+import { ImportFromFolder } from "../projects/ImportFromFolder.js";
 
 export function ProjectWorkspaceRow({ project }: { project: Project }) {
   const queryClient = useQueryClient();
@@ -132,13 +133,18 @@ export function WorkspacesCard() {
 
   return (
     <div className="glass-card rounded-xl overflow-hidden border border-white/10 flex flex-col group hover:border-primary/30 transition-all duration-300">
-      <div className="p-6 border-b border-white/5 bg-surface-container/30 flex items-center gap-4">
-        <div className="w-10 h-10 bg-primary/20 rounded-full flex items-center justify-center">
-          <span className="material-symbols-outlined text-primary">folder</span>
+      <div className="p-6 border-b border-white/5 bg-surface-container/30 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <div className="w-10 h-10 bg-primary/20 rounded-full flex items-center justify-center">
+            <span className="material-symbols-outlined text-primary">folder</span>
+          </div>
+          <div>
+            <h3 className="font-headline-sm text-on-surface font-bold">Workspaces</h3>
+            <p className="text-xs text-on-surface-variant">Local repositories for projects</p>
+          </div>
         </div>
-        <div>
-          <h3 className="font-headline-sm text-on-surface font-bold">Workspaces</h3>
-          <p className="text-xs text-on-surface-variant">Local repositories for projects</p>
+        <div className="w-64">
+          <ImportFromFolder />
         </div>
       </div>
 

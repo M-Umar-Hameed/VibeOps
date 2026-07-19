@@ -126,10 +126,6 @@ describe("project import: import", () => {
     const dirA = join(root, "good");
     mkdirSync(dirA, { recursive: true });
     
-    // Check initial count to ensure no side effects
-    const initialRes = await app.request("/projects", { method: "GET", headers: h });
-    const initialProjects = await initialRes.json();
-
     const res = await app.request("/projects/import", {
       method: "POST", headers: h,
       body: JSON.stringify({
@@ -141,9 +137,11 @@ describe("project import: import", () => {
     });
     expect(res.status).toBe(400);
 
+    // Global counts race parallel test files; assert nothing from THIS batch
+    // landed instead.
     const afterRes = await app.request("/projects", { method: "GET", headers: h });
     const afterProjects = await afterRes.json();
-    expect(afterProjects).toHaveLength(initialProjects.length);
+    expect(afterProjects.some((p: any) => p.repoPath === dirA || p.name === "Good" || p.name === "Evil")).toBe(false);
 
     rmSync(root, { recursive: true, force: true });
   });

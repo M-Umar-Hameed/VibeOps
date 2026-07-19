@@ -3,8 +3,10 @@ import { api } from "../lib/api.js";
 import { NotFoundError } from "../api/errors.js";
 import { useProject } from "../context/project.js";
 import { parseUnifiedDiff, type DiffFile } from "../lib/diff-parse.js";
+import { SpecEditor } from "../components/SpecEditor.js";
+import { CommentList } from "../components/CommentList.js";
 
-type Ticket = { id: string; title: string; status: string };
+type Ticket = { id: string; title: string; status: string; version: number; body: string | null };
 type Agent = { name: string; roles: string[]; models?: { name: string }[] };
 type Skill = { name: string };
 type SandboxStatus = { exists: boolean; branch?: string; lastVerdict?: string };
@@ -25,6 +27,7 @@ export function ForgeScreen() {
   const [doctorStatuses, setDoctorStatuses] = useState<Record<string, DoctorStatus>>({});
   
   const [skills, setSkills] = useState<Skill[]>([]);
+  const [actors, setActors] = useState<any[]>([]);
 
   const [planAgent, setPlanAgent] = useState("auto::");
   const [workAgent, setWorkAgent] = useState("auto::");
@@ -59,6 +62,23 @@ export function ForgeScreen() {
   const [interruptedRun, setInterruptedRun] = useState(false);
   const [ticketRunActive, setTicketRunActive] = useState(false);
   const [ticketRuns, setTicketRuns] = useState<any[]>([]);
+
+  const [ticketComments, setTicketComments] = useState<any[]>([]);
+  const [commentInput, setCommentInput] = useState("");
+  const [commentError, setCommentError] = useState("");
+  const [postingComment, setPostingComment] = useState(false);
+  const [requestingChanges, setRequestingChanges] = useState(false);
+
+  const loadComments = async (id: string) => {
+    try {
+      const res = await api.get(`/tickets/${id}/comments`);
+      setTicketComments(res as any[]);
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  const actorName = (aid: string) => actors.find((a) => a.id === aid)?.name ?? aid;
 
   const [newTask, setNewTask] = useState("");
   const [newTaskError, setNewTaskError] = useState("");
@@ -114,6 +134,7 @@ export function ForgeScreen() {
        .catch((err: any) => setAgentsError(err.message || "Failed to load agents"));
        
     api.get("/forge/skills").then(s => setSkills(s as Skill[])).catch(() => {});
+    api.get("/actors").then(a => setActors(a as any[])).catch(() => {});
 
     api.get("/forge/doctor")
        .then(d => {
@@ -147,6 +168,7 @@ export function ForgeScreen() {
   useEffect(() => {
     if (selectedTicket) {
       loadSandbox(selectedTicket.id);
+      loadComments(selectedTicket.id);
       api.get("/forge/runs").then((r: any) => {
         const tr = r.filter((run: any) => run.ticketId === selectedTicket.id);
         const sorted = tr.sort((a: any, b: any) => b.startedAt.localeCompare(a.startedAt));
@@ -168,6 +190,9 @@ export function ForgeScreen() {
       setDiffExplain(null);
       setSandboxActivity(null);
       setConfirmApprove(false); // never carry an armed confirm across tickets
+      setTicketComments([]);
+      setCommentInput("");
+      setCommentError("");
     }
   }, [selectedTicket]);
 
@@ -374,6 +399,47 @@ export function ForgeScreen() {
     setViewDiff(true);
   };
 
+  const handlePostComment = async () => {
+    if (!selectedTicket || !commentInput.trim()) return;
+    setPostingComment(true);
+    setCommentError("");
+    try {
+      await api.post(`/tickets/${selectedTicket.id}/comments`, { body: commentInput });
+      setCommentInput("");
+      await loadComments(selectedTicket.id);
+    } catch (e: any) {
+      setCommentError(e.message || "Failed to post comment");
+    } finally {
+      setPostingComment(false);
+    }
+  };
+
+  const handleRequestChanges = async () => {
+    if (!selectedTicket || !commentInput.trim()) return;
+    setRequestingChanges(true);
+    setCommentError("");
+    try {
+      const body = `CHANGE REQUEST:\n${commentInput}`;
+      await api.post(`/tickets/${selectedTicket.id}/comments`, { body });
+      if (selectedTicket.status === "review") {
+        const updated = await api.patch(`/tickets/${selectedTicket.id}`, { 
+          expectedVersion: selectedTicket.version, 
+          status: "planned" 
+        });
+        await loadTickets();
+        setSelectedTicket(updated as Ticket);
+      } else {
+        await loadTickets();
+      }
+      setCommentInput("");
+      await loadComments(selectedTicket.id);
+    } catch (e: any) {
+      setCommentError(e.message || "Failed to request changes");
+    } finally {
+      setRequestingChanges(false);
+    }
+  };
+
   const handlePromptChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setExtraPrompt(val);
@@ -494,6 +560,14 @@ export function ForgeScreen() {
 
             {agentsError && <div className="text-error text-sm">{agentsError}</div>}
             
+            <SpecEditor 
+              ticket={selectedTicket} 
+              onSave={(t) => {
+                setSelectedTicket(t);
+                setTickets(tickets.map(x => x.id === t.id ? t : x));
+              }}
+            />
+
             <div className="glass-card rounded-xl border border-white/10 p-6 flex flex-col gap-4">
               <h3 className="font-headline-sm text-on-surface font-bold border-b border-white/5 pb-2">Pipeline Settings</h3>
               
@@ -819,6 +893,38 @@ export function ForgeScreen() {
                   Sandbox not created yet. Run the pipeline to generate code.
                 </div>
               )}
+            </div>
+
+            <div className="glass-card rounded-xl border border-white/10 p-6 flex flex-col gap-4">
+              <h3 className="font-headline-sm text-on-surface font-bold border-b border-white/5 pb-2">Discussion</h3>
+              <CommentList items={ticketComments} actorName={actorName} />
+              
+              <div className="relative mt-4">
+                <textarea 
+                  className="w-full bg-surface-container-lowest border border-white/10 rounded-xl p-4 text-sm text-on-surface focus:border-primary-fixed-dim focus:ring-1 focus:ring-primary-fixed-dim/30 outline-none transition-all min-h-[100px] resize-y pb-12" 
+                  placeholder="Type your comment... prefix with CHANGE REQUEST: or use the button."
+                  value={commentInput}
+                  onChange={(e) => setCommentInput(e.target.value)}
+                ></textarea>
+                <div className="absolute bottom-3 right-3 flex gap-2">
+                  <button 
+                    className="px-4 py-2 bg-surface-container border border-white/10 hover:bg-white/5 text-on-surface font-bold text-sm rounded transition-transform active:scale-95 disabled:opacity-50 cursor-pointer"
+                    disabled={!commentInput.trim() || postingComment || requestingChanges || (selectedTicket.status !== "review" && selectedTicket.status !== "planned")}
+                    onClick={handleRequestChanges}
+                    title="Enabled when status is review or planned"
+                  >
+                    Request changes
+                  </button>
+                  <button 
+                    className="px-4 py-2 bg-primary text-on-primary font-bold text-sm rounded transition-transform active:scale-95 shadow-[0_0_15px_rgba(0,219,233,0.3)] disabled:opacity-50 cursor-pointer"
+                    disabled={!commentInput.trim() || postingComment || requestingChanges}
+                    onClick={handlePostComment}
+                  >
+                    Post comment
+                  </button>
+                </div>
+              </div>
+              {commentError && <div className="text-error text-xs">{commentError}</div>}
             </div>
 
             {ticketRuns.length > 0 && (

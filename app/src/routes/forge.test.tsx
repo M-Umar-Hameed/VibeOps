@@ -285,3 +285,67 @@ test("sandbox activity panel appears only while running, and hides on 404", asyn
   expect(screen.getByText(/a\.ts/)).toBeInTheDocument();
 });
 
+test("spec renders body, edit saves with expectedVersion", async () => {
+  apiFetch.mockImplementation(async (path, opts) => {
+    if (path === "/tickets") return [{ id: "t1", title: "My Ticket", status: "open", body: "Original body", version: 1 }];
+    if (path === "/forge/agents") return [];
+    if (path === "/forge/skills") return [];
+    if (path.includes("/sandbox")) return { exists: false };
+    if (path.includes("/comments")) return [];
+    if (path === "/tickets/t1" && opts?.method === "PATCH") return { id: "t1", title: "My Ticket", status: "open", body: "New body", version: 2 };
+    return {};
+  });
+
+  render(<ProjectProvider><ForgeScreen /></ProjectProvider>);
+  await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
+  fireEvent.click(screen.getByText("My Ticket"));
+
+  await waitFor(() => expect(screen.getByText("Original body")).toBeInTheDocument());
+  
+  fireEvent.click(screen.getByText(/Edit Spec/i));
+  const textarea = screen.getByDisplayValue("Original body");
+  fireEvent.change(textarea, { target: { value: "New body" } });
+  
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/tickets/t1", expect.objectContaining({
+    method: "PATCH",
+    body: { expectedVersion: 1, body: "New body" }
+  })));
+});
+
+test("request-changes posts comment + bounces review->planned", async () => {
+  apiFetch.mockImplementation(async (path, opts) => {
+    if (path === "/tickets") return [{ id: "t1", title: "My Ticket", status: "review", version: 1 }];
+    if (path === "/forge/agents") return [];
+    if (path === "/forge/skills") return [];
+    if (path.includes("/sandbox")) return { exists: false };
+    if (path.includes("/comments") && opts?.method === "POST") return {};
+    if (path.includes("/comments")) return [];
+    if (path === "/tickets/t1" && opts?.method === "PATCH") return { id: "t1", title: "My Ticket", status: "planned", version: 2 };
+    return {};
+  });
+
+  render(<ProjectProvider><ForgeScreen /></ProjectProvider>);
+  await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
+  fireEvent.click(screen.getByText("My Ticket"));
+
+  await waitFor(() => expect(screen.getByPlaceholderText(/prefix with CHANGE REQUEST/i)).toBeInTheDocument());
+  
+  const input = screen.getByPlaceholderText(/prefix with CHANGE REQUEST/i);
+  fireEvent.change(input, { target: { value: "Please fix this" } });
+  
+  const reqBtn = screen.getByRole("button", { name: /Request changes/i });
+  expect(reqBtn).not.toBeDisabled();
+  fireEvent.click(reqBtn);
+  
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/tickets/t1/comments", expect.objectContaining({
+    method: "POST",
+    body: { body: "CHANGE REQUEST:\nPlease fix this" }
+  })));
+  
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/tickets/t1", expect.objectContaining({
+    method: "PATCH",
+    body: { expectedVersion: 1, status: "planned" }
+  })));
+});

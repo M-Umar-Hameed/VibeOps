@@ -246,9 +246,18 @@ async function pipeline(
   agents: { plan: RelayAgent; work: RelayAgent; review: RelayAgent }, workdir: string, styleSetting: string,
   lessons: string, config: RelayConfig, extraPrompt?: string,
 ): Promise<void> {
-  const extra = extraPrompt ? `\n\nOperator instructions:\n${extraPrompt}` : "";
+  let extra = extraPrompt ? `\n\nOperator instructions:\n${extraPrompt}` : "";
   const onData = (c: string) => append(run, c);
   let ticket = await getTicket(run.ticketId);
+
+  const allComments = await listComments(ticket.id);
+  const planCommentIndex = allComments.map(c => c.kind).lastIndexOf("plan");
+  const recentComments = planCommentIndex === -1 ? allComments : allComments.slice(planCommentIndex + 1);
+  const changeRequests = recentComments.filter(c => c.body.startsWith("CHANGE REQUEST:"));
+  const changeRequestsText = changeRequests.map(c => c.body).join("\n\n").slice(0, 2000);
+  if (changeRequestsText) {
+    extra += `\n\nChange Requests:\n${fenceUntrusted("change-requests", redactSecrets(changeRequestsText))}`;
+  }
 
   // plan
   let plan: string;

@@ -379,6 +379,26 @@ describe("forge run manager", () => {
 
     rmSync(nonGitDir, { recursive: true, force: true });
   });
+
+  it("pipeline prompt includes a CHANGE REQUEST comment when present", async () => {
+    const { actorId, ticket } = await seedTicket("Change Request path");
+    await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+    await addComment(actorId, ticket.id, "CHANGE REQUEST:\nFix the typo", "comment");
+
+    // The fake-agent will echo the prompt so we can inspect it.
+    // It will echo and exit 0. We'll wait for the pipeline to settle.
+    setScript("echo-prompt");
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).toContain("Change Requests:");
+    expect(output?.chunk).toContain("CHANGE REQUEST:");
+    expect(output?.chunk).toContain("Fix the typo");
+  });
 });
 
 
@@ -436,6 +456,7 @@ it("hasActiveRun is true mid-run and false after settle", async () => {
   // run before a stage-wait completes.
   expect(await hasActiveRun(ticket.id)).toBe(true);
 
+  await waitForStage(runId, "plan");
   stopRun(runId);
   await awaitRun(runId);
   expect(await hasActiveRun(ticket.id)).toBe(false);

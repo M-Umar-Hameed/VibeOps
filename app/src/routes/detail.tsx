@@ -10,6 +10,7 @@ import { api } from "../lib/api.js";
 import { Avatar } from "../components/Avatar.js";
 import { AuditTimeline } from "../components/AuditTimeline.js";
 import { CommentList } from "../components/CommentList.js";
+import { SpecEditor } from "../components/SpecEditor.js";
 
 export function DetailScreen({ id }: { id: string }) {
   const qc = useQueryClient();
@@ -161,15 +162,7 @@ export function DetailScreen({ id }: { id: string }) {
         </section>
 
         {/* Description */}
-        <section className="glass-card p-6 rounded-xl space-y-4">
-          <div className="flex items-center gap-2 text-primary-fixed-dim">
-            <span className="material-symbols-outlined text-base">description</span>
-            <h3 className="font-headline-md text-headline-md">Description</h3>
-          </div>
-          <div className="space-y-4 text-on-surface-variant leading-relaxed font-body-sm whitespace-pre-wrap">
-            {t.body || <span className="opacity-50 italic">No description provided.</span>}
-          </div>
-        </section>
+        <SpecEditor ticket={t} />
 
         {/* Audit Timeline */}
         <section className="space-y-6 pt-6 border-t border-white/5">

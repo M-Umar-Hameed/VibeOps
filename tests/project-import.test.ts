@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, basename } from "node:path";
 import { createActor } from "../src/services/actors.js";
 import { createProject, updateProjectRepo } from "../src/services/projects.js";
 import { app } from "../src/api/app.js";
@@ -46,6 +46,45 @@ describe("project import: scan", () => {
     expect(b.isGit).toBe(false);
     expect(b.alreadyProject).toBe(true);
     expect(entries.some((e: any) => e.name === "nested")).toBe(false);
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("detects a git repo root: selfIsGit true, dot/noise dirs hidden", async () => {
+    const h = await adminHeaders();
+    const root = tmpDir();
+    mkdirSync(join(root, ".git"), { recursive: true });
+    mkdirSync(join(root, ".github"), { recursive: true });
+    mkdirSync(join(root, "node_modules"), { recursive: true });
+    mkdirSync(join(root, "src"), { recursive: true });
+
+    const res = await app.request("/projects/scan", {
+      method: "POST", headers: h, body: JSON.stringify({ path: root }),
+    });
+    expect(res.status).toBe(200);
+    const result = await res.json();
+    expect(result.selfIsGit).toBe(true);
+    expect(result.name).toBe(basename(root));
+    expect(result.alreadyProject).toBe(false);
+    expect(result.entries.map((e: any) => e.name)).toEqual(["src"]);
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("hides dot and noise dirs on a folder-of-repos scan (root not git)", async () => {
+    const h = await adminHeaders();
+    const root = tmpDir();
+    mkdirSync(join(root, "repo-a", ".git"), { recursive: true });
+    mkdirSync(join(root, ".vscode"), { recursive: true });
+    mkdirSync(join(root, "dist"), { recursive: true });
+
+    const res = await app.request("/projects/scan", {
+      method: "POST", headers: h, body: JSON.stringify({ path: root }),
+    });
+    expect(res.status).toBe(200);
+    const entries = await res.json();
+    expect(Array.isArray(entries)).toBe(true);
+    expect(entries.map((e: any) => e.name)).toEqual(["repo-a"]);
 
     rmSync(root, { recursive: true, force: true });
   });

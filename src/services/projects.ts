@@ -1,5 +1,5 @@
 import { existsSync, statSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, basename } from "node:path";
 import { spawn } from "node:child_process";
 import { eq, and } from "drizzle-orm";
 import { db } from "../db/client.js";
@@ -13,6 +13,11 @@ function isGit(repoPath: string): boolean {
   } catch {
     return false;
   }
+}
+
+const NOISE_DIRS = new Set(["node_modules", "dist", "coverage", "target", "build", "out"]);
+function isNoise(name: string): boolean {
+  return name.startsWith(".") || NOISE_DIRS.has(name);
 }
 
 // Shared by updateProjectRepo, scanFolder, importProjects.
@@ -133,9 +138,15 @@ export async function boundProjects(connectorKey: string): Promise<{ projectId: 
 }
 
 export type ScanEntry = { name: string; path: string; isGit: boolean; alreadyProject: boolean };
+export type ScanRootResult = { selfIsGit: true; name: string; alreadyProject: boolean; entries: ScanEntry[] };
+export type ScanResult = ScanEntry[] | ScanRootResult;
 
 // Read-only, one level deep, cap 200. Never throws on a stray unreadable dir.
-export async function scanFolder(dirPath: string): Promise<ScanEntry[]> {
+// Dot-dirs and common noise dirs (node_modules, dist, coverage, target, build,
+// out) are excluded from the listing entirely. If dirPath is itself a git
+// repo, subdirs are still returned but wrapped with selfIsGit metadata so the
+// caller can offer a one-click "import this folder as one project".
+export async function scanFolder(dirPath: string): Promise<ScanResult> {
   assertSafePath(dirPath);
   if (!existsSync(dirPath) || !statSync(dirPath).isDirectory()) {
     throw new Error(`path does not exist or is not a directory: ${dirPath}`);
@@ -146,11 +157,11 @@ export async function scanFolder(dirPath: string): Promise<ScanEntry[]> {
     existing.map((p) => p.repoPath).filter((p): p is string => !!p).map(normalizePath)
   );
 
-  const entries = readdirSync(dirPath, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
+  const dirEntries = readdirSync(dirPath, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && !isNoise(e.name))
     .slice(0, 200);
 
-  return entries.map((e) => {
+  const entries: ScanEntry[] = dirEntries.map((e) => {
     const full = join(dirPath, e.name);
     return {
       name: e.name,
@@ -159,6 +170,16 @@ export async function scanFolder(dirPath: string): Promise<ScanEntry[]> {
       alreadyProject: boundPaths.has(normalizePath(full)),
     };
   });
+
+  if (isGit(dirPath)) {
+    return {
+      selfIsGit: true,
+      name: basename(dirPath),
+      alreadyProject: boundPaths.has(normalizePath(dirPath)),
+      entries,
+    };
+  }
+  return entries;
 }
 
 export type ImportItem = { name: string; path: string };

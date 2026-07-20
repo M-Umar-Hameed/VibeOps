@@ -4,6 +4,7 @@ import { pickFolder, dialogAvailable } from "../../lib/native-dialog.js";
 import { useProject } from "../../context/project.js";
 
 type ScanEntry = { name: string; path: string; isGit: boolean; alreadyProject: boolean };
+type ScanResult = ScanEntry[] | { selfIsGit: true; name: string; alreadyProject: boolean; entries: ScanEntry[] };
 
 export function ImportFromFolder() {
   const { refreshProjects } = useProject();
@@ -11,6 +12,8 @@ export function ImportFromFolder() {
   const [canBrowse, setCanBrowse] = useState(false);
   const [folderPath, setFolderPath] = useState("");
   const [entries, setEntries] = useState<ScanEntry[] | null>(null);
+  const [selfInfo, setSelfInfo] = useState<{ name: string; alreadyProject: boolean } | null>(null);
+  const [showSubfolders, setShowSubfolders] = useState(false);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -21,12 +24,22 @@ export function ImportFromFolder() {
     setError("");
     setBusy(true);
     try {
-      const result = (await api.post("/projects/scan", { path })) as ScanEntry[];
-      setEntries(result);
-      setChecked(new Set(result.filter((e) => e.isGit && !e.alreadyProject).map((e) => e.path)));
+      const result = (await api.post("/projects/scan", { path })) as ScanResult;
+      if (Array.isArray(result)) {
+        setSelfInfo(null);
+        setShowSubfolders(false);
+        setEntries(result);
+        setChecked(new Set(result.filter((e) => e.isGit && !e.alreadyProject).map((e) => e.path)));
+      } else {
+        setSelfInfo({ name: result.name, alreadyProject: result.alreadyProject });
+        setShowSubfolders(false);
+        setEntries(result.entries);
+        setChecked(result.alreadyProject ? new Set() : new Set([path]));
+      }
     } catch (err: any) {
       setError(err.message || "Failed to scan folder");
       setEntries(null);
+      setSelfInfo(null);
     } finally {
       setBusy(false);
     }
@@ -50,10 +63,23 @@ export function ImportFromFolder() {
     });
   };
 
+  const eligiblePaths = (entries ?? []).filter((e) => e.isGit && !e.alreadyProject).map((e) => e.path);
+  const allSelected = eligiblePaths.length > 0 && eligiblePaths.every((p) => checked.has(p));
+  const toggleAll = () => {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (allSelected) eligiblePaths.forEach((p) => next.delete(p));
+      else eligiblePaths.forEach((p) => next.add(p));
+      return next;
+    });
+  };
+
   const reset = () => {
     setOpen(false);
     setFolderPath("");
     setEntries(null);
+    setSelfInfo(null);
+    setShowSubfolders(false);
     setChecked(new Set());
     setError("");
   };
@@ -63,7 +89,9 @@ export function ImportFromFolder() {
     setError("");
     setBusy(true);
     try {
-      const items = entries.filter((e) => checked.has(e.path)).map((e) => ({ name: e.name, path: e.path }));
+      const items: { name: string; path: string }[] = [];
+      if (selfInfo && checked.has(folderPath)) items.push({ name: selfInfo.name, path: folderPath });
+      for (const e of entries) if (checked.has(e.path)) items.push({ name: e.name, path: e.path });
       await api.post("/projects/import", { items });
       await refreshProjects();
       reset();
@@ -111,25 +139,64 @@ export function ImportFromFolder() {
 
       {error && <div className="text-xs text-error font-code-sm">{error}</div>}
 
-      {entries && (
+      {(entries || selfInfo) && (
         <div className="flex flex-col gap-2">
-          {entries.length === 0 && (
-            <div className="text-xs text-on-surface-variant">No subdirectories found.</div>
-          )}
-          {entries.map((e) => (
-            <label key={e.path} className="flex items-center gap-2 text-sm text-on-surface">
+          {selfInfo && (
+            <label className="flex items-center gap-2 text-sm text-on-surface bg-primary/10 border border-primary/30 rounded px-2 py-1.5">
               <input
                 type="checkbox"
-                checked={checked.has(e.path)}
-                disabled={e.alreadyProject}
-                onChange={() => toggle(e.path)}
+                checked={checked.has(folderPath)}
+                disabled={selfInfo.alreadyProject}
+                onChange={() => toggle(folderPath)}
               />
-              <span className="truncate flex-1">{e.name}</span>
-              <span className="text-xs text-on-surface-variant">
-                {e.alreadyProject ? "already imported" : e.isGit ? "git" : "not git"}
-              </span>
+              <span className="flex-1">This folder is a git repository — import it as one project</span>
+              {selfInfo.alreadyProject && (
+                <span className="text-xs text-on-surface-variant">already imported</span>
+              )}
             </label>
-          ))}
+          )}
+
+          {selfInfo && entries && entries.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowSubfolders((v) => !v)}
+              className="text-xs text-on-surface-variant hover:text-primary text-left"
+            >
+              {showSubfolders ? "Hide subfolders" : "Show subfolders anyway"}
+            </button>
+          )}
+
+          {(!selfInfo || showSubfolders) && entries && (
+            <>
+              {entries.length === 0 && (
+                <div className="text-xs text-on-surface-variant">No subdirectories found.</div>
+              )}
+              {eligiblePaths.length > 0 && (
+                <label className="flex items-center gap-2 text-xs text-on-surface-variant">
+                  <input type="checkbox" checked={allSelected} onChange={toggleAll} />
+                  Select all
+                </label>
+              )}
+              {entries.map((e) => (
+                <label
+                  key={e.path}
+                  className={`flex items-center gap-2 text-sm text-on-surface ${!e.isGit && !e.alreadyProject ? "opacity-50" : ""}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked.has(e.path)}
+                    disabled={e.alreadyProject}
+                    onChange={() => toggle(e.path)}
+                  />
+                  <span className="truncate flex-1">{e.name}</span>
+                  <span className="text-xs text-on-surface-variant">
+                    {e.alreadyProject ? "already imported" : e.isGit ? "git" : "not git"}
+                  </span>
+                </label>
+              ))}
+            </>
+          )}
+
           <div className="flex gap-2">
             <button
               type="button"

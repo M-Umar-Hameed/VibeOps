@@ -67,6 +67,18 @@ test("(b) issues + comments map correctly, PR excluded, state mapped", async () 
   expect(out[0].comments[0].author).toBe("alice");
 });
 
+test("(b2) full-URL binding heals to owner/repo (defensive)", async () => {
+  __setSettingsForTest({ "github.token": "t" });
+  const fetchImpl = makeFetch([
+    { data: [{ number: 7, title: "T", state: "open", updated_at: "2026-01-01T00:00:00Z" }] },
+    { data: [] },
+  ]);
+  const conn = makeGithubConnector(fetchImpl as any, "https://github.com/acme/widgets.git");
+  const out = await conn.listExternalTickets();
+  expect(new URL(fetchImpl.mock.calls[0][0]).pathname).toBe("/repos/acme/widgets/issues");
+  expect(out[0].externalId).toBe("acme/widgets#7");
+});
+
 test("(c) pagination follows Link rel=next and caps at 10", async () => {
   __setSettingsForTest({ "github.token": "t", "github.repo": "o/r" });
 

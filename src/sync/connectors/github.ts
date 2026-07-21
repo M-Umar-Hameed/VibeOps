@@ -1,5 +1,6 @@
 import { getSetting } from "../../services/settings.js";
 import type { SourceConnector, ExternalTicket, ExternalComment } from "../connector.js";
+import { normalizeBinding } from "../binding.js";
 
 export function makeGithubConnector(fetchImpl: typeof fetch = fetch, bindingOverride?: string): SourceConnector {
   async function paginatedGet(urlStr: string, headers: Record<string, string>): Promise<any[]> {
@@ -26,13 +27,14 @@ export function makeGithubConnector(fetchImpl: typeof fetch = fetch, bindingOver
     source: "github",
     async listExternalTickets(since?: Date): Promise<ExternalTicket[]> {
       const token = await getSetting("github.token");
-      const repo = bindingOverride ?? (await getSetting("github.repo"));
+      const rawRepo = bindingOverride ?? (await getSetting("github.repo"));
 
-      if (!token || !repo) {
+      if (!token || !rawRepo) {
         console.warn("GitHub connector skipped: missing github.token or github.repo setting");
         return [];
       }
 
+      const repo = normalizeBinding(rawRepo); // heals pre-existing full-URL rows
       const [owner, name] = repo.split("/");
       const headers = { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" };
 
@@ -43,7 +45,7 @@ export function makeGithubConnector(fetchImpl: typeof fetch = fetch, bindingOver
       issuesUrl.searchParams.set("per_page", "100");
       if (since) issuesUrl.searchParams.set("since", since.toISOString());
 
-      const issues = await paginatedGet(issuesUrl.toString(), headers);
+      const issues = (await paginatedGet(issuesUrl.toString(), headers)) as any[];
       const out: ExternalTicket[] = [];
 
       for (const issue of issues) {

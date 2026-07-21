@@ -5,6 +5,7 @@ import { eq, and } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { projects, projectSettings, type Project } from "../db/schema.js";
 import { ConflictError, NotFoundError } from "./errors.js";
+import { normalizeBinding } from "../sync/binding.js";
 
 // Never-throw: a workspace folder can vanish (moved/deleted) after being set.
 function isGit(repoPath: string): boolean {
@@ -123,12 +124,13 @@ export async function setProjectSetting(projectId: string, key: string, value: s
   const [p] = await db.select().from(projects).where(eq(projects.id, projectId));
   if (!p) throw new NotFoundError(`project not found: ${projectId}`);
 
-  if (value === "") {
+  const normalized = normalizeBinding(value);
+  if (normalized === "") {
     await db.delete(projectSettings).where(and(eq(projectSettings.projectId, projectId), eq(projectSettings.key, key)));
   } else {
     await db.insert(projectSettings)
-      .values({ projectId, key, value })
-      .onConflictDoUpdate({ target: [projectSettings.projectId, projectSettings.key], set: { value } });
+      .values({ projectId, key, value: normalized })
+      .onConflictDoUpdate({ target: [projectSettings.projectId, projectSettings.key], set: { value: normalized } });
   }
 }
 

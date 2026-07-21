@@ -30,6 +30,7 @@ export function ProjectBindingsCard({
   const queryClient = useQueryClient();
   const [value, setValue] = useState("");
   const [isEditing, setIsEditing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
   const { data: projectSettings } = useQuery({
     queryKey: ["projects", projectId, "settings"],
@@ -55,11 +56,31 @@ export function ProjectBindingsCard({
     mutationFn: async (newValue: string) => {
       await api.put(`/projects/${projectId}/settings/${bindingKey}`, { value: newValue });
     },
-    onSuccess: () => {
+    onSuccess: (_data, newValue) => {
       queryClient.invalidateQueries({ queryKey: ["projects", projectId, "settings"] });
       setIsEditing(false);
+      if (newValue) triggerSync();
     },
   });
+
+  const syncMutation = useMutation({
+    mutationFn: async () => await api.post(`/sync/${projectId}`) as {
+      created: number; updated: number; skipped: number; commentsAdded: number; failed: number; bindings: number;
+    },
+    onSuccess: (r) => {
+      setSyncMsg(r.bindings === 0
+        ? "Nothing bound to sync yet."
+        : `Synced: ${r.created} created, ${r.updated} updated${r.failed ? `, ${r.failed} failed` : ""}.`);
+      queryClient.invalidateQueries({ queryKey: ["tickets"] });
+    },
+    onError: (e: any) => setSyncMsg(`Sync failed: ${e?.message ?? "error"}`),
+  });
+
+  const triggerSync = () => {
+    if (!globalSetting?.value) { setSyncMsg(`Set your ${title} token in Integrations to sync.`); return; }
+    setSyncMsg(null);
+    syncMutation.mutate();
+  };
 
   const handleSave = (e: FormEvent) => {
     e.preventDefault();
@@ -98,12 +119,20 @@ export function ProjectBindingsCard({
               <span className="text-xs font-code-sm text-on-surface-variant/70">{label}</span>
               <span className="text-sm text-on-surface font-medium truncate">{projectSettings[bindingKey]}</span>
             </div>
+            <button
+              onClick={triggerSync}
+              disabled={syncMutation.isPending}
+              className="w-full py-2.5 rounded bg-white/5 hover:bg-white/10 text-on-surface text-sm font-medium transition-all disabled:opacity-50 cursor-pointer"
+            >
+              {syncMutation.isPending ? "Syncing..." : "Sync now"}
+            </button>
             <button 
               onClick={() => setIsEditing(true)}
               className="mt-auto w-full py-2.5 rounded bg-white/5 hover:bg-white/10 text-on-surface text-sm font-medium transition-all cursor-pointer"
             >
               Edit Binding
             </button>
+            {syncMsg && <p className="text-xs text-on-surface-variant">{syncMsg}</p>}
           </div>
         ) : (
           <form onSubmit={handleSave} className="flex flex-col flex-1 gap-4">
@@ -143,6 +172,7 @@ export function ProjectBindingsCard({
                 </button>
               )}
             </div>
+            {syncMsg && <p className="text-xs text-on-surface-variant">{syncMsg}</p>}
           </form>
         )}
       </div>

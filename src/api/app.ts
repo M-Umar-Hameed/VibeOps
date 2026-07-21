@@ -7,6 +7,7 @@ import { saveNote, updateNote, deleteNote, listNotes, getNote } from "../service
 import { searchKnowledge, getKnowledgeSource, upsertSourceDoc, listSessionDocs, knowledgeGraph } from "../services/knowledge.js";
 import { AuthError, ConflictError, ForbiddenError, NotFoundError, StaleVersionError } from "../services/errors.js";
 import { listProjects, createProject, updateProjectRepo, gitInitProject, getProjectSettings, setProjectSetting, scanFolder, importProjects } from "../services/projects.js";
+import { syncProject } from "../sync/run.js";
 import { listActors, createActor, revokeActor } from "../services/actors.js";
 import { requireAdmin } from "./auth.js";
 import { getSystemMetrics, getSystemLogs, getSystemTopology, getAiUsage, getSystemStatus } from "../services/system.js";
@@ -127,6 +128,14 @@ app.put("/projects/:id/settings/:key", requireAdmin, async (c) => {
     return c.json({ ok: true });
   } catch (e) {
     if (e instanceof NotFoundError) throw e;
+    return c.json({ error: (e as Error).message }, 400);
+  }
+});
+
+app.post("/sync/:projectId", requireAdmin, async (c) => {
+  try {
+    return c.json(await syncProject(c.req.param("projectId")));
+  } catch (e) {
     return c.json({ error: (e as Error).message }, 400);
   }
 });

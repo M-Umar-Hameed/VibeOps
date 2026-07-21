@@ -41,4 +41,17 @@ describe("project settings", () => {
     res = await app.request(`/projects/${project.id}/settings`, { headers: h });
     expect(await res.json()).toEqual({});
   });
+
+  it("normalizes a pasted GitHub URL to owner/repo on save", async () => {
+    const h = await adminHeaders();
+    const project = await createProject({ key: uniq("ps-norm"), name: "N" });
+
+    let res = await app.request(`/projects/${project.id}/settings/github.repo`, {
+      method: "PUT", headers: h, body: JSON.stringify({ value: "https://github.com/Foo/bar" })
+    });
+    expect(res.status).toBe(200);
+
+    res = await app.request(`/projects/${project.id}/settings`, { headers: h });
+    expect(await res.json()).toEqual({ "github.repo": "Foo/bar" });
+  });
 });

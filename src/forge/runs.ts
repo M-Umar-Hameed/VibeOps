@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { getLessons, setLessons, lessonsClause, composeAnalyzerPrompt, parseLessons } from "./lessons.js";
+import { getLessons, setLessons, lessonsClause, composeAnalyzerPrompt, parseOps, applyOps, recordOutcome, settleCandidate, pushRejected, loadEvoState, saveEvoState } from "./lessons.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
@@ -368,15 +368,39 @@ async function analyzeRun(run: Run, actorId: string, config: RelayConfig): Promi
     const pick = pickAgents(config, "cheapest-first").plan;
     const agent = { ...getAgent(config, pick.agent, "plan") };
     agent.cmd = resolveCmd(agent, pick.model);
-    const current = await getLessons();
-    const prompt = composeAnalyzerPrompt({
-      output: run.output.slice(0, 30_000),
-      outcome: `status=${run.status} stage=${run.stage}`,
-      current,
-    });
-    const res = await runAgent(agent, prompt, config.workdir);
-    const parsed = parseLessons(res.output);
-    if (parsed !== null) await setLessons(actorId, parsed);
+    
+    let state = await loadEvoState();
+    state = recordOutcome(state, run.status === "passed");
+    const g = settleCandidate(state);
+    state = g.state;
+    
+    if (g.action === "revert" && g.revertDoc !== undefined) {
+      await setLessons(actorId, g.revertDoc);
+    }
+    
+    if (state.candidate === null) {
+      const current = await getLessons();
+      const prompt = composeAnalyzerPrompt({
+        output: run.output.slice(0, 30_000),
+        outcome: `status=${run.status} stage=${run.stage}`,
+        current,
+        rejected: state.rejected
+      });
+      const res = await runAgent(agent, prompt, config.workdir);
+      const ops = parseOps(res.output);
+      if (ops === null) {
+        console.warn("forge: analyzer parsed null ops");
+        await saveEvoState(state);
+        return;
+      }
+      const { doc, applied, rejected } = applyOps(current, ops);
+      state.rejected = pushRejected(state.rejected, rejected);
+      if (applied.length) {
+        await setLessons(actorId, doc);
+        state.candidate = { version: state.version + 1, parentDoc: current, ops: applied, window: [] };
+      }
+    }
+    await saveEvoState(state);
   } catch (e) {
     console.warn(`forge: analyzer failed for run ${run.id}:`, (e as Error).message);
   }

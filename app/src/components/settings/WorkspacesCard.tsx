@@ -23,7 +23,7 @@ export function ProjectWorkspaceRow({ project }: { project: Project }) {
     mutationFn: async ({ id, repoPath }: { id: string; repoPath: string }) => {
       await api.patch(`/projects/${id}`, { repoPath });
     },
-    onSuccess: () => {
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
     },
   });
@@ -32,7 +32,7 @@ export function ProjectWorkspaceRow({ project }: { project: Project }) {
     mutationFn: async (id: string) => {
       await api.post(`/projects/${id}/git-init`);
     },
-    onSuccess: () => {
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
     },
   });

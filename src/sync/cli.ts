@@ -1,5 +1,5 @@
 import { pathToFileURL } from "node:url";
-import { CONNECTOR_FACTORIES } from "./run.js";
+import { CONNECTOR_FACTORIES, PUSH_FACTORIES } from "./run.js";
 import { runSync } from "./import.js";
 import { boundProjects } from "../services/projects.js";
 
@@ -11,7 +11,9 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
       for (const { projectId, binding } of bindings) {
         try {
           const result = await runSync(factory(binding), { projectId });
-          console.log(JSON.stringify(result));
+          const push = PUSH_FACTORIES[key];
+          const pushRes = push ? await push(binding, projectId) : { pushed: 0, closed: 0, pushFailed: 0 };
+          console.log(JSON.stringify({ ...result, ...pushRes }));
         } catch (e) {
           console.error(`${key} sync run failed for binding ${binding}:`, (e as Error).message);
           process.exitCode = 1;
@@ -20,7 +22,9 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     } else if (legacyProject) {
       try {
         const result = await runSync(factory(), { projectId: legacyProject });
-        console.log(JSON.stringify(result));
+        const push = PUSH_FACTORIES[key];
+        const pushRes = push ? await push(undefined, legacyProject) : { pushed: 0, closed: 0, pushFailed: 0 };
+        console.log(JSON.stringify({ ...result, ...pushRes }));
       } catch (e) {
         console.error(`${key.split('.')[0]} sync run failed:`, (e as Error).message);
         process.exit(1);

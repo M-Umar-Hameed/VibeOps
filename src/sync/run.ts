@@ -5,6 +5,7 @@ import { makeAsanaConnector } from "./connectors/asana.js";
 import { runSync, type SyncResult } from "./import.js";
 import { getProjectSettings } from "../services/projects.js";
 import type { SourceConnector } from "./connector.js";
+import { pushGithub, type PushResult } from "./push.js";
 
 // binding-key -> factory. `binding` optional so the CLI's legacy env-var path
 // (no per-project binding) can still call factory() and fall back to global settings.
@@ -15,7 +16,12 @@ export const CONNECTOR_FACTORIES: Record<string, (binding?: string) => SourceCon
   "asana.projectGid": (b) => makeAsanaConnector(undefined, b),
 };
 
-export type SyncProjectResult = SyncResult & { bindings: number };
+// binding-key -> push fn. Only github pushes in this ticket; other keys fall through.
+export const PUSH_FACTORIES: Record<string, (binding: string | undefined, projectId: string) => Promise<PushResult>> = {
+  "github.repo": (binding, projectId) => pushGithub(undefined, { projectId, binding }),
+};
+
+export type SyncProjectResult = SyncResult & { bindings: number; pushed: number; closed: number };
 
 // Runs every bound connector for one project in-process, aggregating results.
 // Re-throws a connector-level failure (e.g. GitHub 404 on a bad repo) so the
@@ -23,7 +29,7 @@ export type SyncProjectResult = SyncResult & { bindings: number };
 // throw); reflected as bindings>0 with zero created (UI hints via hasGlobalCredential).
 export async function syncProject(projectId: string): Promise<SyncProjectResult> {
   const settings = await getProjectSettings(projectId);
-  const total: SyncProjectResult = { created: 0, updated: 0, skipped: 0, commentsAdded: 0, failed: 0, bindings: 0 };
+  const total: SyncProjectResult = { created: 0, updated: 0, skipped: 0, commentsAdded: 0, failed: 0, bindings: 0, pushed: 0, closed: 0 };
   for (const [key, factory] of Object.entries(CONNECTOR_FACTORIES)) {
     const binding = settings[key];
     if (!binding) continue;
@@ -34,6 +40,12 @@ export async function syncProject(projectId: string): Promise<SyncProjectResult>
     total.commentsAdded += r.commentsAdded;
     total.failed += r.failed;
     total.bindings += 1;
+    const push = PUSH_FACTORIES[key];
+    if (push) {
+      const p = await push(binding, projectId);
+      total.pushed += p.pushed;
+      total.closed += p.closed;
+    }
   }
   return total;
 }

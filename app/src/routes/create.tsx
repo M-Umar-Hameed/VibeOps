@@ -7,6 +7,7 @@ import { tickets } from "../api/tickets.js";
 import { Avatar } from "../components/Avatar.js";
 import { api } from "../lib/api.js";
 import { useProject } from "../context/project.js";
+import { useImageAttachments } from "../components/useImageAttachments.js";
 
 export function CreateScreen() {
   const qc = useQueryClient();
@@ -22,9 +23,15 @@ export function CreateScreen() {
   const [assigneeId, setAssigneeId] = useState("");
   const [requiresVerification, setRequiresVerification] = useState(false);
 
+  const att = useImageAttachments();
+
   const createTicket = useMutation({
-    mutationFn: () => tickets.create({ projectId, title, body, priority, assigneeId: assigneeId || undefined, requiresVerification }),
-    onSuccess: (t) => { qc.invalidateQueries({ queryKey: ["tickets"] }); nav({ to: "/tickets/$id", params: { id: t.id } }); },
+    mutationFn: () => {
+      const md = att.markdown();
+      const finalBody = md ? (body ? `${body}\n\n${md}` : md) : body;
+      return tickets.create({ projectId, title, body: finalBody, priority, assigneeId: assigneeId || undefined, requiresVerification });
+    },
+    onSuccess: (t) => { att.clear(); qc.invalidateQueries({ queryKey: ["tickets"] }); nav({ to: "/tickets/$id", params: { id: t.id } }); },
   });
 
   useEffect(() => {
@@ -164,8 +171,43 @@ export function CreateScreen() {
               rows={6}
               value={body}
               onChange={(e) => setBody(e.target.value)}
+              onPaste={e => {
+                const imgs = Array.from(e.clipboardData.files).filter((f: any) => f.type.startsWith("image/"));
+                if (imgs.length) { e.preventDefault(); att.uploadFiles(imgs as File[]); }
+              }}
             ></textarea>
           </div>
+          <input
+            ref={att.fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            multiple
+            className="hidden"
+            onChange={e => { att.uploadFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }}
+          />
+          <button
+            type="button"
+            onClick={() => att.fileInputRef.current?.click()}
+            className="w-full px-3 py-1.5 rounded border border-white/10 hover:bg-white/5 text-on-surface-variant text-xs cursor-pointer"
+          >
+            Attach image
+          </button>
+          {att.attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {att.attachments.map(a => (
+                <div key={a.id} className="relative">
+                  <img src={a.previewUrl} alt={a.name} className="w-12 h-12 object-cover rounded border border-white/10" />
+                  <button
+                    type="button"
+                    onClick={() => att.removeAttachment(a.id)}
+                    className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-error text-white text-[10px] leading-none flex items-center justify-center cursor-pointer"
+                    aria-label={`Remove ${a.name}`}
+                  >×</button>
+                </div>
+              ))}
+            </div>
+          )}
+          {att.attachError && <div className="text-error text-xs">{att.attachError}</div>}
         </div>
 
         {/* Verification */}

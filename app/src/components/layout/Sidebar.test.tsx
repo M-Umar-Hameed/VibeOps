@@ -25,7 +25,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 import { Sidebar } from "./Sidebar.js";
 
-test("primary nav renders 4 links and Library section toggles", () => {
+test("primary nav renders 5 links and Library section toggles", () => {
   render(<Sidebar />);
 
   const navs = document.querySelectorAll("nav");
@@ -33,15 +33,15 @@ test("primary nav renders 4 links and Library section toggles", () => {
 
   const primaryNav = navs[0];
   const primaryLinks = primaryNav.querySelectorAll("a");
-  expect(primaryLinks.length).toBe(4);
+  expect(primaryLinks.length).toBe(5);
   
   expect(within(primaryNav).getByText("Board")).toBeInTheDocument();
+  expect(within(primaryNav).getByText("New Work Order")).toBeInTheDocument();
   expect(within(primaryNav).getByText("Forge")).toBeInTheDocument();
   expect(within(primaryNav).getByText("Usage")).toBeInTheDocument();
   expect(within(primaryNav).getByText("Settings")).toBeInTheDocument();
 
   expect(screen.queryByText("Knowledge")).not.toBeInTheDocument();
-  expect(screen.queryByText("New Work Order")).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByText("Library"));
 
@@ -50,5 +50,5 @@ test("primary nav renders 4 links and Library section toggles", () => {
   
   const libraryNav = navsAfter[1];
   expect(within(libraryNav).getByText("Knowledge")).toBeInTheDocument();
-  expect(within(libraryNav).getByText("New Work Order")).toBeInTheDocument();
+  expect(within(libraryNav).queryByText("New Work Order")).not.toBeInTheDocument();
 });

@@ -5,6 +5,7 @@ import { useProject } from "../context/project.js";
 import { parseUnifiedDiff, type DiffFile } from "../lib/diff-parse.js";
 import { SpecEditor } from "../components/SpecEditor.js";
 import { CommentList } from "../components/CommentList.js";
+import { useImageAttachments } from "../components/useImageAttachments.js";
 
 type Ticket = { id: string; title: string; status: string; version: number; body: string | null };
 type Agent = { name: string; roles: string[]; models?: { name: string }[] };
@@ -88,29 +89,7 @@ export function ForgeScreen() {
   const [newTaskError, setNewTaskError] = useState("");
   const [creating, setCreating] = useState(false);
 
-  type PendingAttachment = { id: string; name: string; path: string; markdown: string; previewUrl: string };
-  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
-  const [attachError, setAttachError] = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const uploadFiles = async (files: File[]) => {
-    setAttachError("");
-    for (const file of files) {
-      if (!file.type.startsWith("image/")) { setAttachError("Only image files can be attached."); continue; }
-      try {
-        const dataBase64 = await new Promise<string>((resolve, reject) => {
-          const r = new FileReader();
-          r.onload = () => resolve(String(r.result).split(",")[1] ?? "");
-          r.onerror = () => reject(new Error("read failed"));
-          r.readAsDataURL(file);
-        });
-        const res = await api.post("/forge/attachments", { dataBase64, name: file.name }) as { path: string; markdown: string };
-        setAttachments(a => [...a, { id: res.path, name: file.name, path: res.path, markdown: res.markdown, previewUrl: URL.createObjectURL(file) }]);
-      } catch (e: any) {
-        setAttachError(e.message || "Attachment upload failed");
-      }
-    }
-  };
+  const { attachments, attachError, fileInputRef, uploadFiles, removeAttachment, clear, markdown } = useImageAttachments();
 
   const createTask = async () => {
     const text = newTask.trim();
@@ -123,13 +102,13 @@ export function ForgeScreen() {
       if (!project) throw new Error("no project available");
       const [title, ...rest] = text.split("\n");
       const briefBody = rest.join("\n");
-      const attachMd = attachments.map(a => a.markdown).join("\n");
+      const attachMd = markdown();
       const body = attachMd ? (briefBody ? `${briefBody}\n\n${attachMd}` : attachMd) : briefBody;
       const t = await api.post("/tickets", {
         projectId: project.id, title: title.slice(0, 200), body,
       }) as Ticket;
       setNewTask("");
-      setAttachments([]);
+      clear();
       await loadTickets();
       setSelectedTicket(t);
     } catch (e: any) {
@@ -631,7 +610,7 @@ export function ForgeScreen() {
                   <div key={a.id} className="relative">
                     <img src={a.previewUrl} alt={a.name} className="w-12 h-12 object-cover rounded border border-white/10" />
                     <button
-                      onClick={() => setAttachments(list => list.filter(x => x.id !== a.id))}
+                      onClick={() => removeAttachment(a.id)}
                       className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-error text-white text-[10px] leading-none flex items-center justify-center cursor-pointer"
                       aria-label={`Remove ${a.name}`}
                     >×</button>

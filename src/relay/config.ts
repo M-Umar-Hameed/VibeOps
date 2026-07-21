@@ -5,7 +5,7 @@ import { substituteCmd } from "./invoke.js";
 
 export type ModelTier = "free" | "cheap" | "expensive";
 export type RelayModel = { name: string; tier: ModelTier; quality: number };
-export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[] };
+export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string> };
 export type RelayConfig = {
   workdir: string; apiKey?: string; baseUrl?: string; pollMs?: number;
   agents: Record<string, RelayAgent>;
@@ -52,6 +52,16 @@ export function loadRelayConfig(path?: string): RelayConfig {
     }
     if (!Array.isArray(a.roles) || !a.roles.every((r) => typeof r === "string")) {
       throw new Error(`relay config agent "${name}" must have a roles string array`);
+    }
+    if (a.env !== undefined) {
+      if (typeof a.env !== "object" || a.env === null || Array.isArray(a.env)) {
+        throw new Error(`relay config agent "${name}" env must be an object of string values`);
+      }
+      for (const [k, v] of Object.entries(a.env)) {
+        if (typeof v !== "string") {
+          throw new Error(`relay config agent "${name}" env value "${k}" must be a string`);
+        }
+      }
     }
     if (a.models !== undefined) {
       if (!Array.isArray(a.models) || a.models.length === 0) {

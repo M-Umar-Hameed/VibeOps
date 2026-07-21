@@ -260,3 +260,75 @@ test("resolveCmd throws for a model unknown to the agent", () => {
   expect(() => resolveCmd(agent, "nope")).toThrow(/unknown model "nope"/);
 });
 
+test("runAgent merges agent.env over process.env for the child (override + inherited PATH)", async () => {
+  const agent = {
+    cmd: [process.execPath, "-e", "process.stdout.write(process.env.FOO + '|' + (process.env.PATH ? 'PATH' : 'NOPATH'))"],
+    roles: [], env: { FOO: "bar" },
+  };
+  const res = await runAgent(agent, "unused", process.cwd());
+  expect(res.ok).toBe(true);
+  expect(res.output).toContain("bar|PATH");
+});
+
+test("runAgent substitutes {workdir} in env values", async () => {
+  const agent = {
+    cmd: [process.execPath, "-e", "process.stdout.write(process.env.WD)"],
+    roles: [], env: { WD: "{workdir}" },
+  };
+  const res = await runAgent(agent, "unused", process.cwd());
+  expect(res.ok).toBe(true);
+  expect(res.output).toContain(process.cwd());
+});
+
+test("runAgent without env leaves the child inheriting the parent env", async () => {
+  process.env.INHERIT_PROBE = "seen";
+  const agent = {
+    cmd: [process.execPath, "-e", "process.stdout.write(process.env.INHERIT_PROBE ?? 'MISSING')"],
+    roles: [],
+  };
+  const res = await runAgent(agent, "unused", process.cwd());
+  expect(res.output).toContain("seen");
+  delete process.env.INHERIT_PROBE;
+});
+
+test("loadRelayConfig rejects a non-string env value, naming the agent", () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-cfg-"));
+  const path = join(dir, "relay.json");
+  writeFileSync(path, JSON.stringify({
+    workdir: dir,
+    agents: { kimi: { cmd: ["claude"], roles: ["work"], env: { ANTHROPIC_AUTH_TOKEN: 123 } } },
+  }));
+  try {
+    expect(() => loadRelayConfig(path)).toThrow(/agent "kimi" env value "ANTHROPIC_AUTH_TOKEN" must be a string/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("loadRelayConfig rejects an array env, naming the agent", () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-cfg-"));
+  const path = join(dir, "relay.json");
+  writeFileSync(path, JSON.stringify({
+    workdir: dir,
+    agents: { kimi: { cmd: ["claude"], roles: ["work"], env: ["x"] } },
+  }));
+  try {
+    expect(() => loadRelayConfig(path)).toThrow(/agent "kimi" env must be an object/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("loadRelayConfig accepts a valid env object", () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-cfg-"));
+  const path = join(dir, "relay.json");
+  writeFileSync(path, JSON.stringify({
+    workdir: dir,
+    agents: { kimi: { cmd: ["claude", "-p"], roles: ["work"], env: { ANTHROPIC_BASE_URL: "https://api.moonshot.ai/anthropic" } } },
+  }));
+  try {
+    expect(loadRelayConfig(path).agents.kimi.env).toEqual({ ANTHROPIC_BASE_URL: "https://api.moonshot.ai/anthropic" });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

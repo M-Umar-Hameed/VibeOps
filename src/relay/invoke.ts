@@ -39,11 +39,23 @@ export async function runAgent(
 
   const [cmd0, ...rest] = substituteCmd(agent.cmd, { prompt, promptFile, workdir });
 
+  // Merge agent.env over the inherited process env; only {workdir} is substituted.
+  // {prompt}/{promptFile} intentionally excluded (secrets/size). ponytail: {model}
+  // in env unsupported here — model isn't in scope; thread it via resolveCmd if a
+  // provider ever needs model-dependent env tokens.
+  let childEnv: NodeJS.ProcessEnv | undefined;
+  if (agent.env) {
+    const keys = Object.keys(agent.env);
+    const vals = substituteCmd(Object.values(agent.env), { workdir });
+    childEnv = { ...process.env };
+    keys.forEach((k, i) => { childEnv![k] = vals[i]; });
+  }
+
   try {
     return await new Promise((resolve) => {
       // stdin ignored unless piping the prompt: headless CLIs (codex exec)
       // otherwise block reading an open stdin.
-      const child = spawn(cmd0, rest, { cwd: workdir, stdio: [viaStdin ? "pipe" : "ignore", "pipe", "pipe"] });
+      const child = spawn(cmd0, rest, { cwd: workdir, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", "pipe", "pipe"] });
       onSpawn?.(child);
       if (viaStdin) {
         child.stdin?.on("error", () => {});

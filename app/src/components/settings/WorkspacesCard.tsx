@@ -9,6 +9,7 @@ export function ProjectWorkspaceRow({ project }: { project: Project }) {
   const queryClient = useQueryClient();
   const [editValue, setEditValue] = useState("");
   const [error, setError] = useState("");
+  const [indexResult, setIndexResult] = useState("");
   const [canBrowse, setCanBrowse] = useState(false);
 
   useEffect(() => {
@@ -37,6 +38,12 @@ export function ProjectWorkspaceRow({ project }: { project: Project }) {
     },
   });
 
+  const indexRepo = useMutation({
+    mutationFn: async (id: string) => {
+      return await api.post(`/projects/${id}/index-repo`);
+    },
+  });
+
   const handleSave = (e: FormEvent) => {
     e.preventDefault();
     setError("");
@@ -55,6 +62,19 @@ export function ProjectWorkspaceRow({ project }: { project: Project }) {
     initGit.mutate(project.id, {
       onError: (err: any) => {
         setError(err instanceof Error ? err.message : "Failed to initialize git");
+      },
+    });
+  };
+
+  const handleIndexRepo = () => {
+    setError("");
+    setIndexResult("");
+    indexRepo.mutate(project.id, {
+      onSuccess: (r: any) => {
+        setIndexResult(`indexed ${r.indexed}, skipped ${r.skipped}, removed ${r.removed}`);
+      },
+      onError: (err: any) => {
+        setError(err instanceof Error ? err.message : "Failed to index repo");
       },
     });
   };
@@ -116,10 +136,23 @@ export function ProjectWorkspaceRow({ project }: { project: Project }) {
         ) : (
           <span className="text-xs px-2 py-1 rounded bg-white/5 text-on-surface-variant font-medium">default workdir</span>
         )}
+        {project.repoPath && (
+          <button
+            type="button"
+            onClick={handleIndexRepo}
+            disabled={indexRepo.isPending}
+            className="text-xs px-3 py-1 rounded bg-white/5 hover:bg-primary hover:text-on-primary text-on-surface font-medium transition-all disabled:opacity-50"
+          >
+            Index docs
+          </button>
+        )}
       </div>
 
       {error && (
         <div className="text-xs text-error font-code-sm">{error}</div>
+      )}
+      {indexResult && (
+        <div className="text-xs text-on-surface-variant font-code-sm">{indexResult}</div>
       )}
     </div>
   );

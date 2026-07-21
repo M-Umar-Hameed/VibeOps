@@ -14,7 +14,7 @@ import { pickAgents, escalate, pairsForRole, type Pick, type RoutingStrategy } f
 import { updateTicket } from "../services/tickets.js";
 import { addComment, listComments } from "../services/comments.js";
 import { getTicket } from "../services/history.js";
-import { searchKnowledge } from "../services/knowledge.js";
+import { searchKnowledge, indexRepoDocs, repoIndexed } from "../services/knowledge.js";
 import { getSetting } from "../services/settings.js";
 import { projectWorkdir } from "../services/projects.js";
 import { ConflictError } from "../services/errors.js";
@@ -220,6 +220,14 @@ export async function startPipeline(
     throw new ConflictError(`ticket is ${ticket.status}; pipeline needs open or planned`);
   }
   const workdir = await resolveWorkdir(ticket.projectId, config);
+
+  if (await projectWorkdir(ticket.projectId)) {
+    if (!(await repoIndexed(ticket.projectId))) {
+      indexRepoDocs(ticket.projectId)
+        .catch((e) => console.warn(`repo index failed: ${(e as Error).message}`)); // non-blocking
+    }
+  }
+
 
   const run: Run = {
     id: randomUUID(), ticketId: opts.ticketId, stage: "plan", status: "running",

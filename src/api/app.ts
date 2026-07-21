@@ -4,7 +4,7 @@ import { createTicket, updateTicket } from "../services/tickets.js";
 import { addComment, listComments } from "../services/comments.js";
 import { getTicket, getTicketHistory, listTickets, searchTickets } from "../services/history.js";
 import { saveNote, updateNote, deleteNote, listNotes, getNote } from "../services/notes.js";
-import { searchKnowledge, getKnowledgeSource, upsertSourceDoc, listSessionDocs, knowledgeGraph } from "../services/knowledge.js";
+import { searchKnowledge, getKnowledgeSource, upsertSourceDoc, listSessionDocs, knowledgeGraph, indexRepoDocs } from "../services/knowledge.js";
 import { AuthError, ConflictError, ForbiddenError, NotFoundError, StaleVersionError } from "../services/errors.js";
 import { listProjects, createProject, updateProjectRepo, gitInitProject, getProjectSettings, setProjectSetting, scanFolder, importProjects } from "../services/projects.js";
 import { syncProject } from "../sync/run.js";
@@ -93,6 +93,8 @@ app.patch("/projects/:id", requireAdmin, async (c) => {
   }
 });
 app.post("/projects/:id/git-init", requireAdmin, async (c) => c.json(await gitInitProject(c.req.param("id"))));
+app.post("/projects/:id/index-repo", requireAdmin, async (c) =>
+  c.json(await indexRepoDocs(c.req.param("id"))));
 
 app.post("/projects/scan", requireAdmin, async (c) => {
   const { path } = await c.req.json().catch(() => ({}));

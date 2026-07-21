@@ -85,6 +85,13 @@
       "when": 1784369972169,
       "tag": "0011_lush_nova",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1784677151106,
+      "tag": "0012_bored_hitman",
+      "breakpoints": true
     }
   ]
 }

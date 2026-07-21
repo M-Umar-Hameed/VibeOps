@@ -98,7 +98,7 @@ export function KnowledgeScreen() {
                         const nB = graphQuery.data.nodes.find(n => n.id === e.b);
                         if (!nA || !nB) return null;
                         const getPos = (n: any) => {
-                          const r = n.kind === 'vault' ? 140 : n.kind === 'note' ? 220 : n.kind === 'session' ? 300 : 380;
+                          const r = n.kind === 'vault' ? 140 : n.kind === 'note' ? 220 : n.kind === 'session' ? 300 : n.kind === 'repo' ? 380 : 460;
                           const angle = (Math.abs(hashString(n.id)) % 10000 / 10000) * 2 * Math.PI;
                           return { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
                         };
@@ -110,11 +110,11 @@ export function KnowledgeScreen() {
                     </g>
                     <g className="nodes">
                       {graphQuery.data.nodes.map((n, i) => {
-                        const r = n.kind === 'vault' ? 140 : n.kind === 'note' ? 220 : n.kind === 'session' ? 300 : 380;
+                        const r = n.kind === 'vault' ? 140 : n.kind === 'note' ? 220 : n.kind === 'session' ? 300 : n.kind === 'repo' ? 380 : 460;
                         const angle = (Math.abs(hashString(n.id)) % 10000 / 10000) * 2 * Math.PI;
                         const x = Math.cos(angle) * r;
                         const y = Math.sin(angle) * r;
-                        const colorClass = n.kind === 'vault' ? 'fill-primary' : n.kind === 'note' ? 'fill-secondary' : n.kind === 'session' ? 'fill-amber-500' : 'fill-on-surface';
+                        const colorClass = n.kind === 'vault' ? 'fill-primary' : n.kind === 'note' ? 'fill-secondary' : n.kind === 'session' ? 'fill-amber-500' : n.kind === 'repo' ? 'fill-tertiary' : 'fill-on-surface';
                         return (
                           <circle 
                             key={i} cx={x} cy={y} r={6} 
@@ -131,6 +131,7 @@ export function KnowledgeScreen() {
                     <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-primary"></span> Vault</span>
                     <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-secondary"></span> Note</span>
                     <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-500"></span> Session</span>
+                    <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-tertiary"></span> Repo</span>
                   </div>
                 </>
               )}

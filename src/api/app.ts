@@ -14,6 +14,8 @@ import { getSetting, setSetting } from "../services/settings.js";
 import { getVaultStatus, startWatcher, stopWatcher } from "../ingest/watch.js";
 import { fetchDocs } from "../knowledge/docs.js";
 import { getEmbedder } from "../knowledge/embedder.js";
+import { execFileSync } from "node:child_process";
+import { loadRelayConfig } from "../relay/config.js";
 import type { Actor } from "../db/schema.js";
 import { registerMcpRoutes } from "./mcp-routes.js";
 import { registerForgeRoutes } from "./forge-routes.js";
@@ -130,6 +132,15 @@ app.put("/projects/:id/settings/:key", requireAdmin, async (c) => {
 });
 
 app.get("/actors", async (c) => c.json(await listActors()));
+app.get("/git/identity", (c) => {
+  try {
+    const workdir = loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG).workdir;
+    const name = execFileSync("git", ["config", "user.name"], { cwd: workdir, encoding: "utf-8" }).trim();
+    return c.json({ name: name || null });
+  } catch {
+    return c.json({ name: null });
+  }
+});
 app.post("/actors", requireAdmin, async (c) => {
   const { name, kind, role } = await c.req.json().catch(() => ({}));
   if (typeof name !== "string" || !name.trim()) return c.json({ error: "name required" }, 400);

@@ -49,9 +49,9 @@ export function ProviderCard({ settingKey, name, subtitle, icon, placeholder, bo
   
   return (
     <div className={`glass-card rounded-xl overflow-hidden border border-white/10 flex flex-col md:flex-row md:items-center gap-6 p-6 group hover:border-${borderColorClass} transition-all duration-300`}>
-      <div className="flex items-center gap-4 min-w-[200px]">
+      <div className="flex items-center gap-4 md:w-[260px] md:shrink-0">
         {icon}
-        <div>
+        <div className="min-w-0">
           <h3 className="font-headline-sm text-on-surface font-bold">{name}</h3>
           <p className="text-xs text-on-surface-variant">{subtitle}</p>
           {note && <p className="text-[11px] text-on-surface-variant/60 mt-1">{note}</p>}
@@ -65,13 +65,13 @@ export function ProviderCard({ settingKey, name, subtitle, icon, placeholder, bo
           
           {!isEditing && hasValue ? (
             <div className="w-full bg-surface-container-lowest/30 border border-white/5 rounded px-3 py-2 flex justify-between items-center h-[38px]">
-              <span className="text-sm font-code-sm text-on-surface-variant flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-green-500/80"></span>
-                Connected (•••• {setting?.slice(-4) || ""})
+              <span className="text-sm font-code-sm text-on-surface-variant flex items-center gap-2 min-w-0">
+                <span className="w-2 h-2 rounded-full bg-green-500/80 shrink-0"></span>
+                <span className="whitespace-nowrap truncate">Connected (•••• {setting?.slice(-4) || ""})</span>
               </span>
               <button 
                 onClick={() => setIsEditing(true)}
-                className="text-xs text-primary hover:underline"
+                className="text-xs text-primary hover:underline shrink-0 ml-2 whitespace-nowrap"
               >
                 Change
               </button>

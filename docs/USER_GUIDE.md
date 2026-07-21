@@ -4,7 +4,7 @@
 VibeOps is a self-hosted operations console that orchestrates your autonomous coding agents through a supervised work-order queue. It provides a shared memory and an append-only audit trail so multiple agents can collaborate on the same tasks without starting cold. Humans and agents work together in a continuous loop of planning, sandboxed execution, adversarial review, and final human promotion.
 
 ## Install
-Grab the Windows installer (or build from source per [README.md#install-one-file](README.md#install-one-file)). On your first boot, VibeOps self-creates everything it needs: an embedded PGlite database, your vault, the **Inbox** project, and your owner credentials at `~/.vibeops/credentials.json`. The application spawns a local server on `127.0.0.1:8787`. If you ever uninstall the app, the `~/.vibeops` directory is intentionally left untouched so your data remains safe.
+Grab the Windows installer (or build from source per [README.md#install-one-file](../README.md#install-one-file)). On your first boot, VibeOps self-creates everything it needs: an embedded PGlite database, your vault, the **Inbox** project, and your owner credentials at `~/.vibeops/credentials.json`. The application spawns a local server on `127.0.0.1:8787`. If you ever uninstall the app, the `~/.vibeops` directory is intentionally left untouched so your data remains safe.
 
 ## Connect your agents
 VibeOps never asks for your AI provider API keys. You install and sign in to each agent CLI yourself, once, on your machine, through the vendor's own login. VibeOps only invokes those binaries and verifies they work via Run checks. Your usage and billing stay on your existing subscriptions. VibeOps never sees or stores these credentials.

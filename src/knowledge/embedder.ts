@@ -92,6 +92,45 @@ export class VoyageEmbedder implements Embedder {
   }
 }
 
+// Sticky process-wide fallback: after the first Voyage embed failure (429, 5xx,
+// network) the whole process embeds locally for the rest of its lifetime, so new
+// rows and queries stay in one vector space. Voyage rows written earlier keep
+// their 1024-dim tag and are simply not queried again (dim discriminator).
+let voyageFellBack = false;
+
+// Test-only: reset the sticky flag between cases in a shared module instance.
+export function resetVoyageFallback(): void {
+  voyageFellBack = false;
+}
+
+export class VoyageWithLocalFallback implements Embedder {
+  model: string;
+  dim: number;
+  private local?: Embedder;
+  constructor(private primary: Embedder, private makeLocal: () => Embedder = () => new LocalEmbedder()) {
+    this.model = primary.model;
+    this.dim = primary.dim;
+  }
+  async embed(texts: string[]): Promise<number[][]> {
+    if (!voyageFellBack) {
+      try {
+        return await this.primary.embed(texts);
+      } catch (e) {
+        // Sync check-and-set in the catch: at most one warn even under concurrent
+        // in-flight batches (no await between check and set).
+        if (!voyageFellBack) {
+          voyageFellBack = true;
+          console.warn(`${(e as Error).message}, falling back to local embedder`);
+        }
+      }
+    }
+    const local = (this.local ??= this.makeLocal());
+    this.model = local.model;
+    this.dim = local.dim;
+    return local.embed(texts);
+  }
+}
+
 export function getEmbedder(): Embedder {
   const provider = process.env.EMBED_PROVIDER
     ?? (process.env.VOYAGE_API_KEY ? "voyage" : "local");
@@ -99,6 +138,9 @@ export function getEmbedder(): Embedder {
   if (provider === "local") return new LocalEmbedder();
   const model = process.env.EMBED_MODEL ?? "voyage-3";
   if (!MODEL_DIMS[model]) throw new Error(`unknown embed model: ${model}`);
-  if (provider === "voyage") return new VoyageEmbedder(model, process.env.VOYAGE_API_KEY ?? "");
+  if (provider === "voyage") {
+    if (voyageFellBack) return new LocalEmbedder();
+    return new VoyageWithLocalFallback(new VoyageEmbedder(model, process.env.VOYAGE_API_KEY ?? ""));
+  }
   throw new Error(`unsupported EMBED_PROVIDER: ${provider}`);
 }

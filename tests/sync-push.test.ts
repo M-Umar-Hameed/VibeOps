@@ -130,7 +130,7 @@ test("5. Cross-source ticket not pushed to github", async () => {
   const ticket = await createTicket(aid, { projectId, title: "open", body: "", status: "open" });
   await db.insert(syncLinks).values({
     source: "gitlab",
-    externalId: `gitlab-proj#8`,
+    externalId: `${uniq("gitlab-proj")}#8`,
     ticketId: ticket.id,
     externalUpdatedAt: new Date()
   });

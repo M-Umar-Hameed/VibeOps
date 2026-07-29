@@ -5,14 +5,8 @@ import { useProject } from "../context/project.js";
 import { parseUnifiedDiff, type DiffFile } from "../lib/diff-parse.js";
 import { SpecEditor } from "../components/SpecEditor.js";
 import { CommentList } from "../components/CommentList.js";
-import { useImageAttachments } from "../components/useImageAttachments.js";
+import { WorkOrderComposer } from "../components/WorkOrderComposer.js";
 
-type EffortLevel = "quick" | "standard" | "max";
-const EFFORT_TIPS: Record<EffortLevel, string> = {
-  quick: "Quick: cheapest models, small fixes.",
-  standard: "Standard: cost-optimized routing.",
-  max: "Max: best models everywhere.",
-};
 const parseSel = (s: string) => { const [agent, model] = s.split("::"); return { agent, model }; };
 
 type Ticket = { id: string; title: string; status: string; version: number; body: string | null };
@@ -93,81 +87,7 @@ export function ForgeScreen() {
 
   const actorName = (aid: string) => actors.find((a) => a.id === aid)?.name ?? aid;
 
-  const [newTask, setNewTask] = useState("");
-  const [newTaskError, setNewTaskError] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [effort, setEffort] = useState<EffortLevel>("standard");
-  const [composerWarnings, setComposerWarnings] = useState<string[]>([]);
 
-  const { attachments, attachError, fileInputRef, uploadFiles, removeAttachment, clear, markdown } = useImageAttachments();
-
-  const createTicketFromComposer = async (): Promise<Ticket | null> => {
-    const text = newTask.trim();
-    if (!text) return null;
-    setNewTaskError("");
-    try {
-      const projects = await api.get("/projects") as { id: string; key: string }[];
-      const project = projects.find(p => p.key === "inbox") ?? projects[0];
-      if (!project) throw new Error("no project available");
-      const [title, ...rest] = text.split("\n");
-      const briefBody = rest.join("\n");
-      const attachMd = markdown();
-      const body = attachMd ? (briefBody ? `${briefBody}\n\n${attachMd}` : attachMd) : briefBody;
-      const t = await api.post("/tickets", {
-        projectId: project.id, title: title.slice(0, 200), body,
-      }) as Ticket;
-      setNewTask("");
-      clear();
-      return t;
-    } catch (e: any) {
-      setNewTaskError(e.message || "Failed to create task");
-      return null;
-    }
-  };
-
-  const saveDraft = async () => {
-    setCreating(true);
-    try {
-      const t = await createTicketFromComposer();
-      if (!t) return;
-      await loadTickets();
-      setSelectedTicket(t);
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const runIt = async () => {
-    setCreating(true);
-    setComposerWarnings([]);
-    try {
-      const t = await createTicketFromComposer();
-      if (!t) return;
-      try {
-        const plan = parseSel(planAgent), work = parseSel(workAgent), review = parseSel(reviewAgent);
-        const body: Record<string, any> = {
-          ticketId: t.id,
-          planAgent: plan.agent, workAgent: work.agent, reviewAgent: review.agent,
-          extraPrompt: "",
-          force: false,
-          effort,
-        };
-        if (plan.model) body.planModel = plan.model;
-        if (work.model) body.workModel = work.model;
-        if (review.model) body.reviewModel = review.model;
-        const res = await api.post("/forge/pipeline", body) as { runId: string; doctorWarnings?: string[] };
-        if (res.doctorWarnings?.length) setComposerWarnings(res.doctorWarnings);
-      } catch (e: any) {
-        setNewTaskError(e.message || "Pipeline start failed");
-      }
-      // select AFTER pipeline start: the ticket-select effect reattaches to the
-      // running run and takes over console follow.
-      await loadTickets();
-      setSelectedTicket(t);
-    } finally {
-      setCreating(false);
-    }
-  };
 
   const loadTickets = async () => {
     try {
@@ -623,83 +543,32 @@ export function ForgeScreen() {
             <h2 className="font-headline-sm text-on-surface font-bold">Forge Work Orders</h2>
             <p className="text-xs text-on-surface-variant/70 mt-1">Plan, run, and promote agent work per work order.</p>
           </div>
-          <div className="space-y-2">
-            <textarea
-              className="w-full bg-surface-container/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface outline-none min-h-[96px] resize-y"
-              placeholder="Describe the work. First line becomes the title."
-              value={newTask}
-              onChange={e => setNewTask(e.target.value)}
-              onPaste={e => {
-                const imgs = Array.from(e.clipboardData.files).filter(f => f.type.startsWith("image/"));
-                if (imgs.length) { e.preventDefault(); uploadFiles(imgs); }
-              }}
-            />
-            <div className="flex items-center gap-1" role="group" aria-label="Effort">
-              {(["quick", "standard", "max"] as const).map(lvl => (
-                <button
-                  key={lvl}
-                  onClick={() => setEffort(lvl)}
-                  title={EFFORT_TIPS[lvl]}
-                  className={`px-3 py-1 rounded-full text-xs capitalize cursor-pointer border transition-colors ${effort === lvl ? "bg-primary text-on-primary border-primary" : "border-white/10 text-on-surface-variant hover:bg-white/5"}`}
-                >
-                  {lvl}
-                </button>
-              ))}
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={runIt}
-                disabled={creating || !newTask.trim()}
-                className="flex-1 px-3 py-2 rounded bg-primary hover:brightness-110 text-on-primary text-xs font-bold uppercase tracking-widest transition-all disabled:opacity-50 cursor-pointer"
-              >
-                Run it
-              </button>
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                title="Attach image"
-                className="px-3 py-2 rounded border border-white/10 hover:bg-white/5 text-on-surface-variant text-xs cursor-pointer"
-              >
-                Attach
-              </button>
-            </div>
-            <button
-              onClick={saveDraft}
-              disabled={creating || !newTask.trim()}
-              className="w-full px-3 py-1 text-on-surface-variant/70 hover:text-on-surface text-xs cursor-pointer disabled:opacity-50"
-            >
-              Save as draft
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/png,image/jpeg,image/gif,image/webp"
-              multiple
-              className="hidden"
-              onChange={e => { uploadFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }}
-            />
-            {attachments.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {attachments.map(a => (
-                  <div key={a.id} className="relative">
-                    <img src={a.previewUrl} alt={a.name} className="w-12 h-12 object-cover rounded border border-white/10" />
-                    <button
-                      onClick={() => removeAttachment(a.id)}
-                      className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-error text-white text-[10px] leading-none flex items-center justify-center cursor-pointer"
-                      aria-label={`Remove ${a.name}`}
-                    >×</button>
-                  </div>
-                ))}
-              </div>
-            )}
-            {composerWarnings.length > 0 && (
-              <div className="flex items-start justify-between gap-2 text-amber-400 text-xs border border-amber-500/30 bg-amber-500/10 rounded p-2">
-                <span>{composerWarnings.join("; ")}</span>
-                <button onClick={() => setComposerWarnings([])} aria-label="Dismiss warnings" className="cursor-pointer shrink-0">×</button>
-              </div>
-            )}
-            {attachError && <div className="text-error text-xs">{attachError}</div>}
-            {newTaskError && <div className="text-error text-xs">{newTaskError}</div>}
-          </div>
+          <WorkOrderComposer
+            createTicket={async ({ title, body }) => {
+              const projects = await api.get("/projects") as { id: string; key: string }[];
+              const project = projects.find(p => p.key === "inbox") ?? projects[0];
+              if (!project) throw new Error("no project available");
+              return await api.post("/tickets", { projectId: project.id, title, body }) as Ticket;
+            }}
+            launchPipeline={(t, effort) => {
+              const plan = parseSel(planAgent), work = parseSel(workAgent), review = parseSel(reviewAgent);
+              const body: Record<string, any> = {
+                ticketId: t.id,
+                planAgent: plan.agent, workAgent: work.agent, reviewAgent: review.agent,
+                extraPrompt: "", force: false, effort,
+              };
+              if (plan.model) body.planModel = plan.model;
+              if (work.model) body.workModel = work.model;
+              if (review.model) body.reviewModel = review.model;
+              return api.post("/forge/pipeline", body) as Promise<{ runId: string; doctorWarnings?: string[] }>;
+            }}
+            onCreated={async (t) => {
+              // select AFTER pipeline start: the ticket-select effect reattaches to the
+              // running run and takes over console follow.
+              await loadTickets();
+              setSelectedTicket(t as Ticket);
+            }}
+          />
         </div>
         {ticketsError && <div className="text-error text-xs p-4">{ticketsError}</div>}
         <div className="flex-1 p-4 space-y-6">

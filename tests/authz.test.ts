@@ -67,6 +67,7 @@ test("guarded routes: 403 for member, non-403 for admin", { timeout: 60_000 }, a
     ["/forge/tickets/00000000-0000-0000-0000-000000000000/promote", { method: "POST", headers: memberH }],
     ["/forge/tickets/00000000-0000-0000-0000-000000000000/approve", { method: "POST", headers: memberH }],
     ["/tickets/00000000-0000-0000-0000-000000000000/verify", { method: "POST", headers: memberH }],
+    ["/council", { headers: memberH }],
     ["/council/evaluate", { method: "POST", headers: memberH, body: JSON.stringify({ prompt: "long enough prompt" }) }],
     ["/council/00000000-0000-0000-0000-000000000000/create-ticket", { method: "POST", headers: memberH, body: JSON.stringify({ projectId: "x" }) }],
     ["/skills/marketplaces", { headers: memberH }],

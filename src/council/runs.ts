@@ -89,8 +89,11 @@ async function runCouncilPipeline(session: Session, config: RelayConfig): Promis
 
   const runPersona = async (role: "believer" | "investor" | "skeptic") => {
     const prompt = composePersonaPrompt(role, session.prompt);
-    append(session, `\n=== COUNCIL ${role} ===\n`);
-    const res = await runAgent(personaAgent, prompt, workdir, (chunk) => append(session, chunk));
+    let buf = "";
+    const res = await runAgent(personaAgent, prompt, workdir, (chunk) => { buf += chunk; });
+    // Personas run concurrently; buffer locally and append header+body atomically
+    // so the shared console never interleaves roles. Header format is load-bearing.
+    append(session, `\n=== COUNCIL ${role} ===\n${buf}`);
     if (!res.ok) throw new Error(`${role} failed: ${res.output}`);
     session[role] = res.output;
   };
@@ -191,4 +194,10 @@ export function getCouncilOutput(id: string, after: number) {
   if (!session) return undefined;
   const from = Math.max(0, Math.min(after, session.output.length));
   return { chunk: session.output.slice(from), next: session.output.length, status: session.status };
+}
+
+export function listCouncils() {
+  return [...sessions.values()]
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+    .map((s) => ({ id: s.id, status: s.status, round: s.round, startedAt: s.startedAt, promptPreview: s.prompt.slice(0, 80) }));
 }

@@ -25,6 +25,7 @@ test("member surface audit: admin surfaces return 403", async () => {
     ["/forge/tickets/00000000-0000-0000-0000-000000000000/sandbox", { headers: h }],
     ["/forge/tickets/00000000-0000-0000-0000-000000000000/diff", { headers: h }],
     ["/forge/tickets/00000000-0000-0000-0000-000000000000/explain-diff", { method: "POST", headers: h, body: JSON.stringify({}) }],
+    ["/council", { headers: h }],
     ["/council/evaluate", { method: "POST", headers: h, body: JSON.stringify({ prompt: "x" }) }],
     ["/council/00000000-0000-0000-0000-000000000000/create-ticket", { method: "POST", headers: h, body: JSON.stringify({ projectId: "x" }) }],
     ["/relay/bootstrap", { method: "POST", headers: h, body: JSON.stringify({}) }],

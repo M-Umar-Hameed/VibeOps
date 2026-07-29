@@ -9,6 +9,8 @@ import { api } from "../lib/api.js";
 import { useProject } from "../context/project.js";
 import { useImageAttachments } from "../components/useImageAttachments.js";
 
+const COUNCIL_KEY = "vibeops.activeCouncilId";
+
 export function CreateScreen() {
   const qc = useQueryClient();
   const nav = useNavigate();
@@ -269,6 +271,8 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
   // Title is shown inside the spec preview; only the setter side effects matter.
   const [, setCouncilTitle] = useState("");
   const [councilSpec, setCouncilSpec] = useState("");
+  const [personaTexts, setPersonaTexts] = useState<{ believer?: string; investor?: string; skeptic?: string }>({});
+  const [showConsole, setShowConsole] = useState(false);
   const [answers, setAnswers] = useState<string[]>([]);
   const [forceCreate, setForceCreate] = useState(false);
   const [requiresVerification, setRequiresVerification] = useState(false);
@@ -313,6 +317,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
         const res = await api.get(`/council/${councilId}`) as {
           status: CouncilStatus; rating?: number; decision?: Decision;
           questions?: string[]; title?: string; spec?: string;
+          believer?: string; investor?: string; skeptic?: string;
         };
         if (!running) return;
         setCouncilStatus(res.status);
@@ -324,6 +329,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
         }
         if (res.title !== undefined) setCouncilTitle(res.title);
         if (res.spec !== undefined) setCouncilSpec(res.spec);
+        setPersonaTexts({ believer: res.believer, investor: res.investor, skeptic: res.skeptic });
         if (res.status !== "running") running = false;
       } catch (e: any) {
         if (!running) return;
@@ -336,6 +342,41 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
     return () => { running = false; clearInterval(interval); };
   }, [councilId, councilStatus]);
 
+  useEffect(() => {
+    const saved = localStorage.getItem(COUNCIL_KEY);
+    if (!saved) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.get(`/council/${saved}`) as {
+          status: CouncilStatus; rating?: number; decision?: Decision;
+          questions?: string[]; title?: string; spec?: string;
+          believer?: string; investor?: string; skeptic?: string;
+        };
+        if (cancelled) return;
+        if (res.status === "running" || res.status === "awaiting-answers" || res.status === "decided") {
+          setCouncilId(saved);
+          setCouncilStatus(res.status);
+          if (res.rating !== undefined) setCouncilRating(res.rating);
+          if (res.decision !== undefined) setCouncilDecision(res.decision);
+          if (res.questions !== undefined) {
+            setCouncilQuestions(res.questions);
+            setAnswers(res.questions.map(() => ""));
+          }
+          if (res.title !== undefined) setCouncilTitle(res.title);
+          if (res.spec !== undefined) setCouncilSpec(res.spec);
+          setPersonaTexts({ believer: res.believer, investor: res.investor, skeptic: res.skeptic });
+          nextOffsetRef.current = 0;
+        } else {
+          localStorage.removeItem(COUNCIL_KEY);
+        }
+      } catch {
+        if (!cancelled) localStorage.removeItem(COUNCIL_KEY);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const handleEvaluate = async () => {
     const prompt = ideaPrompt.trim();
     if (!prompt || !councilProjectId) return;
@@ -344,6 +385,8 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
     try {
       const res = await api.post("/council/evaluate", { prompt, projectId: councilProjectId }) as { councilId: string };
       setCouncilId(res.councilId);
+      localStorage.setItem(COUNCIL_KEY, res.councilId);
+      setPersonaTexts({});
       setCouncilStatus("running");
       setCouncilOutput("");
       setCouncilQuestions([]);
@@ -383,6 +426,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
       const body: { projectId: string; force?: boolean; requiresVerification?: boolean } = { projectId: councilProjectId, requiresVerification };
       if (councilDecision !== "GO" && forceCreate) body.force = true;
       const ticket = await api.post(`/council/${councilId}/create-ticket`, body) as { id: string };
+      localStorage.removeItem(COUNCIL_KEY);
       nav({ to: "/tickets/$id", params: { id: ticket.id } });
     } catch (e: any) {
       setCouncilError(e.message || "Failed to create ticket");
@@ -392,6 +436,9 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
   };
 
   const handleStartOver = () => {
+    localStorage.removeItem(COUNCIL_KEY);
+    setPersonaTexts({});
+    setShowConsole(false);
     setCouncilId(null);
     setCouncilStatus("idle");
     setCouncilOutput("");
@@ -444,21 +491,26 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
       )}
 
       {councilId && councilStatus === "running" && (
-        <div className="glass-card rounded-xl border border-white/10 overflow-hidden flex flex-col">
-          <div className="p-3 bg-surface-container/50 border-b border-white/5 text-xs uppercase tracking-widest text-on-surface-variant">Live Console</div>
-          <pre ref={outputRef} className="p-4 h-64 overflow-y-auto bg-background/80 text-code-sm text-on-surface font-mono whitespace-pre-wrap">
-            {councilOutput}
-          </pre>
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <PersonaCard name="Believer" text={personaTexts.believer} />
+            <PersonaCard name="Investor" text={personaTexts.investor} />
+            <PersonaCard name="Skeptic" text={personaTexts.skeptic} />
+          </div>
+          <div className="text-xs uppercase tracking-widest text-on-surface-variant animate-pulse">Council in session...</div>
+          <ConsoleToggle show={showConsole} onToggle={() => setShowConsole(s => !s)} output={councilOutput} outputRef={outputRef} />
         </div>
       )}
 
       {councilId && councilStatus === "awaiting-answers" && (
         <div className="space-y-4">
           <VerdictCard rating={councilRating} decision={councilDecision} councilId={councilId} />
-          <details>
-            <summary className="cursor-pointer text-xs uppercase tracking-widest text-on-surface-variant">Full console</summary>
-            <pre className="p-4 h-64 overflow-y-auto bg-background/80 text-code-sm text-on-surface font-mono whitespace-pre-wrap">{councilOutput}</pre>
-          </details>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <PersonaCard name="Believer" text={personaTexts.believer} />
+            <PersonaCard name="Investor" text={personaTexts.investor} />
+            <PersonaCard name="Skeptic" text={personaTexts.skeptic} />
+          </div>
+          <ConsoleToggle show={showConsole} onToggle={() => setShowConsole(s => !s)} output={councilOutput} />
           {councilQuestions.map((q, i) => (
             <div key={i} className="space-y-1">
               <label className="text-sm text-on-surface-variant">{q}</label>
@@ -483,7 +535,13 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
       {councilId && councilStatus === "decided" && (
         <div className="space-y-4">
           <VerdictCard rating={councilRating} decision={councilDecision} councilId={councilId} />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <PersonaCard name="Believer" text={personaTexts.believer} />
+            <PersonaCard name="Investor" text={personaTexts.investor} />
+            <PersonaCard name="Skeptic" text={personaTexts.skeptic} />
+          </div>
           <pre className="p-4 h-64 overflow-y-auto bg-background/80 text-code-sm text-on-surface font-mono whitespace-pre-wrap border border-white/10 rounded-lg">{councilSpec}</pre>
+          <ConsoleToggle show={showConsole} onToggle={() => setShowConsole(s => !s)} output={councilOutput} />
           {councilDecision !== "GO" && (
             <label className="flex items-center gap-2 text-sm text-on-surface-variant">
               <input type="checkbox" checked={forceCreate} onChange={(e) => setForceCreate(e.target.checked)} />
@@ -500,7 +558,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
             disabled={creatingTicket || (councilDecision !== "GO" && !forceCreate)}
             className="w-full px-10 py-4 bg-primary-fixed-dim text-on-primary font-code-label font-bold uppercase tracking-[0.15em] rounded-sm disabled:opacity-50 cursor-pointer"
           >
-            Create ticket
+            {councilDecision === "GO" ? "Create work order" : "Create ticket"}
           </button>
         </div>
       )}
@@ -554,11 +612,16 @@ function VerdictCard({ rating, decision, councilId }: { rating?: number; decisio
     <div className="flex flex-col gap-4 p-4 border border-white/10 rounded-sm">
       <div className="flex justify-between items-center w-full">
         <div className="flex items-center gap-4">
+          <span className={`px-4 py-2 rounded-sm font-code-label text-lg font-bold uppercase ${
+            decision === "GO" ? "bg-green-500/20 text-green-400"
+            : decision === "NO-GO" ? "bg-red-500/20 text-red-400"
+            : decision === "NEEDS-INFO" ? "bg-amber-500/20 text-amber-400"
+            : "bg-surface-container-highest text-on-surface"
+          }`}>
+            {decision ?? "PENDING"}
+          </span>
           <span className="px-3 py-1 bg-primary-fixed-dim/20 text-primary-fixed-dim rounded-sm font-code-label text-sm">
             {rating ?? 0}/10
-          </span>
-          <span className="px-3 py-1 bg-surface-container-highest text-on-surface rounded-sm font-code-label text-sm uppercase">
-            {decision ?? "PENDING"}
           </span>
         </div>
         {councilId && (
@@ -576,6 +639,43 @@ function VerdictCard({ rating, decision, councilId }: { rating?: number; decisio
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function PersonaCard({ name, text }: { name: string; text?: string }) {
+  return (
+    <div className="p-4 border border-white/10 rounded-sm space-y-2">
+      <div className="font-code-label text-xs uppercase tracking-widest text-on-surface-variant">{name}</div>
+      {text ? (
+        <div className="text-sm text-on-surface whitespace-pre-wrap">
+          {text.split(/\r?\n/).map((l) => l.replace(/^\*\*+\s*/, "")).join("\n")}
+        </div>
+      ) : (
+        <div className="text-sm text-on-surface-variant/50 animate-pulse">Deliberating...</div>
+      )}
+    </div>
+  );
+}
+
+function ConsoleToggle({ show, onToggle, output, outputRef }: {
+  show: boolean; onToggle: () => void; output: string;
+  outputRef?: React.RefObject<HTMLPreElement | null>;
+}) {
+  return (
+    <div className="space-y-2">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="text-xs uppercase tracking-widest text-on-surface-variant hover:text-on-surface cursor-pointer"
+      >
+        {show ? "Hide console" : "Show console"}
+      </button>
+      {show && (
+        <pre ref={outputRef} className="p-4 h-64 overflow-y-auto bg-background/80 text-code-sm text-on-surface font-mono whitespace-pre-wrap border border-white/10 rounded-lg">
+          {output}
+        </pre>
+      )}
     </div>
   );
 }

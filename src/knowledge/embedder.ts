@@ -14,6 +14,12 @@ export const MODEL_DIMS: Record<string, number> = {
   "voyage-3.5": 1024,
   "voyage-3.5-lite": 1024,
   "voyage-code-3": 1024,
+  "voyage-4-large": 1024,
+  "voyage-4": 1024,
+  "voyage-4-lite": 1024,
+  "voyage-3-large": 1024,
+  "voyage-law-2": 1024,
+  "voyage-finance-2": 1024,
   "text-embedding-3-small": 1536,
   "text-embedding-3-large": 3072,
   "text-embedding-004": 768,
@@ -22,7 +28,7 @@ export const MODEL_DIMS: Record<string, number> = {
 
 // Matryoshka models accept output_dimension; we pin 1024 to match the vector
 // column. Models absent here use their fixed native dim.
-const OUTPUT_DIM_MODELS = new Set(["voyage-3.5", "voyage-3.5-lite", "voyage-code-3"]);
+const OUTPUT_DIM_MODELS = new Set(["voyage-3.5", "voyage-3.5-lite", "voyage-code-3", "voyage-4-large", "voyage-4", "voyage-4-lite", "voyage-3-large"]);
 
 // Deterministic pseudo-embedding for tests: hash-seeded unit-ish vector.
 export class FakeEmbedder implements Embedder {

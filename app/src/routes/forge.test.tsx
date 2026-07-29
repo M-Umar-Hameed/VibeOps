@@ -6,7 +6,7 @@ vi.mock("../api/client.js", () => ({ apiFetch: (...a: any[]) => apiFetch(...a) }
 
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 import { ForgeScreen } from "./forge.js";
-import { NotFoundError } from "../api/errors.js";
+import { NotFoundError, StaleVersionError } from "../api/errors.js";
 import { ProjectProvider } from "../context/project.js";
 
 // SpecEditor uses react-query; every render needs a client.
@@ -526,7 +526,7 @@ test("paste image attaches a thumbnail and Create task posts body with the absol
   });
 
   render(wrap(<ForgeScreen />));
-  const textarea = await screen.findByPlaceholderText(/New task/i);
+  const textarea = await screen.findByPlaceholderText(/Describe the work/i);
   fireEvent.change(textarea, { target: { value: "Fix the header" } });
 
   const file = new File([Uint8Array.from([0x89, 0x50, 0x4e, 0x47])], "shot.png", { type: "image/png" });
@@ -534,7 +534,111 @@ test("paste image attaches a thumbnail and Create task posts body with the absol
 
   await waitFor(() => expect(screen.getByRole("img")).toBeInTheDocument());
 
-  fireEvent.click(screen.getByRole("button", { name: /Create task/i }));
+  fireEvent.click(screen.getByRole("button", { name: /Save as draft/i }));
   await waitFor(() => expect(posted.length).toBe(1));
   expect(posted[0].body).toContain(abs);
+});
+
+const composerMocks = (pipelineImpl?: (init: any) => any) => {
+  apiFetch.mockImplementation(async (path: string, init?: any) => {
+    if (path === "/tickets" && init?.method === "POST") return { id: "t9", title: "Fix the header", status: "open" };
+    if (path === "/tickets") return [];
+    if (path === "/projects") return [{ id: "p1", key: "inbox" }];
+    if (path === "/forge/agents") return [];
+    if (path === "/forge/skills") return [];
+    if (path === "/actors") return [];
+    if (path === "/forge/runs") return [];
+    if (path.includes("/sandbox")) return { exists: false };
+    if (path.includes("/comments")) return [];
+    if (path === "/forge/pipeline") return pipelineImpl ? pipelineImpl(init) : { runId: "run123", doctorWarnings: [] };
+    return {};
+  });
+};
+
+test("composer Run it: tickets POST then pipeline POST with default effort standard", async () => {
+  composerMocks();
+  render(wrap(<ForgeScreen />));
+  const textarea = await screen.findByPlaceholderText(/Describe the work/i);
+  fireEvent.change(textarea, { target: { value: "Fix the header" } });
+  fireEvent.click(screen.getByRole("button", { name: /Run it/i }));
+
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/forge/pipeline", {
+    method: "POST",
+    body: {
+      ticketId: "t9",
+      planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+      extraPrompt: "", force: false, effort: "standard",
+    },
+  }));
+  const postIdx = (p: string) => apiFetch.mock.calls.findIndex((c: any) => c[0] === p && c[1]?.method === "POST");
+  expect(postIdx("/tickets")).toBeGreaterThanOrEqual(0);
+  expect(postIdx("/forge/pipeline")).toBeGreaterThan(postIdx("/tickets"));
+});
+
+test("effort pill changes pipeline payload", async () => {
+  composerMocks();
+  render(wrap(<ForgeScreen />));
+  const textarea = await screen.findByPlaceholderText(/Describe the work/i);
+  fireEvent.change(textarea, { target: { value: "Big refactor" } });
+  fireEvent.click(screen.getByRole("button", { name: /^max$/i }));
+  fireEvent.click(screen.getByRole("button", { name: /Run it/i }));
+
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/forge/pipeline", expect.objectContaining({
+    method: "POST",
+    body: expect.objectContaining({ effort: "max" }),
+  })));
+});
+
+test("Save as draft creates ticket, never calls pipeline", async () => {
+  composerMocks();
+  render(wrap(<ForgeScreen />));
+  const textarea = await screen.findByPlaceholderText(/Describe the work/i);
+  fireEvent.change(textarea, { target: { value: "Just a draft" } });
+  fireEvent.click(screen.getByRole("button", { name: /Save as draft/i }));
+
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/tickets", expect.objectContaining({ method: "POST" })));
+  expect(apiFetch.mock.calls.some((c: any) => c[0] === "/forge/pipeline")).toBe(false);
+});
+
+test("doctor warnings from pipeline start surface as a dismissible note", async () => {
+  composerMocks(() => ({ runId: "run123", doctorWarnings: ["agy: auth expired"] }));
+  render(wrap(<ForgeScreen />));
+  const textarea = await screen.findByPlaceholderText(/Describe the work/i);
+  fireEvent.change(textarea, { target: { value: "Fix the header" } });
+  fireEvent.click(screen.getByRole("button", { name: /Run it/i }));
+
+  await waitFor(() => expect(screen.getByText(/agy: auth expired/)).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: /Dismiss warnings/i }));
+  expect(screen.queryByText(/agy: auth expired/)).not.toBeInTheDocument();
+});
+
+test("pipeline 409 shows inline error text; ticket still created", async () => {
+  composerMocks(() => { throw new StaleVersionError("per-ticket token cap exceeded: 999 > 100"); });
+  render(wrap(<ForgeScreen />));
+  const textarea = await screen.findByPlaceholderText(/Describe the work/i);
+  fireEvent.change(textarea, { target: { value: "Fix the header" } });
+  fireEvent.click(screen.getByRole("button", { name: /Run it/i }));
+
+  await waitFor(() => expect(screen.getByText(/per-ticket token cap exceeded/)).toBeInTheDocument());
+  expect(apiFetch).toHaveBeenCalledWith("/tickets", expect.objectContaining({ method: "POST" }));
+});
+
+test("Run History row shows effort badge when the run record has one", async () => {
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/tickets") return [{ id: "t1", title: "My Ticket", status: "review" }];
+    if (path === "/forge/agents") return [];
+    if (path === "/forge/skills") return [];
+    if (path.includes("/sandbox")) return { exists: false };
+    if (path.includes("/comments")) return [];
+    if (path === "/forge/runs") return [
+      { id: "run456", ticketId: "t1", status: "passed", stage: "review", startedAt: "2026-07-18T00:00:00Z", effort: "max" },
+    ];
+    if (path.includes("/output")) return { chunk: "", next: 0, stage: "review", status: "passed" };
+    return {};
+  });
+  render(wrap(<ForgeScreen />));
+  await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
+  fireEvent.click(screen.getByText("My Ticket"));
+  await waitFor(() => expect(screen.getByText("Run History")).toBeInTheDocument());
+  expect(screen.getByTestId("run-effort-run456")).toHaveTextContent("max");
 });

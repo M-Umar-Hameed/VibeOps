@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 
 const ABS = "/mock/path/shot.png";
-const apiPost = vi.fn(async () => ({ path: ABS, markdown: `![shot.png](${ABS})` }));
+const apiPost = vi.fn(async (..._a: any[]) => ({ path: ABS, markdown: `![shot.png](${ABS})` }));
 vi.mock("../lib/api.js", () => ({ api: { get: vi.fn(async () => []), post: (...a: any[]) => apiPost(...a) } }));
 
 const createTicket = vi.fn(async (..._a: any[]) => ({ id: "new1" }));

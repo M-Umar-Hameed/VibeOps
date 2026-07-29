@@ -35,7 +35,7 @@ const NEW_MODELS = ["voyage-4-large", "voyage-4", "voyage-4-lite", "voyage-3-lar
 const MATRYOSHKA = new Set(["voyage-4-large", "voyage-4", "voyage-4-lite", "voyage-3-large"]);
 
 test.each(NEW_MODELS)("%s: dim 1024, output_dimension only for matryoshka", async (model) => {
-  const fetchMock = vi.fn(async () =>
+  const fetchMock = vi.fn(async (url: any, init: any) =>
     new Response(JSON.stringify({ data: [{ embedding: new Array(1024).fill(0) }] }), { status: 200 }),
   );
   vi.stubGlobal("fetch", fetchMock);

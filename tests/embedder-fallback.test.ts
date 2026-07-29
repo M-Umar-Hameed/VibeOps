@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import {
   FakeEmbedder, LocalEmbedder, VoyageEmbedder, VoyageWithLocalFallback,
-  getEmbedder, resetVoyageFallback,
+  getEmbedder, resetVoyageFallback, resetVoyageThrottle,
 } from "../src/knowledge/embedder.js";
 
-beforeEach(() => resetVoyageFallback());
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+beforeEach(() => { resetVoyageFallback(); resetVoyageThrottle(); process.env.VOYAGE_MIN_INTERVAL_MS = "0"; });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); delete process.env.VOYAGE_MIN_INTERVAL_MS; });
 
 test("voyage failure -> local fallback, local-tagged, sticky, single warn", async () => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  vi.stubGlobal("fetch", vi.fn(async () => new Response("rate limited", { status: 429 })));
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("rate limited", { status: 429, headers: { "retry-after": "0" } })));
 
   const primary = new VoyageEmbedder("voyage-3", "k");   // model voyage-3, dim 1024
   const local = new FakeEmbedder(384);                    // stands in for LocalEmbedder
@@ -21,13 +21,13 @@ test("voyage failure -> local fallback, local-tagged, sticky, single warn", asyn
   expect(w.model).toBe("fake");          // local tag, NEVER voyage
   expect(w.dim).toBe(384);
   expect(localEmbed).toHaveBeenCalledTimes(1);
-  expect(warn).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalledTimes(2);
 
   (fetch as any).mockClear();
   await w.embed(["doc b"]);              // subsequent call skips voyage
   expect(fetch).not.toHaveBeenCalled();
   expect(localEmbed).toHaveBeenCalledTimes(2);
-  expect(warn).toHaveBeenCalledTimes(1); // no per-doc spam
+  expect(warn).toHaveBeenCalledTimes(2); // no per-doc spam
 });
 
 test("getEmbedder returns LocalEmbedder directly once fallback is sticky", async () => {

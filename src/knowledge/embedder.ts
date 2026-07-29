@@ -75,6 +75,45 @@ export class LocalEmbedder implements Embedder {
   }
 }
 
+// --- Voyage throttle + 429 retry: module-level, one queue per process ---
+// ponytail: single promise-chain queue + adaptive interval; per-key queues only if multi-tenant ever matters.
+const THROTTLED_INTERVAL_MS = 21_000; // ~3 req/min with margin, set on first 429
+const INTERVAL_FLOOR_MS = 2_000;
+const HALVE_AFTER_SUCCESSES = 20;
+const RETRY_BACKOFF_MS = [30_000, 60_000, 120_000];
+
+let voyageQueue: Promise<unknown> = Promise.resolve();
+let adaptiveIntervalMs = 0; // 0 until first 429: paid RPM is high, don't slow the happy path
+let successRun = 0;
+let lastRequestStart = -Infinity;
+let warned429 = false;
+
+// VOYAGE_MIN_INTERVAL_MS forces a fixed interval and disables adaptation.
+function forcedIntervalMs(): number | null {
+  const raw = process.env.VOYAGE_MIN_INTERVAL_MS;
+  if (raw === undefined || raw === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+function retryAfterMs(res: Response): number | null {
+  const h = res.headers.get("retry-after");
+  if (h === null || h.trim() === "") return null;
+  const n = Number(h);
+  return Number.isFinite(n) && n >= 0 ? n * 1000 : null;
+}
+
+// Test-only: reset module throttle state between cases.
+export function resetVoyageThrottle(): void {
+  voyageQueue = Promise.resolve();
+  adaptiveIntervalMs = 0;
+  successRun = 0;
+  lastRequestStart = -Infinity;
+  warned429 = false;
+}
+
 export class VoyageEmbedder implements Embedder {
   dim: number;
   constructor(public model: string, private apiKey: string) {
@@ -83,18 +122,50 @@ export class VoyageEmbedder implements Embedder {
     this.dim = d;
   }
   async embed(texts: string[]): Promise<number[][]> {
+    // All Voyage requests serialize through the module chain; the chain holds
+    // only the newest promise, so memory stays bounded.
+    const run = voyageQueue.then(() => this.embedWithRetry(texts));
+    voyageQueue = run.catch(() => undefined);
+    return run;
+  }
+  private async embedWithRetry(texts: string[]): Promise<number[][]> {
+    for (let attempt = 0; ; attempt++) {
+      const wait = lastRequestStart + (forcedIntervalMs() ?? adaptiveIntervalMs) - Date.now();
+      if (wait > 0) await sleep(wait);
+      lastRequestStart = Date.now();
+      const res = await this.request(texts);
+      if (res.ok) {
+        if (forcedIntervalMs() === null && adaptiveIntervalMs > INTERVAL_FLOOR_MS && ++successRun >= HALVE_AFTER_SUCCESSES) {
+          adaptiveIntervalMs = Math.max(INTERVAL_FLOOR_MS, adaptiveIntervalMs / 2);
+          successRun = 0;
+        }
+        const data = (await res.json()) as { data: { embedding: number[] }[] };
+        // Pad sub-1024 dims to the vector(1024) column width, same as the local
+        // embedder — shared zero padding preserves cosine similarity.
+        return data.data.map((d) => padTo(d.embedding, 1024));
+      }
+      // 5xx/other: single failure -> throw (unchanged behavior). 429: retry up
+      // to 3 times, so the sticky fallback only sees truly exhausted 429s.
+      if (res.status !== 429 || attempt >= RETRY_BACKOFF_MS.length) {
+        throw new Error(`voyage embed failed: ${res.status}`);
+      }
+      successRun = 0;
+      if (forcedIntervalMs() === null && adaptiveIntervalMs < THROTTLED_INTERVAL_MS) adaptiveIntervalMs = THROTTLED_INTERVAL_MS;
+      if (!warned429) {
+        warned429 = true;
+        console.warn("voyage 429, retrying with backoff");
+      }
+      await sleep(retryAfterMs(res) ?? RETRY_BACKOFF_MS[attempt]);
+    }
+  }
+  private async request(texts: string[]): Promise<Response> {
     const body: Record<string, unknown> = { input: texts, model: this.model };
     if (OUTPUT_DIM_MODELS.has(this.model)) body.output_dimension = this.dim;
-    const res = await fetch("https://api.voyageai.com/v1/embeddings", {
+    return fetch("https://api.voyageai.com/v1/embeddings", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.apiKey}` },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`voyage embed failed: ${res.status}`);
-    const data = (await res.json()) as { data: { embedding: number[] }[] };
-    // Pad sub-1024 dims to the vector(1024) column width, same as the local
-    // embedder — shared zero padding preserves cosine similarity.
-    return data.data.map((d) => padTo(d.embedding, 1024));
   }
 }
 

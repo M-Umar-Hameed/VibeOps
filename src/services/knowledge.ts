@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
+import { statSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { and, eq, isNull, inArray, sql as dsql } from "drizzle-orm";
+import { join, relative, sep } from "node:path";
+import { and, eq, isNull, inArray, like, notInArray, sql as dsql } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { embeddings, notes } from "../db/schema.js";
+import { embeddings, notes, projects } from "../db/schema.js";
+import { ConflictError, NotFoundError } from "./errors.js";
 import { chunkMarkdown } from "../knowledge/chunker.js";
 import { getEmbedder, type Embedder } from "../knowledge/embedder.js";
 import { redactSecrets } from "../forge/redact.js";
@@ -20,7 +23,7 @@ function vecLiteral(v: number[]): string {
 }
 
 export async function upsertSourceDoc(
-  kind: "vault" | "note" | "session", ref: string, text: string,
+  kind: "vault" | "note" | "session" | "repo", ref: string, text: string,
   embedder: Embedder, contentHash?: string,
 ): Promise<number> {
   const chunks = chunkMarkdown(text);
@@ -74,6 +77,78 @@ export async function insertNoteEmbedding(noteId: string, body: string, embedder
     })));
     return true;
   });
+}
+
+function walkRepoDocs(root: string, currentDir = root, depth = 0, files: string[] = []): string[] {
+  if (depth > 4) return files;
+  try {
+    const entries = readdirSync(currentDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const name = entry.name;
+      if (entry.isDirectory()) {
+        if (name === "node_modules" || name === ".git" || name === "coverage" || name === "build" || /^dist/.test(name)) continue;
+        walkRepoDocs(root, join(currentDir, name), depth + 1, files);
+      } else {
+        if (/\.md$/i.test(name) || /^readme/i.test(name) || name === "CLAUDE.md" || name === "AGENTS.md") {
+          files.push(join(currentDir, name));
+        }
+      }
+    }
+  } catch (e) {
+    // skip unreadable
+  }
+  return files;
+}
+
+export async function indexRepoDocs(projectId: string): Promise<{ indexed: number; skipped: number; removed: number }> {
+  const [p] = await db.select().from(projects).where(eq(projects.id, projectId));
+  if (!p) throw new NotFoundError(`project not found: ${projectId}`);
+  if (!p.repoPath) throw new ConflictError("project has no repoPath set");
+  const root = p.repoPath;
+  const embedder = getEmbedder();
+  let files = walkRepoDocs(root);
+  if (files.length > 50) {
+    console.warn(`Dropped ${files.length - 50} repo docs (cap 50) for project ${projectId}`);
+    files = files.slice(0, 50);
+  }
+  let indexed = 0;
+  let skipped = 0;
+  const kept: string[] = [];
+  for (const file of files) {
+    try {
+      const stat = statSync(file);
+      if (stat.size > 200 * 1024) {
+        skipped++;
+        continue;
+      }
+      const text = await readFile(file, "utf-8");
+      const relPosix = relative(root, file).split(sep).join("/");
+      const ref = `${projectId}:${relPosix}`;
+      await upsertSourceDoc("repo", ref, text, embedder);
+      indexed++;
+      kept.push(ref);
+    } catch (e) {
+      // skip unreadable file
+    }
+  }
+  
+  const removedRows = await db.delete(embeddings)
+    .where(and(
+      eq(embeddings.sourceKind, "repo"),
+      like(embeddings.sourceRef, `${projectId}:%`),
+      kept.length ? notInArray(embeddings.sourceRef, kept) : undefined
+    ))
+    .returning({ ref: embeddings.sourceRef });
+  const removed = new Set(removedRows.map(r => r.ref)).size;
+  // ponytail: re-embeds every file; add contentHash skip (see reindexFile) if manual re-index cost matters
+  return { indexed, skipped, removed };
+}
+
+export async function repoIndexed(projectId: string): Promise<boolean> {
+  const [row] = await db.select({ id: embeddings.id }).from(embeddings)
+    .where(and(eq(embeddings.sourceKind, "repo"), like(embeddings.sourceRef, `${projectId}:%`)))
+    .limit(1);
+  return !!row;
 }
 
 export async function searchKnowledge(

@@ -7,6 +7,14 @@ import { SpecEditor } from "../components/SpecEditor.js";
 import { CommentList } from "../components/CommentList.js";
 import { useImageAttachments } from "../components/useImageAttachments.js";
 
+type EffortLevel = "quick" | "standard" | "max";
+const EFFORT_TIPS: Record<EffortLevel, string> = {
+  quick: "Quick: cheapest models, small fixes.",
+  standard: "Standard: cost-optimized routing.",
+  max: "Max: best models everywhere.",
+};
+const parseSel = (s: string) => { const [agent, model] = s.split("::"); return { agent, model }; };
+
 type Ticket = { id: string; title: string; status: string; version: number; body: string | null };
 type Agent = { name: string; roles: string[]; models?: { name: string }[] };
 type Skill = { name: string };
@@ -88,13 +96,14 @@ export function ForgeScreen() {
   const [newTask, setNewTask] = useState("");
   const [newTaskError, setNewTaskError] = useState("");
   const [creating, setCreating] = useState(false);
+  const [effort, setEffort] = useState<EffortLevel>("standard");
+  const [composerWarnings, setComposerWarnings] = useState<string[]>([]);
 
   const { attachments, attachError, fileInputRef, uploadFiles, removeAttachment, clear, markdown } = useImageAttachments();
 
-  const createTask = async () => {
+  const createTicketFromComposer = async (): Promise<Ticket | null> => {
     const text = newTask.trim();
-    if (!text) return;
-    setCreating(true);
+    if (!text) return null;
     setNewTaskError("");
     try {
       const projects = await api.get("/projects") as { id: string; key: string }[];
@@ -109,10 +118,52 @@ export function ForgeScreen() {
       }) as Ticket;
       setNewTask("");
       clear();
-      await loadTickets();
-      setSelectedTicket(t);
+      return t;
     } catch (e: any) {
       setNewTaskError(e.message || "Failed to create task");
+      return null;
+    }
+  };
+
+  const saveDraft = async () => {
+    setCreating(true);
+    try {
+      const t = await createTicketFromComposer();
+      if (!t) return;
+      await loadTickets();
+      setSelectedTicket(t);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const runIt = async () => {
+    setCreating(true);
+    setComposerWarnings([]);
+    try {
+      const t = await createTicketFromComposer();
+      if (!t) return;
+      try {
+        const plan = parseSel(planAgent), work = parseSel(workAgent), review = parseSel(reviewAgent);
+        const body: Record<string, any> = {
+          ticketId: t.id,
+          planAgent: plan.agent, workAgent: work.agent, reviewAgent: review.agent,
+          extraPrompt: "",
+          force: false,
+          effort,
+        };
+        if (plan.model) body.planModel = plan.model;
+        if (work.model) body.workModel = work.model;
+        if (review.model) body.reviewModel = review.model;
+        const res = await api.post("/forge/pipeline", body) as { runId: string; doctorWarnings?: string[] };
+        if (res.doctorWarnings?.length) setComposerWarnings(res.doctorWarnings);
+      } catch (e: any) {
+        setNewTaskError(e.message || "Pipeline start failed");
+      }
+      // select AFTER pipeline start: the ticket-select effect reattaches to the
+      // running run and takes over console follow.
+      await loadTickets();
+      setSelectedTicket(t);
     } finally {
       setCreating(false);
     }
@@ -350,7 +401,7 @@ export function ForgeScreen() {
     setRunStatus("running");
     nextOffsetRef.current = 0;
     try {
-      const parseSel = (s: string) => { const [agent, model] = s.split("::"); return { agent, model }; };
+
       const plan = parseSel(planAgent), work = parseSel(workAgent), review = parseSel(reviewAgent);
       const body: Record<string, any> = {
         ticketId: selectedTicket.id,
@@ -574,8 +625,8 @@ export function ForgeScreen() {
           </div>
           <div className="space-y-2">
             <textarea
-              className="w-full bg-surface-container/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface outline-none min-h-[56px] resize-y"
-              placeholder="New task: first line is the title, the rest is the brief."
+              className="w-full bg-surface-container/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface outline-none min-h-[96px] resize-y"
+              placeholder="Describe the work. First line becomes the title."
               value={newTask}
               onChange={e => setNewTask(e.target.value)}
               onPaste={e => {
@@ -583,12 +634,40 @@ export function ForgeScreen() {
                 if (imgs.length) { e.preventDefault(); uploadFiles(imgs); }
               }}
             />
+            <div className="flex items-center gap-1" role="group" aria-label="Effort">
+              {(["quick", "standard", "max"] as const).map(lvl => (
+                <button
+                  key={lvl}
+                  onClick={() => setEffort(lvl)}
+                  title={EFFORT_TIPS[lvl]}
+                  className={`px-3 py-1 rounded-full text-xs capitalize cursor-pointer border transition-colors ${effort === lvl ? "bg-primary text-on-primary border-primary" : "border-white/10 text-on-surface-variant hover:bg-white/5"}`}
+                >
+                  {lvl}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={runIt}
+                disabled={creating || !newTask.trim()}
+                className="flex-1 px-3 py-2 rounded bg-primary hover:brightness-110 text-on-primary text-xs font-bold uppercase tracking-widest transition-all disabled:opacity-50 cursor-pointer"
+              >
+                Run it
+              </button>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                title="Attach image"
+                className="px-3 py-2 rounded border border-white/10 hover:bg-white/5 text-on-surface-variant text-xs cursor-pointer"
+              >
+                Attach
+              </button>
+            </div>
             <button
-              onClick={createTask}
+              onClick={saveDraft}
               disabled={creating || !newTask.trim()}
-              className="w-full px-3 py-2 rounded bg-surface-container-highest hover:bg-white/10 text-on-surface text-xs font-bold uppercase tracking-widest transition-all disabled:opacity-50 cursor-pointer"
+              className="w-full px-3 py-1 text-on-surface-variant/70 hover:text-on-surface text-xs cursor-pointer disabled:opacity-50"
             >
-              Create task
+              Save as draft
             </button>
             <input
               ref={fileInputRef}
@@ -598,12 +677,6 @@ export function ForgeScreen() {
               className="hidden"
               onChange={e => { uploadFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }}
             />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="w-full px-3 py-1.5 rounded border border-white/10 hover:bg-white/5 text-on-surface-variant text-xs cursor-pointer"
-            >
-              Attach image
-            </button>
             {attachments.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {attachments.map(a => (
@@ -616,6 +689,12 @@ export function ForgeScreen() {
                     >×</button>
                   </div>
                 ))}
+              </div>
+            )}
+            {composerWarnings.length > 0 && (
+              <div className="flex items-start justify-between gap-2 text-amber-400 text-xs border border-amber-500/30 bg-amber-500/10 rounded p-2">
+                <span>{composerWarnings.join("; ")}</span>
+                <button onClick={() => setComposerWarnings([])} aria-label="Dismiss warnings" className="cursor-pointer shrink-0">×</button>
               </div>
             )}
             {attachError && <div className="text-error text-xs">{attachError}</div>}
@@ -1063,6 +1142,11 @@ export function ForgeScreen() {
                           <span className={`px-2 py-0.5 rounded text-[10px] font-code-label uppercase ${run.status === 'passed' ? 'bg-green-500/20 text-green-400' : run.status === 'failed' ? 'bg-red-500/20 text-red-400' : 'bg-surface-container text-on-surface-variant'}`}>
                             {run.status}
                           </span>
+                          {run.effort && (
+                            <span data-testid={`run-effort-${run.id}`} className="px-2 py-0.5 rounded text-[10px] font-code-label uppercase border border-white/10 bg-surface-container text-on-surface-variant">
+                              {run.effort}
+                            </span>
+                          )}
                         </div>
                         <span className="text-xs text-on-surface-variant/70 font-code-sm">
                           {new Date(run.startedAt).toLocaleString()}

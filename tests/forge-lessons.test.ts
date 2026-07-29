@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { getLessons, setLessons, lessonsClause, composeAnalyzerPrompt, parseLessons } from "../src/forge/lessons.js";
+import { getLessons, setLessons, lessonsClause, composeAnalyzerPrompt, parseOps, applyOps, recordOutcome, settleCandidate, pushRejected, loadEvoState, saveEvoState } from "../src/forge/lessons.js";
 import { createActor } from "../src/services/actors.js";
 
 process.env.EMBED_PROVIDER = "fake";
@@ -9,46 +9,130 @@ function uniq(prefix: string) {
 }
 
 describe("forge lessons", () => {
-  it("parseLessons: well-formed block", () => {
-    const output = "analysis done\nLESSONS:\n- one\n- two";
-    expect(parseLessons(output)).toBe("- one\n- two");
+  it("parseOps: valid OPS→ops (capped 3, ill-shaped dropped)", () => {
+    const output = `analysis done\nOPS:\n[
+      {"op":"add","text":"one"},
+      {"op":"delete","target":"two"},
+      {"op":"replace","target":"three","text":"four"},
+      {"op":"add","text":"five"},
+      {"op":"add"}
+    ]`;
+    const ops = parseOps(output);
+    expect(ops).toEqual([
+      { op: "add", text: "one" },
+      { op: "delete", target: "two" },
+      { op: "replace", target: "three", text: "four" }
+    ]);
   });
 
-  it("parseLessons: garbage output -> null", () => {
-    expect(parseLessons("just some narration, no marker here")).toBeNull();
+  it("parseOps: no anchor -> null", () => {
+    expect(parseOps("just some narration, no marker here")).toBeNull();
   });
 
-  it("parseLessons: last line-anchored block beats earlier narration", () => {
-    const output = "LESSONS:\nold doc\n\nmore narration mentions LESSONS: inline, not anchored\n\nLESSONS:\nnew doc";
-    expect(parseLessons(output)).toBe("new doc");
+  it("parseOps: malformed JSON / non-array -> null", () => {
+    expect(parseOps("OPS:\n{ \"not\": \"an array\" }")).toBeNull();
+    expect(parseOps("OPS:\nnot even json")).toBeNull();
   });
 
-  it("lessonsClause: empty vs filled", () => {
-    expect(lessonsClause("")).toBe("");
-    expect(lessonsClause("- do X")).toBe("\n\nPrompting lessons learned (follow these):\n- do X");
+  it("applyOps: add/delete/replace apply on verbatim match", () => {
+    const doc = "line1\nline2\nline3";
+    const ops: any[] = [
+      { op: "delete", target: "line2" },
+      { op: "replace", target: "line3", text: "line3_new" },
+      { op: "add", text: "line4" }
+    ];
+    const { doc: newDoc, applied, rejected } = applyOps(doc, ops);
+    expect(newDoc).toBe("line1\nline3_new\nline4");
+    expect(applied.length).toBe(3);
+    expect(rejected.length).toBe(0);
   });
 
-  it("setLessons caps at 1500, redacts sk- keys, round-trips via getLessons", async () => {
-    const { actor } = await createActor({ name: uniq("lessons-actor"), kind: "human" });
-    const secret = "sk-abcdefghij0123456789";
-    const longText = `leaked key ${secret}\n` + "x".repeat(2000);
-
-    await setLessons(actor.id, longText);
-    const stored = await getLessons();
-
-    expect(stored.length).toBeLessThanOrEqual(1500);
-    expect(stored).not.toContain(secret);
-
-    await setLessons(actor.id, "- second write");
-    expect(await getLessons()).toBe("- second write");
+  it("applyOps: unknown target rejected without mutating doc", () => {
+    const doc = "line1";
+    const ops: any[] = [
+      { op: "delete", target: "line2" },
+      { op: "replace", target: "line3", text: "line3_new" }
+    ];
+    const { doc: newDoc, applied, rejected } = applyOps(doc, ops);
+    expect(newDoc).toBe("line1");
+    expect(applied.length).toBe(0);
+    expect(rejected.length).toBe(2);
   });
 
-  it("composeAnalyzerPrompt includes output, outcome, current, and the hard-rule contract", () => {
-    const prompt = composeAnalyzerPrompt({ output: "OUTPUT_MARKER", outcome: "status=passed stage=review", current: "CURRENT_MARKER" });
+  it("applyOps: 12-line cap enforced, redacted text", () => {
+    const doc = Array.from({ length: 12 }, (_, i) => `line${i}`).join("\n");
+    const ops: any[] = [
+      { op: "add", text: "line12" }, // should be rejected unless delete makes room
+      { op: "add", text: "leaked sk-abcdefghij0123456789" }
+    ];
+    const res1 = applyOps(doc, ops);
+    expect(res1.applied.length).toBe(0);
+    expect(res1.rejected.length).toBe(2);
+
+    const opsWithDelete: any[] = [
+      { op: "delete", target: "line0" },
+      { op: "add", text: "leaked sk-abcdefghij0123456789" }
+    ];
+    const res2 = applyOps(doc, opsWithDelete);
+    expect(res2.applied.length).toBe(2);
+    expect(res2.rejected.length).toBe(0);
+    expect(res2.doc).not.toContain("sk-abcdefghij0123456789");
+    expect(res2.doc).toContain("leaked [redacted]");
+  });
+
+  it("gate math: candidate worse -> revert; better -> promote; window <K -> none", () => {
+    let state: any = { version: 0, baseline: { rate: 0.5, window: [] }, candidate: null, rejected: [] };
+    state.candidate = { version: 1, parentDoc: "parent", ops: [{ op: "add", text: "x" }], window: [] };
+    
+    // window < K -> none
+    for (let i=0; i<5; i++) state = recordOutcome(state, true);
+    expect(settleCandidate(state).action).toBe("none");
+
+    // candidate worse (5 passes out of 6, candRate = 5/6 = 0.83, baseline is 0.9)
+    state.baseline.rate = 0.9;
+    state = recordOutcome(state, false); // now 6 outcomes: 5 true, 1 false
+    const settleWorse = settleCandidate(state);
+    expect(settleWorse.action).toBe("revert");
+    expect(settleWorse.revertDoc).toBe("parent");
+    expect(settleWorse.state.candidate).toBeNull();
+    expect(settleWorse.state.rejected.length).toBe(1);
+
+    // candidate better
+    let state2: any = { version: 0, baseline: { rate: 0.5, window: [] }, candidate: null, rejected: [] };
+    state2.candidate = { version: 1, parentDoc: "parent", ops: [], window: [] };
+    for (let i=0; i<6; i++) state2 = recordOutcome(state2, true); // candRate 1.0
+    const settleBetter = settleCandidate(state2);
+    expect(settleBetter.action).toBe("promote");
+    expect(settleBetter.state.candidate).toBeNull();
+    expect(settleBetter.state.baseline.rate).toBe(1);
+    expect(settleBetter.state.version).toBe(1);
+  });
+
+  it("pushRejected trims to 10", () => {
+    const buf = Array.from({ length: 9 }, (_, i) => ({ op: "add", text: `old${i}` } as any));
+    const newOps = [
+      { op: "add", text: "new1" },
+      { op: "add", text: "new2" }
+    ] as any;
+    const res = pushRejected(buf, newOps);
+    expect(res.length).toBe(10);
+    expect(res[9].text).toBe("new2");
+    expect(res[0].text).toBe("old1");
+  });
+
+  it("composeAnalyzerPrompt includes output, outcome, current, hard-rule contract, and rejected", () => {
+    const prompt = composeAnalyzerPrompt({ 
+      output: "OUTPUT_MARKER", 
+      outcome: "status=passed stage=review", 
+      current: "CURRENT_MARKER",
+      rejected: [{ op: "add", text: "BAD_EDIT" } as any]
+    });
     expect(prompt).toContain("OUTPUT_MARKER");
     expect(prompt).toContain("status=passed stage=review");
     expect(prompt).toContain("CURRENT_MARKER");
     expect(prompt).toContain("workers write files only, relative paths only, no git commits, REPORT:/VERDICT: contracts");
+    expect(prompt).toContain("These edits were tried and made things worse; do not re-propose them");
+    expect(prompt).toContain("BAD_EDIT");
   });
 });
 
@@ -104,12 +188,13 @@ describe("forge lessons integration", () => {
   let counterDir: string;
   let counterFile: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     workdir = initRepo();
     sandboxRoot = mkdtempSync(join(tmpdir(), "lessons-run-sbx-"));
     process.env.VIBEOPS_SANDBOX_ROOT = sandboxRoot;
     counterDir = mkdtempSync(join(tmpdir(), "lessons-run-ctr-"));
     counterFile = join(counterDir, "counter.txt");
+    await setSetting("prompts.selfImprove.state", ""); // clear state
   });
 
   afterEach(() => {
@@ -124,6 +209,7 @@ describe("forge lessons integration", () => {
 
   it("selfImprove on: analyzer runs after settle and rewrites prompt-lessons", async () => {
     const { actorId, ticket } = await seedTicket("Lessons happy path");
+    await setLessons(actorId, ""); // clear previous lessons to avoid hitting the 12-line cap
     process.env.FAKE_SCRIPT = "plan,work,review-pass,analyzer";
     process.env.FAKE_COUNTER_FILE = counterFile;
     process.env.FAKE_WRITE = "1";
@@ -143,6 +229,8 @@ describe("forge lessons integration", () => {
         await new Promise((r) => setTimeout(r, 50));
       }
       expect(body).toContain("MARKER-LESSON-42");
+      const state = await loadEvoState();
+      expect(state.candidate).not.toBeNull();
     } finally {
       await setSetting("prompts.selfImprove", "");
     }
@@ -160,8 +248,49 @@ describe("forge lessons integration", () => {
     });
     await awaitRun(runId);
 
-    // give a would-be fire-and-forget analyzer call a moment to prove it does NOT happen
     await new Promise((r) => setTimeout(r, 300));
     expect(readFileSync(counterFile, "utf-8")).toBe("3");
+  });
+
+  it("promote/revert against a real note", async () => {
+    const { actorId } = await seedTicket("fake-for-actor");
+    const baselineDoc = "line1";
+    await setLessons(actorId, baselineDoc);
+    
+    // Build candidate
+    const ops: any[] = [{ op: "add", text: "line2" }];
+    const { doc: candidateDoc } = applyOps(baselineDoc, ops);
+    await setLessons(actorId, candidateDoc);
+    
+    let state = await loadEvoState();
+    state.baseline.rate = 0.5;
+    state.candidate = { version: 1, parentDoc: baselineDoc, ops, window: [] };
+    
+    // Fail 6 times -> revert
+    for (let i = 0; i < 6; i++) {
+      state = recordOutcome(state, false);
+    }
+    const g = settleCandidate(state);
+    expect(g.action).toBe("revert");
+    await setLessons(actorId, g.revertDoc!);
+    state = g.state;
+    await saveEvoState(state);
+    
+    expect(await getLessons()).toBe(baselineDoc);
+    expect(state.rejected.length).toBe(1);
+    
+    // Promote case
+    await setLessons(actorId, candidateDoc);
+    state.candidate = { version: 2, parentDoc: baselineDoc, ops, window: [] };
+    for (let i = 0; i < 6; i++) {
+      state = recordOutcome(state, true);
+    }
+    const g2 = settleCandidate(state);
+    expect(g2.action).toBe("promote");
+    state = g2.state;
+    await saveEvoState(state);
+    
+    expect(await getLessons()).toBe(candidateDoc);
+    expect(state.baseline.rate).toBe(1);
   });
 });

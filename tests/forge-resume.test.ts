@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { eq } from "drizzle-orm";
-import { markInterruptedRuns, awaitRun, getRunOutput, stopRun, startPipeline } from "../src/forge/runs.js";
+import { markInterruptedRuns, awaitRun, getRunOutput, stopRun, startPipeline, hasActiveRun } from "../src/forge/runs.js";
 import { loadRelayConfig } from "../src/relay/config.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
@@ -103,9 +104,25 @@ describe("forge run resume", () => {
     expect(marked).toContain(ticket.id);
     const [row] = await db.select().from(forgeRuns).where(eq(forgeRuns.id, runId));
     expect(row.status).toBe("interrupted");
+    expect(row.finishedAt).not.toBeNull();
     
     stopRun(runId);
     await awaitRun(runId);
+  });
+
+  it("markInterruptedRuns sets finishedAt so hasActiveRun clears", async () => {
+    const { ticket } = await seedTicket("Orphaned run row");
+    await db.insert(forgeRuns).values({
+      id: randomUUID(), ticketId: ticket.id, status: "running", stage: "plan",
+      planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+      startedAt: new Date(), finishedAt: null,
+    });
+    const marked = await markInterruptedRuns();
+    expect(marked).toContain(ticket.id);
+    const [row] = await db.select().from(forgeRuns).where(eq(forgeRuns.ticketId, ticket.id));
+    expect(row.status).toBe("interrupted");
+    expect(row.finishedAt).not.toBeNull();
+    expect(await hasActiveRun(ticket.id)).toBe(false);
   });
 
   it("resume route: seeded planned ticket -> 201 runId and pipeline completes; 409 on closed ticket", async () => {

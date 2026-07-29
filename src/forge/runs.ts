@@ -507,7 +507,7 @@ export function awaitRun(id: string): Promise<void> {
 export async function markInterruptedRuns(): Promise<string[]> {
   try {
     const rows = await db.update(forgeRuns)
-      .set({ status: "interrupted" })
+      .set({ status: "interrupted", finishedAt: new Date() })
       .where(isNull(forgeRuns.finishedAt))
       .returning({ ticketId: forgeRuns.ticketId });
     return rows.map((r) => r.ticketId);

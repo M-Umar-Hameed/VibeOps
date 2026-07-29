@@ -10,7 +10,7 @@ type SubTab = "providers" | "usage";
 type Strategy = "cost" | "max";
 type CommProfile = "off" | "auto" | "caveman" | "humanizer";
 
-const VOYAGE_MODELS = ["voyage-3", "voyage-3-lite", "voyage-3.5", "voyage-3.5-lite", "voyage-code-3"];
+const VOYAGE_MODELS = ["voyage-3", "voyage-3-lite", "voyage-3.5", "voyage-3.5-lite", "voyage-code-3", "voyage-4-large", "voyage-4", "voyage-4-lite", "voyage-3-large", "voyage-law-2", "voyage-finance-2"];
 
 function VoyageModelSelect() {
   const queryClient = useQueryClient();

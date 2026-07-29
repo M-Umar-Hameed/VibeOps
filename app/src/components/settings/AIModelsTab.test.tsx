@@ -37,3 +37,11 @@ test("switching the comm profile to Off persists via PATCH", async () => {
     expect(apiFetch).toHaveBeenCalledWith("/settings/agents.commProfile", { method: "PATCH", body: { value: "off" } }),
   );
 });
+
+test("voyage dropdown renders new model options", async () => {
+  render(wrap(<AIModelsTab />));
+  await waitFor(() => expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0));
+  for (const m of ["voyage-4-large", "voyage-4", "voyage-4-lite", "voyage-3-large", "voyage-law-2", "voyage-finance-2"]) {
+    expect(document.querySelector(`option[value="${m}"]`)).not.toBeNull();
+  }
+});

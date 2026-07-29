@@ -30,6 +30,9 @@ export async function getLessons(): Promise<string> {
   return note?.body ?? "";
 }
 
+// Redact BEFORE capping: capping first can slice a secret in half at the 1500
+// boundary, leaving a partial credential that no longer matches redactSecrets'
+// patterns and slips through unredacted.
 export async function setLessons(actorId: string, text: string): Promise<void> {
   const capped = redactSecrets(text).slice(0, LESSONS_CAP);
   try {

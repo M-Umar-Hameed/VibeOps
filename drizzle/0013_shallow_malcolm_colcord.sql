@@ -1,0 +1,1 @@
+ALTER TABLE "forge_runs" ADD COLUMN "effort" text;

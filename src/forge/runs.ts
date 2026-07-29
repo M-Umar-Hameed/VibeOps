@@ -60,10 +60,13 @@ const PLAN_ONLY =
 type Stage = "plan" | "work" | "review";
 type Status = "running" | "passed" | "failed" | "stopped" | "interrupted";
 
+export type Effort = "quick" | "standard" | "max";
+
 type Run = {
   id: string; ticketId: string; stage: Stage; status: Status;
   agents: { plan: string; work: string; review: string };
   operatorNotes?: string;
+  effort?: Effort;
   output: string; startedAt: string; finishedAt?: string;
   child?: ChildProcess; // the in-flight agent CLI for the current stage, if any
   stopped: boolean;
@@ -161,7 +164,7 @@ export async function startPipeline(
   actorId: string, config: RelayConfig,
   opts: {
     ticketId: string; planAgent: string; workAgent: string; reviewAgent: string; extraPrompt?: string; operatorNotes?: string;
-    planModel?: string; workModel?: string; reviewModel?: string; force?: boolean;
+    planModel?: string; workModel?: string; reviewModel?: string; force?: boolean; effort?: Effort;
   },
 ): Promise<{ runId: string; doctorWarnings: string[] }> {
   if ((opts.extraPrompt ?? "").length > MAX_EXTRA_PROMPT) throw new Error("extraPrompt too long");
@@ -182,7 +185,15 @@ export async function startPipeline(
   const styleSetting = await getSetting("agents.commProfile");
   const lessons = lessonsClause(await getLessons());
   let auto: { plan: Pick; work: Pick; review: Pick } | undefined;
-  const getAuto = () => (auto ??= pickAgents(config, strategy));
+
+  // Per-run effort preset overrides the global strategy for auto-resolved
+  // roles only; explicit agent/model picks below never consult it.
+  const effortStrategy: RoutingStrategy | undefined =
+    opts.effort === "quick" ? "cheapest-first"
+    : opts.effort === "max" ? "quality-first"
+    : undefined;
+
+  const getAuto = () => (auto ??= pickAgents(config, effortStrategy ?? strategy));
 
   let planPick: Pick = opts.planAgent === "auto" ? getAuto().plan : { agent: opts.planAgent, model: opts.planModel };
   let workPick: Pick = opts.workAgent === "auto" ? getAuto().work : { agent: opts.workAgent, model: opts.workModel };
@@ -234,6 +245,7 @@ export async function startPipeline(
     id: randomUUID(), ticketId: opts.ticketId, stage: "plan", status: "running",
     agents: { plan: composite(planPick), work: composite(workPick), review: composite(reviewPick) },
     operatorNotes: opts.operatorNotes?.slice(0, MAX_OPERATOR_NOTES),
+    effort: opts.effort,
     output: "", startedAt: new Date().toISOString(), stopped: false,
     done: Promise.resolve(),
   };
@@ -373,6 +385,7 @@ async function persistRun(run: Run): Promise<void> {
       planAgent: run.agents.plan,
       workAgent: run.agents.work,
       reviewAgent: run.agents.review,
+      effort: run.effort ?? null,
       startedAt: new Date(run.startedAt),
       finishedAt,
     }).onConflictDoUpdate({
@@ -514,6 +527,7 @@ export async function listRunsWithHistory(): Promise<RunListItem[]> {
     .map((r) => ({
       id: r.id, ticketId: r.ticketId, status: r.status as Status, stage: r.stage as Stage,
       agents: { plan: r.planAgent, work: r.workAgent, review: r.reviewAgent },
+      effort: (r.effort ?? undefined) as Effort | undefined,
       startedAt: r.startedAt.toISOString(),
       finishedAt: r.finishedAt ? r.finishedAt.toISOString() : undefined,
       persisted: true,

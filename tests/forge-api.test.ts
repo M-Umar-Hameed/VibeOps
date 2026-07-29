@@ -262,6 +262,17 @@ describe("forge API", () => {
     expect(discardAgain.status).toBe(404);
   });
 
+  it("pipeline rejects invalid effort with 400", async () => {
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+    const res = await app.request("/forge/pipeline", {
+      method: "POST", headers: h,
+      body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake", effort: "turbo" }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("effort");
+  });
+
   it("POST /forge/pipeline returns 400 for missing fields and unknown agent", async () => {
     const h = await adminHeaders();
     const ticket = await seedTicket();

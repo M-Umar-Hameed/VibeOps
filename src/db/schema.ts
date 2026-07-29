@@ -172,6 +172,7 @@ export const forgeRuns = pgTable('forge_runs', {
   planAgent: text('plan_agent').notNull(),
   workAgent: text('work_agent').notNull(),
   reviewAgent: text('review_agent').notNull(),
+  effort: text('effort'),
   startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
 });

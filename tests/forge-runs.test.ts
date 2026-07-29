@@ -151,6 +151,7 @@ describe("forge run manager", () => {
     expect(output?.chunk).toContain("=== FORGE plan");
     expect(output?.chunk).toContain("=== FORGE work");
     expect(output?.chunk).toContain("=== FORGE review");
+    expect(output?.chunk).not.toContain("=== FORGE checks ===");
 
     const persisted = await waitForPersistedRun(runId);
     expect(persisted.status).toBe("passed");
@@ -169,6 +170,34 @@ describe("forge run manager", () => {
     expect(getRunOutput(runId, 0)?.status).toBe("passed");
     expect((await getTicket(ticket.id)).status).toBe("planned");
     expect(sandboxExists(ticket.id)).toBe(true);
+  });
+
+  it("executes project checks and feeds failures to the review prompt without hard-failing the pipeline", async () => {
+    const { actorId, ticket } = await seedTicket("Checks path");
+    
+    // Extend base repo
+    const g = (...a: string[]) => execFileSync("git", a, { cwd: workdir });
+    writeFileSync(join(workdir, "package.json"), JSON.stringify({ scripts: { typecheck: "node typecheck.js" } }));
+    writeFileSync(join(workdir, "typecheck.js"), `console.log("TS-FAKE-9999 boom"); process.exit(1);`);
+    g("add", "-A");
+    g("commit", "-m", "add check");
+
+    setScript("plan,work,echo-prompt");
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).toContain("=== FORGE checks ===");
+    expect(output?.chunk).toContain("exit 1");
+
+    const comments = await listComments(ticket.id);
+    const review = comments.filter((c) => c.kind === "review").pop();
+    expect(review?.body).toContain("CHECKS");
+    expect(review?.body).toContain("exit 1");
+    expect(review?.body).toContain("TS-FAKE-9999");
   });
 
   it("worker process failure bounces to planned", async () => {

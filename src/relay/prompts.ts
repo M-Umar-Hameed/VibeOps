@@ -46,8 +46,8 @@ export function composeWorkPrompt(
 }
 
 export function composeReviewPrompt(
-  { ticket, plan, report, diff, operatorNotes }: {
-    ticket: TicketLike; plan: string; report: string; diff: string; operatorNotes?: string;
+  { ticket, plan, report, diff, operatorNotes, checks }: {
+    ticket: TicketLike; plan: string; report: string; diff: string; operatorNotes?: string; checks?: string;
   },
 ): string {
   return [
@@ -55,6 +55,11 @@ export function composeReviewPrompt(
     `\nPlan:\n${plan}`,
     `\nWorker report:\n${fenceUntrusted("worker-report", report)}`,
     `\nDiff:\n${fenceUntrusted("diff", diff)}`,
+    checks
+      ? `\nCHECKS (project check commands, run by the pipeline in the worker's sandbox):\n${fenceUntrusted("checks", checks)}\n` +
+        `A non-zero exit code in any check above is an automatic Critical finding and requires VERDICT: FAIL, ` +
+        `unless the ticket body explicitly waives that check.`
+      : "",
     `\nReview whether the diff satisfies the plan's acceptance criteria.`,
     // Reviewers run in the base repo, NOT the worker's isolated sandbox; a
     // reviewer that checks its own filesystem sees a clean tree and falsely

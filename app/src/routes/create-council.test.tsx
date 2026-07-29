@@ -14,6 +14,7 @@ import { CreateScreen } from "./create.js";
 const wrap = (ui: any) => <QueryClientProvider client={new QueryClient()}>{ui}</QueryClientProvider>;
 
 beforeEach(() => {
+  localStorage.clear();
   apiFetch.mockReset();
   nav.mockReset();
   // shouldAdvanceTime: waitFor polls on real timers; frozen clocks deadlock it.
@@ -48,6 +49,9 @@ test("evaluate posts the prompt and console renders polled chunks", async () => 
   await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/council/evaluate", {
     method: "POST", body: { prompt: "Build a thing", projectId: "p1" },
   }));
+
+  expect(document.querySelector("pre")).toBeNull();
+  fireEvent.click(await screen.findByText(/Show console/i));
 
   await waitFor(() => expect(screen.getByText("believer thinking...")).toBeInTheDocument());
 
@@ -84,6 +88,8 @@ test("awaiting-answers renders the questions and Submit posts { answers } in ord
   await act(async () => { vi.advanceTimersByTime(2000); });
   await waitFor(() => expect(screen.getByText("What is the budget?")).toBeInTheDocument(), { timeout: 6000 });
   expect(screen.getByText("Who is the audience?")).toBeInTheDocument();
+  expect(document.querySelector("pre")).toBeNull();
+  expect(screen.getByText(/Show console/i)).toBeInTheDocument();
 
   const inputs = screen.getAllByRole("textbox");
   fireEvent.change(inputs[0], { target: { value: "10k" } });
@@ -103,7 +109,7 @@ test("decided GO renders spec and Create ticket posts { projectId } then navigat
     if (path === "/council/c1") {
       statusCall++;
       if (statusCall === 1) return { status: "running", round: 1 };
-      return { status: "decided", round: 1, rating: 8, decision: "GO", questions: [], title: "Ship it", spec: "# Spec\nDo the thing." };
+      return { status: "decided", round: 1, rating: 8, decision: "GO", questions: [], title: "Ship it", spec: "# Spec\nDo the thing.", believer: "**Great idea", investor: "Costly but fine", skeptic: "Meh" };
     }
     if (path === "/council/c1/create-ticket") return { id: "t9" };
     return {};
@@ -114,17 +120,23 @@ test("decided GO renders spec and Create ticket posts { projectId } then navigat
   fireEvent.change(screen.getByPlaceholderText(/Describe the idea/i), { target: { value: "Build a thing" } });
   fireEvent.change(screen.getAllByRole("combobox")[0], { target: { value: "p1" } });
   fireEvent.click(screen.getByText(/Convene council/i));
+  await waitFor(() => expect(localStorage.getItem("vibeops.activeCouncilId")).toBe("c1"));
 
   await act(async () => { vi.advanceTimersByTime(2000); });
   await waitFor(() => expect(screen.getByText(/Do the thing/)).toBeInTheDocument(), { timeout: 6000 });
+  expect(screen.getByText("GO")).toBeInTheDocument();
   expect(screen.getByText("8/10")).toBeInTheDocument();
+  expect(screen.getByText("Great idea")).toBeInTheDocument();
+  expect(screen.getByText("Costly but fine")).toBeInTheDocument();
+  expect(screen.getByText("Meh")).toBeInTheDocument();
 
-  fireEvent.click(screen.getByText(/Create ticket/i));
+  fireEvent.click(screen.getByText(/Create work order/i));
 
   await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/council/c1/create-ticket", {
     method: "POST", body: { projectId: "p1", requiresVerification: false },
   }));
   await waitFor(() => expect(nav).toHaveBeenCalledWith({ to: "/tickets/$id", params: { id: "t9" } }));
+  await waitFor(() => expect(localStorage.getItem("vibeops.activeCouncilId")).toBeNull());
 });
 
 test("NEEDS-INFO shows the Create-anyway checkbox and posts force: true when checked", async () => {
@@ -159,4 +171,32 @@ test("NEEDS-INFO shows the Create-anyway checkbox and posts force: true when che
   await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/council/c1/create-ticket", {
     method: "POST", body: { projectId: "p1", requiresVerification: false, force: true },
   }));
+});
+
+test("stored councilId reattaches on mount and resumes output polling", async () => {
+  localStorage.setItem("vibeops.activeCouncilId", "c9");
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/council/c9") return { status: "running", round: 1 };
+    if (path.startsWith("/council/c9/output")) return { chunk: "resumed chunk", next: 13, status: "running" };
+    return {};
+  });
+
+  render(wrap(<CreateScreen />));
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/council/c9"));
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith(expect.stringMatching(/^\/council\/c9\/output/)));
+
+  fireEvent.click(await screen.findByText(/Show console/i));
+  await waitFor(() => expect(screen.getByText("resumed chunk")).toBeInTheDocument());
+});
+
+test("stored councilId pointing at consumed session clears the key", async () => {
+  localStorage.setItem("vibeops.activeCouncilId", "c9");
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/council/c9") return { status: "consumed", round: 1 };
+    return {};
+  });
+
+  render(wrap(<CreateScreen />));
+  await waitFor(() => expect(localStorage.getItem("vibeops.activeCouncilId")).toBeNull());
+  expect(screen.getByPlaceholderText(/Describe the idea/i)).toBeInTheDocument(); // idle form intact
 });

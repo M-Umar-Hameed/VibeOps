@@ -56,6 +56,16 @@ if (mode === "persona" || mode === "believer" || mode === "investor" || mode ===
   else if (prompt.includes("roaster")) mode = "skeptic";
 }
 
+if (mode === "persona-staggered") {
+  let role = "believer";
+  if (prompt.includes("realist")) role = "investor";
+  else if (prompt.includes("roaster")) role = "skeptic";
+  const delay = { believer: 300, investor: 150, skeptic: 0 }[role];
+  await new Promise((r) => setTimeout(r, delay));
+  console.log(OUTPUTS[role]);
+  process.exit(0);
+}
+
 if (mode === "exit") {
   console.error("boom");
   process.exit(1);

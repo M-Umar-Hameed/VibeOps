@@ -9,6 +9,7 @@ import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
 import { ConflictError } from "../src/services/errors.js";
 import type { RelayConfig } from "../src/relay/config.js";
+import { app } from "../src/api/app.js";
 import { getTicket } from "../src/services/history.js";
 
 process.env.EMBED_PROVIDER = "fake";
@@ -153,5 +154,50 @@ describe("council engine", () => {
   it("(e) prompt too short -> error", async () => {
     const { actor } = await createActor({ name: uniq("council-actor"), kind: "human" });
     await expect(startCouncil(actor.id, relayConfig(), { prompt: "short" })).rejects.toThrow("prompt must be between 10 and 10000 characters");
+  });
+
+  it("(f) persona output blocks never interleave: each header followed only by its own text", async () => {
+    const { actor } = await createActor({ name: uniq("council-actor"), kind: "human" });
+    setScript("persona-staggered,persona-staggered,persona-staggered,chairman-go");
+
+    const { councilId } = await startCouncil(actor.id, relayConfig(), { prompt: "a prompt long enough to pass" });
+    await waitForStatus(councilId, ["decided"]);
+
+    const out = getCouncilOutput(councilId, 0)!.chunk;
+    const sections = out.split(/^=== COUNCIL (believer|investor|skeptic|chairman) ===$/m);
+    // sections: [pre, role1, body1, role2, body2, ...]
+    const byRole: Record<string, string> = {};
+    for (let i = 1; i < sections.length; i += 2) byRole[sections[i]] = sections[i + 1];
+
+    expect(byRole.believer).toContain("believer view: fine idea");
+    expect(byRole.believer).not.toContain("investor view");
+    expect(byRole.believer).not.toContain("skeptic view");
+    expect(byRole.investor).toContain("investor view: fine idea");
+    expect(byRole.investor).not.toContain("believer view");
+    expect(byRole.investor).not.toContain("skeptic view");
+    expect(byRole.skeptic).toContain("skeptic view: fine idea");
+    expect(byRole.skeptic).not.toContain("believer view");
+    expect(byRole.skeptic).not.toContain("investor view");
+  });
+
+  it("(g) GET /council lists active session (admin), 404 detail stays 404", async () => {
+    const { actor, apiKey } = await createActor({ name: uniq("council-actor"), kind: "human", role: "admin" });
+    const adminH = { Authorization: `Bearer ${apiKey}` };
+    setScript("persona,persona,persona,chairman-go");
+
+    const { councilId } = await startCouncil(actor.id, relayConfig(), { prompt: "a prompt long enough to pass" });
+    await waitForStatus(councilId, ["decided"]);
+
+    const res = await app.request("/council", { headers: adminH });
+    expect(res.status).toBe(200);
+    const list = await res.json() as any[];
+    const row = list.find((r) => r.id === councilId);
+    expect(row).toMatchObject({ id: councilId, status: "decided", round: 1 });
+    expect(row.promptPreview).toBe("a prompt long enough to pass");
+    expect(row.startedAt).toBeTruthy();
+    expect(row.output).toBeUndefined();
+
+    const missing = await app.request(`/council/00000000-0000-0000-0000-000000000000`, { headers: adminH });
+    expect(missing.status).toBe(404);
   });
 });

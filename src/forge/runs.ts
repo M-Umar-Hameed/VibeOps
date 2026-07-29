@@ -23,6 +23,7 @@ import { desc, isNull, sum, eq, gte, and } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { forgeRuns, aiUsageLogs } from "../db/schema.js";
 import { verifyModel, MISMATCH_WARNING, computeVerificationStatus } from "./verify.js";
+import { resolveChecks, runChecks, formatChecks } from "./checks.js";
 
 const OUTPUT_CAP = 400_000;
 const MAX_ACTIVE = 3;
@@ -317,11 +318,26 @@ async function pipeline(
   // review — against the sandbox branch diff
   run.stage = "review";
   append(run, `\n=== FORGE review (${run.agents.review}) ===\n`);
+
+  // Checks: project static gates run in the SANDBOX (T17 shipped a tsc break —
+  // reviewer reads diffs, vitest transpiles without typechecking). A failing
+  // check never hard-fails the run; the reviewer judges it.
+  const checkCmds = resolveChecks(await getSetting("forge.checks"), sandbox);
+  let checksText: string | undefined;
+  if (checkCmds.length) {
+    append(run, `\n=== FORGE checks ===\n`);
+    const checkResults = await runChecks(checkCmds, sandbox, undefined, (child) => { run.child = child; });
+    run.child = undefined;
+    if (run.stopped) return settle(run, "stopped");
+    checksText = redactSecrets(formatChecks(checkResults));
+    append(run, checksText + "\n");
+  }
+
   const diff = await sandboxDiff(workdir, ticket.id);
   const stat = await sandboxDiffSummary(workdir, ticket.id);
   const reviewRes = await track(actorId, ticket.id, "review", run.agents.review, () => runAgent(
     agents.review,
-    composeReviewPrompt({ ticket, plan, report: workRes.output, diff: reviewDiffPayload(diff, stat), operatorNotes: run.operatorNotes }) + roleStyle("review", styleSetting),
+    composeReviewPrompt({ ticket, plan, report: workRes.output, diff: reviewDiffPayload(diff, stat), operatorNotes: run.operatorNotes, checks: checksText }) + roleStyle("review", styleSetting),
     workdir, onData,
     (child) => { run.child = child; },
   ));

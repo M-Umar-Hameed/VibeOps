@@ -351,6 +351,76 @@ describe("forge run manager", () => {
     }
   });
 
+  it("effort=quick resolves free-tier model for all auto roles regardless of global strategy", async () => {
+    const { actorId, ticket } = await seedTicket("Effort quick path");
+    const priorStrategy = await getSetting("ai.routing_strategy");
+    await setSetting("ai.routing_strategy", "quality-first");
+    setScript("plan,work,review-pass", true);
+    try {
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "auto", workAgent: "auto", reviewAgent: "auto", effort: "quick",
+      });
+      await awaitRun(runId);
+      const summary = listRuns().find((r) => r.id === runId);
+      expect(summary?.agents).toEqual({ plan: "fake:fast", work: "fake:fast", review: "fake:fast" });
+      expect(summary?.effort).toBe("quick");
+    } finally {
+      await setSetting("ai.routing_strategy", priorStrategy ?? "balanced");
+    }
+  });
+
+  it("effort=quick falls back to cheapest when no free-tier model exists", async () => {
+    const { actorId, ticket } = await seedTicket("Effort quick fallback");
+    setScript("plan,work,review-pass", true);
+    const config = relayConfig();
+    config.agents.fake.models = [
+      { name: "mid", tier: "cheap", quality: 3 },
+      { name: "smart", tier: "expensive", quality: 5 },
+    ];
+    const { runId } = await startPipeline(actorId, config, {
+      ticketId: ticket.id, planAgent: "auto", workAgent: "auto", reviewAgent: "auto", effort: "quick",
+    });
+    await awaitRun(runId);
+    expect(listRuns().find((r) => r.id === runId)?.agents)
+      .toEqual({ plan: "fake:mid", work: "fake:mid", review: "fake:mid" });
+  });
+
+  it("effort=max resolves quality-first for all auto roles", async () => {
+    const { actorId, ticket } = await seedTicket("Effort max path");
+    setScript("plan,work,review-pass", true);
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "auto", workAgent: "auto", reviewAgent: "auto", effort: "max",
+    });
+    await awaitRun(runId);
+    const summary = listRuns().find((r) => r.id === runId);
+    expect(summary?.agents).toEqual({ plan: "fake:smart", work: "fake:smart", review: "fake:smart" });
+    expect(summary?.effort).toBe("max");
+  });
+
+  it("explicit workModel override beats effort", async () => {
+    const { actorId, ticket } = await seedTicket("Effort vs explicit");
+    setScript("plan,work,review-pass", true);
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "auto", workAgent: "fake", reviewAgent: "auto",
+      workModel: "smart", effort: "quick",
+    });
+    await awaitRun(runId);
+    const summary = listRuns().find((r) => r.id === runId);
+    expect(summary?.agents.work).toBe("fake:smart");
+    expect(summary?.agents.plan).toBe("fake:fast");
+  });
+
+  it("effort persists to forge_runs and listRunsWithHistory exposes it", async () => {
+    const { actorId, ticket } = await seedTicket("Effort persistence");
+    setScript("plan,work,review-pass", true);
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake", effort: "max",
+    });
+    await awaitRun(runId);
+    const list = await listRunsWithHistory();
+    expect(list.find((r) => r.id === runId)?.effort).toBe("max");
+  });
+
   it("commProfile setting does not break the pipeline", async () => {
     const { actorId, ticket } = await seedTicket("Comm profile path");
     const prior = await getSetting("agents.commProfile");

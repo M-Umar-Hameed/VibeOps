@@ -217,7 +217,8 @@ app.get("/knowledge/graph", async (c) => {
   }
   const n = Number(c.req.query("limit"));
   const limit = Number.isFinite(n) && n > 0 ? n : 60;
-  return c.json(await knowledgeGraph(limit));
+  const project = c.req.query("project") || undefined;
+  return c.json(await knowledgeGraph(limit, project));
 });
 
 app.get("/knowledge/source", async (c) => {

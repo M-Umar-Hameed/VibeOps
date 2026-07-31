@@ -17,6 +17,11 @@ vi.mock("../api/notes.js", () => ({ notes: {
 const apiFetch = vi.fn();
 vi.mock("../api/client.js", () => ({ apiFetch: (...a: any[]) => apiFetch(...a) }));
 
+let mockProjectId: string | null = null;
+vi.mock("../context/project.js", () => ({
+  useProject: () => ({ projects: [], activeProjectId: mockProjectId, setActiveProject: () => {}, refreshProjects: async () => {} }),
+}));
+
 import { KnowledgeScreen } from "./knowledge.js";
 const wrap = (ui: any) => <QueryClientProvider client={new QueryClient()}>{ui}</QueryClientProvider>;
 
@@ -129,4 +134,22 @@ test("sync sessions button reports a per-source summary", async () => {
   await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/ingest/sessions", { method: "POST", body: {} }));
   await waitFor(() => expect(screen.getByText(/codex 1/)).toBeInTheDocument());
   expect(screen.getByText(/claude-code 38/)).toBeInTheDocument();
+});
+
+test("switching the active project changes the graph query key and refetches", async () => {
+  apiFetch.mockImplementation(async (url: string) => {
+    if (url === "/knowledge/graph") return { nodes: [], edges: [] };
+    return { codex: { indexed: 1, skipped: 0, failed: 0 } };
+  });
+  const client = new QueryClient();
+  const wrapStable = (ui: any) => <QueryClientProvider client={client}>{ui}</QueryClientProvider>;
+
+  mockProjectId = "proj-A";
+  const { rerender } = render(wrapStable(<KnowledgeScreen />));
+  fireEvent.click(screen.getByText("Graph"));
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/knowledge/graph", { query: { project: "proj-A" } }));
+
+  mockProjectId = "proj-B";
+  rerender(wrapStable(<KnowledgeScreen />));
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/knowledge/graph", { query: { project: "proj-B" } }));
 });

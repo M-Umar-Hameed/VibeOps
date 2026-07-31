@@ -1,5 +1,8 @@
 import { expect, test, vi } from "vitest";
 import { upsertSourceDoc, knowledgeGraph } from "../src/services/knowledge.js";
+import { randomUUID } from "node:crypto";
+import { createProject } from "../src/services/projects.js";
+import { saveNote } from "../src/services/notes.js";
 import { app } from "../src/api/app.js";
 import { FakeEmbedder } from "../src/knowledge/embedder.js";
 import { createActor } from "../src/services/actors.js";
@@ -36,5 +39,43 @@ test("GET /knowledge/graph returns 200", async () => {
   });
   
   expect(res.status).toBe(200);
+});
+
+test("knowledgeGraph(projectId) returns only that project's repo nodes, with vault/session still shown", async () => {
+  const pA = randomUUID();
+  const pB = randomUUID();
+  const vaultRef = `vault-shared-${Date.now()}.md`;
+  const sessRef = `session-shared-${Date.now()}`;
+  await upsertSourceDoc("repo", `${pA}:README.md`, "alpha repo docs", emb);
+  await upsertSourceDoc("repo", `${pB}:README.md`, "beta repo docs", emb);
+  await upsertSourceDoc("vault", vaultRef, "shared vault content", emb);
+  await upsertSourceDoc("session", sessRef, "shared session content", emb);
+
+  const res = await knowledgeGraph(200, pA);
+  const ids = res.nodes.map(n => n.id);
+  expect(ids).toContain(`${pA}:README.md`);
+  expect(ids).not.toContain(`${pB}:README.md`);
+  expect(ids).toContain(vaultRef);
+  expect(ids).toContain(sessRef);
+});
+
+test("knowledgeGraph() with no projectId includes repo nodes for any project (unchanged)", async () => {
+  const p = randomUUID();
+  const ref = `${p}:UNFILTERED.md`;
+  await upsertSourceDoc("repo", ref, "repo doc no filter", emb);
+  const res = await knowledgeGraph(200);
+  expect(res.nodes.map(n => n.id)).toContain(ref);
+});
+
+test("knowledgeGraph(projectId) includes project-scoped notes and excludes another project's notes", async () => {
+  const { actor } = await createActor({ name: "Notes Author", kind: "human", role: "member" });
+  const pA = await createProject({ key: `ka-${randomUUID()}`, name: "A" });
+  const pB = await createProject({ key: `kb-${randomUUID()}`, name: "B" });
+  const nA = await saveNote(actor.id, { body: "knowledge for A", scope: "project", refId: pA.id }, emb);
+  const nB = await saveNote(actor.id, { body: "knowledge for B", scope: "project", refId: pB.id }, emb);
+  const res = await knowledgeGraph(200, pA.id);
+  const ids = res.nodes.map(n => n.id);
+  expect(ids).toContain(nA.id);
+  expect(ids).not.toContain(nB.id);
 });
 

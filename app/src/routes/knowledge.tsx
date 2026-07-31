@@ -5,6 +5,7 @@ import { knowledge } from "../api/knowledge.js";
 import { notes } from "../api/notes.js";
 import { apiFetch } from "../api/client.js";
 import { NotesPanel } from "../components/NotesPanel.js";
+import { useProject } from "../context/project.js";
 
 function hashString(str: string) {
   let hash = 0;
@@ -17,6 +18,7 @@ function hashString(str: string) {
 export function KnowledgeScreen() {
   const nav = useNavigate();
   const qc = useQueryClient();
+  const { activeProjectId } = useProject();
   const [q, setQ] = useState("");
   const [submitted, setSubmitted] = useState("");
   const [activeSource, setActiveSource] = useState<{kind: string, ref: string, citation: string} | null>(null);
@@ -25,7 +27,7 @@ export function KnowledgeScreen() {
   
   const sq = useQuery({ queryKey: ["knowledge", submitted], queryFn: () => knowledge.search(submitted), enabled: !!submitted });
   const sessionsQuery = useQuery({ queryKey: ["sessions"], queryFn: () => apiFetch("/knowledge/sessions") as Promise<{ref: string, chunkCount: number, created_at: string, excerpt: string}[]>, enabled: tab === "Sessions" });
-  const graphQuery = useQuery({ queryKey: ["graph"], queryFn: () => apiFetch("/knowledge/graph") as Promise<{nodes: any[], edges: any[]}>, enabled: tab === "Graph" });
+  const graphQuery = useQuery({ queryKey: ["graph", activeProjectId], queryFn: () => apiFetch("/knowledge/graph", { query: activeProjectId ? { project: activeProjectId } : undefined }) as Promise<{nodes: any[], edges: any[]}>, enabled: tab === "Graph" });
   
   const sourceQuery = useQuery({
     queryKey: ["source", activeSource?.kind, activeSource?.ref],
@@ -87,6 +89,7 @@ export function KnowledgeScreen() {
           </div>
           
           {tab === "Graph" ? (
+            <>
             <div className="w-full mt-12 bg-surface-container-lowest border border-white/10 rounded-lg p-4 relative overflow-hidden" style={{ height: "600px" }}>
               {graphQuery.isPending && <div className="text-center mt-8 text-primary-fixed-dim neon-pulse font-code-sm uppercase tracking-widest">Loading graph...</div>}
               {graphQuery.data && (
@@ -136,6 +139,8 @@ export function KnowledgeScreen() {
                 </>
               )}
             </div>
+            <p className="font-code-sm text-[10px] text-on-surface-variant/60 mt-3 uppercase tracking-widest text-center">Vault and session knowledge is shared across all projects</p>
+            </>
           ) : tab === "Search" ? (
             <>
               {/* Large Search Bar */}

@@ -251,10 +251,29 @@ export async function getKnowledgeSource(kind: string, ref: string): Promise<str
   return `Error: Unknown source kind ${kind}`;
 }
 
-export async function knowledgeGraph(limit = 60): Promise<{ nodes: { id: string; kind: string; chunks: number; createdAt: string }[]; edges: { a: string; b: string; w: number }[] }> {
+export async function knowledgeGraph(limit = 60, projectId?: string): Promise<{ nodes: { id: string; kind: string; chunks: number; createdAt: string }[]; edges: { a: string; b: string; w: number }[] }> {
+  // vault + session are shared context (no project). repo nodes carry a
+  // "<projectId>:" sourceRef prefix. note nodes map to a project via
+  // scope+refId (notes have no project_id column); global-scope notes are shared.
+  const proj = projectId
+    ? dsql`WHERE (
+        source_kind IN ('vault','session')
+        OR (source_kind = 'repo' AND source_ref LIKE ${projectId + ":%"})
+        OR (source_kind = 'note' AND source_ref IN (
+          SELECT n.id::text FROM notes n
+          LEFT JOIN tickets t ON t.id = n.ref_id
+          WHERE n.deleted_at IS NULL AND (
+            n.scope = 'global'
+            OR (n.scope = 'project' AND n.ref_id = ${projectId}::uuid)
+            OR (n.scope = 'ticket' AND t.project_id = ${projectId}::uuid)
+          )
+        ))
+      )`
+    : dsql``;
   const aggRows: unknown = await db.execute(dsql`
     SELECT source_ref, source_kind, count(id) as chunk_count, max(created_at) as created_at
     FROM embeddings
+    ${proj}
     GROUP BY source_ref, source_kind
     ORDER BY max(created_at) DESC
     LIMIT ${limit}

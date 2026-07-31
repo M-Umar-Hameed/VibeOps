@@ -23,6 +23,7 @@ export function ListScreen() {
   const listQ = useQuery({
     queryKey: ["tickets", { activeProjectId, projectId, status, q }],
     queryFn: () => q ? tickets.search(q) : tickets.list({ projectId: effectiveProjectId, status: status || undefined }),
+    refetchInterval: 5000,
   });
   
   const actorName = (id: string | null) => actQ.data?.find((a) => a.id === id)?.name ?? "Unassigned";

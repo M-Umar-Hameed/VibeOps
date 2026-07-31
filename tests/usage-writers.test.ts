@@ -165,4 +165,17 @@ describe("usage writers", () => {
     expect(myTicket!.tokens).toBeGreaterThan(0);
     expect(myTicket!.title).toBe("Usage endpoint path");
   });
+
+  it("logAgentUse writes real tokens and cost when provided", async () => {
+    const { actorId, ticket } = await seedTicket("Usage real tokens");
+    const agentName = uniq("agent");
+    const { logAgentUse } = await import("../src/services/usage.js");
+    await logAgentUse({
+      actorId, agent: agentName, role: "work", ticketId: ticket.id,
+      outputChars: 4000, durationMs: 5, ok: true, tokens: 12345, cost: 6789,
+    });
+    const [row] = await db.select().from(aiUsageLogs).where(eq(aiUsageLogs.provider, agentName));
+    expect(row.tokens).toBe(12345); // real, NOT 4000/4=1000
+    expect(row.cost).toBe(6789);
+  });
 });

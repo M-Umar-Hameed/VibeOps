@@ -89,7 +89,11 @@ export async function runDoctor(
   const names = Object.keys(config.agents);
 
   return Promise.all(names.map(async (name) => {
-    const cmd0 = config.agents[name].cmd[0];
+    const cmd0 = config.agents[name].cmd?.[0];
+    if (!cmd0) {
+      // sdk agents have no CLI binary to probe; auth is the OAuth token / CLI login.
+      return { name, binary: name, probe: { ok: true }, auth: { known: false, connected: null }, lastChecked: new Date(now).toISOString() };
+    }
     const cached = cache.get(cacheKey(name, cmd0));
     if (!opts.fresh && cached && cached.expiresAt > now) return cached.status;
 
@@ -108,7 +112,7 @@ export async function runDoctor(
 // through the same name+binary key, so a probe for a different cmd never
 // applies to the agent as currently configured.
 function cachedStatus(config: RelayConfig, agentName: string): AgentDoctorStatus | undefined {
-  const cmd0 = config.agents[agentName]?.cmd[0];
+  const cmd0 = config.agents[agentName]?.cmd?.[0];
   if (!cmd0) return undefined;
   return cache.get(cacheKey(agentName, cmd0))?.status;
 }

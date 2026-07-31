@@ -8,6 +8,8 @@ import type { RelayAgent } from "./config.js";
 const OUTPUT_CAP = 100_000;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 
+export type AgentResult = { ok: boolean; output: string; usage?: { tokens: number; cost: number } };
+
 // Pure: only replaces placeholders present as keys in `vars`; anything else
 // in the cmd array passes through untouched.
 export function substituteCmd(cmd: string[], vars: Record<string, string>): string[] {
@@ -29,7 +31,7 @@ export async function runAgent(
   agent: RelayAgent, prompt: string, workdir: string,
   onData?: (chunk: string) => void,
   onSpawn?: (child: ChildProcess) => void,
-): Promise<{ ok: boolean; output: string }> {
+): Promise<AgentResult> {
   const promptFile = join(tmpdir(), `vibeops-relay-${randomUUID()}.txt`);
   const needsFile = agent.cmd.some((p) => p.includes("{promptFile}"));
   // No placeholder at all -> deliver the prompt on stdin. Windows argv tops out

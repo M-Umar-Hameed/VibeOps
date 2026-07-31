@@ -12,6 +12,8 @@ export type UsageEntry = {
   outputChars: number;
   durationMs: number;
   ok: boolean;
+  tokens?: number; // real token count when the lane reports it (sdk); estimate used otherwise
+  cost?: number;   // real cost ×1e6 (micro-dollars); 0 when unknown
 };
 
 export async function logAgentUse(entry: UsageEntry): Promise<void> {
@@ -19,7 +21,8 @@ export async function logAgentUse(entry: UsageEntry): Promise<void> {
     await db.insert(aiUsageLogs).values({
       provider: entry.agent,
       model: entry.role,
-      tokens: Math.round(entry.outputChars / 4), // estimated: headless CLIs report no token counts
+      tokens: entry.tokens ?? Math.round(entry.outputChars / 4), // estimated: headless CLIs report no token counts
+      cost: entry.cost ?? 0,
       ticketId: entry.ticketId,
       actorId: entry.actorId,
       durationMs: entry.durationMs,

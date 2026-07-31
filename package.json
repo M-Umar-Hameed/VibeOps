@@ -23,6 +23,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.77",
     "@electric-sql/pglite": "^0.2.17",
     "@hono/node-server": "^1.13.0",
     "@huggingface/transformers": "4.2.0",

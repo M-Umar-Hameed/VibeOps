@@ -7,7 +7,8 @@ import { resolveCmd, type RelayConfig, type RelayAgent } from "../relay/config.j
 import { pipelineStartWarnings, pipelineStartBlockingError } from "../relay/doctor.js";
 import { roleStyle } from "../relay/style.js";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, fenceUntrusted } from "../relay/prompts.js";
-import { runAgent, killTree } from "../relay/invoke.js";
+import { killTree, type AgentResult } from "../relay/invoke.js";
+import { runAgent } from "../relay/dispatch.js";
 import { redactSecrets } from "./redact.js";
 import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary } from "./sandbox.js";
 import { pickAgents, escalate, pairsForRole, type Pick, type RoutingStrategy } from "./router.js";
@@ -69,17 +70,18 @@ type Run = {
   effort?: Effort;
   output: string; startedAt: string; finishedAt?: string;
   child?: ChildProcess; // the in-flight agent CLI for the current stage, if any
+  abort?: () => void;   // in-loop sdk lane's AbortController.abort, if any
   stopped: boolean;
   done: Promise<void>;
 };
 
 const runs = new Map<string, Run>();
 
-export type RunSummary = Omit<Run, "output" | "child" | "stopped" | "done">;
+export type RunSummary = Omit<Run, "output" | "child" | "abort" | "stopped" | "done">;
 
 function summarize(r: Run): RunSummary {
-  const { output, child, stopped, done, ...rest } = r;
-  void output; void child; void stopped; void done;
+  const { output, child, abort, stopped, done, ...rest } = r;
+  void output; void child; void abort; void stopped; void done;
   return rest;
 }
 
@@ -112,8 +114,8 @@ function activeRuns(): Run[] {
 // ai_usage_logs row (estimated tokens from output length). Never throws.
 async function track(
   actorId: string, ticketId: string, role: Stage, agentName: string,
-  fn: () => Promise<{ ok: boolean; output: string }>,
-): Promise<{ ok: boolean; output: string }> {
+  fn: () => Promise<AgentResult>,
+): Promise<AgentResult> {
   const sessionId = await startAgentSession(`${role}:${agentName}`);
   const startedAt = Date.now();
   const res = await fn();
@@ -121,6 +123,7 @@ async function track(
   await logAgentUse({
     actorId, agent: agentName, role, ticketId,
     outputChars: res.output.length, durationMs: Date.now() - startedAt, ok: res.ok,
+    tokens: res.usage?.tokens, cost: res.usage?.cost,
   });
   return res;
 }
@@ -256,9 +259,10 @@ export async function startPipeline(
     work: { ...getAgent(config, workPick.agent, "work") },
     review: { ...getAgent(config, reviewPick.agent, "review") },
   };
-  agents.plan.cmd = resolveCmd(agents.plan, planPick.model);
-  agents.work.cmd = resolveCmd(agents.work, workPick.model);
-  agents.review.cmd = resolveCmd(agents.review, reviewPick.model);
+  const resolveIfCli = (a: RelayAgent, m?: string) => a.type === "sdk" ? (a.cmd ?? []) : resolveCmd(a, m);
+  agents.plan.cmd = resolveIfCli(agents.plan, planPick.model);
+  agents.work.cmd = resolveIfCli(agents.work, workPick.model);
+  agents.review.cmd = resolveIfCli(agents.review, reviewPick.model);
 
   if (activeRuns().some((r) => r.ticketId === opts.ticketId)) {
     throw new ConflictError(`ticket ${opts.ticketId} already has an active run`);
@@ -367,8 +371,10 @@ async function pipeline(
   const workPrompt = composeWorkPrompt({ ticket, plan, knowledge, workdir: sandbox })
     + findings + NARRATION + "\n\nDo NOT run git commit; the supervisor commits for you." + lessons + roleStyle("work", styleSetting) + extra;
   const workRes = await track(actorId, ticket.id, "work", run.agents.work, () =>
-    runAgent(agents.work, workPrompt, sandbox, onData, (child) => { run.child = child; }));
+    runAgent(agents.work, workPrompt, sandbox, onData,
+      (child) => { run.child = child; }, (abort) => { run.abort = abort; }));
   run.child = undefined;
+  run.abort = undefined;
   if (run.stopped) { await bounce(run, actorId, "run stopped", ""); return settle(run, "stopped"); }
   applyVerification(workRes, run.agents.work, run, config);
   if (!workRes.ok) { await bounce(run, actorId, "worker failed", workRes.output); return settle(run, "failed"); }
@@ -608,6 +614,7 @@ export function stopRun(id: string): boolean {
   if (!r || r.status !== "running") return false;
   r.stopped = true; // checked between stages so a running stage still lands on "stopped"
   if (r.child) killTree(r.child);
+  if (r.abort) r.abort();
   return true;
 }
 

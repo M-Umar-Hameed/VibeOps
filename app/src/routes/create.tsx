@@ -7,7 +7,7 @@ import { tickets } from "../api/tickets.js";
 import { Avatar } from "../components/Avatar.js";
 import { api } from "../lib/api.js";
 import { useProject } from "../context/project.js";
-import { WorkOrderComposer } from "../components/WorkOrderComposer.js";
+import { WorkOrderComposer, modelOptionsForRole } from "../components/WorkOrderComposer.js";
 import { Markdown } from "../components/Markdown.js";
 
 const COUNCIL_KEY = "vibeops.activeCouncilId";
@@ -19,6 +19,15 @@ export function CreateScreen() {
   const [mode, setMode] = useState<"council" | "quick">("council");
   const pq = useQuery({ queryKey: ["projects"], queryFn: projects.list });
   const aq = useQuery({ queryKey: ["actors"], queryFn: actors.list });
+  const agentsQ = useQuery({
+    queryKey: ["forge", "agents"],
+    queryFn: () => api.get("/forge/agents") as Promise<{ name: string; roles: string[]; models?: { name: string }[] }[]>,
+    staleTime: Infinity,
+  });
+  const workDefaultQ = useQuery({
+    queryKey: ["settings", "forge.defaultModel.work"],
+    queryFn: async () => (await api.get("/settings/forge.defaultModel.work")).value || "",
+  });
   const [projectId, setProjectId] = useState("");
   const [priority, setPriority] = useState("normal");
   const [assigneeId, setAssigneeId] = useState("");
@@ -60,9 +69,10 @@ export function CreateScreen() {
           <WorkOrderComposer
             createTicket={({ title, body }) =>
               tickets.create({ projectId, title, body, priority, assigneeId: assigneeId || undefined, requiresVerification })}
-            launchPipeline={(t, effort) => api.post("/forge/pipeline", {
+            launchPipeline={(t, effort, work) => api.post("/forge/pipeline", {
               ticketId: t.id,
-              planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+              planAgent: "auto", workAgent: work?.agent ?? "auto", reviewAgent: "auto",
+              ...(work?.model ? { workModel: work.model } : {}),
               extraPrompt: "", force: false, effort,
             }) as Promise<{ runId: string; doctorWarnings?: string[] }>}
             onCreated={(t, { pipelineError }) => {
@@ -70,6 +80,8 @@ export function CreateScreen() {
               if (!pipelineError) nav({ to: "/tickets/$id", params: { id: t.id } });
             }}
             submitDisabled={!projectId}
+            modelOptions={modelOptionsForRole(agentsQ.data ?? [], "work")}
+            defaultModel={workDefaultQ.data ?? ""}
             inlineControls={
               <>
                 <select

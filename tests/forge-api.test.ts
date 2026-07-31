@@ -10,6 +10,7 @@ import { createTicket } from "../src/services/tickets.js";
 import { app } from "../src/api/app.js";
 import { resolveSyncActor } from "../src/sync/actor.js";
 import { addComment } from "../src/services/comments.js";
+import { getSetting, setSetting } from "../src/services/settings.js";
 
 process.env.EMBED_PROVIDER = "fake";
 
@@ -271,6 +272,21 @@ describe("forge API", () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toContain("effort");
+  });
+
+  it("pipeline 400s when a forge.defaultModel.<role> setting names an unknown model", async () => {
+    const ticket = await seedTicket();
+    const prior = await getSetting("forge.defaultModel.plan");
+    await setSetting("forge.defaultModel.plan", "fake:nope");
+    try {
+      const res = await app.request("/forge/pipeline", {
+        method: "POST", headers: await adminHeaders(),
+        body: JSON.stringify({ ticketId: ticket.id, planAgent: "auto", workAgent: "fake", reviewAgent: "fake" }),
+      });
+      expect(res.status).toBe(400);
+    } finally {
+      await setSetting("forge.defaultModel.plan", prior ?? "");
+    }
   });
 
   it("POST /forge/pipeline returns 400 for missing fields and unknown agent", async () => {

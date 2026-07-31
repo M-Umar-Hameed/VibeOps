@@ -6,7 +6,7 @@ import { useProject } from "../context/project.js";
 import { parseUnifiedDiff, type DiffFile } from "../lib/diff-parse.js";
 import { SpecEditor } from "../components/SpecEditor.js";
 import { CommentList } from "../components/CommentList.js";
-import { WorkOrderComposer } from "../components/WorkOrderComposer.js";
+import { WorkOrderComposer, modelOptionsForRole } from "../components/WorkOrderComposer.js";
 
 const parseSel = (s: string) => { const [agent, model] = s.split("::"); return { agent, model }; };
 const SELECTED_TICKET_KEY = "vibeops.forgeSelectedTicketId";
@@ -97,6 +97,10 @@ export function ForgeScreen() {
   const ticketsError = ticketsQ.error ? ((ticketsQ.error as any).message || "Failed to load tickets") : "";
 
   const agentsQ = useQuery({ queryKey: ["forge", "agents"], queryFn: () => api.get("/forge/agents") as Promise<Agent[]>, staleTime: Infinity });
+  const workDefaultQ = useQuery({
+    queryKey: ["settings", "forge.defaultModel.work"],
+    queryFn: async () => (await api.get("/settings/forge.defaultModel.work")).value || "",
+  });
   const skillsQ = useQuery({ queryKey: ["forge", "skills"], queryFn: () => api.get("/forge/skills") as Promise<Skill[]>, staleTime: Infinity });
   const actorsQ = useQuery({ queryKey: ["actors"], queryFn: () => api.get("/actors") as Promise<any[]>, staleTime: Infinity });
   const doctorQ = useQuery({ queryKey: ["forge", "doctor"], queryFn: () => api.get("/forge/doctor") as Promise<DoctorStatus[]>, staleTime: Infinity });
@@ -567,15 +571,18 @@ export function ForgeScreen() {
               if (!project) throw new Error("no project available");
               return await api.post("/tickets", { projectId: project.id, title, body }) as Ticket;
             }}
-            launchPipeline={(t, effort) => {
-              const plan = parseSel(planAgent), work = parseSel(workAgent), review = parseSel(reviewAgent);
+            modelOptions={modelOptionsForRole(agents, "work")}
+            defaultModel={workDefaultQ.data ?? ""}
+            launchPipeline={(t, effort, work) => {
+              const plan = parseSel(planAgent), workSel = parseSel(workAgent), review = parseSel(reviewAgent);
+              const w = work ?? workSel;
               const body: Record<string, any> = {
                 ticketId: t.id,
-                planAgent: plan.agent, workAgent: work.agent, reviewAgent: review.agent,
+                planAgent: plan.agent, workAgent: w.agent, reviewAgent: review.agent,
                 extraPrompt: "", force: false, effort,
               };
               if (plan.model) body.planModel = plan.model;
-              if (work.model) body.workModel = work.model;
+              if (w.model) body.workModel = w.model;
               if (review.model) body.reviewModel = review.model;
               return api.post("/forge/pipeline", body) as Promise<{ runId: string; doctorWarnings?: string[] }>;
             }}

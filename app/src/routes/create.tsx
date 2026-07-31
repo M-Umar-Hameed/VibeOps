@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { projects } from "../api/projects.js";
 import { actors } from "../api/actors.js";
@@ -7,7 +7,7 @@ import { tickets } from "../api/tickets.js";
 import { Avatar } from "../components/Avatar.js";
 import { api } from "../lib/api.js";
 import { useProject } from "../context/project.js";
-import { useImageAttachments } from "../components/useImageAttachments.js";
+import { WorkOrderComposer } from "../components/WorkOrderComposer.js";
 
 const COUNCIL_KEY = "vibeops.activeCouncilId";
 
@@ -19,22 +19,9 @@ export function CreateScreen() {
   const pq = useQuery({ queryKey: ["projects"], queryFn: projects.list });
   const aq = useQuery({ queryKey: ["actors"], queryFn: actors.list });
   const [projectId, setProjectId] = useState("");
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
   const [priority, setPriority] = useState("normal");
   const [assigneeId, setAssigneeId] = useState("");
   const [requiresVerification, setRequiresVerification] = useState(false);
-
-  const att = useImageAttachments();
-
-  const createTicket = useMutation({
-    mutationFn: () => {
-      const md = att.markdown();
-      const finalBody = md ? (body ? `${body}\n\n${md}` : md) : body;
-      return tickets.create({ projectId, title, body: finalBody, priority, assigneeId: assigneeId || undefined, requiresVerification });
-    },
-    onSuccess: (t) => { att.clear(); qc.invalidateQueries({ queryKey: ["tickets"] }); nav({ to: "/tickets/$id", params: { id: t.id } }); },
-  });
 
   useEffect(() => {
     if (activeProjectId) setProjectId(activeProjectId);
@@ -65,186 +52,72 @@ export function CreateScreen() {
       {mode === "quick" && (
         <div className="glass-card rounded-lg p-8 relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-primary-fixed-dim via-transparent to-transparent opacity-50"></div>
-          
           <div className="mb-10 text-center">
-        <h2 className="font-code-label text-2xl text-primary-fixed-dim tracking-[0.2em] uppercase terminal-cursor">INITIALIZE_WORK_ORDER</h2>
-        <div className="h-[1px] w-24 bg-primary-fixed-dim/30 mx-auto mt-4"></div>
-      </div>
-      
-      <form className="space-y-8" onSubmit={(e) => { e.preventDefault(); createTicket.mutate(); }}>
-        {/* Title */}
-        <div className="space-y-2 group">
-          <label className="font-code-sm text-on-surface-variant uppercase tracking-widest flex items-center gap-2">
-            <span className="w-1 h-1 bg-primary-fixed-dim rounded-full"></span>
-            Title_String
-          </label>
-          <div className="relative flex items-center">
-            <span className="absolute left-4 font-code-label text-primary-fixed-dim opacity-70 font-bold">&gt;</span>
-            <input 
-              className="w-full bg-surface-container-lowest border border-white/5 focus:border-primary-fixed-dim focus:ring-1 focus:ring-primary-fixed-dim/20 pl-10 pr-4 py-4 font-code-label text-primary-fixed-dim rounded-sm transition-all duration-300 outline-none" 
-              placeholder="Define process scope..." 
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              required
-            />
+            <h2 className="font-code-label text-2xl text-primary-fixed-dim tracking-[0.2em] uppercase terminal-cursor">INITIALIZE_WORK_ORDER</h2>
+            <div className="h-[1px] w-24 bg-primary-fixed-dim/30 mx-auto mt-4"></div>
           </div>
-        </div>
-
-        {/* Priority & Assignee & Project Row */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Project */}
-          <div className="space-y-2">
-            <label className="font-code-sm text-on-surface-variant uppercase tracking-widest flex items-center gap-2">
-              <span className="w-1 h-1 bg-primary-fixed-dim rounded-full"></span>
-              Project_ID
-            </label>
-            <div className="relative">
-              <select 
-                className="w-full bg-surface-container-lowest border border-white/5 focus:border-primary-fixed-dim focus:ring-1 focus:ring-primary-fixed-dim/20 px-4 py-4 font-code-label text-on-surface rounded-sm appearance-none outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                value={projectId}
-                onChange={(e) => setProjectId(e.target.value)}
-                disabled={!!activeProjectId}
-                required
-              >
-                <option className="bg-surface text-on-surface-variant" value="">Select target namespace</option>
-                {pq.data?.map((p) => <option className="bg-surface" key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-              <span className="absolute right-4 top-1/2 -translate-y-1/2 material-symbols-outlined pointer-events-none opacity-50">expand_more</span>
-            </div>
-          </div>
-
-          {/* Priority */}
-          <div className="space-y-2">
-            <label className="font-code-sm text-on-surface-variant uppercase tracking-widest flex items-center gap-2">
-              <span className="w-1 h-1 bg-primary-fixed-dim rounded-full"></span>
-              Priority_Level
-            </label>
-            <div className="relative">
-              <select 
-                className="w-full bg-surface-container-lowest border border-white/5 focus:border-primary-fixed-dim focus:ring-1 focus:ring-primary-fixed-dim/20 px-4 py-4 font-code-label text-on-surface rounded-sm appearance-none outline-none cursor-pointer"
-                value={priority}
-                onChange={(e) => setPriority(e.target.value)}
-              >
-                <option className="bg-surface text-on-surface-variant" value="low">LOW_LATENCY</option>
-                <option className="bg-surface text-primary-fixed-dim" value="normal">NORMAL_FLOW</option>
-                <option className="bg-surface text-secondary-fixed-dim" value="high">HIGH_PRIORITY</option>
-                <option className="bg-surface text-error" value="critical">CRITICAL_BLOCKER</option>
-              </select>
-              <span className="absolute right-4 top-1/2 -translate-y-1/2 material-symbols-outlined pointer-events-none opacity-50">expand_more</span>
-            </div>
-          </div>
-
-          {/* Assignee */}
-          <div className="space-y-2">
-            <label className="font-code-sm text-on-surface-variant uppercase tracking-widest flex items-center gap-2">
-              <span className="w-1 h-1 bg-primary-fixed-dim rounded-full"></span>
-              Operator_Assign
-            </label>
-            <div className="relative flex items-center gap-2">
-              <Avatar actorId={assigneeId} size="md" />
-              <div className="relative flex-1">
-                <select 
-                  className="w-full bg-surface-container-lowest border border-white/5 focus:border-primary-fixed-dim focus:ring-1 focus:ring-primary-fixed-dim/20 px-4 py-4 font-code-label text-on-surface rounded-sm appearance-none outline-none cursor-pointer"
-                  value={assigneeId}
-                  onChange={(e) => setAssigneeId(e.target.value)}
+          <WorkOrderComposer
+            createTicket={({ title, body }) =>
+              tickets.create({ projectId, title, body, priority, assigneeId: assigneeId || undefined, requiresVerification })}
+            launchPipeline={(t, effort) => api.post("/forge/pipeline", {
+              ticketId: t.id,
+              planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+              extraPrompt: "", force: false, effort,
+            }) as Promise<{ runId: string; doctorWarnings?: string[] }>}
+            onCreated={(t, { pipelineError }) => {
+              qc.invalidateQueries({ queryKey: ["tickets"] });
+              if (!pipelineError) nav({ to: "/tickets/$id", params: { id: t.id } });
+            }}
+            submitDisabled={!projectId}
+            inlineControls={
+              <>
+                <select
+                  aria-label="Project"
+                  className="bg-surface-container-lowest border border-white/10 rounded px-2 py-1 text-xs text-on-surface outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  value={projectId}
+                  onChange={(e) => setProjectId(e.target.value)}
+                  disabled={!!activeProjectId}
                 >
-                  <option className="bg-surface" value="">@unassigned_node</option>
-                  {aq.data?.map((a) => <option className="bg-surface" key={a.id} value={a.id}>@{a.name}</option>)}
+                  <option className="bg-surface text-on-surface-variant" value="">Select project</option>
+                  {pq.data?.map((p) => <option className="bg-surface" key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
-                <span className="absolute right-4 top-1/2 -translate-y-1/2 material-symbols-outlined pointer-events-none opacity-50">expand_more</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Description */}
-        <div className="space-y-2">
-          <div className="flex justify-between items-center">
-            <label className="font-code-sm text-on-surface-variant uppercase tracking-widest flex items-center gap-2">
-              <span className="w-1 h-1 bg-primary-fixed-dim rounded-full"></span>
-              Sys_Description
-            </label>
-            <span className="font-code-sm text-primary-fixed-dim/40 text-[10px]">MD_SUPPORTED</span>
-          </div>
-          <div className="relative">
-            <textarea 
-              className="w-full bg-surface-container-lowest border border-white/5 focus:border-primary-fixed-dim focus:ring-1 focus:ring-primary-fixed-dim/20 p-6 font-code-label text-on-surface rounded-sm transition-all duration-300 resize-y outline-none" 
-              placeholder="Describe the operational anomaly or requirement here..." 
-              rows={6}
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              onPaste={e => {
-                const imgs = Array.from(e.clipboardData.files).filter((f: any) => f.type.startsWith("image/"));
-                if (imgs.length) { e.preventDefault(); att.uploadFiles(imgs as File[]); }
-              }}
-            ></textarea>
-          </div>
-          <input
-            ref={att.fileInputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp"
-            multiple
-            className="hidden"
-            onChange={e => { att.uploadFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }}
-          />
-          <button
-            type="button"
-            onClick={() => att.fileInputRef.current?.click()}
-            className="w-full px-3 py-1.5 rounded border border-white/10 hover:bg-white/5 text-on-surface-variant text-xs cursor-pointer"
-          >
-            Attach image
-          </button>
-          {att.attachments.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {att.attachments.map(a => (
-                <div key={a.id} className="relative">
-                  <img src={a.previewUrl} alt={a.name} className="w-12 h-12 object-cover rounded border border-white/10" />
-                  <button
-                    type="button"
-                    onClick={() => att.removeAttachment(a.id)}
-                    className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-error text-white text-[10px] leading-none flex items-center justify-center cursor-pointer"
-                    aria-label={`Remove ${a.name}`}
-                  >×</button>
+                <select
+                  aria-label="Priority"
+                  className="bg-surface-container-lowest border border-white/10 rounded px-2 py-1 text-xs text-on-surface outline-none cursor-pointer"
+                  value={priority}
+                  onChange={(e) => setPriority(e.target.value)}
+                >
+                  <option className="bg-surface" value="low">low</option>
+                  <option className="bg-surface" value="normal">normal</option>
+                  <option className="bg-surface" value="high">high</option>
+                  <option className="bg-surface" value="critical">critical</option>
+                </select>
+              </>
+            }
+            moreOptions={
+              <details className="text-xs text-on-surface-variant">
+                <summary className="cursor-pointer hover:text-on-surface">More options</summary>
+                <div className="mt-2 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Avatar actorId={assigneeId} size="md" />
+                    <select
+                      aria-label="Assignee"
+                      className="flex-1 bg-surface-container-lowest border border-white/10 rounded px-2 py-1 text-xs text-on-surface outline-none cursor-pointer"
+                      value={assigneeId}
+                      onChange={(e) => setAssigneeId(e.target.value)}
+                    >
+                      <option className="bg-surface" value="">@unassigned</option>
+                      {aq.data?.map((a) => <option className="bg-surface" key={a.id} value={a.id}>@{a.name}</option>)}
+                    </select>
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={requiresVerification} onChange={(e) => setRequiresVerification(e.target.checked)} className="w-4 h-4 rounded border-white/10 bg-surface-container-lowest text-primary-fixed-dim focus:ring-primary-fixed-dim focus:ring-1 outline-none" />
+                    Require verification to close
+                  </label>
                 </div>
-              ))}
-            </div>
-          )}
-          {att.attachError && <div className="text-error text-xs">{att.attachError}</div>}
-        </div>
-
-        {/* Verification */}
-        <div className="space-y-2">
-          <label className="flex items-center gap-2 font-code-sm text-on-surface-variant cursor-pointer">
-            <input type="checkbox" checked={requiresVerification} onChange={(e) => setRequiresVerification(e.target.checked)} className="w-4 h-4 rounded border-white/10 bg-surface-container-lowest text-primary-fixed-dim focus:ring-primary-fixed-dim focus:ring-1 outline-none" />
-            Require verification to close
-          </label>
-        </div>
-
-        {/* Footer Actions */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-6 pt-6 border-t border-white/5">
-          <button 
-            type="button"
-            onClick={() => nav({ to: "/" })}
-            className="group flex items-center gap-2 px-6 py-2 text-on-surface-variant hover:text-error transition-all duration-300 cursor-pointer"
-          >
-            <span className="material-symbols-outlined text-lg group-hover:rotate-90 transition-transform">close</span>
-            <span className="font-code-label text-code-label tracking-widest uppercase">ABORT_CANCEL</span>
-          </button>
-          
-          <button 
-            type="submit"
-            disabled={!projectId || !title || createTicket.isPending}
-            className="w-full sm:w-auto px-10 py-4 bg-primary-fixed-dim text-on-primary font-code-label text-code-label font-bold uppercase tracking-[0.15em] rounded-sm neon-glow-primary hover:opacity-90 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-3 cursor-pointer"
-          >
-            <span className="material-symbols-outlined">bolt</span>
-            EXECUTE_SUBMIT
-          </button>
-        </div>
-      </form>
-
-      <div className="absolute bottom-4 left-8 pointer-events-none opacity-20">
-        <span className="font-code-sm text-[9px] uppercase tracking-tighter">TS: {new Date().toISOString().substring(0, 19).replace('T', ' ')}</span>
-      </div>
+              </details>
+            }
+          />
         </div>
       )}
     </div>

@@ -16,6 +16,7 @@ const wrap = (ui: any) => (
 
 beforeEach(() => {
   apiFetch.mockReset();
+  localStorage.clear();
   // shouldAdvanceTime: waitFor polls on real timers; frozen clocks deadlock it.
   vi.useFakeTimers({ shouldAdvanceTime: true });
 });
@@ -137,6 +138,7 @@ test("Promote button disabled when lastVerdict is not pass and enabled when it i
   expect(promoteBtn).toBeDisabled();
 
   unmount();
+  localStorage.clear();
 
   // now with pass
   apiFetch.mockImplementation(async (path) => {
@@ -709,4 +711,38 @@ test("stage change during a run triggers exactly one tickets refetch; same stage
 
   await act(async () => { vi.advanceTimersByTime(1000); }); // poll 4: work again -> no refetch
   expect(tCalls()).toBe(base + 1);
+});
+
+test("restores stored ticket selection on mount and renders its run history", async () => {
+  apiFetch.mockImplementation(async (path) => {
+    if (path === "/tickets") return [{ id: "t1", title: "My Ticket", status: "in_progress" }];
+    if (path === "/forge/agents") return [];
+    if (path === "/forge/skills") return [];
+    if (path === "/forge/runs") return [
+      { id: "run777", ticketId: "t1", status: "passed", stage: "review", startedAt: "2024-01-01T00:00:00Z", agents: {} },
+    ];
+    if (path.includes("/output")) return { chunk: "", next: 0, stage: "review", status: "passed" };
+    if (path.includes("/sandbox")) return { exists: false };
+    return {};
+  });
+  localStorage.setItem("vibeops.forgeSelectedTicketId", "t1");
+
+  render(wrap(<ForgeScreen />));
+  await waitFor(() => expect(screen.getByText("Run History")).toBeInTheDocument());
+  expect(screen.getByText("Run run777")).toBeInTheDocument();
+});
+
+test("clears a stored ticket id absent from the list and shows no empty detail panel", async () => {
+  apiFetch.mockImplementation(async (path) => {
+    if (path === "/tickets") return [{ id: "t2", title: "Other Ticket", status: "open" }];
+    if (path === "/forge/agents") return [];
+    if (path === "/forge/skills") return [];
+    return {};
+  });
+  localStorage.setItem("vibeops.forgeSelectedTicketId", "t1");
+
+  render(wrap(<ForgeScreen />));
+  await waitFor(() => expect(screen.getByText("Other Ticket")).toBeInTheDocument());
+  await waitFor(() => expect(localStorage.getItem("vibeops.forgeSelectedTicketId")).toBeNull());
+  expect(screen.getByText("Select a work order to enter the Forge")).toBeInTheDocument();
 });

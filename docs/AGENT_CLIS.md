@@ -104,20 +104,27 @@ Login Flow: Authenticate this CLI in your terminal the way its provider expects.
 
 ---
 
-## First-Party SDK Lane
-Forge supports running `@anthropic-ai/claude-agent-sdk` directly in-loop as an alternative to external CLIs for the **work** stage.
-This skips stdio overhead and provides exact token accounting, though it runs under the Relay's process identity.
+## SDK lane (experimental)
 
-To use it, set the agent type to `"sdk"`. The `cmd` array is omitted.
+Set `"type": "sdk"` on a work agent to run it first-party and in-loop via
+`@anthropic-ai/claude-agent-sdk` instead of spawning a CLI. The relay (CLI) lane
+stays the default; omit `type` or set `"cli"` to keep it.
+
+An sdk agent needs no `cmd`. It uses your existing Claude Code credentials —
+either `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, or a `claude login`
+on this machine. VibeOps stores no API key. If neither is present the run fails
+with a message naming `claude setup-token`.
+
+Phase 1 supports the **work** stage only; plan and review still run on the relay
+lane. Writes are permitted only inside the run's sandbox worktree; reads are
+unrestricted; other tools are denied and logged as
+`[forge: permission-denied <tool> <path>]` in the live console.
+
 ```json
-{
-  "workdir": "/path/to/repo",
-  "agents": {
-    "claude": {
-      "type": "sdk",
-      "roles": ["work"]
-    }
-  }
+"sonnet-sdk": {
+  "type": "sdk",
+  "roles": ["work"]
 }
 ```
-*Note: SDK agents are only supported for the `work` stage in this release.*
+
+To fall back, change `"type"` to `"cli"` (with a `cmd`) or remove the agent.

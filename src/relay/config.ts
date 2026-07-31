@@ -58,6 +58,9 @@ export function loadRelayConfig(path?: string): RelayConfig {
     if (!Array.isArray(a.roles) || !a.roles.every((r) => typeof r === "string")) {
       throw new Error(`relay config agent "${name}" must have a roles string array`);
     }
+    if (a.type === "sdk" && a.roles.some((r) => r !== "work")) {
+      throw new Error(`relay config agent "${name}" of type sdk can only have the "work" role in Phase 1`);
+    }
     if (a.env !== undefined) {
       if (typeof a.env !== "object" || a.env === null || Array.isArray(a.env)) {
         throw new Error(`relay config agent "${name}" env must be an object of string values`);

@@ -347,6 +347,18 @@ test("loadRelayConfig accepts an sdk agent without cmd", () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("loadRelayConfig rejects an sdk agent with non-work roles", () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-cfg-"));
+  const path = join(dir, "relay.json");
+  writeFileSync(path, JSON.stringify({
+    workdir: dir,
+    agents: { bad: { type: "sdk", roles: ["plan", "work"] } },
+  }));
+  try {
+    expect(() => loadRelayConfig(path)).toThrow(/of type sdk can only have the "work" role in Phase 1/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("loadRelayConfig rejects an unknown agent type, naming the agent", () => {
   const dir = mkdtempSync(join(tmpdir(), "relay-cfg-"));
   const path = join(dir, "relay.json");

@@ -491,28 +491,54 @@ function SpecBlock({ spec, onExpand }: { spec: string; onExpand: () => void }) {
   );
 }
 
-function VerdictCard({ rating, decision, councilId }: { rating?: number; decision?: Decision; councilId?: string }) {
+async function fetchBrief(councilId: string): Promise<{ text: string; filename: string }> {
+  const { getSettings } = await import("../settings.js");
+  const { baseUrl, apiKey } = await getSettings();
+  const res = await fetch(`${baseUrl}/export/brief?kind=council&id=${councilId}`, {
+    headers: { Authorization: `Bearer ${apiKey}` }
+  });
+  if (!res.ok) throw new Error("Export failed");
+  const text = await res.text();
+  const disp = res.headers.get("Content-Disposition");
+  let filename = `council-${councilId.substring(0,8)}.md`;
+  if (disp && disp.includes("filename=")) {
+    filename = disp.split("filename=")[1].replace(/"/g, "");
+  }
+  return { text, filename };
+}
+
+function downloadBrief(text: string, filename: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: "text/markdown" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export function VerdictCard({ rating, decision, councilId }: { rating?: number; decision?: Decision; councilId?: string }) {
+  const [notice, setNotice] = useState<string | null>(null);
   const handleExport = async () => {
     if (!councilId) return;
     try {
-      const { getSettings } = await import("../settings.js");
-      const { baseUrl, apiKey } = await getSettings();
-      const res = await fetch(`${baseUrl}/export/brief?kind=council&id=${councilId}`, {
-        headers: { Authorization: `Bearer ${apiKey}` }
-      });
-      if (!res.ok) throw new Error("Export failed");
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      const disp = res.headers.get("Content-Disposition");
-      let filename = `council-${councilId.substring(0,8)}.md`;
-      if (disp && disp.includes("filename=")) {
-        filename = disp.split("filename=")[1].replace(/"/g, "");
+      const { text, filename } = await fetchBrief(councilId);
+      downloadBrief(text, filename);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+  const handleSendToNotebookLM = async () => {
+    if (!councilId) return;
+    try {
+      const { text, filename } = await fetchBrief(councilId);
+      try {
+        await navigator.clipboard.writeText(text);
+        setNotice("Brief copied. In NotebookLM: + Add source -> Paste text.");
+      } catch {
+        downloadBrief(text, filename);
+        setNotice("Clipboard unavailable - brief downloaded instead; add the file as a NotebookLM source.");
       }
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
+      window.open("https://notebooklm.google.com/", "_blank", "noopener,noreferrer");
     } catch (e) {
       console.error(e);
     }
@@ -536,9 +562,13 @@ function VerdictCard({ rating, decision, councilId }: { rating?: number; decisio
         </div>
         {councilId && (
           <div className="flex items-center gap-3">
-            <a href="https://notebooklm.google.com/" target="_blank" rel="noreferrer" className="text-primary-fixed-dim hover:underline font-code-sm text-[10px] uppercase tracking-wider">
-              Open NotebookLM
-            </a>
+            <button
+              type="button"
+              onClick={handleSendToNotebookLM}
+              className="px-2 py-0.5 rounded font-code-sm text-[10px] uppercase tracking-wider bg-primary/20 text-primary hover:bg-primary/30 border border-primary/30 cursor-pointer transition-colors"
+            >
+              Send to NotebookLM
+            </button>
             <button
               type="button"
               onClick={handleExport}
@@ -549,6 +579,9 @@ function VerdictCard({ rating, decision, councilId }: { rating?: number; decisio
           </div>
         )}
       </div>
+      {notice && (
+        <div role="status" className="text-xs text-on-surface-variant">{notice}</div>
+      )}
     </div>
   );
 }

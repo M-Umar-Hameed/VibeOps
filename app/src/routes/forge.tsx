@@ -121,7 +121,7 @@ export function ForgeScreen() {
   const agentsError = agentsQ.error ? ((agentsQ.error as any).message || "Failed to load agents") : "";
   const doctorStatuses = useMemo(() => {
     const byName: Record<string, DoctorStatus> = {};
-    for (const s of doctorQ.data ?? []) byName[s.name] = s;
+    for (const s of Array.isArray(doctorQ.data) ? doctorQ.data : []) byName[s.name] = s;
     return byName;
   }, [doctorQ.data]);
 

@@ -4,14 +4,14 @@ import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
 const apiFetch = vi.fn();
 vi.mock("../api/client.js", () => ({ apiFetch: (...a: any[]) => apiFetch(...a) }));
 
-import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
+import { QueryClientProvider, QueryClient, focusManager } from "@tanstack/react-query";
 import { ForgeScreen } from "./forge.js";
 import { NotFoundError, StaleVersionError } from "../api/errors.js";
 import { ProjectProvider } from "../context/project.js";
 
 // SpecEditor uses react-query; every render needs a client.
 const wrap = (ui: any) => (
-  <QueryClientProvider client={new QueryClient()}><ProjectProvider>{ui}</ProjectProvider></QueryClientProvider>
+  <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ProjectProvider>{ui}</ProjectProvider></QueryClientProvider>
 );
 
 beforeEach(() => {
@@ -660,8 +660,9 @@ test("tickets refetch every 5s, on window focus, and stop after unmount", async 
   await waitFor(() => expect(calls()).toBeGreaterThanOrEqual(base + 1));
 
   const beforeFocus = calls();
-  await act(async () => { window.dispatchEvent(new Event("focus")); });
+  await act(async () => { focusManager.setFocused(false); focusManager.setFocused(true); });
   await waitFor(() => expect(calls()).toBeGreaterThanOrEqual(beforeFocus + 1));
+  focusManager.setFocused(undefined);
 
   unmount();
   const afterUnmount = calls();

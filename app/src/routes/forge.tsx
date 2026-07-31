@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api.js";
 import { NotFoundError } from "../api/errors.js";
 import { useProject } from "../context/project.js";
@@ -20,17 +21,8 @@ type SandboxActivityData = { stage: string; files: SandboxActivityFile[]; totalA
 
 export function ForgeScreen() {
   const { activeProjectId } = useProject();
-  const [tickets, setTickets] = useState<Ticket[]>([]);
-  const [sandboxes, setSandboxes] = useState<Record<string, SandboxStatus>>({});
-  const [ticketsError, setTicketsError] = useState("");
+  const queryClient = useQueryClient();
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
-
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [agentsError, setAgentsError] = useState("");
-  const [doctorStatuses, setDoctorStatuses] = useState<Record<string, DoctorStatus>>({});
-  
-  const [skills, setSkills] = useState<Skill[]>([]);
-  const [actors, setActors] = useState<any[]>([]);
 
   const [planAgent, setPlanAgent] = useState("auto::");
   const [workAgent, setWorkAgent] = useState("auto::");
@@ -52,7 +44,6 @@ export function ForgeScreen() {
   const outputRef = useRef<HTMLPreElement>(null);
   const prevStageRef = useRef("");
 
-  const [sandbox, setSandbox] = useState<SandboxStatus | null>(null);
   const [diff, setDiff] = useState<string | null>(null);
   const [diffParsed, setDiffParsed] = useState<DiffFile[]>([]);
   const [diffMode, setDiffMode] = useState<"sbs" | "unified" | "explain">("sbs");
@@ -68,7 +59,6 @@ export function ForgeScreen() {
   const [ticketRunActive, setTicketRunActive] = useState(false);
   const [ticketRuns, setTicketRuns] = useState<any[]>([]);
 
-  const [ticketComments, setTicketComments] = useState<any[]>([]);
   const [commentInput, setCommentInput] = useState("");
   const [commentError, setCommentError] = useState("");
   const [postingComment, setPostingComment] = useState(false);
@@ -77,98 +67,72 @@ export function ForgeScreen() {
   const [statusSaving, setStatusSaving] = useState(false);
   const [statusError, setStatusError] = useState("");
 
-  const loadComments = async (id: string) => {
-    try {
-      const res = await api.get(`/tickets/${id}/comments`);
-      setTicketComments(Array.isArray(res) ? res : []);
-    } catch (e) {
-      // ignore
-    }
-  };
+  const commentsQ = useQuery({
+    queryKey: ["tickets", selectedTicket?.id, "comments"],
+    queryFn: () => api.get(`/tickets/${selectedTicket!.id}/comments`),
+    enabled: !!selectedTicket,
+  });
+  const ticketComments = Array.isArray(commentsQ.data) ? commentsQ.data : [];
 
   const actorName = (aid: string) => actors.find((a) => a.id === aid)?.name ?? aid;
 
 
 
-  const loadTickets = async () => {
-    try {
+  const ticketsQ = useQuery({
+    queryKey: ["forge", "tickets", activeProjectId],
+    queryFn: async () => {
       const t = await api.get(activeProjectId ? `/tickets?projectId=${encodeURIComponent(activeProjectId)}` : "/tickets") as Ticket[];
-      setTickets(t);
-      const reviewIds = t.filter(x => x.status === "review").map(x => x.id);
-      const sMap: Record<string, SandboxStatus> = {};
-      for (const id of reviewIds) {
-        try {
-          const s = await api.get(`/forge/tickets/${id}/sandbox`) as SandboxStatus;
-          sMap[id] = s;
-        } catch (e) { /* ignore single sandbox error for list */ }
+      const sandboxes: Record<string, SandboxStatus> = {};
+      for (const id of t.filter(x => x.status === "review").map(x => x.id)) {
+        try { sandboxes[id] = await api.get(`/forge/tickets/${id}/sandbox`) as SandboxStatus; }
+        catch { /* single sandbox failure never blocks the list, as today */ }
       }
-      setSandboxes(sMap);
-    } catch (e: any) {
-      setTicketsError(e.message || "Failed to load tickets");
-    }
-  };
+      return { tickets: t, sandboxes };
+    },
+    refetchInterval: 5000,
+  });
+  const tickets = ticketsQ.data?.tickets ?? [];
+  const sandboxes = ticketsQ.data?.sandboxes ?? {};
+  const ticketsError = ticketsQ.error ? ((ticketsQ.error as any).message || "Failed to load tickets") : "";
 
-  const ticketsRefreshInFlight = useRef(false);
-  const autoRefreshTickets = async () => {
-    if (ticketsRefreshInFlight.current) return;
-    ticketsRefreshInFlight.current = true;
-    try { await loadTickets(); } finally { ticketsRefreshInFlight.current = false; }
-  };
+  const agentsQ = useQuery({ queryKey: ["forge", "agents"], queryFn: () => api.get("/forge/agents") as Promise<Agent[]>, staleTime: Infinity });
+  const skillsQ = useQuery({ queryKey: ["forge", "skills"], queryFn: () => api.get("/forge/skills") as Promise<Skill[]>, staleTime: Infinity });
+  const actorsQ = useQuery({ queryKey: ["actors"], queryFn: () => api.get("/actors") as Promise<any[]>, staleTime: Infinity });
+  const doctorQ = useQuery({ queryKey: ["forge", "doctor"], queryFn: () => api.get("/forge/doctor") as Promise<DoctorStatus[]>, staleTime: Infinity });
+
+  const agents = agentsQ.data ?? [];
+  const skills = skillsQ.data ?? [];
+  const actors = actorsQ.data ?? [];
+  const agentsError = agentsQ.error ? ((agentsQ.error as any).message || "Failed to load agents") : "";
+  const doctorStatuses = useMemo(() => {
+    const byName: Record<string, DoctorStatus> = {};
+    for (const s of Array.isArray(doctorQ.data) ? doctorQ.data : []) byName[s.name] = s;
+    return byName;
+  }, [doctorQ.data]);
+
+
+  const sandboxQ = useQuery({
+    queryKey: ["forge", "sandbox", selectedTicket?.id],
+    queryFn: () => api.get(`/forge/tickets/${selectedTicket!.id}/sandbox`) as Promise<SandboxStatus>,
+    enabled: !!selectedTicket,
+  });
+  const sandbox = sandboxQ.data ?? null;
 
   useEffect(() => {
-    api.get("/forge/agents")
-       .then(a => {
-         const ags = a as Agent[];
-         setAgents(ags);
-       })
-       .catch((err: any) => setAgentsError(err.message || "Failed to load agents"));
-       
-    api.get("/forge/skills").then(s => setSkills(s as Skill[])).catch(() => {});
-    api.get("/actors").then(a => setActors(a as any[])).catch(() => {});
-
-    api.get("/forge/doctor")
-       .then(d => {
-         const byName: Record<string, DoctorStatus> = {};
-         for (const s of d as DoctorStatus[]) byName[s.name] = s;
-         setDoctorStatuses(byName);
-       })
-       .catch(() => {}); // health dots are informational -- never block the panel
-  }, []);
-
-  useEffect(() => {
-    loadTickets();
-    const interval = setInterval(autoRefreshTickets, 5000);
-    window.addEventListener("focus", autoRefreshTickets);
-    return () => { clearInterval(interval); window.removeEventListener("focus", autoRefreshTickets); };
-  }, [activeProjectId]);
-
-  const loadSandbox = async (ticketId: string) => {
-    setSandboxError("");
-    try {
-      const s = await api.get(`/forge/tickets/${ticketId}/sandbox`) as SandboxStatus;
-      setSandbox(s);
-      if (!s.exists) {
-        setDiff(null);
-        setDiffParsed([]);
-        setDiffExplain(null);
-        setViewDiff(false);
-      }
-    } catch (e: any) {
-      setSandboxError(e.message || "Failed to load sandbox");
+    if (sandboxQ.data && !sandboxQ.data.exists) {
+      setDiff(null); setDiffParsed([]); setDiffExplain(null); setViewDiff(false);
     }
-  };
+  }, [sandboxQ.data]);
 
   useEffect(() => {
     if (selectedTicket) {
-      loadSandbox(selectedTicket.id);
-      loadComments(selectedTicket.id);
+      setSandboxError("");
       setViewDiff(false);
       setDiff(null);
       setDiffParsed([]);
       setDiffExplain(null);
       setSandboxActivity(null);
       setConfirmApprove(false); // never carry an armed confirm across tickets
-      setTicketComments([]);
       setCommentInput("");
       setCommentError("");
       setOutputUnavailable(false);
@@ -292,13 +256,13 @@ export function ForgeScreen() {
         setRunStage(res.stage);
         setRunStatus(res.status);
         if (res.status === "running" && prevStageRef.current && res.stage !== prevStageRef.current) {
-          autoRefreshTickets(); // columns follow the pipeline on stage transitions
+          queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] }); // columns follow the pipeline on stage transitions
         }
         prevStageRef.current = res.stage;
         if (res.status !== "running") {
           setActiveRunId(null);
-          if (selectedTicket) loadSandbox(selectedTicket.id);
-          autoRefreshTickets(); // ticket status moved server-side; refresh the columns
+          if (selectedTicket) queryClient.invalidateQueries({ queryKey: ["forge", "sandbox", selectedTicket.id] });
+          queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] }); // ticket status moved server-side; refresh the columns
           
           // Refresh runs list to get updated history
           api.get("/forge/runs").then((r: any) => {
@@ -393,8 +357,8 @@ export function ForgeScreen() {
     if (!selectedTicket) return;
     try {
       await api.post(`/forge/tickets/${selectedTicket.id}/promote`);
-      await loadTickets();
-      await loadSandbox(selectedTicket.id);
+      await queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] });
+      await queryClient.invalidateQueries({ queryKey: ["forge", "sandbox", selectedTicket.id] });
     } catch (e: any) {
       setSandboxError(e.message || "Failed to promote");
     }
@@ -407,7 +371,7 @@ export function ForgeScreen() {
     setConfirmApprove(false);
     try {
       await api.post(`/forge/tickets/${selectedTicket.id}/approve`);
-      await loadSandbox(selectedTicket.id);
+      await queryClient.invalidateQueries({ queryKey: ["forge", "sandbox", selectedTicket.id] });
     } catch (e: any) {
       setSandboxError(e.message || "Failed to approve");
     }
@@ -417,8 +381,8 @@ export function ForgeScreen() {
     if (!selectedTicket) return;
     try {
       await api.post(`/forge/tickets/${selectedTicket.id}/discard`);
-      await loadTickets();
-      await loadSandbox(selectedTicket.id);
+      await queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] });
+      await queryClient.invalidateQueries({ queryKey: ["forge", "sandbox", selectedTicket.id] });
     } catch (e: any) {
       setSandboxError(e.message || "Failed to discard");
     }
@@ -439,7 +403,7 @@ export function ForgeScreen() {
     try {
       await api.post(`/tickets/${selectedTicket.id}/comments`, { body: commentInput });
       setCommentInput("");
-      await loadComments(selectedTicket.id);
+      await queryClient.invalidateQueries({ queryKey: ["tickets", selectedTicket.id, "comments"] });
     } catch (e: any) {
       setCommentError(e.message || "Failed to post comment");
     } finally {
@@ -459,13 +423,13 @@ export function ForgeScreen() {
           expectedVersion: selectedTicket.version, 
           status: "planned" 
         });
-        await loadTickets();
+        await queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] });
         setSelectedTicket(updated as Ticket);
       } else {
-        await loadTickets();
+        await queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] });
       }
       setCommentInput("");
-      await loadComments(selectedTicket.id);
+      await queryClient.invalidateQueries({ queryKey: ["tickets", selectedTicket.id, "comments"] });
     } catch (e: any) {
       setCommentError(e.message || "Failed to request changes");
     } finally {
@@ -483,7 +447,7 @@ export function ForgeScreen() {
         status: newStatus,
       });
       setSelectedTicket(updated as Ticket);
-      await loadTickets();
+      await queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] });
     } catch (e: any) {
       setStatusError(e.message || "Failed to update status");
     } finally {
@@ -581,7 +545,7 @@ export function ForgeScreen() {
             onCreated={async (t) => {
               // select AFTER pipeline start: the ticket-select effect reattaches to the
               // running run and takes over console follow.
-              await loadTickets();
+              await queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] });
               setSelectedTicket(t as Ticket);
             }}
           />
@@ -648,7 +612,7 @@ export function ForgeScreen() {
               ticket={selectedTicket} 
               onSave={(t) => {
                 setSelectedTicket(t);
-                setTickets(tickets.map(x => x.id === t.id ? t : x));
+                queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] });
               }}
             />
 
@@ -836,7 +800,7 @@ export function ForgeScreen() {
 
             <div className="glass-card rounded-xl border border-white/10 p-6 flex flex-col gap-4">
               <h3 className="font-headline-sm text-on-surface font-bold border-b border-white/5 pb-2">Sandbox</h3>
-              {sandboxError && <div className="text-error text-sm">{sandboxError}</div>}
+              {((sandboxQ.error as any)?.message || sandboxError) && <div className="text-error text-sm">{(sandboxQ.error as any)?.message || sandboxError}</div>}
               
               {sandbox?.exists ? (
                 <div className="space-y-4">

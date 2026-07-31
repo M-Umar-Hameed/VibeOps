@@ -90,6 +90,7 @@ test("awaiting-answers renders the questions and Submit posts { answers } in ord
   expect(screen.getByText("Who is the audience?")).toBeInTheDocument();
   expect(document.querySelector("pre")).toBeNull();
   expect(screen.getByText(/Show console/i)).toBeInTheDocument();
+  expect(screen.queryByLabelText("Expand spec")).toBeNull();
 
   const inputs = screen.getAllByRole("textbox");
   fireEvent.change(inputs[0], { target: { value: "10k" } });
@@ -99,6 +100,34 @@ test("awaiting-answers renders the questions and Submit posts { answers } in ord
   await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/council/c1/answers", {
     method: "POST", body: { answers: ["10k", "Developers"] },
   }));
+});
+
+test("awaiting-answers renders the chairman spec with the questions and Expand opens the overlay", async () => {
+  let statusCall = 0;
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/council/evaluate") return { councilId: "c1" };
+    if (path.startsWith("/council/c1/output")) return { chunk: "", next: 0, status: "running" };
+    if (path === "/council/c1") {
+      statusCall++;
+      if (statusCall === 1) return { status: "running", round: 1 };
+      return { status: "awaiting-answers", round: 1, rating: 7, decision: "GO", questions: ["What is the budget?"], spec: "Chairman reasoning: personas argued from wrong premise." };
+    }
+    return {};
+  });
+
+  render(wrap(<CreateScreen />));
+  await waitFor(() => screen.getByText("Proj"));
+  fireEvent.change(screen.getByPlaceholderText(/Describe the idea/i), { target: { value: "Build a thing" } });
+  fireEvent.change(screen.getAllByRole("combobox")[0], { target: { value: "p1" } });
+  fireEvent.click(screen.getByText(/Convene council/i));
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/council/evaluate", expect.anything()));
+
+  await act(async () => { vi.advanceTimersByTime(2000); });
+  await waitFor(() => expect(screen.getByText("What is the budget?")).toBeInTheDocument(), { timeout: 6000 });
+  expect(screen.getByText(/personas argued from wrong premise/)).toBeInTheDocument();
+
+  fireEvent.click(screen.getByLabelText("Expand spec"));
+  expect(screen.getByRole("dialog")).toHaveAttribute("aria-label", "Spec");
 });
 
 test("decided GO renders spec and Create ticket posts { projectId } then navigates", async () => {

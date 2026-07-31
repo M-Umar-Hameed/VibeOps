@@ -390,6 +390,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
       {councilId && councilStatus === "awaiting-answers" && (
         <div className="space-y-4">
           <VerdictCard rating={councilRating} decision={councilDecision} councilId={councilId} />
+          <SpecBlock spec={councilSpec} onExpand={() => setExpanded("spec")} />
           {personaGrid}
           <ConsoleToggle show={showConsole} onToggle={() => setShowConsole(s => !s)} output={councilOutput} />
           {councilQuestions.map((q, i) => (
@@ -417,20 +418,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
         <div className="space-y-4">
           <VerdictCard rating={councilRating} decision={councilDecision} councilId={councilId} />
           {personaGrid}
-          <div className="p-4 max-h-64 overflow-y-auto bg-background/80 border border-white/10 rounded-lg">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <div className="font-code-label text-xs uppercase tracking-widest text-on-surface-variant">Spec</div>
-              <button
-                type="button"
-                aria-label="Expand spec"
-                onClick={() => setExpanded("spec")}
-                className="text-[10px] uppercase tracking-wider text-primary-fixed-dim hover:underline cursor-pointer"
-              >
-                Expand
-              </button>
-            </div>
-            <Markdown text={councilSpec} className="text-sm text-on-surface space-y-2 leading-relaxed text-left max-w-[72ch]" />
-          </div>
+          <SpecBlock spec={councilSpec} onExpand={() => setExpanded("spec")} />
           <ConsoleToggle show={showConsole} onToggle={() => setShowConsole(s => !s)} output={councilOutput} />
           {councilDecision !== "GO" && (
             <label className="flex items-center gap-2 text-sm text-on-surface-variant">
@@ -479,6 +467,26 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
           onClose={() => setExpanded(null)}
         />
       )}
+    </div>
+  );
+}
+
+function SpecBlock({ spec, onExpand }: { spec: string; onExpand: () => void }) {
+  if (!spec) return null;
+  return (
+    <div className="p-4 max-h-64 overflow-y-auto bg-background/80 border border-white/10 rounded-lg">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="font-code-label text-xs uppercase tracking-widest text-on-surface-variant">Spec</div>
+        <button
+          type="button"
+          aria-label="Expand spec"
+          onClick={onExpand}
+          className="text-[10px] uppercase tracking-wider text-primary-fixed-dim hover:underline cursor-pointer"
+        >
+          Expand
+        </button>
+      </div>
+      <Markdown text={spec} className="text-sm text-on-surface space-y-2 leading-relaxed text-left max-w-[72ch]" />
     </div>
   );
 }

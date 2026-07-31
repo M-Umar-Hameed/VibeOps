@@ -101,3 +101,23 @@ Login Flow: Authenticate this CLI in your terminal the way its provider expects.
 }
 ```
 *Note: The model tier and quality shown are examples. Print mode (`-p`) auto-approves tools inside the sandbox worktree, which is a behavior of the Kimi CLI.*
+
+---
+
+## First-Party SDK Lane
+Forge supports running `@anthropic-ai/claude-agent-sdk` directly in-loop as an alternative to external CLIs for the **work** stage.
+This skips stdio overhead and provides exact token accounting, though it runs under the Relay's process identity.
+
+To use it, set the agent type to `"sdk"`. The `cmd` array is omitted.
+```json
+{
+  "workdir": "/path/to/repo",
+  "agents": {
+    "claude": {
+      "type": "sdk",
+      "roles": ["work"]
+    }
+  }
+}
+```
+*Note: SDK agents are only supported for the `work` stage in this release.*

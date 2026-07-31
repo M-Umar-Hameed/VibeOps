@@ -5,7 +5,7 @@ import { substituteCmd } from "./invoke.js";
 
 export type ModelTier = "free" | "cheap" | "expensive";
 export type RelayModel = { name: string; tier: ModelTier; quality: number };
-export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string> };
+export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" };
 export type RelayConfig = {
   workdir: string; apiKey?: string; baseUrl?: string; pollMs?: number;
   agents: Record<string, RelayAgent>;
@@ -47,8 +47,13 @@ export function loadRelayConfig(path?: string): RelayConfig {
   }
   for (const [name, agent] of Object.entries(cfg.agents as Record<string, unknown>)) {
     const a = agent as Record<string, unknown>;
-    if (!Array.isArray(a.cmd) || a.cmd.length === 0 || !a.cmd.every((c) => typeof c === "string")) {
-      throw new Error(`relay config agent "${name}" must have a non-empty cmd string array`);
+    if (a.type !== undefined && a.type !== "cli" && a.type !== "sdk") {
+      throw new Error(`relay config agent "${name}" type must be "cli" or "sdk"`);
+    }
+    if (a.type !== "sdk") {
+      if (!Array.isArray(a.cmd) || a.cmd.length === 0 || !a.cmd.every((c) => typeof c === "string")) {
+        throw new Error(`relay config agent "${name}" must have a non-empty cmd string array`);
+      }
     }
     if (!Array.isArray(a.roles) || !a.roles.every((r) => typeof r === "string")) {
       throw new Error(`relay config agent "${name}" must have a roles string array`);

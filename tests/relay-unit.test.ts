@@ -332,3 +332,41 @@ test("loadRelayConfig accepts a valid env object", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("loadRelayConfig accepts an sdk agent without cmd", () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-cfg-"));
+  const path = join(dir, "relay.json");
+  writeFileSync(path, JSON.stringify({
+    workdir: dir,
+    agents: { sonnet: { type: "sdk", roles: ["work"] } },
+  }));
+  try {
+    const config = loadRelayConfig(path);
+    expect(config.agents.sonnet.type).toBe("sdk");
+    expect(config.agents.sonnet.cmd).toBeUndefined();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("loadRelayConfig rejects an unknown agent type, naming the agent", () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-cfg-"));
+  const path = join(dir, "relay.json");
+  writeFileSync(path, JSON.stringify({
+    workdir: dir,
+    agents: { bad: { type: "grpc", roles: ["work"] } },
+  }));
+  try {
+    expect(() => loadRelayConfig(path)).toThrow(/agent "bad" type must be "cli" or "sdk"/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("loadRelayConfig still requires cmd for a cli agent", () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-cfg-"));
+  const path = join(dir, "relay.json");
+  writeFileSync(path, JSON.stringify({
+    workdir: dir,
+    agents: { c: { type: "cli", roles: ["work"] } },
+  }));
+  try {
+    expect(() => loadRelayConfig(path)).toThrow(/must have a non-empty cmd string array/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

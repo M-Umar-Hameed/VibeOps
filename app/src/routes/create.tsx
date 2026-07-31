@@ -8,6 +8,7 @@ import { Avatar } from "../components/Avatar.js";
 import { api } from "../lib/api.js";
 import { useProject } from "../context/project.js";
 import { WorkOrderComposer } from "../components/WorkOrderComposer.js";
+import { Markdown } from "../components/Markdown.js";
 
 const COUNCIL_KEY = "vibeops.activeCouncilId";
 
@@ -146,6 +147,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
   const [councilSpec, setCouncilSpec] = useState("");
   const [personaTexts, setPersonaTexts] = useState<{ believer?: string; investor?: string; skeptic?: string }>({});
   const [showConsole, setShowConsole] = useState(false);
+  const [expanded, setExpanded] = useState<null | "believer" | "investor" | "skeptic" | "spec">(null);
   const [answers, setAnswers] = useState<string[]>([]);
   const [forceCreate, setForceCreate] = useState(false);
   const [requiresVerification, setRequiresVerification] = useState(false);
@@ -312,6 +314,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
     localStorage.removeItem(COUNCIL_KEY);
     setPersonaTexts({});
     setShowConsole(false);
+    setExpanded(null);
     setCouncilId(null);
     setCouncilStatus("idle");
     setCouncilOutput("");
@@ -325,6 +328,15 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
     setCouncilError("");
     nextOffsetRef.current = 0;
   };
+
+  const personaGrid = (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <PersonaCard name="Believer" text={personaTexts.believer} onExpand={() => setExpanded("believer")} />
+      <PersonaCard name="Investor" text={personaTexts.investor} onExpand={() => setExpanded("investor")} />
+      <PersonaCard name="Skeptic" text={personaTexts.skeptic} onExpand={() => setExpanded("skeptic")} />
+    </div>
+  );
+  const allPersonasHaveText = !!(personaTexts.believer && personaTexts.investor && personaTexts.skeptic);
 
   return (
     <div className="glass-card rounded-lg p-8 relative overflow-hidden space-y-6">
@@ -365,12 +377,12 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
 
       {councilId && councilStatus === "running" && (
         <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <PersonaCard name="Believer" text={personaTexts.believer} />
-            <PersonaCard name="Investor" text={personaTexts.investor} />
-            <PersonaCard name="Skeptic" text={personaTexts.skeptic} />
-          </div>
-          <div className="text-xs uppercase tracking-widest text-on-surface-variant animate-pulse">Council in session...</div>
+          {personaGrid}
+          {allPersonasHaveText ? (
+            <div className="text-xs uppercase tracking-widest text-primary-fixed-dim animate-pulse">Chairman deliberating...</div>
+          ) : (
+            <div className="text-xs uppercase tracking-widest text-on-surface-variant animate-pulse">Council in session...</div>
+          )}
           <ConsoleToggle show={showConsole} onToggle={() => setShowConsole(s => !s)} output={councilOutput} outputRef={outputRef} />
         </div>
       )}
@@ -378,11 +390,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
       {councilId && councilStatus === "awaiting-answers" && (
         <div className="space-y-4">
           <VerdictCard rating={councilRating} decision={councilDecision} councilId={councilId} />
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <PersonaCard name="Believer" text={personaTexts.believer} />
-            <PersonaCard name="Investor" text={personaTexts.investor} />
-            <PersonaCard name="Skeptic" text={personaTexts.skeptic} />
-          </div>
+          {personaGrid}
           <ConsoleToggle show={showConsole} onToggle={() => setShowConsole(s => !s)} output={councilOutput} />
           {councilQuestions.map((q, i) => (
             <div key={i} className="space-y-1">
@@ -408,12 +416,21 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
       {councilId && councilStatus === "decided" && (
         <div className="space-y-4">
           <VerdictCard rating={councilRating} decision={councilDecision} councilId={councilId} />
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <PersonaCard name="Believer" text={personaTexts.believer} />
-            <PersonaCard name="Investor" text={personaTexts.investor} />
-            <PersonaCard name="Skeptic" text={personaTexts.skeptic} />
+          {personaGrid}
+          <div className="p-4 max-h-64 overflow-y-auto bg-background/80 border border-white/10 rounded-lg">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="font-code-label text-xs uppercase tracking-widest text-on-surface-variant">Spec</div>
+              <button
+                type="button"
+                aria-label="Expand spec"
+                onClick={() => setExpanded("spec")}
+                className="text-[10px] uppercase tracking-wider text-primary-fixed-dim hover:underline cursor-pointer"
+              >
+                Expand
+              </button>
+            </div>
+            <Markdown text={councilSpec} className="text-sm text-on-surface space-y-2 leading-relaxed text-left max-w-[72ch]" />
           </div>
-          <pre className="p-4 h-64 overflow-y-auto bg-background/80 text-code-sm text-on-surface font-mono whitespace-pre-wrap border border-white/10 rounded-lg">{councilSpec}</pre>
           <ConsoleToggle show={showConsole} onToggle={() => setShowConsole(s => !s)} output={councilOutput} />
           {councilDecision !== "GO" && (
             <label className="flex items-center gap-2 text-sm text-on-surface-variant">
@@ -450,6 +467,18 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
       )}
 
       {councilError && councilStatus !== "failed" && <div className="text-error text-sm">{councilError}</div>}
+      {expanded && (
+        <ReadingOverlay
+          title={expanded === "spec" ? "Spec" : expanded.charAt(0).toUpperCase() + expanded.slice(1)}
+          text={
+            expanded === "spec" ? councilSpec
+            : expanded === "believer" ? (personaTexts.believer ?? "")
+            : expanded === "investor" ? (personaTexts.investor ?? "")
+            : (personaTexts.skeptic ?? "")
+          }
+          onClose={() => setExpanded(null)}
+        />
+      )}
     </div>
   );
 }
@@ -516,17 +545,48 @@ function VerdictCard({ rating, decision, councilId }: { rating?: number; decisio
   );
 }
 
-function PersonaCard({ name, text }: { name: string; text?: string }) {
+function PersonaCard({ name, text, onExpand }: { name: string; text?: string; onExpand: () => void }) {
   return (
     <div className="p-4 border border-white/10 rounded-sm space-y-2">
-      <div className="font-code-label text-xs uppercase tracking-widest text-on-surface-variant">{name}</div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="font-code-label text-xs uppercase tracking-widest text-on-surface-variant">{name}</div>
+        {text && (
+          <button
+            type="button"
+            aria-label={`Expand ${name}`}
+            onClick={onExpand}
+            className="text-[10px] uppercase tracking-wider text-primary-fixed-dim hover:underline cursor-pointer"
+          >
+            Expand
+          </button>
+        )}
+      </div>
       {text ? (
-        <div className="text-sm text-on-surface whitespace-pre-wrap">
-          {text.split(/\r?\n/).map((l) => l.replace(/^\*\*+\s*/, "")).join("\n")}
-        </div>
+        <Markdown text={text} className="text-sm text-on-surface space-y-2 leading-relaxed text-left" />
       ) : (
         <div className="text-sm text-on-surface-variant/50 animate-pulse">Deliberating...</div>
       )}
+    </div>
+  );
+}
+
+function ReadingOverlay({ title, text, onClose }: { title: string; text: string; onClose: () => void }) {
+  return (
+    <div role="dialog" aria-modal="true" aria-label={title} className="fixed inset-0 z-50 bg-background/95 overflow-y-auto">
+      <div className="max-w-[72ch] mx-auto p-8 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="font-code-label text-sm uppercase tracking-widest text-on-surface-variant">{title}</div>
+          <button
+            type="button"
+            aria-label="Collapse"
+            onClick={onClose}
+            className="text-xs uppercase tracking-widest text-on-surface-variant hover:text-on-surface cursor-pointer"
+          >
+            Collapse
+          </button>
+        </div>
+        <Markdown text={text} className="text-base text-on-surface space-y-3 leading-relaxed text-left" />
+      </div>
     </div>
   );
 }

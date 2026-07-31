@@ -200,3 +200,106 @@ test("stored councilId pointing at consumed session clears the key", async () =>
   await waitFor(() => expect(localStorage.getItem("vibeops.activeCouncilId")).toBeNull());
   expect(screen.getByPlaceholderText(/Describe the idea/i)).toBeInTheDocument(); // idle form intact
 });
+
+test("persona markdown renders with no literal asterisk or hash characters", async () => {
+  let statusCall = 0;
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/council/evaluate") return { councilId: "c1" };
+    if (path.startsWith("/council/c1/output")) return { chunk: "", next: 0, status: "running" };
+    if (path === "/council/c1") {
+      statusCall++;
+      if (statusCall === 1) return { status: "running", round: 1 };
+      return {
+        status: "decided", round: 1, rating: 8, decision: "GO", questions: [], title: "T", spec: "plain spec",
+        believer: "### Upside\n**bold** claim\n- item one\n1. first point",
+        investor: "fine", skeptic: "fine too",
+      };
+    }
+    return {};
+  });
+
+  render(wrap(<CreateScreen />));
+  await waitFor(() => screen.getByText("Proj"));
+  fireEvent.change(screen.getByPlaceholderText(/Describe the idea/i), { target: { value: "Build a thing" } });
+  fireEvent.change(screen.getAllByRole("combobox")[0], { target: { value: "p1" } });
+  fireEvent.click(screen.getByText(/Convene council/i));
+
+  await act(async () => { vi.advanceTimersByTime(2000); });
+  await waitFor(() => expect(screen.getByText("Upside")).toBeInTheDocument(), { timeout: 6000 });
+
+  expect(screen.getByText("bold").tagName).toBe("STRONG");
+  expect(screen.getByText("item one").closest("ul")).not.toBeNull();
+  expect(screen.getByText("first point").closest("ol")).not.toBeNull();
+  expect(document.body.textContent).not.toContain("**");
+  expect(document.body.textContent).not.toContain("###");
+});
+
+test("expand opens wide reading view for a card and collapse returns to grid", async () => {
+  let statusCall = 0;
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/council/evaluate") return { councilId: "c1" };
+    if (path.startsWith("/council/c1/output")) return { chunk: "", next: 0, status: "running" };
+    if (path === "/council/c1") {
+      statusCall++;
+      if (statusCall === 1) return { status: "running", round: 1 };
+      return {
+        status: "decided", round: 1, rating: 8, decision: "GO", questions: [], title: "T", spec: "the spec text",
+        believer: "believer body", investor: "investor body", skeptic: "skeptic body",
+      };
+    }
+    return {};
+  });
+
+  render(wrap(<CreateScreen />));
+  await waitFor(() => screen.getByText("Proj"));
+  fireEvent.change(screen.getByPlaceholderText(/Describe the idea/i), { target: { value: "Build a thing" } });
+  fireEvent.change(screen.getAllByRole("combobox")[0], { target: { value: "p1" } });
+  fireEvent.click(screen.getByText(/Convene council/i));
+
+  await act(async () => { vi.advanceTimersByTime(2000); });
+  await waitFor(() => expect(screen.getByText("believer body")).toBeInTheDocument(), { timeout: 6000 });
+
+  expect(screen.queryByRole("dialog")).toBeNull();
+  fireEvent.click(screen.getByLabelText("Expand Believer"));
+  const dialog = screen.getByRole("dialog");
+  expect(dialog).toHaveAttribute("aria-label", "Believer");
+  expect(dialog.textContent).toContain("believer body");
+
+  fireEvent.click(screen.getByLabelText("Collapse"));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByText("believer body")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByLabelText("Expand spec"));
+  expect(screen.getByRole("dialog")).toHaveAttribute("aria-label", "Spec");
+});
+
+test("all personas populated while running shows chairman deliberating, verdict replaces it", async () => {
+  let statusCall = 0;
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/council/evaluate") return { councilId: "c1" };
+    if (path.startsWith("/council/c1/output")) return { chunk: "", next: 0, status: "running" };
+    if (path === "/council/c1") {
+      statusCall++;
+      if (statusCall <= 1) return { status: "running", round: 1 };
+      if (statusCall === 2) return { status: "running", round: 1, believer: "b", investor: "i", skeptic: "s" };
+      return { status: "decided", round: 1, rating: 8, decision: "GO", questions: [], title: "T", spec: "spec", believer: "b", investor: "i", skeptic: "s" };
+    }
+    return {};
+  });
+
+  render(wrap(<CreateScreen />));
+  await waitFor(() => screen.getByText("Proj"));
+  fireEvent.change(screen.getByPlaceholderText(/Describe the idea/i), { target: { value: "Build a thing" } });
+  fireEvent.change(screen.getAllByRole("combobox")[0], { target: { value: "p1" } });
+  fireEvent.click(screen.getByText(/Convene council/i));
+
+  await waitFor(() => expect(screen.getByText(/Council in session/i)).toBeInTheDocument());
+
+  await act(async () => { vi.advanceTimersByTime(2000); });
+  await waitFor(() => expect(screen.getByText(/Chairman deliberating/i)).toBeInTheDocument(), { timeout: 6000 });
+  expect(screen.queryByText(/Council in session/i)).toBeNull();
+
+  await act(async () => { vi.advanceTimersByTime(2000); });
+  await waitFor(() => expect(screen.getByText("GO")).toBeInTheDocument(), { timeout: 6000 });
+  expect(screen.queryByText(/Chairman deliberating/i)).toBeNull();
+});

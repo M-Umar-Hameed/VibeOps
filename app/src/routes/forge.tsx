@@ -9,6 +9,7 @@ import { CommentList } from "../components/CommentList.js";
 import { WorkOrderComposer } from "../components/WorkOrderComposer.js";
 
 const parseSel = (s: string) => { const [agent, model] = s.split("::"); return { agent, model }; };
+const SELECTED_TICKET_KEY = "vibeops.forgeSelectedTicketId";
 
 type Ticket = { id: string; title: string; status: string; version: number; body: string | null };
 type Agent = { name: string; roles: string[]; models?: { name: string }[] };
@@ -43,6 +44,7 @@ export function ForgeScreen() {
   const nextOffsetRef = useRef<number>(0);
   const outputRef = useRef<HTMLPreElement>(null);
   const prevStageRef = useRef("");
+  const lastDerivedRunTicketRef = useRef<string | null>(null);
 
   const [diff, setDiff] = useState<string | null>(null);
   const [diffParsed, setDiffParsed] = useState<DiffFile[]>([]);
@@ -57,7 +59,6 @@ export function ForgeScreen() {
 
   const [interruptedRun, setInterruptedRun] = useState(false);
   const [ticketRunActive, setTicketRunActive] = useState(false);
-  const [ticketRuns, setTicketRuns] = useState<any[]>([]);
 
   const [commentInput, setCommentInput] = useState("");
   const [commentError, setCommentError] = useState("");
@@ -118,6 +119,18 @@ export function ForgeScreen() {
   });
   const sandbox = sandboxQ.data ?? null;
 
+  const runsQ = useQuery({
+    queryKey: ["forge", "runs", selectedTicket?.id],
+    queryFn: () => api.get("/forge/runs"),
+    enabled: !!selectedTicket,
+  });
+  const ticketRuns = useMemo(() => {
+    const all = Array.isArray(runsQ.data) ? runsQ.data : [];
+    return all
+      .filter((r: any) => r.ticketId === selectedTicket?.id)
+      .sort((a: any, b: any) => b.startedAt.localeCompare(a.startedAt));
+  }, [runsQ.data, selectedTicket?.id]);
+
   useEffect(() => {
     if (sandboxQ.data && !sandboxQ.data.exists) {
       setDiff(null); setDiffParsed([]); setDiffExplain(null); setViewDiff(false);
@@ -136,55 +149,82 @@ export function ForgeScreen() {
       setCommentInput("");
       setCommentError("");
       setOutputUnavailable(false);
-
-      api.get("/forge/runs").then((r: any) => {
-        const tr = r.filter((run: any) => run.ticketId === selectedTicket.id);
-        const sorted = tr.sort((a: any, b: any) => b.startedAt.localeCompare(a.startedAt));
-        setTicketRuns(sorted);
-        const latest = sorted[0];
-        setInterruptedRun(latest?.status === "interrupted");
-        setTicketRunActive(latest?.status === "running");
-        setRunError("");
-        nextOffsetRef.current = 0;
-
-        if (latest?.status === "running") {
-          // reattach: replay the buffered output from offset 0, then the
-          // existing poll effect (keyed on activeRunId) takes over live-follow.
-          setRunOutput("");
-          setRunStage(latest.stage);
-          setRunStatus("running");
-          setActiveRunId(latest.id);
-        } else if (latest?.status === "passed" || latest?.status === "failed" || latest?.status === "stopped") {
-          setActiveRunId(null);
-          setIsSubmitting(false);
-          setRunStage(latest.stage);
-          setRunStatus(latest.status);
-          api.get(`/forge/runs/${latest.id}/output?after=0`)
-            .then((res: any) => setRunOutput(res.chunk || ""))
-            // ponytail: any failure (404 after restart, network) just degrades
-            // to the "unavailable" note -- no need to special-case the error type.
-            .catch(() => setOutputUnavailable(true));
-        } else {
-          setActiveRunId(null);
-          setIsSubmitting(false);
-          setRunOutput("");
-          setRunStage("");
-          setRunStatus("");
-        }
-      }).catch(() => {
-        setInterruptedRun(false);
-        setTicketRunActive(false);
-        setTicketRuns([]);
-        setActiveRunId(null);
-        setIsSubmitting(false);
-        setRunOutput("");
-        setRunStage("");
-        setRunStatus("");
-        setRunError("");
-        nextOffsetRef.current = 0;
-      });
     }
-  }, [selectedTicket]);
+  }, [selectedTicket?.id]);
+
+  // Run-state derivation: runs once per ticket selection (guarded by ref) so a
+  // background runs refetch never clobbers live poll state. Restores run history
+  // and reattaches to a running run on (re)selection, including after reload.
+  useEffect(() => {
+    if (!selectedTicket) { lastDerivedRunTicketRef.current = null; return; }
+    if (lastDerivedRunTicketRef.current === selectedTicket.id) return;
+    if (runsQ.isError) {
+      lastDerivedRunTicketRef.current = selectedTicket.id;
+      setInterruptedRun(false);
+      setTicketRunActive(false);
+      setActiveRunId(null);
+      setIsSubmitting(false);
+      setRunOutput("");
+      setRunStage("");
+      setRunStatus("");
+      setRunError("");
+      nextOffsetRef.current = 0;
+      return;
+    }
+    if (!runsQ.isSuccess) return;
+    lastDerivedRunTicketRef.current = selectedTicket.id;
+
+    const latest = ticketRuns[0];
+    setInterruptedRun(latest?.status === "interrupted");
+    setTicketRunActive(latest?.status === "running");
+    setRunError("");
+    nextOffsetRef.current = 0;
+
+    if (latest?.status === "running") {
+      setRunOutput("");
+      setRunStage(latest.stage);
+      setRunStatus("running");
+      setActiveRunId(latest.id);
+    } else if (latest?.status === "passed" || latest?.status === "failed" || latest?.status === "stopped") {
+      setActiveRunId(null);
+      setIsSubmitting(false);
+      setRunStage(latest.stage);
+      setRunStatus(latest.status);
+      api.get(`/forge/runs/${latest.id}/output?after=0`)
+        .then((res: any) => setRunOutput(res.chunk || ""))
+        .catch(() => setOutputUnavailable(true));
+    } else {
+      setActiveRunId(null);
+      setIsSubmitting(false);
+      setRunOutput("");
+      setRunStage("");
+      setRunStatus("");
+    }
+  }, [runsQ.isSuccess, runsQ.isError, runsQ.data, selectedTicket?.id]);
+
+  // Persist the current selection so a reload can restore the detail panel.
+  useEffect(() => {
+    if (selectedTicket) localStorage.setItem(SELECTED_TICKET_KEY, selectedTicket.id);
+  }, [selectedTicket?.id]);
+
+  // On tickets load (mount, project switch): restore a stored selection if the
+  // ticket is still present; drop a dangling selection/key otherwise so the
+  // detail panel never renders empty.
+  useEffect(() => {
+    if (!ticketsQ.isSuccess) return;
+    if (selectedTicket) {
+      if (!tickets.some(t => t.id === selectedTicket.id)) {
+        setSelectedTicket(null);
+        localStorage.removeItem(SELECTED_TICKET_KEY);
+      }
+      return;
+    }
+    const saved = localStorage.getItem(SELECTED_TICKET_KEY);
+    if (!saved) return;
+    const found = tickets.find(t => t.id === saved);
+    if (found) setSelectedTicket(found);
+    else localStorage.removeItem(SELECTED_TICKET_KEY);
+  }, [ticketsQ.data, ticketsQ.isSuccess, selectedTicket]);
 
   useEffect(() => {
     if (viewDiff && selectedTicket && diff === null) {
@@ -265,10 +305,7 @@ export function ForgeScreen() {
           queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] }); // ticket status moved server-side; refresh the columns
           
           // Refresh runs list to get updated history
-          api.get("/forge/runs").then((r: any) => {
-            const tr = r.filter((run: any) => run.ticketId === selectedTicket?.id);
-            setTicketRuns(tr.sort((a: any, b: any) => b.startedAt.localeCompare(a.startedAt)));
-          }).catch(() => {});
+          queryClient.invalidateQueries({ queryKey: ["forge", "runs", selectedTicket?.id] });
         }
 
         if (selectedTicket) {

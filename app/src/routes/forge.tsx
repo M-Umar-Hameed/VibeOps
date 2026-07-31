@@ -50,6 +50,7 @@ export function ForgeScreen() {
   const [outputUnavailable, setOutputUnavailable] = useState(false);
   const nextOffsetRef = useRef<number>(0);
   const outputRef = useRef<HTMLPreElement>(null);
+  const prevStageRef = useRef("");
 
   const [sandbox, setSandbox] = useState<SandboxStatus | null>(null);
   const [diff, setDiff] = useState<string | null>(null);
@@ -107,6 +108,13 @@ export function ForgeScreen() {
     }
   };
 
+  const ticketsRefreshInFlight = useRef(false);
+  const autoRefreshTickets = async () => {
+    if (ticketsRefreshInFlight.current) return;
+    ticketsRefreshInFlight.current = true;
+    try { await loadTickets(); } finally { ticketsRefreshInFlight.current = false; }
+  };
+
   useEffect(() => {
     api.get("/forge/agents")
        .then(a => {
@@ -129,6 +137,9 @@ export function ForgeScreen() {
 
   useEffect(() => {
     loadTickets();
+    const interval = setInterval(autoRefreshTickets, 5000);
+    window.addEventListener("focus", autoRefreshTickets);
+    return () => { clearInterval(interval); window.removeEventListener("focus", autoRefreshTickets); };
   }, [activeProjectId]);
 
   const loadSandbox = async (ticketId: string) => {
@@ -262,6 +273,7 @@ export function ForgeScreen() {
 
   useEffect(() => {
     if (!activeRunId) return;
+    prevStageRef.current = "";
     let running = true;
     const poll = async () => {
       try {
@@ -279,10 +291,14 @@ export function ForgeScreen() {
         nextOffsetRef.current = res.next;
         setRunStage(res.stage);
         setRunStatus(res.status);
+        if (res.status === "running" && prevStageRef.current && res.stage !== prevStageRef.current) {
+          autoRefreshTickets(); // columns follow the pipeline on stage transitions
+        }
+        prevStageRef.current = res.stage;
         if (res.status !== "running") {
           setActiveRunId(null);
           if (selectedTicket) loadSandbox(selectedTicket.id);
-          loadTickets(); // ticket status moved server-side; refresh the columns
+          autoRefreshTickets(); // ticket status moved server-side; refresh the columns
           
           // Refresh runs list to get updated history
           api.get("/forge/runs").then((r: any) => {

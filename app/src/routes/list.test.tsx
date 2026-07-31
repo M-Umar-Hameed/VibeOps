@@ -1,5 +1,5 @@
 import { expect, test, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 
 const apiFetch = vi.fn();
@@ -98,3 +98,16 @@ test("renders system status components", async () => {
   expect(screen.getByText("fake-embedder")).toBeInTheDocument();
 });
 
+
+test("tickets query polls: advancing 5s triggers a refetch", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    render(<TestHarness />);
+    await waitFor(() => expect(screen.getByText("First")).toBeInTheDocument());
+    const base = (tickets.list as any).mock.calls.length;
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    await waitFor(() => expect((tickets.list as any).mock.calls.length).toBeGreaterThan(base));
+  } finally {
+    vi.useRealTimers();
+  }
+});

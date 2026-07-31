@@ -642,3 +642,70 @@ test("Run History row shows effort badge when the run record has one", async () 
   await waitFor(() => expect(screen.getByText("Run History")).toBeInTheDocument());
   expect(screen.getByTestId("run-effort-run456")).toHaveTextContent("max");
 });
+
+test("tickets refetch every 5s, on window focus, and stop after unmount", async () => {
+  apiFetch.mockImplementation(async (path) => {
+    if (path === "/tickets") return [{ id: "t1", title: "My Ticket", status: "open" }];
+    if (path === "/forge/agents") return [];
+    if (path === "/forge/skills") return [];
+    return {};
+  });
+
+  const { unmount } = render(wrap(<ForgeScreen />));
+  await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
+  const calls = () => apiFetch.mock.calls.filter((c: any) => c[0] === "/tickets").length;
+  const base = calls();
+
+  await act(async () => { vi.advanceTimersByTime(5000); });
+  await waitFor(() => expect(calls()).toBeGreaterThanOrEqual(base + 1));
+
+  const beforeFocus = calls();
+  await act(async () => { window.dispatchEvent(new Event("focus")); });
+  await waitFor(() => expect(calls()).toBeGreaterThanOrEqual(beforeFocus + 1));
+
+  unmount();
+  const afterUnmount = calls();
+  await act(async () => { vi.advanceTimersByTime(15000); });
+  expect(calls()).toBe(afterUnmount);
+});
+
+test("stage change during a run triggers exactly one tickets refetch; same stage does not", async () => {
+  let pollCount = 0;
+  apiFetch.mockImplementation(async (path) => {
+    if (path === "/tickets") return [{ id: "t1", title: "My Ticket", status: "in_progress" }];
+    if (path === "/forge/agents") return [
+      { name: "PlanGPT", roles: ["plan"] },
+      { name: "WorkGPT", roles: ["work"] },
+      { name: "ReviewGPT", roles: ["review"] },
+    ];
+    if (path === "/forge/skills") return [];
+    if (path === "/forge/runs") return [];
+    if (path.includes("/sandbox")) return { exists: false };
+    if (path === "/forge/pipeline") return { runId: "run123" };
+    if (path.includes("/output")) {
+      pollCount++;
+      if (pollCount <= 2) return { chunk: "", next: 0, stage: "plan", status: "running" };
+      return { chunk: "", next: 0, stage: "work", status: "running" };
+    }
+    return {};
+  });
+
+  render(wrap(<ForgeScreen />));
+  await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
+  fireEvent.click(screen.getByText("My Ticket"));
+  await waitFor(() => expect(screen.getByRole("button", { name: /Run pipeline/i })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole("button", { name: /Run pipeline/i }));
+  await waitFor(() => expect(pollCount).toBeGreaterThanOrEqual(1));
+
+  const tCalls = () => apiFetch.mock.calls.filter((c: any) => c[0] === "/tickets").length;
+  const base = tCalls();
+
+  await act(async () => { vi.advanceTimersByTime(1000); }); // poll 2: stage plan again -> no refetch
+  expect(tCalls()).toBe(base);
+
+  await act(async () => { vi.advanceTimersByTime(1000); }); // poll 3: plan -> work -> one refetch
+  await waitFor(() => expect(tCalls()).toBe(base + 1));
+
+  await act(async () => { vi.advanceTimersByTime(1000); }); // poll 4: work again -> no refetch
+  expect(tCalls()).toBe(base + 1);
+});

@@ -80,6 +80,7 @@ export function WorkOrderComposer({ createTicket, launchPipeline, onCreated, sub
     <div className="space-y-2">
       <textarea
         className="w-full bg-surface-container/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface outline-none min-h-[96px] resize-y"
+        aria-label="Work order description"
         placeholder="Describe the work. First line becomes the title."
         value={text}
         onChange={e => setText(e.target.value)}
@@ -94,6 +95,7 @@ export function WorkOrderComposer({ createTicket, launchPipeline, onCreated, sub
             <button
               key={lvl}
               onClick={() => setEffort(lvl)}
+              aria-pressed={effort === lvl}
               title={EFFORT_TIPS[lvl]}
               className={`px-3 py-1 rounded-full text-xs capitalize cursor-pointer border transition-colors ${effort === lvl ? "bg-primary text-on-primary border-primary" : "border-white/10 text-on-surface-variant hover:bg-white/5"}`}
             >

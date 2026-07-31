@@ -1,5 +1,5 @@
 import { runDoctor, type ProbeStatus } from "../src/relay/doctor.js";
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -20,12 +20,12 @@ import {
 import { sandboxExists, branchName, promoteSandbox } from "../src/forge/sandbox.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject, updateProjectRepo } from "../src/services/projects.js";
-import { createTicket } from "../src/services/tickets.js";
-import { updateTicket } from "../src/services/tickets.js";
+import { createTicket, updateTicket } from "../src/services/tickets.js";
+import * as ticketsSvc from "../src/services/tickets.js";
 import { addComment, listComments } from "../src/services/comments.js";
 import { getTicket } from "../src/services/history.js";
 import { getSetting, setSetting } from "../src/services/settings.js";
-import { ConflictError } from "../src/services/errors.js";
+import { ConflictError, StaleVersionError } from "../src/services/errors.js";
 import { db } from "../src/db/client.js";
 import { forgeRuns } from "../src/db/schema.js";
 import type { RelayConfig } from "../src/relay/config.js";
@@ -125,6 +125,70 @@ async function waitForPersistedRun(runId: string, timeoutMs = 5000) {
 }
 
 describe("forge run manager", () => {
+  it("empty spec: plan text is written into the ticket body", async () => {
+    const { actorId, ticket } = await seedTicket("Spec from plan");
+    expect(ticket.body).toBe("");
+    setScript("plan,work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const finalTicket = await getTicket(ticket.id);
+    const comments = await listComments(ticket.id);
+    const planComment = comments.find((c) => c.kind === "plan");
+    expect(comments.filter((c) => c.kind === "plan")).toHaveLength(1);
+    expect(finalTicket.body.trim().length).toBeGreaterThan(0);
+    expect(finalTicket.body).toBe(planComment!.body); // body === plan output (both redacted res.output)
+
+    expect(getRunOutput(runId, 0)?.chunk).toContain("=== FORGE spec populated from plan ===");
+  });
+
+  it("non-empty spec: body is left unchanged", async () => {
+    const { actorId, ticket } = await seedTicket("Has a spec");
+    const withBody = await updateTicket(actorId, ticket.id, ticket.version, { body: "human spec" });
+    setScript("plan,work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    expect((await getTicket(ticket.id)).body).toBe("human spec");
+    expect(getRunOutput(runId, 0)?.chunk).not.toContain("spec populated from plan");
+    void withBody;
+  });
+
+  it("spec write failure does not fail the run; work stage still executes", async () => {
+    const { actorId, ticket } = await seedTicket("Spec write boom");
+    setScript("plan,work,review-pass", true);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const realUpdate = ticketsSvc.updateTicket;
+    const spy = vi.spyOn(ticketsSvc, "updateTicket").mockImplementation(
+      async (actor: string, id: string, ver: number, patch: any) => {
+        if (patch.body !== undefined) throw new StaleVersionError(ver, ver + 1); // only the spec write
+        return realUpdate(actor, id, ver, patch); // status transitions run normally
+      },
+    );
+
+    try {
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+
+      const finalTicket = await getTicket(ticket.id);
+      expect(finalTicket.status).toBe("review");       // reached work + review despite spec-write failure
+      expect(finalTicket.body).toBe("");               // write was rejected
+      const comments = await listComments(ticket.id);
+      expect(comments.filter((c) => c.kind === "report")).toHaveLength(1); // work stage executed
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("happy path: PASS leaves ticket in review awaiting promote", async () => {
     const { actorId, ticket } = await seedTicket("Happy path");
     setScript("plan,work,review-pass", true);

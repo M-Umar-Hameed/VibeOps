@@ -17,11 +17,11 @@ import { getTicket } from "../services/history.js";
 import { searchKnowledge, indexRepoDocs, repoIndexed } from "../services/knowledge.js";
 import { getSetting } from "../services/settings.js";
 import { projectWorkdir } from "../services/projects.js";
-import { ConflictError } from "../services/errors.js";
+import { ConflictError, StaleVersionError } from "../services/errors.js";
 import { logAgentUse, startAgentSession, endAgentSession } from "../services/usage.js";
 import { desc, isNull, sum, eq, gte, and } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { forgeRuns, aiUsageLogs } from "../db/schema.js";
+import { forgeRuns, aiUsageLogs, type Ticket } from "../db/schema.js";
 import { verifyModel, MISMATCH_WARNING, computeVerificationStatus } from "./verify.js";
 import { resolveChecks, runChecks, formatChecks } from "./checks.js";
 
@@ -81,6 +81,23 @@ function summarize(r: Run): RunSummary {
   const { output, child, stopped, done, ...rest } = r;
   void output; void child; void stopped; void done;
   return rest;
+}
+
+// Populate the ticket spec from the plan when the body is empty. A human-written
+// spec is authoritative and must survive every run, so re-check emptiness against
+// the FRESH row before writing. Mirrors the optimistic-retry in lessons.ts.
+async function writeSpecFromPlan(actorId: string, ticketId: string, body: string): Promise<Ticket> {
+  const write = async () => {
+    const fresh = await getTicket(ticketId);
+    if (fresh.body && fresh.body.trim()) return fresh; // human spec wins — no overwrite
+    return updateTicket(actorId, ticketId, fresh.version, { body });
+  };
+  try {
+    return await write();
+  } catch (e) {
+    if (!(e instanceof StaleVersionError)) throw e;
+    return write(); // retry once against a fresh version
+  }
 }
 
 function append(run: Run, text: string): void {
@@ -300,6 +317,17 @@ async function pipeline(
     await addComment(actorId, ticket.id, redactSecrets(res.output), "plan");
     ticket = await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });
     plan = res.output;
+    // Title-only work orders leave the Spec panel blank; seed it from the plan.
+    // Best-effort: a spec-write failure must NOT fail the run.
+    if (!ticket.body || !ticket.body.trim()) {
+      try {
+        const before = ticket.version;
+        ticket = await writeSpecFromPlan(actorId, ticket.id, redactSecrets(res.output));
+        if (ticket.version !== before) append(run, `\n=== FORGE spec populated from plan ===\n`);
+      } catch (e) {
+        console.warn(`forge: spec write failed for ${ticket.id}:`, e);
+      }
+    }
   } else {
     const prior = [...(await listComments(ticket.id))].reverse().find((c) => c.kind === "plan");
     plan = prior?.body ?? "";

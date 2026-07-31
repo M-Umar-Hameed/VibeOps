@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { useImageAttachments } from "./useImageAttachments.js";
 
 export type EffortLevel = "quick" | "standard" | "max";
@@ -12,19 +12,23 @@ export type ComposerTicket = { id: string };
 
 type Props = {
   createTicket: (draft: { title: string; body: string }) => Promise<ComposerTicket>;
-  launchPipeline: (ticket: ComposerTicket, effort: EffortLevel) => Promise<{ doctorWarnings?: string[] } | void>;
+  launchPipeline: (ticket: ComposerTicket, effort: EffortLevel, work?: { agent: string; model?: string }) => Promise<{ doctorWarnings?: string[] } | void>;
   onCreated: (ticket: ComposerTicket, opts: { ran: boolean; pipelineError: boolean }) => void | Promise<void>;
   submitDisabled?: boolean;
   inlineControls?: ReactNode;
   moreOptions?: ReactNode;
+  modelOptions?: { value: string; label: string }[];
+  defaultModel?: string;
 };
 
-export function WorkOrderComposer({ createTicket, launchPipeline, onCreated, submitDisabled, inlineControls, moreOptions }: Props) {
+export function WorkOrderComposer({ createTicket, launchPipeline, onCreated, submitDisabled, inlineControls, moreOptions, modelOptions, defaultModel }: Props) {
   const [text, setText] = useState("");
   const [error, setError] = useState("");
   const [warnings, setWarnings] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
   const [effort, setEffort] = useState<EffortLevel>("standard");
+  const [model, setModel] = useState(defaultModel ?? "");
+  useEffect(() => { setModel(defaultModel ?? ""); }, [defaultModel]);
   const { attachments, attachError, fileInputRef, uploadFiles, removeAttachment, clear, markdown } = useImageAttachments();
 
   const create = async (): Promise<ComposerTicket | null> => {
@@ -64,7 +68,7 @@ export function WorkOrderComposer({ createTicket, launchPipeline, onCreated, sub
       if (!t) return;
       let pipelineError = false;
       try {
-        const res = await launchPipeline(t, effort);
+        const res = await launchPipeline(t, effort, model ? splitPair(model) : undefined);
         if (res && res.doctorWarnings?.length) setWarnings(res.doctorWarnings);
       } catch (e: any) {
         setError(e.message || "Pipeline start failed");
@@ -103,6 +107,18 @@ export function WorkOrderComposer({ createTicket, launchPipeline, onCreated, sub
             </button>
           ))}
         </div>
+        {modelOptions && modelOptions.length > 0 && (
+          <select
+            aria-label="Model"
+            value={model}
+            onChange={e => setModel(e.target.value)}
+            title="Model for the work role; plan and review use their defaults"
+            className="bg-surface-container-lowest border border-white/10 rounded px-2 py-1 text-xs text-on-surface outline-none cursor-pointer"
+          >
+            <option value="">Auto</option>
+            {modelOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        )}
         {inlineControls}
       </div>
       <div className="flex items-center gap-2">
@@ -161,4 +177,20 @@ export function WorkOrderComposer({ createTicket, launchPipeline, onCreated, sub
       {error && <div className="text-error text-xs">{error}</div>}
     </div>
   );
+}
+
+export function modelOptionsForRole(
+  agents: { name: string; roles: string[]; models?: { name: string }[] }[],
+  role: string,
+): { value: string; label: string }[] {
+  return agents.filter(a => a.roles.includes(role)).flatMap(a =>
+    a.models?.length
+      ? a.models.map(m => ({ value: `${a.name}:${m.name}`, label: `${a.name} / ${m.name}` }))
+      : [{ value: a.name, label: a.name }]);
+}
+
+// ponytail: split on the first ":" — agent/model names carry no colons today.
+export function splitPair(value: string): { agent: string; model?: string } {
+  const i = value.indexOf(":");
+  return i === -1 ? { agent: value } : { agent: value.slice(0, i), model: value.slice(i + 1) || undefined };
 }

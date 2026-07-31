@@ -121,6 +121,13 @@ function composite(pick: Pick): string {
   return pick.model ? `${pick.agent}:${pick.model}` : pick.agent;
 }
 
+// "agent:model" (or bare "agent") from a forge.defaultModel.<role> setting.
+// ponytail: split on the first ":" — agent/model names carry no colons today.
+function parsePair(value: string): Pick {
+  const i = value.indexOf(":");
+  return i === -1 ? { agent: value } : { agent: value.slice(0, i), model: value.slice(i + 1) || undefined };
+}
+
 function applyVerification(res: { ok: boolean; output: string }, compositeName: string, run: Run, config: RelayConfig): void {
   const [agentName, requestedModel] = compositeName.split(":");
   // Match on the actual BINARY, not the relay.json key — users key agents
@@ -195,10 +202,24 @@ export async function startPipeline(
 
   const getAuto = () => (auto ??= pickAgents(config, effortStrategy ?? strategy));
 
-  let planPick: Pick = opts.planAgent === "auto" ? getAuto().plan : { agent: opts.planAgent, model: opts.planModel };
-  let workPick: Pick = opts.workAgent === "auto" ? getAuto().work : { agent: opts.workAgent, model: opts.workModel };
-  const reviewPick: Pick =
-    opts.reviewAgent === "auto" ? getAuto().review : { agent: opts.reviewAgent, model: opts.reviewModel };
+  // Saved per-role default. For an "auto" role the priority is: explicit request
+  // pick > effort preset (quick/max) > this default > routing strategy. An
+  // explicitly chosen effort must beat the default, so defaults apply only when
+  // no non-standard effort was requested.
+  const defaults: Record<"plan" | "work" | "review", string> = {
+    plan: (await getSetting("forge.defaultModel.plan")) ?? "",
+    work: (await getSetting("forge.defaultModel.work")) ?? "",
+    review: (await getSetting("forge.defaultModel.review")) ?? "",
+  };
+  const resolveRole = (role: "plan" | "work" | "review", agent: string, model?: string): Pick => {
+    if (agent !== "auto") return { agent, model };
+    if (!effortStrategy && defaults[role]) return parsePair(defaults[role]);
+    return getAuto()[role];
+  };
+
+  let planPick: Pick = resolveRole("plan", opts.planAgent, opts.planModel);
+  let workPick: Pick = resolveRole("work", opts.workAgent, opts.workModel);
+  const reviewPick: Pick = resolveRole("review", opts.reviewAgent, opts.reviewModel);
 
   if (opts.workAgent === "auto") {
     const attempts = await countFailedReviews(opts.ticketId);

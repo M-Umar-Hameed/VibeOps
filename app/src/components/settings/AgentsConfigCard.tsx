@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api.js";
+import { modelOptionsForRole } from "../WorkOrderComposer.js";
 
 type AgentModel = { name: string; tier: string; quality: number };
 type AgentConfig = { name: string; roles: string[]; models: AgentModel[] };
@@ -37,6 +38,7 @@ export function AgentsConfigCard() {
           <div className="text-on-surface-variant text-sm">No agents found in ~/.vibeops/relay.json.</div>
         )}
       </div>
+      <RoleDefaults agents={agents ?? []} />
     </div>
   );
 }
@@ -169,6 +171,50 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
           <span className="material-symbols-outlined text-[14px]">add</span> Add model
         </button>
       </div>
+    </div>
+  );
+}
+
+function RoleDefaults({ agents }: { agents: AgentConfig[] }) {
+  return (
+    <div className="border-t border-white/10 pt-4">
+      <label className="text-xs text-on-surface-variant font-bold mb-1 block">Default model per role</label>
+      <p className="text-xs text-on-surface-variant mb-3">
+        Applied to auto runs unless a run picks quick/max effort or an explicit model. Auto follows the routing strategy.
+      </p>
+      <div className="space-y-2">
+        {(["plan", "work", "review"] as const).map(role => (
+          <RoleDefaultSelect key={role} role={role} agents={agents} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RoleDefaultSelect({ role, agents }: { role: "plan" | "work" | "review"; agents: AgentConfig[] }) {
+  const queryClient = useQueryClient();
+  const key = `forge.defaultModel.${role}`;
+  const { data } = useQuery({
+    queryKey: ["settings", key],
+    queryFn: async () => (await api.get(`/settings/${key}`)).value || "",
+  });
+  const save = useMutation({
+    mutationFn: (value: string) => api.patch(`/settings/${key}`, { value }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings", key] }),
+  });
+  const options = modelOptionsForRole(agents, role);
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-xs text-on-surface w-16 capitalize">{role}</span>
+      <select
+        aria-label={`Default model for ${role}`}
+        value={data ?? ""}
+        onChange={e => save.mutate(e.target.value)}
+        className="flex-1 bg-surface-container-highest border border-white/10 rounded px-2 py-1 text-sm text-on-surface focus:outline-none focus:border-primary"
+      >
+        <option value="">Auto (routing strategy)</option>
+        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
     </div>
   );
 }

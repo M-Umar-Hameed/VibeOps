@@ -20,16 +20,45 @@ function getAllFiles(dirPath: string, arrayOfFiles: string[] = []) {
   return arrayOfFiles;
 }
 
+type SrcFile = { rel: string; content: string };
+
+function loadAppFiles(): SrcFile[] {
+  return getAllFiles(appSrcDir).map((path) => ({
+    rel: path.slice(appSrcDir.length + 1).replace(/\\/g, "/"),
+    content: readFileSync(path, "utf-8"),
+  }));
+}
+
+// Strip block and line comments so a mention of the API in prose is safe, while
+// a real dangerouslySetInnerHTML={...} usage in code still fails.
+function stripComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+}
+
+function findDangerous(files: SrcFile[]): string[] {
+  return files
+    .filter((f) => stripComments(f.content).includes("dangerouslySetInnerHTML"))
+    .map((f) => f.rel);
+}
+
 describe("dangerouslySetInnerHTML audit", () => {
-  it("never uses dangerouslySetInnerHTML", () => {
-    const files = getAllFiles(appSrcDir);
-    let checked = 0;
-    for (const file of files) {
-      const content = readFileSync(file, "utf-8");
-      expect(content).not.toContain("dangerouslySetInnerHTML");
-      checked++;
-    }
-    // We expect there are actually files in app/src
-    expect(checked).toBeGreaterThan(0);
+  it("never uses dangerouslySetInnerHTML in app source", () => {
+    const files = loadAppFiles();
+    expect(files.length).toBeGreaterThan(0);
+    expect(findDangerous(files)).toEqual([]);
+  });
+
+  it("still catches a real usage but ignores comment mentions", () => {
+    expect(
+      findDangerous([
+        { rel: "real.tsx", content: '<div dangerouslySetInnerHTML={{ __html: h }} />' },
+      ]),
+    ).toEqual(["real.tsx"]);
+    expect(
+      findDangerous([
+        { rel: "line.tsx", content: "// discusses dangerouslySetInnerHTML in prose" },
+        { rel: "block.tsx", content: "/* note: dangerouslySetInnerHTML avoided */" },
+      ]),
+    ).toEqual([]);
   });
 });

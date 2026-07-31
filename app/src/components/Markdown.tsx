@@ -1,7 +1,7 @@
 import React from "react";
 
 // Renders untrusted model output as React elements only — no HTML parsing,
-// no dangerously-set-inner-html. Raw HTML in input stays literal text.
+// no dangerouslySetInnerHTML. Raw HTML in input stays literal text.
 function inlineNodes(text: string): React.ReactNode[] {
   const out: React.ReactNode[] = [];
   let key = 0;

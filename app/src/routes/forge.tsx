@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api.js";
 import { NotFoundError } from "../api/errors.js";
 import { useProject } from "../context/project.js";
@@ -20,17 +21,11 @@ type SandboxActivityData = { stage: string; files: SandboxActivityFile[]; totalA
 
 export function ForgeScreen() {
   const { activeProjectId } = useProject();
+  const queryClient = useQueryClient();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [sandboxes, setSandboxes] = useState<Record<string, SandboxStatus>>({});
   const [ticketsError, setTicketsError] = useState("");
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
-
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [agentsError, setAgentsError] = useState("");
-  const [doctorStatuses, setDoctorStatuses] = useState<Record<string, DoctorStatus>>({});
-  
-  const [skills, setSkills] = useState<Skill[]>([]);
-  const [actors, setActors] = useState<any[]>([]);
 
   const [planAgent, setPlanAgent] = useState("auto::");
   const [workAgent, setWorkAgent] = useState("auto::");
@@ -115,25 +110,20 @@ export function ForgeScreen() {
     try { await loadTickets(); } finally { ticketsRefreshInFlight.current = false; }
   };
 
-  useEffect(() => {
-    api.get("/forge/agents")
-       .then(a => {
-         const ags = a as Agent[];
-         setAgents(ags);
-       })
-       .catch((err: any) => setAgentsError(err.message || "Failed to load agents"));
-       
-    api.get("/forge/skills").then(s => setSkills(s as Skill[])).catch(() => {});
-    api.get("/actors").then(a => setActors(a as any[])).catch(() => {});
+  const agentsQ = useQuery({ queryKey: ["forge", "agents"], queryFn: () => api.get("/forge/agents") as Promise<Agent[]>, staleTime: Infinity });
+  const skillsQ = useQuery({ queryKey: ["forge", "skills"], queryFn: () => api.get("/forge/skills") as Promise<Skill[]>, staleTime: Infinity });
+  const actorsQ = useQuery({ queryKey: ["actors"], queryFn: () => api.get("/actors") as Promise<any[]>, staleTime: Infinity });
+  const doctorQ = useQuery({ queryKey: ["forge", "doctor"], queryFn: () => api.get("/forge/doctor") as Promise<DoctorStatus[]>, staleTime: Infinity });
 
-    api.get("/forge/doctor")
-       .then(d => {
-         const byName: Record<string, DoctorStatus> = {};
-         for (const s of d as DoctorStatus[]) byName[s.name] = s;
-         setDoctorStatuses(byName);
-       })
-       .catch(() => {}); // health dots are informational -- never block the panel
-  }, []);
+  const agents = agentsQ.data ?? [];
+  const skills = skillsQ.data ?? [];
+  const actors = actorsQ.data ?? [];
+  const agentsError = agentsQ.error ? ((agentsQ.error as any).message || "Failed to load agents") : "";
+  const doctorStatuses = useMemo(() => {
+    const byName: Record<string, DoctorStatus> = {};
+    for (const s of doctorQ.data ?? []) byName[s.name] = s;
+    return byName;
+  }, [doctorQ.data]);
 
   useEffect(() => {
     loadTickets();

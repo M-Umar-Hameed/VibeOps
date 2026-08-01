@@ -45,3 +45,18 @@ test("voyage dropdown renders new model options", async () => {
     expect(document.querySelector(`option[value="${m}"]`)).not.toBeNull();
   }
 });
+
+test("providers section explains passthrough keys and distinguishes Voyage", async () => {
+  render(wrap(<AIModelsTab />));
+  await waitFor(() => expect(screen.getByText("Optional provider API keys")).toBeInTheDocument());
+  expect(screen.getByText(/optional fallback, passed through/i)).toBeInTheDocument();
+  expect(screen.getByText("Embeddings (used by VibeOps)")).toBeInTheDocument();
+  expect(screen.getByText(/VibeOps itself uses this key/i)).toBeInTheDocument();
+});
+
+test("Local Node / Ollama passthrough control is removed", async () => {
+  render(wrap(<AIModelsTab />));
+  await waitFor(() => expect(screen.getByText("Anthropic")).toBeInTheDocument());
+  expect(screen.queryByText("Local Node")).toBeNull();
+  expect(screen.queryByText(/Ollama/i)).toBeNull();
+});

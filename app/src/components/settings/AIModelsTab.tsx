@@ -261,76 +261,71 @@ export function AIModelsTab() {
               </label>
             </div>
           </div>
-          {activeTab === "providers" && (
-            <>
-              <div className="space-y-6">
-                <h3 className="text-xs font-code-sm uppercase tracking-widest text-on-surface-variant/50 ml-2">Configured Providers</h3>
-                <ProviderCard 
-                  settingKey="anthropic.api_key"
-                  name="Anthropic"
-                  subtitle="Claude 3.5 Sonnet"
-                  placeholder="sk-ant-..."
-                  borderColorClass="[#D97757]/40"
-                  icon={
-                    <div className="w-12 h-12 bg-[#D97757]/20 rounded-xl flex items-center justify-center">
-                      <span className="font-serif italic text-2xl text-[#D97757]">C</span>
-                    </div>
-                  }
-                />
-                <ProviderCard 
-                  settingKey="openai.api_key"
-                  name="OpenAI / Codex"
-                  subtitle="GPT-4o & Codex"
-                  placeholder="sk-..."
-                  borderColorClass="white/20"
-                  icon={
-                    <div className="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center">
-                      <span className="text-white text-2xl material-symbols-outlined">psychology</span>
-                    </div>
-                  }
-                />
-                <ProviderCard 
-                  settingKey="google.api_key"
-                  name="Google"
-                  subtitle="Antigravity & Gemini"
-                  placeholder="AIza..."
-                  borderColorClass="[#4285F4]/40"
-                  icon={
-                    <div className="w-12 h-12 bg-[#4285F4]/20 rounded-xl flex items-center justify-center">
-                      <span className="material-symbols-outlined text-2xl text-[#4285F4]">memory</span>
-                    </div>
-                  }
-                />
-                <ProviderCard
-                  settingKey="voyage.api_key"
-                  name="Voyage AI"
-                  subtitle="Premium Knowledge Embeddings"
-                  placeholder="pa-..."
-                  borderColorClass="[#8B5CF6]/40"
-                  note="Used only for semantic search embeddings over your tickets/knowledge. Optional — VibeOps falls back to a local, zero-key embedder if this is empty."
-                  extra={<VoyageModelSelect />}
-                  icon={
-                    <div className="w-12 h-12 bg-[#8B5CF6]/20 rounded-xl flex items-center justify-center">
-                      <span className="material-symbols-outlined text-2xl text-[#8B5CF6]">explore</span>
-                    </div>
-                  }
-                />
-                <ProviderCard 
-                  settingKey="ollama.url"
-                  name="Local Node"
-                  subtitle="Ollama / Llama 3 (Free)"
-                  placeholder="http://localhost:11434"
-                  borderColorClass="secondary/40"
-                  icon={
-                    <div className="w-12 h-12 bg-surface-container-highest rounded-xl flex items-center justify-center">
-                      <img src="https://ollama.com/public/icon-64x64.png" alt="Ollama" className="w-8 h-8" onError={(e) => e.currentTarget.style.display = 'none'} />
-                      <span className="material-symbols-outlined text-secondary absolute -z-10">smart_toy</span>
-                    </div>
-                  }
-                />
-              </div>
-            </>
-          )}
+          <div className="space-y-6">
+            <div className="ml-2">
+              <h3 className="text-xs font-code-sm uppercase tracking-widest text-on-surface-variant/50">Optional provider API keys</h3>
+              <p className="text-xs text-on-surface-variant/70 mt-1 max-w-3xl">
+                These are not how VibeOps talks to AI. The normal path is signing in to each CLI under AI Accounts above. Keys here are an optional fallback, passed through as environment variables to any agent CLI that is not signed in through its own subscription. Leave them empty unless a CLI needs one.
+              </p>
+            </div>
+            <ProviderCard 
+              settingKey="anthropic.api_key"
+              name="Anthropic"
+              subtitle="Claude 3.5 Sonnet"
+              placeholder="sk-ant-..."
+              borderColorClass="[#D97757]/40"
+              icon={
+                <div className="w-12 h-12 bg-[#D97757]/20 rounded-xl flex items-center justify-center">
+                  <span className="font-serif italic text-2xl text-[#D97757]">C</span>
+                </div>
+              }
+            />
+            <ProviderCard 
+              settingKey="openai.api_key"
+              name="OpenAI / Codex"
+              subtitle="GPT-4o & Codex"
+              placeholder="sk-..."
+              borderColorClass="white/20"
+              icon={
+                <div className="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center">
+                  <span className="text-white text-2xl material-symbols-outlined">psychology</span>
+                </div>
+              }
+            />
+            <ProviderCard 
+              settingKey="google.api_key"
+              name="Google"
+              subtitle="Antigravity & Gemini"
+              placeholder="AIza..."
+              borderColorClass="[#4285F4]/40"
+              icon={
+                <div className="w-12 h-12 bg-[#4285F4]/20 rounded-xl flex items-center justify-center">
+                  <span className="material-symbols-outlined text-2xl text-[#4285F4]">memory</span>
+                </div>
+              }
+            />
+
+            <div className="ml-2 pt-2">
+              <h3 className="text-xs font-code-sm uppercase tracking-widest text-on-surface-variant/50">Embeddings (used by VibeOps)</h3>
+              <p className="text-xs text-on-surface-variant/70 mt-1 max-w-3xl">
+                Unlike the passthrough keys above, VibeOps itself uses this key, for semantic search over your tickets and knowledge. Optional: a local, zero-key embedder is the default.
+              </p>
+            </div>
+            <ProviderCard
+              settingKey="voyage.api_key"
+              name="Voyage AI"
+              subtitle="Premium Knowledge Embeddings"
+              placeholder="pa-..."
+              borderColorClass="[#8B5CF6]/40"
+              note="Used only for semantic search embeddings over your tickets/knowledge. Optional — VibeOps falls back to a local, zero-key embedder if this is empty."
+              extra={<VoyageModelSelect />}
+              icon={
+                <div className="w-12 h-12 bg-[#8B5CF6]/20 rounded-xl flex items-center justify-center">
+                  <span className="material-symbols-outlined text-2xl text-[#8B5CF6]">explore</span>
+                </div>
+              }
+            />
+          </div>
         </div>
       ) : (
         <AIUsageTab />

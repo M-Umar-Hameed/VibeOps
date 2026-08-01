@@ -18,6 +18,8 @@ VibeOps never asks for your AI provider API keys. You install and sign in to eac
 
 Once logged in, go to **Settings > AI Models > AI Accounts** and click **Run checks** to verify the connection. See [docs/AGENT_CLIS.md](AGENT_CLIS.md) for detailed relay wiring instructions.
 
+Optional: **Settings > AI Models** also has provider API-key fields under *Optional provider API keys*. These are a fallback that VibeOps passes through to a CLI that is not signed in above; the normal path needs none of them and they can stay empty. The separate Voyage key is the one key VibeOps itself uses (for embeddings) and is likewise optional — a local embedder is the default.
+
 ## Your first work order
 To create your first work order in Forge, type your task description. You can attach context by pasting an image directly or clicking **Attach image**. Click **Create task** to put it in the queue. 
 
@@ -33,7 +35,7 @@ In the **Integrations** tab, you can bind a project to a GitHub repository by pr
 VibeOps provides a persistent knowledge base for your agents. Just drop markdown or PDF files into `~/.vibeops/vault` and they are automatically indexed. The system falls back to a local, zero-key embedder if this is empty, meaning knowledge search works immediately without any API keys.
 
 ## Troubleshooting
-- **Too Many Requests (429):** The VibeOps window is holding a stale VibeOps API key (stored in the app's own settings store), not a provider key. Restart the app; if it persists, copy the key from `~/.vibeops/credentials.json` into Settings > Local Node.
+- **Too Many Requests (429):** The VibeOps window is holding a stale VibeOps API key (stored in the app's own settings store), not a provider key. Restart the app to refresh it.
 - **Red dot in Agent Doctor:** The CLI is either not installed or not authenticated. Run the vendor login command again.
 - **Empty diff on forge run:** This is often caused by missing agent permission flags (e.g., missing `--sandbox` or dangerously flags).
 - **Where logs live:** Agent token usage is observed by VibeOps from local session logs, across ALL projects, and surfaced in the UI under Settings > AI Models > Token Usage.

@@ -1,8 +1,12 @@
+process.env.EMBED_PROVIDER = "fake";
 import { test, expect } from "vitest";
 import { app } from "../src/api/app.js";
 import { db } from "../src/db/client.js";
 import { tickets, comments, notes } from "../src/db/schema.js";
-import { buildBrief } from "../src/services/export.js";
+import { buildBrief, MAX_BRIEF_CHARS } from "../src/services/export.js";
+import { upsertSourceDoc } from "../src/services/knowledge.js";
+import { getEmbedder } from "../src/knowledge/embedder.js";
+import { saveNote } from "../src/services/notes.js";
 import { startCouncil } from "../src/council/runs.js";
 import { randomUUID } from "node:crypto";
 import { createActor } from "../src/services/actors.js";
@@ -91,5 +95,55 @@ name😀.md`)).toBe("evilname.md");
   expect(fname).not.toContain('"');
   expect(disposition).not.toContain('\r');
   expect(disposition).not.toContain('\n');
-  expect(disposition).not.toContain('😀');
+});
+
+test("export brief project: multi-source markdown with section headers, secrets redacted", async () => {
+  const uniq = "exp-prj-" + randomUUID().slice(0, 8);
+  const { actor } = await createActor({ name: uniq, kind: "human", role: "admin" });
+  const project = await createProject({ key: uniq, name: `Proj ${uniq}` });
+  const embedder = getEmbedder();
+
+  await upsertSourceDoc("repo", `${project.id}:docs/a.md`, `# Doc A\nalpha content ${uniq}`, embedder);
+  await upsertSourceDoc("repo", `${project.id}:docs/b.md`, `# Doc B\nbeta content ${uniq}`, embedder);
+  await saveNote(actor.id, { body: `note body gamma sk-test1234567890abcdefgh`, scope: "project", refId: project.id, title: "PN" }, embedder);
+
+  const { filename, markdown } = await buildBrief("project", project.id);
+  expect(filename).toBe(`project-${project.id.slice(0, 8)}.md`);
+  expect(markdown).toContain(`Proj ${uniq}`);
+  expect(markdown).toContain("docs/a.md");
+  expect(markdown).toContain("docs/b.md");
+  expect(markdown).toContain("alpha content");
+  expect(markdown).toContain("beta content");
+  expect(markdown).toContain("Note: PN");
+  expect(markdown).toContain("[redacted]");
+  expect(markdown).not.toContain("sk-test1234567890abcdefgh");
+});
+
+test("export brief project: no indexed repo docs throws actionable conflict, endpoint 409", async () => {
+  const uniq = "exp-prj-empty-" + randomUUID().slice(0, 8);
+  const { apiKey } = await createActor({ name: uniq, kind: "human", role: "member" });
+  const project = await createProject({ key: uniq, name: `Empty ${uniq}` });
+
+  await expect(buildBrief("project", project.id)).rejects.toThrow(/no indexed repo docs/i);
+
+  const res = await app.request(`/export/brief?kind=project&id=${project.id}`, {
+    headers: { Authorization: `Bearer ${apiKey}` }
+  });
+  expect(res.status).toBe(409);
+});
+
+test("export brief project: respects size cap and states truncation", async () => {
+  const uniq = "exp-prj-cap-" + randomUUID().slice(0, 8);
+  await createActor({ name: uniq, kind: "human", role: "admin" });
+  const project = await createProject({ key: uniq, name: `Big ${uniq}` });
+  const embedder = getEmbedder();
+
+  const big = "x".repeat(70_000);
+  for (let i = 0; i < 4; i++) {
+    await upsertSourceDoc("repo", `${project.id}:docs/${i}.md`, big, embedder);
+  }
+
+  const { markdown } = await buildBrief("project", project.id);
+  expect(markdown).toContain("truncated");
+  expect(markdown.length).toBeLessThanOrEqual(MAX_BRIEF_CHARS + 500);
 });

@@ -4,12 +4,14 @@ import { api } from "../../lib/api.js";
 import type { Project } from "../../api/types.js";
 import { pickFolder, dialogAvailable } from "../../lib/native-dialog.js";
 import { ImportFromFolder } from "../projects/ImportFromFolder.js";
+import { exportBrief, sendBriefToNotebookLM } from "../../lib/notebooklm.js";
 
 export function ProjectWorkspaceRow({ project }: { project: Project }) {
   const queryClient = useQueryClient();
   const [editValue, setEditValue] = useState("");
   const [error, setError] = useState("");
   const [indexResult, setIndexResult] = useState("");
+  const [briefNotice, setBriefNotice] = useState("");
   const [canBrowse, setCanBrowse] = useState(false);
 
   useEffect(() => {
@@ -79,6 +81,24 @@ export function ProjectWorkspaceRow({ project }: { project: Project }) {
     });
   };
 
+  const handleExportBrief = async () => {
+    setBriefNotice("");
+    try {
+      await exportBrief("project", project.id);
+    } catch {
+      setBriefNotice('Export failed. Use "Index docs" first, then retry.');
+    }
+  };
+
+  const handleSendBrief = async () => {
+    setBriefNotice("");
+    try {
+      setBriefNotice(await sendBriefToNotebookLM("project", project.id));
+    } catch {
+      setBriefNotice('Export failed. Use "Index docs" first, then retry.');
+    }
+  };
+
   const originalValue = project.repoPath ?? "";
   const isDirty = editValue !== originalValue;
 
@@ -137,14 +157,30 @@ export function ProjectWorkspaceRow({ project }: { project: Project }) {
           <span className="text-xs px-2 py-1 rounded bg-white/5 text-on-surface-variant font-medium">default workdir</span>
         )}
         {project.repoPath && (
-          <button
-            type="button"
-            onClick={handleIndexRepo}
-            disabled={indexRepo.isPending}
-            className="text-xs px-3 py-1 rounded bg-white/5 hover:bg-primary hover:text-on-primary text-on-surface font-medium transition-all disabled:opacity-50"
-          >
-            Index docs
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={handleIndexRepo}
+              disabled={indexRepo.isPending}
+              className="text-xs px-3 py-1 rounded bg-white/5 hover:bg-primary hover:text-on-primary text-on-surface font-medium transition-all disabled:opacity-50"
+            >
+              Index docs
+            </button>
+            <button
+              type="button"
+              onClick={handleSendBrief}
+              className="text-xs px-3 py-1 rounded bg-white/5 hover:bg-primary hover:text-on-primary text-on-surface font-medium transition-all"
+            >
+              Send to NotebookLM
+            </button>
+            <button
+              type="button"
+              onClick={handleExportBrief}
+              className="text-xs px-3 py-1 rounded bg-white/5 hover:bg-primary hover:text-on-primary text-on-surface font-medium transition-all"
+            >
+              Export brief
+            </button>
+          </>
         )}
       </div>
 
@@ -153,6 +189,9 @@ export function ProjectWorkspaceRow({ project }: { project: Project }) {
       )}
       {indexResult && (
         <div className="text-xs text-on-surface-variant font-code-sm">{indexResult}</div>
+      )}
+      {briefNotice && (
+        <div role="status" className="text-xs text-on-surface-variant font-code-sm">{briefNotice}</div>
       )}
     </div>
   );

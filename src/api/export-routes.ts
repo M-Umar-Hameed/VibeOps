@@ -10,7 +10,7 @@ export function sanitizeFilename(name: string): string {
 
 export function registerExportRoutes(app: Hono<{ Variables: { actor: Actor } }>) {
   app.get("/export/brief", async (c) => {
-    const kind = c.req.query("kind") as "ticket" | "council" | "note";
+    const kind = c.req.query("kind") as "ticket" | "council" | "note" | "project";
     const id = c.req.query("id");
     if (!kind || !id) return c.json({ error: "Missing kind or id" }, 400);
     // Council reads are admin-only elsewhere (GET /council/:id); the export

@@ -9,6 +9,7 @@ import { api } from "../lib/api.js";
 import { useProject } from "../context/project.js";
 import { WorkOrderComposer, modelOptionsForRole } from "../components/WorkOrderComposer.js";
 import { Markdown } from "../components/Markdown.js";
+import { exportBrief, sendBriefToNotebookLM } from "../lib/notebooklm.js";
 
 const COUNCIL_KEY = "vibeops.activeCouncilId";
 
@@ -503,38 +504,12 @@ function SpecBlock({ spec, onExpand }: { spec: string; onExpand: () => void }) {
   );
 }
 
-async function fetchBrief(councilId: string): Promise<{ text: string; filename: string }> {
-  const { getSettings } = await import("../settings.js");
-  const { baseUrl, apiKey } = await getSettings();
-  const res = await fetch(`${baseUrl}/export/brief?kind=council&id=${councilId}`, {
-    headers: { Authorization: `Bearer ${apiKey}` }
-  });
-  if (!res.ok) throw new Error("Export failed");
-  const text = await res.text();
-  const disp = res.headers.get("Content-Disposition");
-  let filename = `council-${councilId.substring(0,8)}.md`;
-  if (disp && disp.includes("filename=")) {
-    filename = disp.split("filename=")[1].replace(/"/g, "");
-  }
-  return { text, filename };
-}
-
-function downloadBrief(text: string, filename: string) {
-  const url = URL.createObjectURL(new Blob([text], { type: "text/markdown" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 export function VerdictCard({ rating, decision, councilId }: { rating?: number; decision?: Decision; councilId?: string }) {
   const [notice, setNotice] = useState<string | null>(null);
   const handleExport = async () => {
     if (!councilId) return;
     try {
-      const { text, filename } = await fetchBrief(councilId);
-      downloadBrief(text, filename);
+      await exportBrief("council", councilId);
     } catch (e) {
       console.error(e);
     }
@@ -542,15 +517,7 @@ export function VerdictCard({ rating, decision, councilId }: { rating?: number; 
   const handleSendToNotebookLM = async () => {
     if (!councilId) return;
     try {
-      const { text, filename } = await fetchBrief(councilId);
-      try {
-        await navigator.clipboard.writeText(text);
-        setNotice("Brief copied. In NotebookLM: + Add source -> Paste text.");
-      } catch {
-        downloadBrief(text, filename);
-        setNotice("Clipboard unavailable - brief downloaded instead; add the file as a NotebookLM source.");
-      }
-      window.open("https://notebooklm.google.com/", "_blank", "noopener,noreferrer");
+      setNotice(await sendBriefToNotebookLM("council", councilId));
     } catch (e) {
       console.error(e);
     }

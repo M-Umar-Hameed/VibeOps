@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { setSetting } from "../src/services/settings.js";
-import { clearSetting } from "./helpers/settings.js";
+import { clearSetting, withSetting, withSettings } from "./helpers/settings.js";
 import { fetchDocs } from "../src/knowledge/docs.js";
 import { app } from "../src/api/app.js";
 import { createActor } from "../src/services/actors.js";

@@ -3,7 +3,7 @@ import { app } from "../src/api/app.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject, setProjectSetting } from "../src/services/projects.js";
 import { setSetting } from "../src/services/settings.js";
-import { clearSetting } from "./helpers/settings.js";
+import { clearSetting, withSetting } from "./helpers/settings.js";
 
 function uniq(p: string) { return `${p}-${Date.now()}-${Math.random().toString(36).slice(2)}`; }
 async function adminHeaders() {

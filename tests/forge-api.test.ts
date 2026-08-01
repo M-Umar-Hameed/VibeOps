@@ -9,7 +9,7 @@ import { createProject } from "../src/services/projects.js";
 import { createTicket } from "../src/services/tickets.js";
 import { app } from "../src/api/app.js";
 import { resolveSyncActor } from "../src/sync/actor.js";
-import { addComment } from "../src/services/comments.js";
+import { addComment, listComments } from "../src/services/comments.js";
 import { getSetting, setSetting } from "../src/services/settings.js";
 
 process.env.EMBED_PROVIDER = "fake";
@@ -194,7 +194,7 @@ describe("forge API", () => {
     expect((await promoteAfter.json()).status).toBe("closed");
   });
 
-  it("protected-path violation blocks promote via the HTTP gate; admin approve overrides", async () => {
+  it("protected-path violation blocks promote; approve does NOT clear it, waive-policy does", async () => {
     const h = await adminHeaders();
     const ticket = await seedTicket();
     process.env.FAKE_WRITE_PATH = "vitest.config.ts";
@@ -204,21 +204,47 @@ describe("forge API", () => {
       method: "POST", headers: h,
       body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
     });
-    expect(startRes.status).toBe(201); // adjusted from 200 since the route returns 201
+    expect(startRes.status).toBe(201);
     const { runId } = await startRes.json();
     await pollUntilDone(h, runId);
 
     const sandboxRes = await app.request(`/forge/tickets/${ticket.id}/sandbox`, { headers: h });
-    expect((await sandboxRes.json()).lastVerdict).toBe("fail");
+    expect((await sandboxRes.json()).protectedViolation).toEqual(["vitest.config.ts"]);
 
+    // durable gate blocks promote and names the path, independent of verdict
     const promoteRes = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
     expect(promoteRes.status).toBe(409);
+    expect((await promoteRes.json()).error).toContain("vitest.config.ts");
 
+    // approve records the human pass but does NOT clear the policy; still 409
     const approveRes = await app.request(`/forge/tickets/${ticket.id}/approve`, { method: "POST", headers: h });
     expect(approveRes.status).toBe(200);
-    const promoteAfter = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
-    expect(promoteAfter.status).toBe(200);
-    expect((await promoteAfter.json()).status).toBe("closed");
+    expect((await approveRes.json()).protectedViolation).toEqual(["vitest.config.ts"]);
+    const afterApprove = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
+    expect(afterApprove.status).toBe(409);
+
+    // wrong/partial set -> 400, promote still blocked
+    const badWaive = await app.request(`/forge/tickets/${ticket.id}/waive-policy`, {
+      method: "POST", headers: h, body: JSON.stringify({ paths: ["package.json"] }),
+    });
+    expect(badWaive.status).toBe(400);
+    const stillBlocked = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
+    expect(stillBlocked.status).toBe(409);
+
+    // exact set -> audited comment recorded, promote succeeds
+    const waiveRes = await app.request(`/forge/tickets/${ticket.id}/waive-policy`, {
+      method: "POST", headers: h, body: JSON.stringify({ paths: ["vitest.config.ts"] }),
+    });
+    expect(waiveRes.status).toBe(200);
+    expect((await waiveRes.json()).waived).toEqual(["vitest.config.ts"]);
+
+    const waiver = (await listComments(ticket.id)).find((cm) => cm.body.includes("Policy waiver by"));
+    expect(waiver).toBeTruthy();
+    expect(waiver!.body).toContain("vitest.config.ts");
+
+    const promoteAfterWaive = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
+    expect(promoteAfterWaive.status).toBe(200);
+    expect((await promoteAfterWaive.json()).status).toBe("closed");
   });
 
   it("member-authored VERDICT: PASS review comments cannot unlock promote", async () => {

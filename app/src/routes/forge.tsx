@@ -14,7 +14,7 @@ const SELECTED_TICKET_KEY = "vibeops.forgeSelectedTicketId";
 type Ticket = { id: string; title: string; status: string; version: number; body: string | null };
 type Agent = { name: string; roles: string[]; models?: { name: string }[] };
 type Skill = { name: string };
-type SandboxStatus = { exists: boolean; branch?: string; lastVerdict?: string };
+type SandboxStatus = { exists: boolean; branch?: string; lastVerdict?: string; protectedViolation?: string[] };
 type Diff = { diff: string };
 type DoctorStatus = { name: string; binary: string; probe: { ok: boolean; error?: string }; auth: { known: boolean; connected: boolean | null }; lastChecked: string };
 type SandboxActivityFile = { path: string; status: "A" | "M" | "D"; additions: number; deletions: number };
@@ -426,6 +426,17 @@ export function ForgeScreen() {
       await queryClient.invalidateQueries({ queryKey: ["forge", "sandbox", selectedTicket.id] });
     } catch (e: any) {
       setSandboxError(e.message || "Failed to discard");
+    }
+  };
+
+  const handleWaivePolicy = async () => {
+    if (!selectedTicket || !sandbox?.protectedViolation) return;
+    try {
+      await api.post(`/forge/tickets/${selectedTicket.id}/waive-policy`, { paths: sandbox.protectedViolation });
+      await queryClient.invalidateQueries({ queryKey: ["forge", "sandbox", selectedTicket.id] });
+      await queryClient.invalidateQueries({ queryKey: ["tickets", selectedTicket.id, "comments"] });
+    } catch (e: any) {
+      setSandboxError(e.message || "Failed to waive policy");
     }
   };
 
@@ -852,6 +863,8 @@ export function ForgeScreen() {
                     <span className="text-sm text-on-surface-variant"><span className="font-bold text-on-surface">Branch:</span> {sandbox.branch}</span>
                     <span className="text-sm text-on-surface-variant"><span className="font-bold text-on-surface">Verdict:</span> {sandbox.lastVerdict || "none"}</span>
                   </div>
+
+
                   
                   <div className="flex items-center gap-3">
                     <button
@@ -862,7 +875,7 @@ export function ForgeScreen() {
                     </button>
                     <button
                       onClick={handlePromote}
-                      disabled={sandbox.lastVerdict !== "pass" || runActiveForTicket}
+                      disabled={sandbox.lastVerdict !== "pass" || runActiveForTicket || (sandbox.protectedViolation?.length ?? 0) > 0}
                       title={
                         runActiveForTicket
                           ? "Pipeline run in progress for this work order"
@@ -874,7 +887,7 @@ export function ForgeScreen() {
                     >
                       Promote
                     </button>
-                    {sandbox.lastVerdict !== "pass" && (
+                    {!(sandbox.protectedViolation?.length) && sandbox.lastVerdict !== "pass" && (
                       <button
                         onClick={handleApprove}
                         disabled={runActiveForTicket}
@@ -891,7 +904,25 @@ export function ForgeScreen() {
                       Discard
                     </button>
                   </div>
-                  {sandbox.lastVerdict !== "pass" && (
+                  {(sandbox.protectedViolation?.length ?? 0) > 0 && (
+                    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 space-y-3">
+                      <div className="text-sm font-bold text-amber-300">Protected-path policy violation</div>
+                      <div className="text-xs text-on-surface-variant">
+                        This run modified files that control how the project is built or tested. Promotion is blocked until you waive the policy for these exact files.
+                      </div>
+                      <ul className="text-xs font-code-label text-amber-200 list-disc pl-5">
+                        {sandbox.protectedViolation!.map((p) => <li key={p}>{p}</li>)}
+                      </ul>
+                      <button
+                        onClick={handleWaivePolicy}
+                        disabled={runActiveForTicket}
+                        className="px-4 py-2 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-300 text-sm font-bold uppercase transition-all disabled:opacity-50 cursor-pointer"
+                      >
+                        Waive policy for these files
+                      </button>
+                    </div>
+                  )}
+                  {!(sandbox.protectedViolation?.length) && sandbox.lastVerdict !== "pass" && (
                     <div className="text-xs text-on-surface-variant">
                       Promote unlocks after a passing review. Approve override records YOUR passing review on the ticket, then Promote merges.
                     </div>

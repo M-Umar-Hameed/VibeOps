@@ -69,6 +69,7 @@ type Run = {
   agents: { plan: string; work: string; review: string };
   operatorNotes?: string;
   effort?: Effort;
+  protectedViolations?: string[];
   output: string; startedAt: string; finishedAt?: string;
   child?: ChildProcess; // the in-flight agent CLI for the current stage, if any
   abort?: () => void;   // in-loop sdk lane's AbortController.abort, if any
@@ -412,6 +413,7 @@ async function pipeline(
   const allowGlobs = parseAllowProtected(ticket.body ?? "");
   const changedPaths = await sandboxDiffNames(workdir, ticket.id);
   const violations = evaluateProtectedPaths(changedPaths, protectedGlobs, allowGlobs);
+  run.protectedViolations = violations.length ? violations : undefined;
   let protectedFinding: string | undefined;
   {
     const lines: string[] = [];
@@ -438,15 +440,8 @@ async function pipeline(
   run.child = undefined;
   if (run.stopped) return settle(run, "stopped");
   applyVerification(reviewRes, run.agents.review, run, config);
-  let verdict = parseVerdict(reviewRes.output);
-  let reviewBody = verdict.raw;
-  if (protectedFinding) {
-    // Deterministic override: trailing VERDICT: FAIL wins (parseVerdict takes
-    // the last match), so a model VERDICT: PASS cannot unblock promote.
-    reviewBody = `${reviewBody}\n\n=== FORGE protected-path violation (automatic Critical) ===\n${protectedFinding}\nVERDICT: FAIL`;
-    verdict = { pass: false, raw: reviewBody };
-  }
-  await addComment(actorId, ticket.id, redactSecrets(reviewBody), "review");
+  const verdict = parseVerdict(reviewRes.output);
+  await addComment(actorId, ticket.id, redactSecrets(verdict.raw), "review");
   if (!verdict.pass) {
     // FAIL: back to planned; sandbox kept for the rework pass.
     await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });
@@ -475,11 +470,12 @@ async function persistRun(run: Run): Promise<void> {
       workAgent: run.agents.work,
       reviewAgent: run.agents.review,
       effort: run.effort ?? null,
+      protectedViolations: run.protectedViolations ?? null,
       startedAt: new Date(run.startedAt),
       finishedAt,
     }).onConflictDoUpdate({
       target: forgeRuns.id,
-      set: { status: run.status, stage: run.stage, finishedAt }
+      set: { status: run.status, stage: run.stage, finishedAt, protectedViolations: run.protectedViolations ?? null }
     });
   } catch (e) {
     console.warn(`forge: failed to persist run ${run.id}:`, (e as Error).message);
@@ -598,6 +594,24 @@ export async function hasActiveRun(ticketId: string): Promise<boolean> {
     .where(and(eq(forgeRuns.ticketId, ticketId), isNull(forgeRuns.finishedAt)))
     .limit(1);
   return !!row;
+}
+
+export type RunPolicy = { runId: string; paths: string[]; waived: boolean };
+
+// Protected-path violation for the ticket's most recent run: the durable gate
+// promote/approve/waive all read. Empty paths => nothing to block.
+export async function latestRunPolicy(ticketId: string): Promise<RunPolicy | null> {
+  const [row] = await db.select({
+    id: forgeRuns.id,
+    violations: forgeRuns.protectedViolations,
+    waivedAt: forgeRuns.policyWaivedAt,
+  }).from(forgeRuns).where(eq(forgeRuns.ticketId, ticketId)).orderBy(desc(forgeRuns.startedAt)).limit(1);
+  if (!row) return null;
+  return { runId: row.id, paths: row.violations ?? [], waived: row.waivedAt !== null };
+}
+
+export async function markPolicyWaived(runId: string): Promise<void> {
+  await db.update(forgeRuns).set({ policyWaivedAt: new Date() }).where(eq(forgeRuns.id, runId));
 }
 
 export type RunListItem = RunSummary & { persisted?: boolean; modelVerified?: boolean | "unknown" };

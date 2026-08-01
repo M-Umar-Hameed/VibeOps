@@ -57,9 +57,9 @@ export async function buildServer(apiKey: string) {
     async (f) => ({ content: [{ type: "text", text: JSON.stringify(await listNotes(f)) }] }));
 
   server.registerTool("search_knowledge",
-    { inputSchema: { query: z.string(), limit: z.number().optional() } },
-    async ({ query, limit }) => ({
-      content: [{ type: "text", text: JSON.stringify(await searchKnowledge(query, { limit })) }],
+    { inputSchema: { query: z.string(), limit: z.number().optional(), project: z.string().optional() } },
+    async ({ query, limit, project }) => ({
+      content: [{ type: "text", text: JSON.stringify(await searchKnowledge(query, { limit, projectId: project })) }],
     }));
 
   server.registerTool("fetch_docs",

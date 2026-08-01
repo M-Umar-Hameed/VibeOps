@@ -197,7 +197,8 @@ app.get("/knowledge", async (c) => {
   const q = c.req.query("q") ?? "";
   const n = Number(c.req.query("limit"));
   const limit = Number.isFinite(n) && n > 0 ? n : undefined;
-  return c.json(await searchKnowledge(q, { limit }));
+  const projectId = c.req.query("project") || undefined;
+  return c.json(await searchKnowledge(q, { limit, projectId }));
 });
 
 app.get("/knowledge/sessions", async (c) => {
@@ -245,7 +246,8 @@ app.get("/prime", async (c) => {
   const q = c.req.query("q") ?? "";
   const n = Number(c.req.query("limit"));
   const limit = Math.min(Number.isFinite(n) && n > 0 ? n : 5, 10);
-  const hits = await searchKnowledge(q, { limit });
+  const projectId = c.req.query("project") || undefined;
+  const hits = await searchKnowledge(q, { limit, projectId });
   if (!hits.length) return c.text(`VibeOps primer: no relevant knowledge for "${q}".`);
   const lines = [`VibeOps primer for "${q}" (${hits.length} hits):`];
   for (const h of hits) {

@@ -9,6 +9,13 @@ import { saveNote } from "../src/services/notes.js";
 
 const emb = new FakeEmbedder(1024);
 
+import { sql } from "drizzle-orm";
+import { beforeEach } from "vitest";
+
+beforeEach(async () => {
+  await db.execute(sql`truncate table embeddings`);
+});
+
 test("indexed vault content is retrievable and ranked", async () => {
   // FakeEmbedder hashes text, so identical text yields an identical vector (cosine
   // distance 0). The content must be unique per run — otherwise duplicate-content

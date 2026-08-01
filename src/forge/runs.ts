@@ -332,7 +332,7 @@ async function pipeline(
   let plan: string;
   if (ticket.status === "open") {
     append(run, `=== FORGE plan (${run.agents.plan}) ===\n`);
-    const knowledge = await getKnowledgeSafe(ticket.title);
+    const knowledge = await getKnowledgeSafe(ticket.title, ticket.projectId);
     const res = await track(actorId, ticket.id, "plan", run.agents.plan, () => runAgent(
       agents.plan, composePlanPrompt({ ticket, knowledge }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra, workdir, onData,
       (child) => { run.child = child; },
@@ -366,7 +366,7 @@ async function pipeline(
   append(run, `\n=== FORGE work (${run.agents.work}) ===\n`);
   ticket = await updateTicket(actorId, ticket.id, ticket.version, { status: "in_progress" });
   const sandbox = await ensureSandbox(workdir, ticket.id);
-  const knowledge = await getKnowledgeSafe(ticket.title);
+  const knowledge = await getKnowledgeSafe(ticket.title, ticket.projectId);
   // Rework passes must see why the last review failed, or the worker repeats
   // the same mistakes (live-hit on the first dogfood ticket).
   const lastReview = [...(await listComments(ticket.id))].reverse().find((c) => c.kind === "review");
@@ -509,8 +509,8 @@ async function bounce(run: Run, actorId: string, why: string, output: string): P
   } catch { /* never mask the original failure */ }
 }
 
-async function getKnowledgeSafe(q: string): Promise<{ content: string; citation: string }[]> {
-  try { return await searchKnowledge(q, { limit: 5 }); } catch { return []; }
+async function getKnowledgeSafe(q: string, projectId?: string): Promise<{ content: string; citation: string }[]> {
+  try { return await searchKnowledge(q, { limit: 5, projectId }); } catch { return []; }
 }
 
 function trim(): void {

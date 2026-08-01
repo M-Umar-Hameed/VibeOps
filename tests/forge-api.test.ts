@@ -89,7 +89,10 @@ async function pollUntilDone(h: Record<string, string>, runId: string): Promise<
   for (;;) {
     const res = await app.request(`/forge/runs/${runId}/output?after=${after}`, { headers: h });
     const body = await res.json();
-    if (body.status !== "running") return body;
+    if (body.status !== "running") {
+      await new Promise(r => setTimeout(r, 300));
+      return body;
+    }
     after = body.next;
     if (Date.now() > deadline) throw new Error("run did not finish within 30s");
     await new Promise((r) => setTimeout(r, 100));

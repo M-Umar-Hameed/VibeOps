@@ -22,6 +22,7 @@ import { createActor } from "../src/services/actors.js";
 import { createProject, updateProjectRepo } from "../src/services/projects.js";
 import { createTicket, updateTicket } from "../src/services/tickets.js";
 import * as ticketsSvc from "../src/services/tickets.js";
+import * as knowledgeSvc from "../src/services/knowledge.js";
 import { addComment, listComments } from "../src/services/comments.js";
 import { getTicket } from "../src/services/history.js";
 import { getSetting, setSetting } from "../src/services/settings.js";
@@ -125,6 +126,23 @@ async function waitForPersistedRun(runId: string, timeoutMs = 5000) {
 }
 
 describe("forge run manager", () => {
+  it("knowledge search is scoped to the ticket's project", async () => {
+    const spy = vi.spyOn(knowledgeSvc, "searchKnowledge");
+    const { actorId, ticket } = await seedTicket("Scoped knowledge");
+    setScript("plan,work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    expect(spy).toHaveBeenCalled();
+    for (const call of spy.mock.calls) {
+      expect(call[1]).toMatchObject({ projectId: ticket.projectId });
+    }
+    spy.mockRestore();
+  });
+
   it("empty spec: plan text is written into the ticket body", async () => {
     const { actorId, ticket } = await seedTicket("Spec from plan");
     expect(ticket.body).toBe("");

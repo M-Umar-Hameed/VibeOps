@@ -773,3 +773,30 @@ test("clears a stored ticket id absent from the list and shows no empty detail p
   await waitFor(() => expect(localStorage.getItem("vibeops.forgeSelectedTicketId")).toBeNull());
   expect(screen.getByText("Select a work order to enter the Forge")).toBeInTheDocument();
 });
+
+test("shows protected violation badge and waive policy button calls api", async () => {
+  apiFetch.mockImplementation(async (path, init) => {
+    if (path === "/tickets") return [{ id: "t1", title: "My Ticket", status: "review" }];
+    if (path === "/forge/agents") return [];
+    if (path === "/forge/skills") return [];
+    if (path.includes("/sandbox")) return { exists: true, branch: "forge/t1", lastVerdict: "none", protectedViolation: ["vitest.config.ts"] };
+    if (path === "/forge/tickets/t1/waive-policy" && init?.method === "POST") return { waived: ["vitest.config.ts"] };
+    return {};
+  });
+
+  render(wrap(<ForgeScreen />));
+  await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
+  fireEvent.click(screen.getByText("My Ticket"));
+
+  await waitFor(() => expect(screen.getByText("Protected Paths Edited")).toBeInTheDocument());
+  expect(screen.getByText(/vitest\.config\.ts/)).toBeInTheDocument();
+
+  const waiveBtn = screen.getByRole("button", { name: /Waive Policy/i });
+  expect(waiveBtn).not.toBeDisabled();
+
+  fireEvent.click(waiveBtn);
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/forge/tickets/t1/waive-policy", expect.objectContaining({
+    method: "POST",
+    body: { paths: ["vitest.config.ts"] }
+  })));
+});

@@ -6,7 +6,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { eq } from "drizzle-orm";
-import { parseVerdict } from "../src/relay/prompts.js";
 import { 
   startPipeline, 
   stopRun, 
@@ -16,7 +15,8 @@ import {
   hasActiveRun, 
   markInterruptedRuns,
   resolveWorkdir,
-  awaitRun
+  awaitRun,
+  latestRunPolicy
 } from "../src/forge/runs.js";
 import { sandboxExists, branchName, promoteSandbox } from "../src/forge/sandbox.js";
 import { createActor } from "../src/services/actors.js";
@@ -389,10 +389,10 @@ describe("forge run manager", () => {
     expect(summary?.finishedAt).toBeTruthy();
   }, 15_000);
 
-  it("work stage editing a protected path blocks promote and records a forced Critical FAIL", async () => {
+  it("work stage editing a protected path records a durable violation without forcing the verdict", async () => {
     const { actorId, ticket } = await seedTicket("Protected path violation");
     process.env.FAKE_WRITE_PATH = "vitest.config.ts";
-    setScript("plan,work,review-pass"); // review model says PASS; gate must override
+    setScript("plan,work,review-pass");
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
@@ -403,12 +403,11 @@ describe("forge run manager", () => {
     expect(output?.chunk).toContain("=== FORGE protected-paths ===");
     expect(output?.chunk).toContain("vitest.config.ts");
 
-    const review = (await listComments(ticket.id)).filter((c) => c.kind === "review").pop();
-    expect(review?.body).toContain("PROTECTED-PATH VIOLATION");
-    expect(review?.body).toContain("VERDICT: FAIL");
-    // The promote gate reads exactly this: last admin review verdict must be fail.
-    expect(parseVerdict(review!.body).pass).toBe(false);
-    expect((await getTicket(ticket.id)).status).toBe("planned");
+    // The durable run-row gate — not the review verdict — blocks promote now.
+    const policy = await latestRunPolicy(ticket.id);
+    expect(policy?.paths).toEqual(["vitest.config.ts"]);
+    expect(policy?.waived).toBe(false);
+    expect((await getTicket(ticket.id)).status).toBe("review");
   });
 
   it("ALLOW-PROTECTED in the ticket body lets a protected edit pass, allowance echoed", async () => {

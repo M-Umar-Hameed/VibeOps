@@ -14,7 +14,7 @@ const SELECTED_TICKET_KEY = "vibeops.forgeSelectedTicketId";
 type Ticket = { id: string; title: string; status: string; version: number; body: string | null };
 type Agent = { name: string; roles: string[]; models?: { name: string }[] };
 type Skill = { name: string };
-type SandboxStatus = { exists: boolean; branch?: string; lastVerdict?: string };
+type SandboxStatus = { exists: boolean; branch?: string; lastVerdict?: string; protectedViolation?: string[] };
 type Diff = { diff: string };
 type DoctorStatus = { name: string; binary: string; probe: { ok: boolean; error?: string }; auth: { known: boolean; connected: boolean | null }; lastChecked: string };
 type SandboxActivityFile = { path: string; status: "A" | "M" | "D"; additions: number; deletions: number };
@@ -426,6 +426,17 @@ export function ForgeScreen() {
       await queryClient.invalidateQueries({ queryKey: ["forge", "sandbox", selectedTicket.id] });
     } catch (e: any) {
       setSandboxError(e.message || "Failed to discard");
+    }
+  };
+
+  const handleWaivePolicy = async () => {
+    if (!selectedTicket || !sandbox?.protectedViolation) return;
+    try {
+      await api.post(`/forge/tickets/${selectedTicket.id}/waive-policy`, { paths: sandbox.protectedViolation });
+      await queryClient.invalidateQueries({ queryKey: ["forge", "sandbox", selectedTicket.id] });
+      await queryClient.invalidateQueries({ queryKey: ["tickets", selectedTicket.id, "comments"] });
+    } catch (e: any) {
+      setSandboxError(e.message || "Failed to waive policy");
     }
   };
 
@@ -852,6 +863,22 @@ export function ForgeScreen() {
                     <span className="text-sm text-on-surface-variant"><span className="font-bold text-on-surface">Branch:</span> {sandbox.branch}</span>
                     <span className="text-sm text-on-surface-variant"><span className="font-bold text-on-surface">Verdict:</span> {sandbox.lastVerdict || "none"}</span>
                   </div>
+
+                  {sandbox.protectedViolation && sandbox.protectedViolation.length > 0 && (
+                    <div className="p-3 bg-red-500/10 border border-red-500/30 rounded flex items-center justify-between">
+                      <div className="text-sm text-red-400">
+                        <span className="font-bold uppercase text-[10px] bg-red-500/20 px-1 py-0.5 rounded mr-2">Protected Paths Edited</span>
+                        {sandbox.protectedViolation.join(", ")}
+                      </div>
+                      <button
+                        onClick={handleWaivePolicy}
+                        disabled={runActiveForTicket}
+                        className="px-3 py-1 bg-red-500 text-white text-xs font-bold uppercase rounded hover:bg-red-600 disabled:opacity-50 cursor-pointer"
+                      >
+                        Waive Policy
+                      </button>
+                    </div>
+                  )}
                   
                   <div className="flex items-center gap-3">
                     <button

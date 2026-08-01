@@ -7,7 +7,7 @@ import type { Actor } from "../db/schema.js";
 import { loadRelayConfig } from "../relay/config.js";
 import { runDoctor } from "../relay/doctor.js";
 import { parseVerdict } from "../relay/prompts.js";
-import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, reviewDiffPayload, activeStageForTicket } from "../forge/runs.js";
+import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived } from "../forge/runs.js";
 import {
   sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash, sandboxActivity, sandboxWorkingDiff
 } from "../forge/sandbox.js";
@@ -159,10 +159,13 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
 
   app.get("/forge/tickets/:id/sandbox", requireAdmin, async (c) => {
     const ticketId = c.req.param("id");
+    const policy = await latestRunPolicy(ticketId);
+    const protectedViolation = policy && policy.paths.length && !policy.waived ? policy.paths : undefined;
     return c.json({
       exists: sandboxExists(ticketId),
       branch: branchName(ticketId),
       lastVerdict: await lastVerdict(ticketId),
+      ...(protectedViolation ? { protectedViolation } : {}),
     });
   });
 
@@ -250,12 +253,24 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     await addComment(actor.id, ticketId,
       `Override approval by ${actor.name} after manual inspection of the sandbox diff.\n\nVERDICT: PASS`,
       "review");
-    return c.json({ lastVerdict: await lastVerdict(ticketId) });
+    const policy = await latestRunPolicy(ticketId);
+    const protectedViolation = policy && policy.paths.length && !policy.waived ? policy.paths : undefined;
+    return c.json({
+      lastVerdict: await lastVerdict(ticketId),
+      ...(protectedViolation ? { protectedViolation } : {}),
+    });
   });
 
   app.post("/forge/tickets/:id/promote", requireAdmin, async (c) => {
     const ticketId = c.req.param("id");
     if (await hasActiveRun(ticketId)) return c.json({ error: "run in progress for this ticket" }, 409);
+    const policy = await latestRunPolicy(ticketId);
+    if (policy && policy.paths.length && !policy.waived) {
+      return c.json({
+        error: `protected-path policy violation must be waived before promoting: ${policy.paths.join(", ")}`,
+        paths: policy.paths,
+      }, 409);
+    }
     const verdict = await lastVerdict(ticketId);
     if (!sandboxExists(ticketId) || verdict !== "pass") {
       return c.json({ error: "sandbox must exist and have a passing review before promoting" }, 409);
@@ -270,6 +285,34 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     const fresh = await getTicket(ticketId);
     const updated = await updateTicket(c.get("actor").id, ticketId, fresh.version, { status: "closed" });
     return c.json(updated);
+  });
+
+  // A protected-path violation is a durable fact on the run row; a normal Approve
+  // cannot clear it. Waiving requires the caller to name the EXACT offending paths
+  // (proof they saw them) and is recorded as an audited, actor-attributed comment.
+  app.post("/forge/tickets/:id/waive-policy", requireAdmin, async (c) => {
+    const ticketId = c.req.param("id");
+    if (await hasActiveRun(ticketId)) return c.json({ error: "run in progress for this ticket" }, 409);
+    const { paths } = await c.req.json().catch(() => ({}));
+    if (!Array.isArray(paths) || !paths.every((p) => typeof p === "string")) {
+      return c.json({ error: "paths must be a string array" }, 400);
+    }
+    const policy = await latestRunPolicy(ticketId);
+    if (!policy || !policy.paths.length || policy.waived) {
+      return c.json({ error: "no active policy violation to waive" }, 400);
+    }
+    const want = new Set(policy.paths);
+    const got = new Set(paths.map((p) => p.trim()).filter(Boolean));
+    const exact = want.size === got.size && [...want].every((p) => got.has(p));
+    if (!exact) {
+      return c.json({ error: `paths must match the recorded violation exactly: ${policy.paths.join(", ")}`, paths: policy.paths }, 400);
+    }
+    await markPolicyWaived(policy.runId);
+    const actor = c.get("actor");
+    await addComment(actor.id, ticketId,
+      `Policy waiver by ${actor.name} for protected paths:\n${policy.paths.map((p) => `  - ${p}`).join("\n")}\n\nThese files control how the project is built or tested.`,
+      "comment");
+    return c.json({ waived: policy.paths });
   });
 
   app.post("/forge/tickets/:id/discard", requireAdmin, async (c) => {

@@ -173,6 +173,8 @@ export const forgeRuns = pgTable('forge_runs', {
   workAgent: text('work_agent').notNull(),
   reviewAgent: text('review_agent').notNull(),
   effort: text('effort'),
+  protectedViolations: jsonb('protected_violations').$type<string[]>(),
+  policyWaivedAt: timestamp('policy_waived_at', { withTimezone: true }),
   startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
 });

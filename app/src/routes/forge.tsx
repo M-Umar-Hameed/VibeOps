@@ -564,13 +564,13 @@ export function ForgeScreen() {
             <h2 className="font-headline-sm text-on-surface font-bold">Forge Work Orders</h2>
             <p className="text-xs text-on-surface-variant/70 mt-1">Plan, run, and promote agent work per work order.</p>
           </div>
+          {!activeProjectId && (
+            <p className="text-xs text-on-surface-variant/70">Select a project to create a work order.</p>
+          )}
           <WorkOrderComposer
-            createTicket={async ({ title, body }) => {
-              const projects = await api.get("/projects") as { id: string; key: string }[];
-              const project = projects.find(p => p.key === "inbox") ?? projects[0];
-              if (!project) throw new Error("no project available");
-              return await api.post("/tickets", { projectId: project.id, title, body }) as Ticket;
-            }}
+            submitDisabled={!activeProjectId}
+            createTicket={({ title, body }) =>
+              api.post("/tickets", { projectId: activeProjectId, title, body }) as Promise<Ticket>}
             modelOptions={modelOptionsForRole(agents, "work")}
             defaultModel={workDefaultQ.data ?? ""}
             launchPipeline={(t, effort, work) => {

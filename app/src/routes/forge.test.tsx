@@ -4,6 +4,12 @@ import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
 const apiFetch = vi.fn();
 vi.mock("../api/client.js", () => ({ apiFetch: (...a: any[]) => apiFetch(...a) }));
 
+const { mockState } = vi.hoisted(() => ({ mockState: { activeProjectId: null as string | null } }));
+vi.mock("../context/project.js", () => ({
+  ProjectProvider: ({ children }: any) => children,
+  useProject: () => ({ activeProjectId: mockState.activeProjectId, projects: [], setActiveProject: () => {}, refreshProjects: async () => {} }),
+}));
+
 import { QueryClientProvider, QueryClient, focusManager } from "@tanstack/react-query";
 import { ForgeScreen } from "./forge.js";
 import { NotFoundError, StaleVersionError } from "../api/errors.js";
@@ -15,6 +21,7 @@ const wrap = (ui: any) => (
 );
 
 beforeEach(() => {
+  mockState.activeProjectId = null;
   apiFetch.mockReset();
   localStorage.clear();
   // shouldAdvanceTime: waitFor polls on real timers; frozen clocks deadlock it.
@@ -518,7 +525,7 @@ test("paste image attaches a thumbnail and Create task posts body with the absol
   const posted: any[] = [];
   apiFetch.mockImplementation(async (path: string, init?: any) => {
     if (path === "/tickets" && init?.method === "POST") { posted.push(init.body); return { id: "t9", title: "Fix the header", status: "open" }; }
-    if (path === "/tickets") return [];
+    if (path.startsWith("/tickets")) return [];
     if (path === "/projects") return [{ id: "p1", key: "inbox" }];
     if (path === "/forge/agents") return [];
     if (path === "/forge/skills") return [];
@@ -527,6 +534,7 @@ test("paste image attaches a thumbnail and Create task posts body with the absol
     return {};
   });
 
+  mockState.activeProjectId = "p1";
   render(wrap(<ForgeScreen />));
   const textarea = await screen.findByPlaceholderText(/Describe the work/i);
   fireEvent.change(textarea, { target: { value: "Fix the header" } });
@@ -542,9 +550,10 @@ test("paste image attaches a thumbnail and Create task posts body with the absol
 });
 
 const composerMocks = (pipelineImpl?: (init: any) => any) => {
+  mockState.activeProjectId = "p1";
   apiFetch.mockImplementation(async (path: string, init?: any) => {
     if (path === "/tickets" && init?.method === "POST") return { id: "t9", title: "Fix the header", status: "open" };
-    if (path === "/tickets") return [];
+    if (path.startsWith("/tickets")) return [];
     if (path === "/projects") return [{ id: "p1", key: "inbox" }];
     if (path === "/forge/agents") return [];
     if (path === "/forge/skills") return [];
@@ -571,6 +580,10 @@ test("composer Run it: tickets POST then pipeline POST with default effort stand
       planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
       extraPrompt: "", force: false, effort: "standard",
     },
+  }));
+  expect(apiFetch).toHaveBeenCalledWith("/tickets", expect.objectContaining({
+    method: "POST",
+    body: expect.objectContaining({ projectId: "p1" }),
   }));
   const postIdx = (p: string) => apiFetch.mock.calls.findIndex((c: any) => c[0] === p && c[1]?.method === "POST");
   expect(postIdx("/tickets")).toBeGreaterThanOrEqual(0);
@@ -671,6 +684,20 @@ test("tickets refetch every 5s, on window focus, and stop after unmount", async 
   await act(async () => { vi.advanceTimersByTime(15000); });
   expect(calls()).toBe(afterUnmount);
 });
+
+test("no active project blocks composer submit and shows a hint", async () => {
+  composerMocks();
+  mockState.activeProjectId = null;
+  render(wrap(<ForgeScreen />));
+  const textarea = await screen.findByPlaceholderText(/Describe the work/i);
+  fireEvent.change(textarea, { target: { value: "Fix the header" } });
+  expect(screen.getByText(/Select a project to create a work order/i)).toBeInTheDocument();
+  const runBtn = screen.getByRole("button", { name: /Run it/i });
+  expect(runBtn).toBeDisabled();
+  fireEvent.click(runBtn);
+  expect(apiFetch.mock.calls.some((c: any) => c[0] === "/tickets" && c[1]?.method === "POST")).toBe(false);
+});
+
 
 test("stage change during a run triggers exactly one tickets refetch; same stage does not", async () => {
   let pollCount = 0;

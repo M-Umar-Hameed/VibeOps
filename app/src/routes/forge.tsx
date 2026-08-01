@@ -864,21 +864,7 @@ export function ForgeScreen() {
                     <span className="text-sm text-on-surface-variant"><span className="font-bold text-on-surface">Verdict:</span> {sandbox.lastVerdict || "none"}</span>
                   </div>
 
-                  {sandbox.protectedViolation && sandbox.protectedViolation.length > 0 && (
-                    <div className="p-3 bg-red-500/10 border border-red-500/30 rounded flex items-center justify-between">
-                      <div className="text-sm text-red-400">
-                        <span className="font-bold uppercase text-[10px] bg-red-500/20 px-1 py-0.5 rounded mr-2">Protected Paths Edited</span>
-                        {sandbox.protectedViolation.join(", ")}
-                      </div>
-                      <button
-                        onClick={handleWaivePolicy}
-                        disabled={runActiveForTicket}
-                        className="px-3 py-1 bg-red-500 text-white text-xs font-bold uppercase rounded hover:bg-red-600 disabled:opacity-50 cursor-pointer"
-                      >
-                        Waive Policy
-                      </button>
-                    </div>
-                  )}
+
                   
                   <div className="flex items-center gap-3">
                     <button
@@ -889,7 +875,7 @@ export function ForgeScreen() {
                     </button>
                     <button
                       onClick={handlePromote}
-                      disabled={sandbox.lastVerdict !== "pass" || runActiveForTicket}
+                      disabled={sandbox.lastVerdict !== "pass" || runActiveForTicket || (sandbox.protectedViolation?.length ?? 0) > 0}
                       title={
                         runActiveForTicket
                           ? "Pipeline run in progress for this work order"
@@ -901,7 +887,7 @@ export function ForgeScreen() {
                     >
                       Promote
                     </button>
-                    {sandbox.lastVerdict !== "pass" && (
+                    {!(sandbox.protectedViolation?.length) && sandbox.lastVerdict !== "pass" && (
                       <button
                         onClick={handleApprove}
                         disabled={runActiveForTicket}
@@ -918,7 +904,25 @@ export function ForgeScreen() {
                       Discard
                     </button>
                   </div>
-                  {sandbox.lastVerdict !== "pass" && (
+                  {(sandbox.protectedViolation?.length ?? 0) > 0 && (
+                    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 space-y-3">
+                      <div className="text-sm font-bold text-amber-300">Protected-path policy violation</div>
+                      <div className="text-xs text-on-surface-variant">
+                        This run modified files that control how the project is built or tested. Promotion is blocked until you waive the policy for these exact files.
+                      </div>
+                      <ul className="text-xs font-code-label text-amber-200 list-disc pl-5">
+                        {sandbox.protectedViolation!.map((p) => <li key={p}>{p}</li>)}
+                      </ul>
+                      <button
+                        onClick={handleWaivePolicy}
+                        disabled={runActiveForTicket}
+                        className="px-4 py-2 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-300 text-sm font-bold uppercase transition-all disabled:opacity-50 cursor-pointer"
+                      >
+                        Waive policy for these files
+                      </button>
+                    </div>
+                  )}
+                  {!(sandbox.protectedViolation?.length) && sandbox.lastVerdict !== "pass" && (
                     <div className="text-xs text-on-surface-variant">
                       Promote unlocks after a passing review. Approve override records YOUR passing review on the ticket, then Promote merges.
                     </div>

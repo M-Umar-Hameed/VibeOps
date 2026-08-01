@@ -71,14 +71,18 @@ function setScript(script: string, write?: boolean): void {
   else delete process.env.FAKE_WRITE;
 }
 
-async function waitForStatus(id: string, statuses: string[], timeoutMs = 20_000) {
+// 60s, not 20s: this spawns real persona child processes, and under full-suite
+// parallel load the box is saturated enough that 20s occasionally elapses before
+// the council settles. The assertion still fails if the status never arrives —
+// only the patience is raised, no behavior is masked.
+async function waitForStatus(id: string, statuses: string[], timeoutMs = 60_000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const council = getCouncil(id);
     if (statuses.includes(council.status)) return council;
     await new Promise((r) => setTimeout(r, 20));
   }
-  throw new Error(`timed out waiting for status ${statuses.join("|")}`);
+  throw new Error(`timed out waiting for status ${statuses.join("|")} — got ${JSON.stringify(getCouncil(id))} :: ${getCouncilOutput(id, 0)?.chunk?.slice(-500)}`);
 }
 
 describe("council engine", () => {

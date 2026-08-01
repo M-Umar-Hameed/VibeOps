@@ -6,6 +6,7 @@ import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
 import { createTicket } from "../src/services/tickets.js";
 import { app } from "../src/api/app.js";
+import { clearSetting } from "./helpers/settings.js";
 
 function uniq(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -26,6 +27,7 @@ test("guarded routes: 403 for member, non-403 for admin", { timeout: 60_000 }, a
   expect((await app.request(`/settings/${settingsKey}`, {
     method: "PATCH", headers: adminH, body: JSON.stringify({ value: "x" }),
   })).status).toBe(200);
+  await clearSetting(settingsKey);
 
   const tmpVault = mkdtempSync(join(tmpdir(), "authz-vault-"));
   expect((await app.request("/knowledge/obsidian/start", {

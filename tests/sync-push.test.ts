@@ -4,6 +4,7 @@ import { db } from "../src/db/client.js";
 import { projects, syncLinks } from "../src/db/schema.js";
 import { createActor } from "../src/services/actors.js";
 import { setSetting } from "../src/services/settings.js";
+import { clearSetting } from "./helpers/settings.js";
 import { createTicket } from "../src/services/tickets.js";
 import { pushGithub } from "../src/sync/push.js";
 
@@ -21,7 +22,7 @@ function makeFetch(responses: any[]) {
   });
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(async () => { vi.unstubAllGlobals(); await clearSetting("github.token"); });
 
 test("1. Create a local-only ticket -> pushes to github and creates link", async () => {
   const aid = await actorId();

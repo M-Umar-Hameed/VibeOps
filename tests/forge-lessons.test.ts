@@ -144,7 +144,8 @@ import { execFileSync } from "node:child_process";
 import { startPipeline, awaitRun } from "../src/forge/runs.js";
 import { createProject } from "../src/services/projects.js";
 import { createTicket } from "../src/services/tickets.js";
-import { getSetting, setSetting } from "../src/services/settings.js";
+import { getSetting } from "../src/services/settings.js";
+import { withSetting, clearSetting } from "./helpers/settings.js";
 import type { RelayConfig } from "../src/relay/config.js";
 
 const __dirname2 = dirname(fileURLToPath(import.meta.url));
@@ -194,10 +195,10 @@ describe("forge lessons integration", () => {
     process.env.VIBEOPS_SANDBOX_ROOT = sandboxRoot;
     counterDir = mkdtempSync(join(tmpdir(), "lessons-run-ctr-"));
     counterFile = join(counterDir, "counter.txt");
-    await setSetting("prompts.selfImprove.state", ""); // clear state
+    await clearSetting("prompts.selfImprove.state"); // clear state
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.VIBEOPS_SANDBOX_ROOT;
     delete process.env.FAKE_SCRIPT;
     delete process.env.FAKE_COUNTER_FILE;
@@ -205,6 +206,7 @@ describe("forge lessons integration", () => {
     rmSync(workdir, { recursive: true, force: true });
     rmSync(sandboxRoot, { recursive: true, force: true });
     rmSync(counterDir, { recursive: true, force: true });
+    await clearSetting("prompts.selfImprove.state");
   });
 
   it("selfImprove on: analyzer runs after settle and rewrites prompt-lessons", async () => {
@@ -214,8 +216,7 @@ describe("forge lessons integration", () => {
     process.env.FAKE_COUNTER_FILE = counterFile;
     process.env.FAKE_WRITE = "1";
 
-    await setSetting("prompts.selfImprove", "true");
-    try {
+    await withSetting("prompts.selfImprove", "true", async () => {
       const { runId } = await startPipeline(actorId, relayConfig(workdir), {
         ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
       });
@@ -231,9 +232,7 @@ describe("forge lessons integration", () => {
       expect(body).toContain("MARKER-LESSON-42");
       const state = await loadEvoState();
       expect(state.candidate).not.toBeNull();
-    } finally {
-      await setSetting("prompts.selfImprove", "");
-    }
+    });
   }, 15_000);
 
   it("selfImprove unset: no 4th analyzer invocation", async () => {

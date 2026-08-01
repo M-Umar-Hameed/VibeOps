@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 import { eq } from "drizzle-orm";
 import { markInterruptedRuns, awaitRun, getRunOutput, stopRun, startPipeline, hasActiveRun } from "../src/forge/runs.js";
 import { loadRelayConfig } from "../src/relay/config.js";
+import { clearSetting } from "./helpers/settings.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
 import { createTicket, updateTicket } from "../src/services/tickets.js";
@@ -49,7 +50,10 @@ let sandboxRoot: string;
 let counterDir: string;
 let counterFile: string;
 
-beforeEach(() => {
+beforeEach(async () => {
+  // This file starts auto-agent pipelines, so a forge.defaultModel.* row left in
+  // the shared settings table by another test changes which agent resolves here.
+  for (const role of ["plan", "work", "review"]) await clearSetting(`forge.defaultModel.${role}`);
   workdir = initRepo();
   sandboxRoot = mkdtempSync(join(tmpdir(), "forge-resume-sbx-"));
   process.env.VIBEOPS_SANDBOX_ROOT = sandboxRoot;

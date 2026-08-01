@@ -15,6 +15,32 @@ function hashString(str: string) {
   return hash;
 }
 
+type NodeShape = "circle" | "square" | "triangle" | "diamond";
+
+const KIND_STYLE: Record<string, { fill: string; shape: NodeShape }> = {
+  vault: { fill: "fill-primary-fixed-dim", shape: "circle" },
+  note: { fill: "fill-secondary-container", shape: "square" },
+  session: { fill: "fill-amber-400", shape: "triangle" },
+  repo: { fill: "fill-emerald-400", shape: "diamond" },
+};
+
+function kindStyle(kind: string): { fill: string; shape: NodeShape } {
+  return KIND_STYLE[kind] ?? { fill: "fill-on-surface", shape: "circle" };
+}
+
+function nodeShape(shape: NodeShape, x: number, y: number) {
+  switch (shape) {
+    case "square":
+      return <rect x={x - 5.5} y={y - 5.5} width={11} height={11} />;
+    case "triangle":
+      return <polygon points={`${x},${y - 7} ${x - 6.5},${y + 5} ${x + 6.5},${y + 5}`} />;
+    case "diamond":
+      return <polygon points={`${x},${y - 7} ${x + 7},${y} ${x},${y + 7} ${x - 7},${y}`} />;
+    default:
+      return <circle cx={x} cy={y} r={6} />;
+  }
+}
+
 export function KnowledgeScreen() {
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -117,24 +143,29 @@ export function KnowledgeScreen() {
                         const angle = (Math.abs(hashString(n.id)) % 10000 / 10000) * 2 * Math.PI;
                         const x = Math.cos(angle) * r;
                         const y = Math.sin(angle) * r;
-                        const colorClass = n.kind === 'vault' ? 'fill-primary' : n.kind === 'note' ? 'fill-secondary' : n.kind === 'session' ? 'fill-amber-500' : n.kind === 'repo' ? 'fill-tertiary' : 'fill-on-surface';
+                        const { fill, shape } = kindStyle(n.kind);
                         return (
-                          <circle 
-                            key={i} cx={x} cy={y} r={6} 
-                            className={`${colorClass} hover:stroke-white stroke-[2px] cursor-pointer transition-all`} 
+                          <g
+                            key={i} data-kind={n.kind} data-shape={shape}
+                            className={`${fill} hover:stroke-white stroke-[2px] cursor-pointer transition-all`}
                             onClick={() => setActiveSource({ kind: n.kind, ref: n.id, citation: n.id })}
                           >
+                            {nodeShape(shape, x, y)}
                             <title>{n.id}</title>
-                          </circle>
+                          </g>
                         );
                       })}
                     </g>
                   </svg>
                   <div className="absolute bottom-4 left-4 flex gap-4 font-code-label text-[10px] uppercase text-on-surface-variant bg-surface-container-high/80 p-2 rounded backdrop-blur border border-white/5">
-                    <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-primary"></span> Vault</span>
-                    <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-secondary"></span> Note</span>
-                    <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-500"></span> Session</span>
-                    <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-tertiary"></span> Repo</span>
+                    {([['vault', 'Vault'], ['note', 'Note'], ['session', 'Session'], ['repo', 'Repo']] as const).map(([kind, label]) => {
+                      const { fill, shape } = kindStyle(kind);
+                      return (
+                        <span key={kind} data-kind={kind} data-shape={shape} className="flex items-center gap-1.5">
+                          <svg width="12" height="12" viewBox="-8 -8 16 16" className={fill} aria-hidden="true">{nodeShape(shape, 0, 0)}</svg> {label}
+                        </span>
+                      );
+                    })}
                   </div>
                 </>
               )}

@@ -153,3 +153,44 @@ test("switching the active project changes the graph query key and refetches", a
   rerender(wrapStable(<KnowledgeScreen />));
   await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/knowledge/graph", { query: { project: "proj-B" } }));
 });
+
+test("graph renders each kind with its color and shape, and the legend matches", async () => {
+  apiFetch.mockImplementation(async (url: string) => {
+    if (url === "/knowledge/graph") {
+      return {
+        nodes: [
+          { id: "v1", kind: "vault" },
+          { id: "n1", kind: "note" },
+          { id: "s1", kind: "session" },
+          { id: "r1", kind: "repo" },
+        ],
+        edges: [],
+      };
+    }
+    return { codex: { indexed: 1, skipped: 0, failed: 0 } };
+  });
+
+  const { container } = render(wrap(<KnowledgeScreen />));
+  fireEvent.click(screen.getByText("Graph"));
+  await waitFor(() => expect(container.querySelector('g[data-kind="vault"]')).toBeTruthy());
+
+  const expected: Record<string, { cls: string; shape: string; tag: string }> = {
+    vault: { cls: "fill-primary-fixed-dim", shape: "circle", tag: "circle" },
+    note: { cls: "fill-secondary-container", shape: "square", tag: "rect" },
+    session: { cls: "fill-amber-400", shape: "triangle", tag: "polygon" },
+    repo: { cls: "fill-emerald-400", shape: "diamond", tag: "polygon" },
+  };
+
+  for (const [kind, { cls, shape, tag }] of Object.entries(expected)) {
+    const node = container.querySelector(`g[data-kind="${kind}"]`)!;
+    expect(node.getAttribute("class")).toContain(cls);
+    expect(node.getAttribute("data-shape")).toBe(shape);
+    expect(node.querySelector(tag)).toBeTruthy();
+
+    const legend = container.querySelector(`span[data-kind="${kind}"]`)!;
+    expect(legend.getAttribute("data-shape")).toBe(shape);
+    expect(legend.querySelector("svg")!.getAttribute("class")).toContain(cls);
+    expect(legend.querySelector(tag)).toBeTruthy();
+  }
+});
+

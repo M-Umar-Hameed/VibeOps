@@ -116,6 +116,11 @@ export async function sandboxDiffSummary(workdir: string, ticketId: string): Pro
   return out.slice(0, DIFF_CAP);
 }
 
+export async function sandboxDiffNames(workdir: string, ticketId: string): Promise<string[]> {
+  const { out } = await git(workdir, "diff", "--name-only", `HEAD...${branchName(ticketId)}`);
+  return out.split("\n").map((l) => l.replace(/\r$/, "").trim()).filter(Boolean);
+}
+
 export type SandboxActivityFile = { path: string; status: "A" | "M" | "D"; additions: number; deletions: number };
 export type SandboxActivity = {
   files: SandboxActivityFile[];

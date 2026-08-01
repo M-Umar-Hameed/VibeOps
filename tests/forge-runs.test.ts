@@ -26,7 +26,7 @@ import * as ticketsSvc from "../src/services/tickets.js";
 import * as knowledgeSvc from "../src/services/knowledge.js";
 import { addComment, listComments } from "../src/services/comments.js";
 import { getTicket } from "../src/services/history.js";
-import { getSetting, setSetting } from "../src/services/settings.js";
+import { withSetting, withSettings } from "./helpers/settings.js";
 import { ConflictError, StaleVersionError } from "../src/services/errors.js";
 import { db } from "../src/db/client.js";
 import { forgeRuns } from "../src/db/schema.js";
@@ -476,10 +476,13 @@ describe("forge run manager", () => {
 
   it("auto agent picks resolve via the configured routing strategy", async () => {
     const { actorId, ticket } = await seedTicket("Auto cheapest path");
-    const priorStrategy = await getSetting("ai.routing_strategy");
-    await setSetting("ai.routing_strategy", "cheapest-first");
     setScript("plan,work,review-pass", true);
-    try {
+    await withSettings({
+      "ai.routing_strategy": "cheapest-first",
+      "forge.defaultModel.plan": "",
+      "forge.defaultModel.work": "",
+      "forge.defaultModel.review": "",
+    }, async () => {
       const { runId } = await startPipeline(actorId, relayConfig(), {
         ticketId: ticket.id, planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
       });
@@ -489,17 +492,13 @@ describe("forge run manager", () => {
       const summary = listRuns().find((r) => r.id === runId);
       // cheapest-first: lowest tier wins for every role -> the free "fast" model.
       expect(summary?.agents).toEqual({ plan: "fake:fast", work: "fake:fast", review: "fake:fast" });
-    } finally {
-      await setSetting("ai.routing_strategy", priorStrategy ?? "balanced");
-    }
+    });
   });
 
   it("effort=quick resolves free-tier model for all auto roles regardless of global strategy", async () => {
     const { actorId, ticket } = await seedTicket("Effort quick path");
-    const priorStrategy = await getSetting("ai.routing_strategy");
-    await setSetting("ai.routing_strategy", "quality-first");
     setScript("plan,work,review-pass", true);
-    try {
+    await withSetting("ai.routing_strategy", "quality-first", async () => {
       const { runId } = await startPipeline(actorId, relayConfig(), {
         ticketId: ticket.id, planAgent: "auto", workAgent: "auto", reviewAgent: "auto", effort: "quick",
       });
@@ -507,9 +506,7 @@ describe("forge run manager", () => {
       const summary = listRuns().find((r) => r.id === runId);
       expect(summary?.agents).toEqual({ plan: "fake:fast", work: "fake:fast", review: "fake:fast" });
       expect(summary?.effort).toBe("quick");
-    } finally {
-      await setSetting("ai.routing_strategy", priorStrategy ?? "balanced");
-    }
+    });
   });
 
   it("effort=quick falls back to cheapest when no free-tier model exists", async () => {
@@ -566,12 +563,11 @@ describe("forge run manager", () => {
 
   it("forge.defaultModel.<role> resolves an auto role, overriding routing strategy", async () => {
     const { actorId, ticket } = await seedTicket("Default model path");
-    const priorStrategy = await getSetting("ai.routing_strategy");
-    const priorDefault = await getSetting("forge.defaultModel.plan");
-    await setSetting("ai.routing_strategy", "cheapest-first");
-    await setSetting("forge.defaultModel.plan", "fake:smart");
     setScript("plan,work,review-pass", true);
-    try {
+    await withSettings({
+      "ai.routing_strategy": "cheapest-first",
+      "forge.defaultModel.plan": "fake:smart",
+    }, async () => {
       const { runId } = await startPipeline(actorId, relayConfig(), {
         ticketId: ticket.id, planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
       });
@@ -579,59 +575,44 @@ describe("forge run manager", () => {
       const summary = listRuns().find((r) => r.id === runId);
       // plan follows the saved default; work/review still resolve cheapest-first.
       expect(summary?.agents).toEqual({ plan: "fake:smart", work: "fake:fast", review: "fake:fast" });
-    } finally {
-      await setSetting("ai.routing_strategy", priorStrategy ?? "balanced");
-      await setSetting("forge.defaultModel.plan", priorDefault ?? "");
-    }
+    });
   });
 
   it("explicit planModel in the request beats the saved default", async () => {
     const { actorId, ticket } = await seedTicket("Default vs explicit");
-    const priorDefault = await getSetting("forge.defaultModel.plan");
-    await setSetting("forge.defaultModel.plan", "fake:smart");
     setScript("plan,work,review-pass", true);
-    try {
+    await withSetting("forge.defaultModel.plan", "fake:smart", async () => {
       const { runId } = await startPipeline(actorId, relayConfig(), {
         ticketId: ticket.id, planAgent: "fake", planModel: "fast", workAgent: "fake", reviewAgent: "fake",
       });
       await awaitRun(runId);
       expect(listRuns().find((r) => r.id === runId)?.agents.plan).toBe("fake:fast");
-    } finally {
-      await setSetting("forge.defaultModel.plan", priorDefault ?? "");
-    }
+    });
   });
 
   it("effort=max beats the saved default", async () => {
     const { actorId, ticket } = await seedTicket("Default vs effort");
-    const priorDefault = await getSetting("forge.defaultModel.plan");
-    await setSetting("forge.defaultModel.plan", "fake:fast");
     setScript("plan,work,review-pass", true);
-    try {
+    await withSetting("forge.defaultModel.plan", "fake:fast", async () => {
       const { runId } = await startPipeline(actorId, relayConfig(), {
         ticketId: ticket.id, planAgent: "auto", workAgent: "auto", reviewAgent: "auto", effort: "max",
       });
       await awaitRun(runId);
       // max => quality-first everywhere; the fast default is ignored.
       expect(listRuns().find((r) => r.id === runId)?.agents.plan).toBe("fake:smart");
-    } finally {
-      await setSetting("forge.defaultModel.plan", priorDefault ?? "");
-    }
+    });
   });
 
   it("commProfile setting does not break the pipeline", async () => {
     const { actorId, ticket } = await seedTicket("Comm profile path");
-    const prior = await getSetting("agents.commProfile");
-    await setSetting("agents.commProfile", "caveman");
     setScript("plan,work,review-pass", true);
-    try {
+    await withSetting("agents.commProfile", "caveman", async () => {
       const { runId } = await startPipeline(actorId, relayConfig(), {
         ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
       });
       await awaitRun(runId);
       expect(getRunOutput(runId, 0)?.status).toBe("passed");
-    } finally {
-      await setSetting("agents.commProfile", prior ?? "off");
-    }
+    });
   });
 
   it("pipeline sandboxes the ticket's OWN project repo, not config.workdir, and promote merges into it", async () => {

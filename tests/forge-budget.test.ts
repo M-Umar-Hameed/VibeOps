@@ -8,7 +8,7 @@ import { startPipeline, awaitRun , checkBudget } from "../src/forge/runs.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
 import { createTicket } from "../src/services/tickets.js";
-import { getSetting, setSetting } from "../src/services/settings.js";
+import { withSetting, withSettings } from "./helpers/settings.js";
 import { ConflictError } from "../src/services/errors.js";
 import { db } from "../src/db/client.js";
 import { aiUsageLogs } from "../src/db/schema.js";
@@ -84,10 +84,7 @@ function setScript(script: string): void {
 describe("forge pipeline budget enforcement", () => {
   it("rejects when per-ticket budget is exceeded, proceeds with force:true", async () => {
     const { actorId, ticket } = await seedTicket("Per-ticket budget");
-    const prior = await getSetting("ai.budget.perTicketTokens");
-    await setSetting("ai.budget.perTicketTokens", "1000");
-
-    try {
+    await withSetting("ai.budget.perTicketTokens", "1000", async () => {
       await db.insert(aiUsageLogs).values({
         provider: "test", model: "test", tokens: 1500, ticketId: ticket.id, actorId, durationMs: 100,
       });
@@ -106,9 +103,7 @@ describe("forge pipeline budget enforcement", () => {
         ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake", force: true,
       });
       await awaitRun(runId);
-    } finally {
-      await setSetting("ai.budget.perTicketTokens", prior ?? "");
-    }
+    });
   });
 
   it("per-day cap rejects via checkBudget override (global setting would throttle parallel suites)", async () => {
@@ -126,13 +121,10 @@ describe("forge pipeline budget enforcement", () => {
 
   it("unset caps never block", async () => {
     const { actorId, ticket } = await seedTicket("Unset budget");
-    const priorTicket = await getSetting("ai.budget.perTicketTokens");
-    const priorDay = await getSetting("ai.budget.perDayTokens");
-    
-    await setSetting("ai.budget.perTicketTokens", "");
-    await setSetting("ai.budget.perDayTokens", "");
-
-    try {
+    await withSettings({
+      "ai.budget.perTicketTokens": "",
+      "ai.budget.perDayTokens": "",
+    }, async () => {
       await db.insert(aiUsageLogs).values({
         provider: "test", model: "test", tokens: 50000, ticketId: ticket.id, actorId, durationMs: 100,
       });
@@ -143,9 +135,6 @@ describe("forge pipeline budget enforcement", () => {
         ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
       });
       await awaitRun(runId);
-    } finally {
-      await setSetting("ai.budget.perTicketTokens", priorTicket ?? "");
-      await setSetting("ai.budget.perDayTokens", priorDay ?? "");
-    }
+    });
   });
 });

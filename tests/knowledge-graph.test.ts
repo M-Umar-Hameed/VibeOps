@@ -9,13 +9,6 @@ import { createActor } from "../src/services/actors.js";
 
 const emb = new FakeEmbedder(1024);
 
-import { sql } from "drizzle-orm";
-import { beforeEach } from "vitest";
-import { db } from "../src/db/client.js";
-
-beforeEach(async () => {
-  await db.execute(sql`truncate table embeddings`);
-});
 
 test("knowledgeGraph returns nodes and edges with twin similarities", async () => {
   const ref1 = `graph-twin-1-${Date.now()}`;
@@ -26,7 +19,7 @@ test("knowledgeGraph returns nodes and edges with twin similarities", async () =
   await upsertSourceDoc("session", ref2, "identical content for testing twins", emb);
   await upsertSourceDoc("session", ref3, "completely different random string", emb);
   
-  const res = await knowledgeGraph(60);
+  const res = await knowledgeGraph(60, undefined, [ref1, ref2, ref3]);
   expect(res.nodes.length).toBeGreaterThanOrEqual(3);
   
   const edge = res.edges.find(e => 
@@ -35,7 +28,7 @@ test("knowledgeGraph returns nodes and edges with twin similarities", async () =
   expect(edge).toBeDefined();
   expect(edge!.w).toBeGreaterThan(0.9);
   
-  const capped = await knowledgeGraph(2);
+  const capped = await knowledgeGraph(2, undefined, [ref1, ref2, ref3]);
   expect(capped.nodes.length).toBeLessThanOrEqual(2);
 });
 
@@ -59,7 +52,7 @@ test("knowledgeGraph(projectId) returns only that project's repo nodes, with vau
   await upsertSourceDoc("vault", vaultRef, "shared vault content", emb);
   await upsertSourceDoc("session", sessRef, "shared session content", emb);
 
-  const res = await knowledgeGraph(200, pA);
+  const res = await knowledgeGraph(200, pA, [`${pA}:README.md`, `${pB}:README.md`, vaultRef, sessRef]);
   const ids = res.nodes.map(n => n.id);
   expect(ids).toContain(`${pA}:README.md`);
   expect(ids).not.toContain(`${pB}:README.md`);
@@ -71,7 +64,7 @@ test("knowledgeGraph() with no projectId includes repo nodes for any project (un
   const p = randomUUID();
   const ref = `${p}:UNFILTERED.md`;
   await upsertSourceDoc("repo", ref, "repo doc no filter", emb);
-  const res = await knowledgeGraph(200);
+  const res = await knowledgeGraph(200, undefined, [ref]);
   expect(res.nodes.map(n => n.id)).toContain(ref);
 });
 
@@ -110,7 +103,7 @@ test("knowledgeGraph(projectId) budgets project nodes first: 5 repo + 55 global 
 test("knowledgeGraph() no-project unchanged: newest global session appears", async () => {
   const sess = `noproj-sess-${Date.now()}`;
   await upsertSourceDoc("session", sess, "no-project session content", emb);
-  const res = await knowledgeGraph(200);
+  const res = await knowledgeGraph(200, undefined, [sess]);
   expect(res.nodes.map(n => n.id)).toContain(sess);
 });
 

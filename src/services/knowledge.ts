@@ -317,7 +317,7 @@ function budgetByKind(rows: any[], limit: number): any[] {
   return out;
 }
 
-export async function knowledgeGraph(limit = 60, projectId?: string): Promise<{ nodes: { id: string; kind: string; chunks: number; createdAt: string }[]; edges: { a: string; b: string; w: number }[] }> {
+export async function knowledgeGraph(limit = 60, projectId?: string, refs?: string[]): Promise<{ nodes: { id: string; kind: string; chunks: number; createdAt: string }[]; edges: { a: string; b: string; w: number }[] }> {
   // vault + session are shared context (no project). repo nodes carry a
   // "<projectId>:" sourceRef prefix. note nodes map to a project via
   // scope+refId (notes have no project_id column); global-scope notes are shared.
@@ -331,6 +331,9 @@ export async function knowledgeGraph(limit = 60, projectId?: string): Promise<{ 
     LIMIT ${limit}
   `);
 
+  // Test-only scoping: restrict candidates to caller-supplied refs so a test can
+  // assert against exactly its own seeded rows without truncating the shared table.
+  const refWhere = refs && refs.length ? inArray(embeddings.sourceRef, refs) : null;
   let rows: any[];
   if (projectId) {
     // Budget the node list so a project's own nodes are never crowded out by the
@@ -339,8 +342,12 @@ export async function knowledgeGraph(limit = 60, projectId?: string): Promise<{ 
     // remaining slots fill with global nodes (vault/session + global-scope notes),
     // newest-first within each group. The two groups are disjoint (a row is repo,
     // vault, session, or a note of exactly one scope) so no dedup is needed.
-    const projectWhere = dsql`WHERE ${projectScopeWhere(projectId)}`;
-    const globalWhere = dsql`WHERE ${globalScopeWhere()}`;
+    const projectWhere = refWhere
+      ? dsql`WHERE ${projectScopeWhere(projectId)} AND ${refWhere}`
+      : dsql`WHERE ${projectScopeWhere(projectId)}`;
+    const globalWhere = refWhere
+      ? dsql`WHERE ${globalScopeWhere()} AND ${refWhere}`
+      : dsql`WHERE ${globalScopeWhere()}`;
     const projectRows = unwrap(await groupQuery(projectWhere));
     const globalRows = unwrap(await groupQuery(globalWhere));
     // ponytail: project block first, globals fill the rest. If a project ever
@@ -356,6 +363,7 @@ export async function knowledgeGraph(limit = 60, projectId?: string): Promise<{ 
         SELECT source_ref, source_kind, count(id) AS chunk_count, max(created_at) AS created_at,
           row_number() OVER (PARTITION BY source_kind ORDER BY max(created_at) DESC) AS rn
         FROM embeddings
+        ${refWhere ? dsql`WHERE ${refWhere}` : dsql``}
         GROUP BY source_ref, source_kind
       ) sub
       WHERE rn <= ${limit}
@@ -365,10 +373,10 @@ export async function knowledgeGraph(limit = 60, projectId?: string): Promise<{ 
   }
   if (!rows.length) return { nodes: [], edges: [] };
 
-  const refs = rows.map(r => String(r.source_ref));
+  const rowRefs = rows.map(r => String(r.source_ref));
   const chunkRows = await db.select({ sourceRef: embeddings.sourceRef, embedding: dsql<string>`${embeddings.embedding}::text` })
     .from(embeddings)
-    .where(and(eq(embeddings.chunkIndex, 0), inArray(embeddings.sourceRef, refs)));
+    .where(and(eq(embeddings.chunkIndex, 0), inArray(embeddings.sourceRef, rowRefs)));
 
   const embMap = new Map(chunkRows.map(c => {
     let arr: number[] = [];

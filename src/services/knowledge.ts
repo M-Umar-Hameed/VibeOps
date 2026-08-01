@@ -251,6 +251,38 @@ export async function getKnowledgeSource(kind: string, ref: string): Promise<str
   return `Error: Unknown source kind ${kind}`;
 }
 
+// Round-robin fair-share: each kind present in `rows` drafts its newest unused
+// row in turn until the budget fills; unused capacity spills to kinds with more
+// rows. Rows must arrive grouped per kind, newest-first within each kind.
+// Guarantees every present kind appears when limit >= number of kinds.
+function budgetByKind(rows: any[], limit: number): any[] {
+  const byKind = new Map<string, any[]>();
+  for (const r of rows) {
+    const k = String(r.source_kind);
+    let arr = byKind.get(k);
+    if (!arr) { arr = []; byKind.set(k, arr); }
+    arr.push(r);
+  }
+  const kinds = [...byKind.keys()];
+  const cursor = new Map(kinds.map((k) => [k, 0]));
+  const out: any[] = [];
+  let progress = true;
+  while (out.length < limit && progress) {
+    progress = false;
+    for (const k of kinds) {
+      if (out.length >= limit) break;
+      const arr = byKind.get(k)!;
+      const i = cursor.get(k)!;
+      if (i < arr.length) {
+        out.push(arr[i]);
+        cursor.set(k, i + 1);
+        progress = true;
+      }
+    }
+  }
+  return out;
+}
+
 export async function knowledgeGraph(limit = 60, projectId?: string): Promise<{ nodes: { id: string; kind: string; chunks: number; createdAt: string }[]; edges: { a: string; b: string; w: number }[] }> {
   // vault + session are shared context (no project). repo nodes carry a
   // "<projectId>:" sourceRef prefix. note nodes map to a project via
@@ -297,7 +329,21 @@ export async function knowledgeGraph(limit = 60, projectId?: string): Promise<{ 
     // exceeds `limit` nodes globals get 0 here; add a reserved global floor then.
     rows = [...projectRows, ...globalRows].slice(0, limit);
   } else {
-    rows = unwrap(await groupQuery(dsql``));
+    // Fair-share the budget across kinds so the high-volume, always-newest
+    // session stream can't starve vault/note/repo (which plain newest-first-
+    // across-all-kinds would drop entirely). Fetch top-`limit` per kind, then
+    // round-robin. Total node count still bounded by `limit`.
+    const perKind = unwrap(await db.execute(dsql`
+      SELECT source_ref, source_kind, chunk_count, created_at FROM (
+        SELECT source_ref, source_kind, count(id) AS chunk_count, max(created_at) AS created_at,
+          row_number() OVER (PARTITION BY source_kind ORDER BY max(created_at) DESC) AS rn
+        FROM embeddings
+        GROUP BY source_ref, source_kind
+      ) sub
+      WHERE rn <= ${limit}
+      ORDER BY source_kind ASC, rn ASC
+    `));
+    rows = budgetByKind(perKind, limit);
   }
   if (!rows.length) return { nodes: [], edges: [] };
 

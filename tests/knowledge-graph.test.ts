@@ -118,3 +118,27 @@ test("knowledgeGraph edges only reference returned nodes", async () => {
     expect(ids.has(e.b)).toBe(true);
   }
 });
+
+test("knowledgeGraph() no-project fair-shares budget across all four kinds", async () => {
+  const stamp = Date.now();
+  for (let i = 0; i < 300; i++) {
+    await upsertSourceDoc("session", `fs-sess-${i}-${stamp}`, `session content ${i}`, emb);
+  }
+  for (let i = 0; i < 10; i++) {
+    await upsertSourceDoc("vault", `fs-vault-${i}-${stamp}.md`, `vault content ${i}`, emb);
+    await upsertSourceDoc("note", `fs-note-${i}-${stamp}`, `note content ${i}`, emb);
+    await upsertSourceDoc("repo", `fs-repo-${i}-${stamp}.md`, `repo content ${i}`, emb);
+  }
+  const res = await knowledgeGraph(60);
+  const kinds = new Set(res.nodes.map((n) => n.kind));
+  expect(kinds.has("session")).toBe(true);
+  expect(kinds.has("vault")).toBe(true);
+  expect(kinds.has("note")).toBe(true);
+  expect(kinds.has("repo")).toBe(true);
+  expect(res.nodes.length).toBe(60);
+  const ids = new Set(res.nodes.map((n) => n.id));
+  for (const e of res.edges) {
+    expect(ids.has(e.a)).toBe(true);
+    expect(ids.has(e.b)).toBe(true);
+  }
+}, 30000);

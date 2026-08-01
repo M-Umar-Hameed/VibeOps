@@ -79,3 +79,42 @@ test("knowledgeGraph(projectId) includes project-scoped notes and excludes anoth
   expect(ids).not.toContain(nB.id);
 });
 
+test("knowledgeGraph(projectId) budgets project nodes first: 5 repo + 55 global at limit 60", async () => {
+  const proj = randomUUID();
+  const stamp = Date.now();
+  for (let i = 0; i < 5; i++) {
+    await upsertSourceDoc("repo", `${proj}:file-${i}-${stamp}.md`, `project repo doc ${i}`, emb);
+  }
+  for (let i = 0; i < 100; i++) {
+    await upsertSourceDoc("session", `budget-sess-${i}-${stamp}`, `global session ${i}`, emb);
+  }
+  const res = await knowledgeGraph(60, proj);
+  const repoIds = res.nodes.filter(n => n.kind === "repo" && n.id.startsWith(`${proj}:`)).map(n => n.id);
+  expect(repoIds.length).toBe(5);
+  for (let i = 0; i < 5; i++) {
+    expect(res.nodes.map(n => n.id)).toContain(`${proj}:file-${i}-${stamp}.md`);
+  }
+  expect(res.nodes.length).toBe(60);
+  const globalCount = res.nodes.filter(n => !(n.kind === "repo" && n.id.startsWith(`${proj}:`))).length;
+  expect(globalCount).toBe(55);
+});
+
+test("knowledgeGraph() no-project unchanged: newest global session appears", async () => {
+  const sess = `noproj-sess-${Date.now()}`;
+  await upsertSourceDoc("session", sess, "no-project session content", emb);
+  const res = await knowledgeGraph(200);
+  expect(res.nodes.map(n => n.id)).toContain(sess);
+});
+
+test("knowledgeGraph edges only reference returned nodes", async () => {
+  const proj = randomUUID();
+  const stamp = Date.now();
+  await upsertSourceDoc("repo", `${proj}:a-${stamp}.md`, "shared graph content here", emb);
+  await upsertSourceDoc("session", `edge-sess-${stamp}`, "shared graph content here", emb);
+  const res = await knowledgeGraph(60, proj);
+  const ids = new Set(res.nodes.map(n => n.id));
+  for (const e of res.edges) {
+    expect(ids.has(e.a)).toBe(true);
+    expect(ids.has(e.b)).toBe(true);
+  }
+});

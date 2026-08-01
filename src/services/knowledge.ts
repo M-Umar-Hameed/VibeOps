@@ -255,31 +255,50 @@ export async function knowledgeGraph(limit = 60, projectId?: string): Promise<{ 
   // vault + session are shared context (no project). repo nodes carry a
   // "<projectId>:" sourceRef prefix. note nodes map to a project via
   // scope+refId (notes have no project_id column); global-scope notes are shared.
-  const proj = projectId
-    ? dsql`WHERE (
-        source_kind IN ('vault','session')
-        OR (source_kind = 'repo' AND source_ref LIKE ${projectId + ":%"})
-        OR (source_kind = 'note' AND source_ref IN (
-          SELECT n.id::text FROM notes n
-          LEFT JOIN tickets t ON t.id = n.ref_id
-          WHERE n.deleted_at IS NULL AND (
-            n.scope = 'global'
-            OR (n.scope = 'project' AND n.ref_id = ${projectId}::uuid)
-            OR (n.scope = 'ticket' AND t.project_id = ${projectId}::uuid)
-          )
-        ))
-      )`
-    : dsql``;
-  const aggRows: unknown = await db.execute(dsql`
+  const unwrap = (r: unknown) => (Array.isArray(r) ? r : (r as { rows: unknown[] }).rows) as any[];
+  const groupQuery = (where: ReturnType<typeof dsql>) => db.execute(dsql`
     SELECT source_ref, source_kind, count(id) as chunk_count, max(created_at) as created_at
     FROM embeddings
-    ${proj}
+    ${where}
     GROUP BY source_ref, source_kind
     ORDER BY max(created_at) DESC
     LIMIT ${limit}
   `);
 
-  const rows = (Array.isArray(aggRows) ? aggRows : (aggRows as { rows: unknown[] }).rows) as any[];
+  let rows: any[];
+  if (projectId) {
+    // Budget the node list so a project's own nodes are never crowded out by the
+    // globally-shared, always-newer session/vault stream. Project-scoped nodes
+    // (repo docs + this project's project/ticket notes) are selected FIRST, then
+    // remaining slots fill with global nodes (vault/session + global-scope notes),
+    // newest-first within each group. The two groups are disjoint (a row is repo,
+    // vault, session, or a note of exactly one scope) so no dedup is needed.
+    const projectWhere = dsql`WHERE (
+        (source_kind = 'repo' AND source_ref LIKE ${projectId + ":%"})
+        OR (source_kind = 'note' AND source_ref IN (
+          SELECT n.id::text FROM notes n
+          LEFT JOIN tickets t ON t.id = n.ref_id
+          WHERE n.deleted_at IS NULL AND (
+            (n.scope = 'project' AND n.ref_id = ${projectId}::uuid)
+            OR (n.scope = 'ticket' AND t.project_id = ${projectId}::uuid)
+          )
+        ))
+      )`;
+    const globalWhere = dsql`WHERE (
+        source_kind IN ('vault','session')
+        OR (source_kind = 'note' AND source_ref IN (
+          SELECT n.id::text FROM notes n
+          WHERE n.deleted_at IS NULL AND n.scope = 'global'
+        ))
+      )`;
+    const projectRows = unwrap(await groupQuery(projectWhere));
+    const globalRows = unwrap(await groupQuery(globalWhere));
+    // ponytail: project block first, globals fill the rest. If a project ever
+    // exceeds `limit` nodes globals get 0 here; add a reserved global floor then.
+    rows = [...projectRows, ...globalRows].slice(0, limit);
+  } else {
+    rows = unwrap(await groupQuery(dsql``));
+  }
   if (!rows.length) return { nodes: [], edges: [] };
 
   const refs = rows.map(r => String(r.source_ref));

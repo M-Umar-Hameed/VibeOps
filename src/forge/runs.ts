@@ -152,7 +152,10 @@ function applyVerification(res: { ok: boolean; output: string }, compositeName: 
   const [agentName, requestedModel] = compositeName.split(":");
   // Match on the actual BINARY, not the relay.json key — users key agents
   // freely ("fable", "agy-gemini"), the CLI's output format follows the exe.
-  const cmd = config.agents[agentName]?.cmd ?? [agentName];
+  // sdk agents legitimately carry no cmd (config validation skips it for them),
+  // and an empty array would slip past ?? and crash on cmd[0]. Length-check it.
+  const configured = config.agents[agentName]?.cmd;
+  const cmd = configured?.length ? configured : [agentName];
   const strip = (p0: string) => (p0.replace(/\\/g, "/").split("/").pop() ?? p0).replace(/\.(exe|cmd|bat|mjs|cjs|js|py)$/i, "");
   // Generic interpreters carry no identity — the script they run does.
   const INTERPRETERS = new Set(["node", "python", "python3", "deno", "bun"]);

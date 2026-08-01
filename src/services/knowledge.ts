@@ -151,14 +151,47 @@ export async function repoIndexed(projectId: string): Promise<boolean> {
   return !!row;
 }
 
+// Single source of truth for project knowledge scoping, shared by searchKnowledge
+// (combined) and knowledgeGraph (split, to budget project-first). Each returns a
+// bare parenthesized boolean SQL fragment (no WHERE keyword).
+// VAULT RULE lives here: vault+session are global today. To make vault
+// per-project, remove 'vault' from globalScopeWhere's IN list below and add a
+// vault branch to projectScopeWhere — one place, every caller follows.
+function projectScopeWhere(projectId: string) {
+  return dsql`(
+        (source_kind = 'repo' AND source_ref LIKE ${projectId + ":%"})
+        OR (source_kind = 'note' AND source_ref IN (
+          SELECT n.id::text FROM notes n
+          LEFT JOIN tickets t ON t.id = n.ref_id
+          WHERE n.deleted_at IS NULL AND (
+            (n.scope = 'project' AND n.ref_id = ${projectId}::uuid)
+            OR (n.scope = 'ticket' AND t.project_id = ${projectId}::uuid)
+          )
+        ))
+      )`;
+}
+
+function globalScopeWhere() {
+  return dsql`(
+        source_kind IN ('vault','session')
+        OR (source_kind = 'note' AND source_ref IN (
+          SELECT n.id::text FROM notes n
+          WHERE n.deleted_at IS NULL AND n.scope = 'global'
+        ))
+      )`;
+}
+
 export async function searchKnowledge(
   query: string,
-  opts: { limit?: number } = {},
+  opts: { limit?: number; projectId?: string } = {},
   embedder: Embedder = getEmbedder(),
 ): Promise<{ content: string; sourceKind: string; sourceRef: string; score: number; citation: string; createdAt: string }[]> {
   const [qv] = await embedder.embed([query]);
   const limit = opts.limit ?? 5;
   const lit = vecLiteral(qv);
+  const scope = opts.projectId
+    ? dsql`AND (${projectScopeWhere(opts.projectId)} OR ${globalScopeWhere()})`
+    : dsql``;
   // Cosine distance; filter to active dim so mixed-dim rows never compare.
   // SET LOCAL needs the same connection as the query, hence the transaction.
   // ef_search 100 (default 40): the dim filter runs AFTER the ANN scan, so
@@ -168,7 +201,7 @@ export async function searchKnowledge(
   // candidate pool; outer query re-ranks that pool by recency-decayed score
   // so the HNSW index is never asked to order by anything but distance.
   const res: unknown = await db.transaction(async (tx) => {
-    await tx.execute(dsql`set local hnsw.ef_search = 100`);
+    await tx.execute(dsql`set local hnsw.ef_search = 200`);
     return tx.execute(dsql`
     select source_kind, source_ref, content, created_at,
            (1 - cosine_distance) * (1.0 / (1.0 + extract(epoch from (now() - created_at)) / (86400.0 * 90))) as score
@@ -177,6 +210,7 @@ export async function searchKnowledge(
              embedding <=> ${lit}::vector as cosine_distance
       from embeddings
       where dim = ${embedder.dim}
+      ${scope}
       order by embedding <=> ${lit}::vector
       limit ${limit * 4}
     ) candidates
@@ -305,24 +339,8 @@ export async function knowledgeGraph(limit = 60, projectId?: string): Promise<{ 
     // remaining slots fill with global nodes (vault/session + global-scope notes),
     // newest-first within each group. The two groups are disjoint (a row is repo,
     // vault, session, or a note of exactly one scope) so no dedup is needed.
-    const projectWhere = dsql`WHERE (
-        (source_kind = 'repo' AND source_ref LIKE ${projectId + ":%"})
-        OR (source_kind = 'note' AND source_ref IN (
-          SELECT n.id::text FROM notes n
-          LEFT JOIN tickets t ON t.id = n.ref_id
-          WHERE n.deleted_at IS NULL AND (
-            (n.scope = 'project' AND n.ref_id = ${projectId}::uuid)
-            OR (n.scope = 'ticket' AND t.project_id = ${projectId}::uuid)
-          )
-        ))
-      )`;
-    const globalWhere = dsql`WHERE (
-        source_kind IN ('vault','session')
-        OR (source_kind = 'note' AND source_ref IN (
-          SELECT n.id::text FROM notes n
-          WHERE n.deleted_at IS NULL AND n.scope = 'global'
-        ))
-      )`;
+    const projectWhere = dsql`WHERE ${projectScopeWhere(projectId)}`;
+    const globalWhere = dsql`WHERE ${globalScopeWhere()}`;
     const projectRows = unwrap(await groupQuery(projectWhere));
     const globalRows = unwrap(await groupQuery(globalWhere));
     // ponytail: project block first, globals fill the rest. If a project ever

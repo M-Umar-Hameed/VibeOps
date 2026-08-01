@@ -9,6 +9,14 @@ import { createActor } from "../src/services/actors.js";
 
 const emb = new FakeEmbedder(1024);
 
+import { sql } from "drizzle-orm";
+import { beforeEach } from "vitest";
+import { db } from "../src/db/client.js";
+
+beforeEach(async () => {
+  await db.execute(sql`truncate table embeddings`);
+});
+
 test("knowledgeGraph returns nodes and edges with twin similarities", async () => {
   const ref1 = `graph-twin-1-${Date.now()}`;
   const ref2 = `graph-twin-2-${Date.now()}`;

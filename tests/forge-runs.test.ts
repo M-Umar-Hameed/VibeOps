@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { eq } from "drizzle-orm";
+import { parseVerdict } from "../src/relay/prompts.js";
 import { 
   startPipeline, 
   stopRun, 
@@ -79,6 +80,7 @@ afterEach(() => {
   delete process.env.FAKE_SCRIPT;
   delete process.env.FAKE_COUNTER_FILE;
   delete process.env.FAKE_WRITE;
+  delete process.env.FAKE_WRITE_PATH;
   rmSync(workdir, { recursive: true, force: true });
   rmSync(sandboxRoot, { recursive: true, force: true });
   rmSync(counterDir, { recursive: true, force: true });
@@ -386,6 +388,66 @@ describe("forge run manager", () => {
     const summary = listRuns().find((r) => r.id === runId);
     expect(summary?.finishedAt).toBeTruthy();
   }, 15_000);
+
+  it("work stage editing a protected path blocks promote and records a forced Critical FAIL", async () => {
+    const { actorId, ticket } = await seedTicket("Protected path violation");
+    process.env.FAKE_WRITE_PATH = "vitest.config.ts";
+    setScript("plan,work,review-pass"); // review model says PASS; gate must override
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).toContain("=== FORGE protected-paths ===");
+    expect(output?.chunk).toContain("vitest.config.ts");
+
+    const review = (await listComments(ticket.id)).filter((c) => c.kind === "review").pop();
+    expect(review?.body).toContain("PROTECTED-PATH VIOLATION");
+    expect(review?.body).toContain("VERDICT: FAIL");
+    // The promote gate reads exactly this: last admin review verdict must be fail.
+    expect(parseVerdict(review!.body).pass).toBe(false);
+    expect((await getTicket(ticket.id)).status).toBe("planned");
+  });
+
+  it("ALLOW-PROTECTED in the ticket body lets a protected edit pass, allowance echoed", async () => {
+    const { actorId, ticket } = await seedTicket("Protected path allowed");
+    await updateTicket(actorId, ticket.id, ticket.version,
+      { body: "Fix the test runner.\nALLOW-PROTECTED: vitest.config.ts" });
+    process.env.FAKE_WRITE_PATH = "vitest.config.ts";
+    setScript("plan,work,review-pass");
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).toContain("ALLOW-PROTECTED honoured: vitest.config.ts");
+    const review = (await listComments(ticket.id)).filter((c) => c.kind === "review").pop();
+    expect(review?.body).toContain("VERDICT: PASS");
+    expect(review?.body).not.toContain("PROTECTED-PATH VIOLATION");
+    expect((await getTicket(ticket.id)).status).toBe("review"); // awaiting promote
+  });
+
+  it("a run touching only src/ is unaffected by the protected-path gate", async () => {
+    const { actorId, ticket } = await seedTicket("Ordinary src path");
+    process.env.FAKE_WRITE_PATH = "src/feature.ts";
+    setScript("plan,work,review-pass");
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).not.toContain("=== FORGE protected-paths ===");
+    const review = (await listComments(ticket.id)).filter((c) => c.kind === "review").pop();
+    expect(review?.body).toContain("VERDICT: PASS");
+    expect(review?.body).not.toContain("PROTECTED-PATH VIOLATION");
+    expect((await getTicket(ticket.id)).status).toBe("review");
+  });
 
   it("stopRun returns false for an unknown or already-settled run", async () => {
     expect(stopRun("no-such-run")).toBe(false);

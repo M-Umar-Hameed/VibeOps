@@ -4,7 +4,7 @@
 // FAKE_SCRIPT is set, by a comma list consumed left-to-right via FAKE_COUNTER_FILE
 // (clamped to the last entry once the script is exhausted).
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 
 const prompt = process.argv[2] ?? "";
 void prompt;
@@ -103,6 +103,11 @@ if (!out) {
 
 if (process.env.FAKE_WRITE && mode === "work") {
   writeFileSync(join(process.cwd(), "forge-made.txt"), "made by fake agent\n");
+}
+if (process.env.FAKE_WRITE_PATH && mode === "work") {
+  const p = join(process.cwd(), process.env.FAKE_WRITE_PATH);
+  mkdirSync(dirname(p), { recursive: true });
+  writeFileSync(p, "edited by fake agent\n");
 }
 
 console.log(out);

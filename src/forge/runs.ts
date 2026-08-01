@@ -10,7 +10,8 @@ import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict
 import { killTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { redactSecrets } from "./redact.js";
-import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary } from "./sandbox.js";
+import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames } from "./sandbox.js";
+import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths } from "./policy.js";
 import { pickAgents, escalate, pairsForRole, type Pick, type RoutingStrategy } from "./router.js";
 import { updateTicket } from "../services/tickets.js";
 import { addComment, listComments } from "../services/comments.js";
@@ -403,19 +404,49 @@ async function pipeline(
     append(run, checksText + "\n");
   }
 
+  // Protected-path policy: deterministic, evaluated on the diff (never the
+  // worker's self-report). A touched protected path is an automatic Critical
+  // finding that force-fails the review below and blocks promote, unless the
+  // ticket body waives it with an ALLOW-PROTECTED: <glob>,<glob> line.
+  const protectedGlobs = resolveProtectedPaths(await getSetting("forge.protectedPaths"));
+  const allowGlobs = parseAllowProtected(ticket.body ?? "");
+  const changedPaths = await sandboxDiffNames(workdir, ticket.id);
+  const violations = evaluateProtectedPaths(changedPaths, protectedGlobs, allowGlobs);
+  let protectedFinding: string | undefined;
+  {
+    const lines: string[] = [];
+    if (allowGlobs.length) lines.push(`ALLOW-PROTECTED honoured: ${allowGlobs.join(", ")}`);
+    if (violations.length) {
+      protectedFinding =
+        `PROTECTED-PATH VIOLATION (automatic Critical): the work stage modified protected ` +
+        `harness/config/audit paths:\n${violations.map((p) => `  - ${p}`).join("\n")}\n` +
+        `No ALLOW-PROTECTED allowance in the ticket body covers these; promotion is blocked ` +
+        `until a human overrides.`;
+      lines.push(protectedFinding);
+    }
+    if (lines.length) append(run, `\n=== FORGE protected-paths ===\n${lines.join("\n")}\n`);
+  }
+
   const diff = await sandboxDiff(workdir, ticket.id);
   const stat = await sandboxDiffSummary(workdir, ticket.id);
   const reviewRes = await track(actorId, ticket.id, "review", run.agents.review, () => runAgent(
     agents.review,
-    composeReviewPrompt({ ticket, plan, report: workRes.output, diff: reviewDiffPayload(diff, stat), operatorNotes: run.operatorNotes, checks: checksText }) + roleStyle("review", styleSetting),
+    composeReviewPrompt({ ticket, plan, report: workRes.output, diff: reviewDiffPayload(diff, stat), operatorNotes: run.operatorNotes, checks: checksText, protectedViolation: protectedFinding }) + roleStyle("review", styleSetting),
     workdir, onData,
     (child) => { run.child = child; },
   ));
   run.child = undefined;
   if (run.stopped) return settle(run, "stopped");
   applyVerification(reviewRes, run.agents.review, run, config);
-  const verdict = parseVerdict(reviewRes.output);
-  await addComment(actorId, ticket.id, redactSecrets(verdict.raw), "review");
+  let verdict = parseVerdict(reviewRes.output);
+  let reviewBody = verdict.raw;
+  if (protectedFinding) {
+    // Deterministic override: trailing VERDICT: FAIL wins (parseVerdict takes
+    // the last match), so a model VERDICT: PASS cannot unblock promote.
+    reviewBody = `${reviewBody}\n\n=== FORGE protected-path violation (automatic Critical) ===\n${protectedFinding}\nVERDICT: FAIL`;
+    verdict = { pass: false, raw: reviewBody };
+  }
+  await addComment(actorId, ticket.id, redactSecrets(reviewBody), "review");
   if (!verdict.pass) {
     // FAIL: back to planned; sandbox kept for the rework pass.
     await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });

@@ -72,6 +72,7 @@ afterEach(() => {
   delete process.env.FAKE_SCRIPT;
   delete process.env.FAKE_COUNTER_FILE;
   delete process.env.FAKE_WRITE;
+  delete process.env.FAKE_WRITE_PATH;
   rmSync(workdir, { recursive: true, force: true });
   rmSync(sandboxRoot, { recursive: true, force: true });
 });
@@ -188,6 +189,33 @@ describe("forge API", () => {
     const approveRes = await app.request(`/forge/tickets/${ticket.id}/approve`, { method: "POST", headers: h });
     expect(approveRes.status).toBe(200);
     expect((await approveRes.json()).lastVerdict).toBe("pass");
+    const promoteAfter = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
+    expect(promoteAfter.status).toBe(200);
+    expect((await promoteAfter.json()).status).toBe("closed");
+  });
+
+  it("protected-path violation blocks promote via the HTTP gate; admin approve overrides", async () => {
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+    process.env.FAKE_WRITE_PATH = "vitest.config.ts";
+    setScript("plan,work,review-pass");
+
+    const startRes = await app.request("/forge/pipeline", {
+      method: "POST", headers: h,
+      body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+    });
+    expect(startRes.status).toBe(201); // adjusted from 200 since the route returns 201
+    const { runId } = await startRes.json();
+    await pollUntilDone(h, runId);
+
+    const sandboxRes = await app.request(`/forge/tickets/${ticket.id}/sandbox`, { headers: h });
+    expect((await sandboxRes.json()).lastVerdict).toBe("fail");
+
+    const promoteRes = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
+    expect(promoteRes.status).toBe(409);
+
+    const approveRes = await app.request(`/forge/tickets/${ticket.id}/approve`, { method: "POST", headers: h });
+    expect(approveRes.status).toBe(200);
     const promoteAfter = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
     expect(promoteAfter.status).toBe(200);
     expect((await promoteAfter.json()).status).toBe("closed");

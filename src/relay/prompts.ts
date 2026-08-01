@@ -46,8 +46,9 @@ export function composeWorkPrompt(
 }
 
 export function composeReviewPrompt(
-  { ticket, plan, report, diff, operatorNotes, checks }: {
-    ticket: TicketLike; plan: string; report: string; diff: string; operatorNotes?: string; checks?: string;
+  { ticket, plan, report, diff, operatorNotes, checks, protectedViolation }: {
+    ticket: TicketLike; plan: string; report: string; diff: string;
+    operatorNotes?: string; checks?: string; protectedViolation?: string;
   },
 ): string {
   return [
@@ -59,6 +60,12 @@ export function composeReviewPrompt(
       ? `\nCHECKS (project check commands, run by the pipeline in the worker's sandbox):\n${fenceUntrusted("checks", checks)}\n` +
         `A non-zero exit code in any check above is an automatic Critical finding and requires VERDICT: FAIL, ` +
         `unless the ticket body explicitly waives that check.`
+      : "",
+    protectedViolation
+      ? `\nPROTECTED-PATH POLICY (evaluated deterministically by the pipeline on the diff):\n` +
+        `${fenceUntrusted("protected-paths", protectedViolation)}\n` +
+        `This is an automatic Critical finding recorded as fact. The run's promotion is already ` +
+        `blocked regardless of your verdict.`
       : "",
     `\nReview whether the diff satisfies the plan's acceptance criteria.`,
     // Reviewers run in the base repo, NOT the worker's isolated sandbox; a

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { getLessons, setLessons, lessonsClause, composeAnalyzerPrompt, parseOps, applyOps, recordOutcome, settleCandidate, pushRejected, loadEvoState, saveEvoState } from "./lessons.js";
+import { getLessons, lessonsClause, composeAnalyzerPrompt, parseOps, applyOps, recordProposal } from "./lessons.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
@@ -507,47 +507,32 @@ async function persistRun(run: Run): Promise<void> {
   }
 }
 
-// Studies the settled run's narrated output and rewrites the shared
-// prompt-lessons document. Opt-in, fire-and-forget, never blocks a pipeline.
+// Studies the settled run's narrated output and records a PROPOSED prompt-lessons
+// document in the separate prompt-lessons-proposals note. Advisory-only: it never
+// writes the live prompt-lessons note. Opt-in, fire-and-forget, never blocks a pipeline.
 async function analyzeRun(run: Run, actorId: string, config: RelayConfig): Promise<void> {
   try {
     if ((await getSetting("prompts.selfImprove")) !== "true") return;
     const pick = pickAgents(config, "cheapest-first").plan;
     const agent = { ...getAgent(config, pick.agent, "plan") };
     agent.cmd = resolveCmd(agent, pick.model);
-    
-    let state = await loadEvoState();
-    state = recordOutcome(state, run.status === "passed");
-    const g = settleCandidate(state);
-    state = g.state;
-    
-    if (g.action === "revert" && g.revertDoc !== undefined) {
-      await setLessons(actorId, g.revertDoc);
+
+    const current = await getLessons();
+    const prompt = composeAnalyzerPrompt({
+      output: run.output.slice(0, 30_000),
+      outcome: `status=${run.status} stage=${run.stage}`,
+      current,
+    });
+    const res = await runAgent(agent, prompt, config.workdir);
+    const ops = parseOps(res.output);
+    if (ops === null) {
+      console.warn("forge: analyzer parsed null ops");
+      return;
     }
-    
-    if (state.candidate === null) {
-      const current = await getLessons();
-      const prompt = composeAnalyzerPrompt({
-        output: run.output.slice(0, 30_000),
-        outcome: `status=${run.status} stage=${run.stage}`,
-        current,
-        rejected: state.rejected
-      });
-      const res = await runAgent(agent, prompt, config.workdir);
-      const ops = parseOps(res.output);
-      if (ops === null) {
-        console.warn("forge: analyzer parsed null ops");
-        await saveEvoState(state);
-        return;
-      }
-      const { doc, applied, rejected } = applyOps(current, ops);
-      state.rejected = pushRejected(state.rejected, rejected);
-      if (applied.length) {
-        await setLessons(actorId, doc);
-        state.candidate = { version: state.version + 1, parentDoc: current, ops: applied, window: [] };
-      }
+    const { doc, applied } = applyOps(current, ops);
+    if (applied.length) {
+      await recordProposal(actorId, doc);
     }
-    await saveEvoState(state);
   } catch (e) {
     console.warn(`forge: analyzer failed for run ${run.id}:`, (e as Error).message);
   }

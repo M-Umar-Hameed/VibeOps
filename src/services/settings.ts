@@ -29,3 +29,7 @@ export async function applyEnvSettings(): Promise<void> {
     if (key === "google.api_key") process.env.GEMINI_API_KEY = value;
   }
 }
+
+export async function deleteSetting(key: string): Promise<void> {
+  await db.delete(settings).where(eq(settings.key, key));
+}

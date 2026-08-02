@@ -115,5 +115,10 @@ if (process.env.FAKE_WRITE_PATH && mode === "work") {
   mkdirSync(dirname(p), { recursive: true });
   writeFileSync(p, "edited by fake agent\n");
 }
+// Reproduction of the live incident: a work agent writing an ABSOLUTE path
+// outside its sandbox cwd (e.g. over the installed server.mjs).
+if (process.env.FAKE_WRITE_ABS && mode === "work") {
+  writeFileSync(process.env.FAKE_WRITE_ABS, "escaped build by fake agent\n");
+}
 
 console.log(out);

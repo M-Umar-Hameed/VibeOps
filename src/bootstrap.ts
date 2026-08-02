@@ -5,6 +5,7 @@ import { db } from "./db/client.js";
 import { actors } from "./db/schema.js";
 import { createActor } from "./services/actors.js";
 import { createProject } from "./services/projects.js";
+import { deleteSetting } from "./services/settings.js";
 
 // First-run self-setup for the embedded database. Idempotent: any existing
 // actor means the system is already initialized.
@@ -32,6 +33,11 @@ export async function runBootstrap(
   } catch (e) {
     console.warn(`could not prepare default vault: ${(e as Error).message}`);
   }
+
+  // Advisory-only migration (was T61): every sample in the old evo A/B state was
+  // recorded under a broken outcome definition and nothing reads the key anymore.
+  // Clear it on every boot so no stale state lingers. Runs before the early return.
+  await deleteSetting("prompts.selfImprove.state");
 
   const [existing] = await db.select({ id: actors.id }).from(actors).limit(1);
   if (existing) return { bootstrapped: false };

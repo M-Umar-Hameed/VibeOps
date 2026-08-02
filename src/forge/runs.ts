@@ -63,7 +63,7 @@ const PLAN_ONLY =
   "with repository-relative paths only (src/..., tests/...), never absolute paths.";
 
 type Stage = "plan" | "work" | "review";
-type Status = "running" | "passed" | "failed" | "stopped" | "interrupted";
+type Status = "running" | "passed" | "rejected" | "failed" | "stopped" | "interrupted";
 
 export type Effort = "quick" | "standard" | "max";
 
@@ -465,8 +465,11 @@ async function pipeline(
   const verdict = parseVerdict(reviewRes.output);
   await addComment(actorId, ticket.id, redactSecrets(verdict.raw), "review");
   if (!verdict.pass) {
-    // FAIL: back to planned; sandbox kept for the rework pass.
+    // FAIL: back to planned; sandbox kept for the rework pass. The run settles
+    // "rejected" (not "passed") so the quality signal reflects the verdict, not
+    // pipeline completion.
     await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });
+    return settle(run, "rejected");
   }
   // PASS: ticket STAYS in review — promotion is a human action.
   settle(run, "passed");

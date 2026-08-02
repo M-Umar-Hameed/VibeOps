@@ -453,6 +453,48 @@ describe("forge API", () => {
     expect(promoteRes.status).toBe(409);
     expect((await promoteRes.json()).error).toBe("sandbox has no commits to promote");
   });
+
+  it("a run in progress reports no verdict even when an older review exists (BUG1)", async () => {
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+    // run1: plan,work,review-fail (indices 0,1,2). run2: plan,slow (indices 3,4).
+    setScript("plan,work,review-fail,plan,slow", true);
+
+    const start1 = await app.request("/forge/pipeline", {
+      method: "POST", headers: h,
+      body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+    });
+    const { runId: run1 } = await start1.json();
+    const final1 = await pollUntilDone(h, run1);
+    expect(final1.status).toBe("rejected");
+
+    // control: with run1 settled, its own fail verdict shows.
+    const between = await app.request(`/forge/tickets/${ticket.id}/sandbox`, { headers: h });
+    expect((await between.json()).lastVerdict).toBe("fail");
+
+    // run2 starts; hold it at the work stage (slow agent), no review yet.
+    const start2 = await app.request("/forge/pipeline", {
+      method: "POST", headers: h,
+      body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+    });
+    const { runId: run2 } = await start2.json();
+
+    const deadline = Date.now() + 5000;
+    let stage = "";
+    while (stage !== "work" && Date.now() < deadline) {
+      const out = await app.request(`/forge/runs/${run2}/output?after=0`, { headers: h });
+      stage = (await out.json()).stage;
+      if (stage !== "work") await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(stage).toBe("work");
+
+    // BUG1: the older fail verdict must NOT be reported for the in-progress run2.
+    const during = await app.request(`/forge/tickets/${ticket.id}/sandbox`, { headers: h });
+    expect((await during.json()).lastVerdict).toBeNull();
+
+    await app.request(`/forge/runs/${run2}/stop`, { method: "POST", headers: h });
+    await pollUntilDone(h, run2);
+  });
 });
 
 it("GET /forge/doctor returns per-agent probe/auth status for the configured relay agents", async () => {

@@ -201,4 +201,25 @@ describe("forge sandbox", () => {
     expect(await sandboxDiff(workdir, TID)).not.toContain("uncommitted edit");
     expect(await sandboxWorkingDiff(workdir, TID)).toContain("uncommitted edit");
   });
+
+  it("diff is computed against the sandbox base, not a moving master (BUG2)", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    writeFileSync(join(sp, "b.txt"), "sandbox line\n"); // the agent's only change
+    await forgeCommit(TID, "add b");
+
+    // master advances DURING the run: a new commit touching an unrelated file.
+    writeFileSync(join(workdir, "master-added.txt"), "supervisor fix\n");
+    git(workdir, "add", "-A");
+    git(workdir, "commit", "-m", "supervisor commit while run in progress");
+
+    const activity = await sandboxActivity(workdir, TID);
+    const paths = activity.files.map((f) => f.path);
+    expect(paths).toContain("b.txt");
+    expect(paths).not.toContain("master-added.txt"); // must NOT appear as a deletion
+    expect(activity.totalDeletions).toBe(0);
+
+    const diff = await sandboxWorkingDiff(workdir, TID);
+    expect(diff).toContain("b.txt");
+    expect(diff).not.toContain("master-added.txt");
+  });
 });

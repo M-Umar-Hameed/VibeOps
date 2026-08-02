@@ -136,8 +136,8 @@ const ACTIVITY_CACHE_MS = 2_000;
 // Upgrade path: evict on discardSandbox/promoteSandbox cleanup() if it ever does.
 const activityCache = new Map<string, { at: number; data: SandboxActivity }>();
 
-async function baseCommit(workdir: string): Promise<string> {
-  return (await must(workdir, "rev-parse", "HEAD")).trim();
+async function baseCommit(workdir: string, ticketId: string): Promise<string> {
+  return (await must(workdir, "merge-base", "HEAD", branchName(ticketId))).trim();
 }
 
 function stripCR(s: string): string {
@@ -152,7 +152,7 @@ export async function sandboxActivity(workdir: string, ticketId: string): Promis
   const cached = activityCache.get(path);
   if (cached && Date.now() - cached.at < ACTIVITY_CACHE_MS) return cached.data;
 
-  const base = await baseCommit(workdir);
+  const base = await baseCommit(workdir, ticketId);
   const [numstat, nameStatus, status] = await Promise.all([
     git(path, "diff", "--no-renames", "--numstat", base),
     git(path, "diff", "--no-renames", "--name-status", base),
@@ -207,7 +207,7 @@ export async function sandboxActivity(workdir: string, ticketId: string): Promis
 // Same base-commit comparison as sandboxActivity, but returns the raw unified
 // diff text for the diff viewer instead of a per-file summary.
 export async function sandboxWorkingDiff(workdir: string, ticketId: string): Promise<string> {
-  const base = await baseCommit(workdir);
+  const base = await baseCommit(workdir, ticketId);
   const { out } = await git(sandboxPath(ticketId), "diff", "--no-renames", base);
   return out.slice(0, DIFF_CAP);
 }

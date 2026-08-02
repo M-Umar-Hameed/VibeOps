@@ -20,6 +20,7 @@ type Session = {
   believer?: string;
   investor?: string;
   skeptic?: string;
+  personaRounds?: { round: number; believer: string; investor: string; skeptic: string }[];
   qa?: { question: string; answer: string }[];
   verdict?: ReturnType<typeof parseChairman>;
   startedAt: string;
@@ -80,7 +81,7 @@ export async function startCouncil(
   return { councilId: id };
 }
 
-async function runCouncilPipeline(session: Session, config: RelayConfig): Promise<void> {
+async function runPersonas(session: Session, config: RelayConfig): Promise<void> {
   const personasPick = pickAgents(config, "cheapest-first").plan;
   const personaAgent = { ...config.agents[personasPick.agent] };
   personaAgent.cmd = resolveCmd(personaAgent, personasPick.model);
@@ -88,7 +89,13 @@ async function runCouncilPipeline(session: Session, config: RelayConfig): Promis
   const workdir = config.workdir;
 
   const runPersona = async (role: "believer" | "investor" | "skeptic") => {
-    const prompt = composePersonaPrompt(role, session.prompt);
+    // On a later round, feed the accumulated Q&A and this role's own prior
+    // position so it can concede/maintain. Read happens before any await that
+    // overwrites session[role], so concurrent roles do not race.
+    const round = session.qa && session.qa.length > 0
+      ? { qa: session.qa, priorResponse: session[role] ?? "" }
+      : undefined;
+    const prompt = composePersonaPrompt(role, session.prompt, round);
     let buf = "";
     const res = await runAgent(personaAgent, prompt, workdir, (chunk) => { buf += chunk; });
     // Personas run concurrently; buffer locally and append header+body atomically
@@ -104,6 +111,16 @@ async function runCouncilPipeline(session: Session, config: RelayConfig): Promis
     runPersona("skeptic"),
   ]);
 
+  session.personaRounds = [...(session.personaRounds ?? []), {
+    round: session.round,
+    believer: session.believer!,
+    investor: session.investor!,
+    skeptic: session.skeptic!,
+  }];
+}
+
+async function runCouncilPipeline(session: Session, config: RelayConfig): Promise<void> {
+  await runPersonas(session, config);
   await runChairman(session, config);
 }
 
@@ -145,11 +162,13 @@ export async function submitAnswers(councilId: string, config: RelayConfig, answ
   session.round++;
   session.status = "running";
 
-  runChairman(session, config).catch((e) => {
-    append(session, `\ncouncil error: ${(e as Error).message}\n`);
-    session.status = "failed";
-    session.finishedAt = new Date().toISOString();
-  });
+  runPersonas(session, config)
+    .then(() => runChairman(session, config))
+    .catch((e) => {
+      append(session, `\ncouncil error: ${(e as Error).message}\n`);
+      session.status = "failed";
+      session.finishedAt = new Date().toISOString();
+    });
 }
 
 export async function createTicketFromCouncil(

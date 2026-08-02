@@ -6,13 +6,24 @@ const PERSONA_ROLE: Record<"believer" | "investor" | "skeptic", string> = {
   skeptic: "roaster, actively destroy the idea, hidden flaws, market saturation, why users will not care, brutally honest"
 };
 
-export function composePersonaPrompt(persona: "believer" | "investor" | "skeptic", idea: string): string {
-  return [
+export function composePersonaPrompt(
+  persona: "believer" | "investor" | "skeptic",
+  idea: string,
+  round?: { qa: { question: string; answer: string }[]; priorResponse: string }
+): string {
+  const parts = [
     `Role: ${PERSONA_ROLE[persona]}`,
     `Idea: ${fenceUntrusted("idea", idea)}`,
-    `Answer in under 300 words as plain text.`,
-    UNTRUSTED_CLAUSE
-  ].filter(Boolean).join("\n\n");
+  ];
+  if (round && round.qa.length > 0) {
+    const qaBlock = round.qa.map((qa) => `Q: ${qa.question}\nA: ${qa.answer}`).join("\n\n");
+    parts.push(`The user has since answered the council's questions: ${fenceUntrusted("qa", qaBlock)}`);
+    parts.push(`Your previous position: ${fenceUntrusted("prior", round.priorResponse)}`);
+    parts.push(`Reconsider in light of the answers. State what you now concede, what you still maintain, and what the answers changed.`);
+  }
+  parts.push(`Answer in under 300 words as plain text.`);
+  parts.push(UNTRUSTED_CLAUSE);
+  return parts.filter(Boolean).join("\n\n");
 }
 
 export function composeChairmanPrompt(input: {

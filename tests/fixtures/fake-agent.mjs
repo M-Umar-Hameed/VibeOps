@@ -95,10 +95,16 @@ if (mode === "explain-diff") {
   process.exit(0);
 }
 
-const out = OUTPUTS[mode];
+let out = OUTPUTS[mode];
 if (!out) {
   console.error(`fake-agent: unknown FAKE_MODE "${mode}"`);
   process.exit(1);
+}
+
+// Persona re-runs (round >= 2) carry the answered questions as an untrusted qa
+// fence; emit distinct text so tests can assert a persona shifted position.
+if ((mode === "believer" || mode === "investor" || mode === "skeptic") && prompt.includes('label="qa"')) {
+  out += " (revised after answers)";
 }
 
 if (process.env.FAKE_WRITE && mode === "work") {

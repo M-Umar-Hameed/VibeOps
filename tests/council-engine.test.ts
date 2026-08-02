@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -203,5 +203,31 @@ describe("council engine", () => {
 
     const missing = await app.request(`/council/00000000-0000-0000-0000-000000000000`, { headers: adminH });
     expect(missing.status).toBe(404);
+  });
+
+  it("(h) personas re-run each round: all three change after answers", async () => {
+    const { actor } = await createActor({ name: uniq("council-actor"), kind: "human" });
+    setScript("persona,persona,persona,chairman-questions,persona,persona,persona,chairman-go");
+
+    const { councilId } = await startCouncil(actor.id, relayConfig(), { prompt: "a prompt long enough to pass" });
+    const r1 = await waitForStatus(councilId, ["awaiting-answers"]) as any;
+    const before = { believer: r1.believer, investor: r1.investor, skeptic: r1.skeptic };
+
+    await submitAnswers(councilId, relayConfig(), ["ans a", "ans b"]);
+    const r2 = await waitForStatus(councilId, ["decided"]) as any;
+
+    expect(r2.believer).not.toBe(before.believer);
+    expect(r2.investor).not.toBe(before.investor);
+    expect(r2.skeptic).not.toBe(before.skeptic);
+    expect(r2.believer).toContain("revised after answers");
+    expect(r2.personaRounds).toHaveLength(2);
+    expect(r2.personaRounds[0].round).toBe(1);
+    expect(r2.personaRounds[1].round).toBe(2);
+  });
+
+  it("(i) persona-running block exists in exactly one place", () => {
+    const src = readFileSync(join(__dirname, "..", "src", "council", "runs.ts"), "utf-8");
+    expect(src.match(/runPersona\("believer"\)/g) ?? []).toHaveLength(1);
+    expect(src.match(/async function runPersonas\b/g) ?? []).toHaveLength(1);
   });
 });

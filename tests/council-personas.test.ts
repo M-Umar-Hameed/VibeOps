@@ -136,4 +136,24 @@ More spec
     const result = parseChairman(output);
     expect(result.title).toBe("First real line of spec that is quite long and we will see if it truncates later"); // 80 chars length checking
   });
+
+  it("composePersonaPrompt round 1 is unchanged when no Q&A", () => {
+    const prompt = composePersonaPrompt("believer", "A great idea");
+    expect(prompt).not.toContain('label="qa"');
+    expect(prompt).not.toContain("previous position");
+    expect(prompt).not.toContain("Reconsider");
+  });
+
+  it("composePersonaPrompt later round fences Q&A and prior position", () => {
+    const prompt = composePersonaPrompt("skeptic", "A great idea", {
+      qa: [{ question: "Cost?", answer: "Cheap" }],
+      priorResponse: "my earlier take",
+    });
+    expect(prompt).toContain('<UNTRUSTED label="qa">');
+    expect(prompt).toContain("Cost?");
+    expect(prompt).toContain("Cheap");
+    expect(prompt).toContain('<UNTRUSTED label="prior">');
+    expect(prompt).toContain("my earlier take");
+    expect(prompt).toContain("concede");
+  });
 });

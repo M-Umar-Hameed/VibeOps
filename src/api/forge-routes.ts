@@ -61,6 +61,11 @@ async function lastVerdict(ticketId: string): Promise<"pass" | "fail" | null> {
   const review = [...(await listComments(ticketId))].reverse()
     .find((c) => c.kind === "review" && admins.has(c.authorId));
   if (!review) return null;
+  // A verdict belongs to the run that produced it. If the latest run started
+  // after this review was written, the review is a PREVIOUS run's verdict --
+  // show none until the current run produces its own review.
+  const policy = await latestRunPolicy(ticketId);
+  if (policy && new Date(review.createdAt).getTime() < policy.startedAt.getTime()) return null;
   return parseVerdict(review.body).pass ? "pass" : "fail";
 }
 

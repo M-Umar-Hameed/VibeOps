@@ -623,7 +623,7 @@ export async function hasActiveRun(ticketId: string): Promise<boolean> {
   return !!row;
 }
 
-export type RunPolicy = { runId: string; paths: string[]; waived: boolean };
+export type RunPolicy = { runId: string; paths: string[]; waived: boolean; startedAt: Date };
 
 // Protected-path violation for the ticket's most recent run: the durable gate
 // promote/approve/waive all read. Empty paths => nothing to block.
@@ -632,9 +632,10 @@ export async function latestRunPolicy(ticketId: string): Promise<RunPolicy | nul
     id: forgeRuns.id,
     violations: forgeRuns.protectedViolations,
     waivedAt: forgeRuns.policyWaivedAt,
+    startedAt: forgeRuns.startedAt,
   }).from(forgeRuns).where(eq(forgeRuns.ticketId, ticketId)).orderBy(desc(forgeRuns.startedAt)).limit(1);
   if (!row) return null;
-  return { runId: row.id, paths: row.violations ?? [], waived: row.waivedAt !== null };
+  return { runId: row.id, paths: row.violations ?? [], waived: row.waivedAt !== null, startedAt: row.startedAt };
 }
 
 export async function markPolicyWaived(runId: string): Promise<void> {

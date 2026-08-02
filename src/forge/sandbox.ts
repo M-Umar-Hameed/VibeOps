@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readlinkSync, rmdirSync, symlinkSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { ConflictError } from "../services/errors.js";
+import { vibeopsHome } from "../runtime/home.js";
 
 // Candidate deps dirs to link from the base repo into a sandbox, so work agents
 // (fresh worktree, no install) can run tests without a full npm install per ticket.
@@ -16,12 +16,16 @@ export function assertTicketId(id: string): void {
 }
 
 function sandboxRoot(): string {
-  return process.env.VIBEOPS_SANDBOX_ROOT ?? join(homedir(), ".vibeops", "sandbox");
+  return process.env.VIBEOPS_SANDBOX_ROOT ?? join(vibeopsHome(), ".vibeops", "sandbox");
+}
+
+export function sandboxPathIn(root: string, ticketId: string): string {
+  assertTicketId(ticketId);
+  return join(root, ticketId);
 }
 
 export function sandboxPath(ticketId: string): string {
-  assertTicketId(ticketId);
-  return join(sandboxRoot(), ticketId);
+  return sandboxPathIn(sandboxRoot(), ticketId);
 }
 
 export function branchName(ticketId: string): string {

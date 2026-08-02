@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { getLessons, setLessons, lessonsClause, composeAnalyzerPrompt, parseOps, applyOps, recordOutcome, settleCandidate, pushRejected, loadEvoState } from "../src/forge/lessons.js";
+import { getLessons, setLessons, composeAnalyzerPrompt, parseOps, applyOps } from "../src/forge/lessons.js";
 import { createActor } from "../src/services/actors.js";
 
 process.env.EMBED_PROVIDER = "fake";
@@ -80,59 +80,16 @@ describe("forge lessons", () => {
     expect(res2.doc).toContain("leaked [redacted]");
   });
 
-  it("gate math: candidate worse -> revert; better -> promote; window <K -> none", () => {
-    let state: any = { version: 0, baseline: { rate: 0.5, window: [] }, candidate: null, rejected: [] };
-    state.candidate = { version: 1, parentDoc: "parent", ops: [{ op: "add", text: "x" }], window: [] };
-    
-    // window < K -> none
-    for (let i=0; i<5; i++) state = recordOutcome(state, true);
-    expect(settleCandidate(state).action).toBe("none");
-
-    // candidate worse (5 passes out of 6, candRate = 5/6 = 0.83, baseline is 0.9)
-    state.baseline.rate = 0.9;
-    state = recordOutcome(state, false); // now 6 outcomes: 5 true, 1 false
-    const settleWorse = settleCandidate(state);
-    expect(settleWorse.action).toBe("revert");
-    expect(settleWorse.revertDoc).toBe("parent");
-    expect(settleWorse.state.candidate).toBeNull();
-    expect(settleWorse.state.rejected.length).toBe(1);
-
-    // candidate better
-    let state2: any = { version: 0, baseline: { rate: 0.5, window: [] }, candidate: null, rejected: [] };
-    state2.candidate = { version: 1, parentDoc: "parent", ops: [], window: [] };
-    for (let i=0; i<6; i++) state2 = recordOutcome(state2, true); // candRate 1.0
-    const settleBetter = settleCandidate(state2);
-    expect(settleBetter.action).toBe("promote");
-    expect(settleBetter.state.candidate).toBeNull();
-    expect(settleBetter.state.baseline.rate).toBe(1);
-    expect(settleBetter.state.version).toBe(1);
-  });
-
-  it("pushRejected trims to 10", () => {
-    const buf = Array.from({ length: 9 }, (_, i) => ({ op: "add", text: `old${i}` } as any));
-    const newOps = [
-      { op: "add", text: "new1" },
-      { op: "add", text: "new2" }
-    ] as any;
-    const res = pushRejected(buf, newOps);
-    expect(res.length).toBe(10);
-    expect(res[9].text).toBe("new2");
-    expect(res[0].text).toBe("old1");
-  });
-
-  it("composeAnalyzerPrompt includes output, outcome, current, hard-rule contract, and rejected", () => {
-    const prompt = composeAnalyzerPrompt({ 
-      output: "OUTPUT_MARKER", 
-      outcome: "status=passed stage=review", 
+  it("composeAnalyzerPrompt includes output, outcome, current, and hard-rule contract", () => {
+    const prompt = composeAnalyzerPrompt({
+      output: "OUTPUT_MARKER",
+      outcome: "status=passed stage=review",
       current: "CURRENT_MARKER",
-      rejected: [{ op: "add", text: "BAD_EDIT" } as any]
     });
     expect(prompt).toContain("OUTPUT_MARKER");
     expect(prompt).toContain("status=passed stage=review");
     expect(prompt).toContain("CURRENT_MARKER");
     expect(prompt).toContain("workers write files only, relative paths only, no git commits, REPORT:/VERDICT: contracts");
-    expect(prompt).toContain("These edits were tried and made things worse; do not re-propose them");
-    expect(prompt).toContain("BAD_EDIT");
   });
 });
 
@@ -145,9 +102,9 @@ import { startPipeline, awaitRun } from "../src/forge/runs.js";
 import { createProject } from "../src/services/projects.js";
 import { createTicket } from "../src/services/tickets.js";
 import { getSetting } from "../src/services/settings.js";
-import { getNote, saveNote, updateNote } from "../src/services/notes.js";
+import { listNotes } from "../src/services/notes.js";
 import { randomUUID } from "node:crypto";
-import { withSetting, clearSetting } from "./helpers/settings.js";
+import { withSetting } from "./helpers/settings.js";
 import type { RelayConfig } from "../src/relay/config.js";
 
 const __dirname2 = dirname(fileURLToPath(import.meta.url));
@@ -197,7 +154,6 @@ describe("forge lessons integration", () => {
     process.env.VIBEOPS_SANDBOX_ROOT = sandboxRoot;
     counterDir = mkdtempSync(join(tmpdir(), "lessons-run-ctr-"));
     counterFile = join(counterDir, "counter.txt");
-    await clearSetting("prompts.selfImprove.state"); // clear state
   });
 
   afterEach(async () => {
@@ -208,12 +164,12 @@ describe("forge lessons integration", () => {
     rmSync(workdir, { recursive: true, force: true });
     rmSync(sandboxRoot, { recursive: true, force: true });
     rmSync(counterDir, { recursive: true, force: true });
-    await clearSetting("prompts.selfImprove.state");
   });
 
-  it("selfImprove on: analyzer runs after settle and rewrites prompt-lessons", async () => {
+  it("selfImprove on: analyzer records a proposal and never writes the live note", async () => {
     const { actorId, ticket } = await seedTicket("Lessons happy path");
-    await setLessons(actorId, ""); // clear previous lessons to avoid hitting the 12-line cap
+    const SENTINEL = `live-untouched-${randomUUID()}`;
+    await setLessons(actorId, SENTINEL); // known live-note body; must stay unchanged
     process.env.FAKE_SCRIPT = "plan,work,review-pass,analyzer";
     process.env.FAKE_COUNTER_FILE = counterFile;
     process.env.FAKE_WRITE = "1";
@@ -224,16 +180,19 @@ describe("forge lessons integration", () => {
       });
       await awaitRun(runId);
 
+      // proposal lands in the SEPARATE proposals note; SENTINEL makes it this run's
       const start = Date.now();
-      let body = "";
+      let proposal = "";
       while (Date.now() - start < 5000) {
-        body = await getLessons();
-        if (body.includes("MARKER-LESSON-42")) break;
+        const rows = await listNotes({ scope: "global" });
+        proposal = rows.find((n) => n.title === "prompt-lessons-proposals")?.body ?? "";
+        if (proposal.includes(SENTINEL) && proposal.includes("MARKER-LESSON-42")) break;
         await new Promise((r) => setTimeout(r, 50));
       }
-      expect(body).toContain("MARKER-LESSON-42");
-      const state = await loadEvoState();
-      expect(state.candidate).not.toBeNull();
+      expect(proposal).toContain("MARKER-LESSON-42");
+      expect(proposal).toContain(SENTINEL);
+      // the automated path must NOT have touched the live prompt-lessons note
+      expect(await getLessons()).toBe(SENTINEL);
     });
   }, 15_000);
 
@@ -251,43 +210,5 @@ describe("forge lessons integration", () => {
 
     await new Promise((r) => setTimeout(r, 300));
     expect(readFileSync(counterFile, "utf-8")).toBe("3");
-  });
-
-  it("promote/revert against a real note", async () => {
-    const { actorId } = await seedTicket("fake-for-actor");
-    // Own row, keyed by a unique title and read back by id — never the shared
-    // "prompt-lessons" singleton, so concurrent analyzers can't clobber it.
-    const title = `lessons-note-${randomUUID()}`;
-    const baselineDoc = "line1";
-    let note = await saveNote(actorId, { body: baselineDoc, scope: "global", title });
-
-    const ops: any[] = [{ op: "add", text: "line2" }];
-    const { doc: candidateDoc } = applyOps(baselineDoc, ops);
-    note = await updateNote(actorId, note.id, note.version, { body: candidateDoc });
-
-    // Evo state stays in-memory: never write the shared prompts.selfImprove.state key.
-    let state: any = { version: 0, baseline: { rate: 0.5, window: [] }, candidate: null, rejected: [] };
-    state.candidate = { version: 1, parentDoc: baselineDoc, ops, window: [] };
-
-    // Fail 6 times -> revert
-    for (let i = 0; i < 6; i++) state = recordOutcome(state, false);
-    const g = settleCandidate(state);
-    expect(g.action).toBe("revert");
-    note = await updateNote(actorId, note.id, note.version, { body: g.revertDoc! });
-    state = g.state;
-
-    expect((await getNote(note.id)).body).toBe(baselineDoc);
-    expect(state.rejected.length).toBe(1);
-
-    // Promote case
-    note = await updateNote(actorId, note.id, note.version, { body: candidateDoc });
-    state.candidate = { version: 2, parentDoc: baselineDoc, ops, window: [] };
-    for (let i = 0; i < 6; i++) state = recordOutcome(state, true);
-    const g2 = settleCandidate(state);
-    expect(g2.action).toBe("promote");
-    state = g2.state;
-
-    expect((await getNote(note.id)).body).toBe(candidateDoc);
-    expect(state.baseline.rate).toBe(1);
   });
 });

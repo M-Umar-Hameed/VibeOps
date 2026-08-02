@@ -256,7 +256,7 @@ export function AIModelsTab() {
               <label htmlFor="self-improve" className="text-sm text-on-surface cursor-pointer">
                 Self-improving prompts
                 <span className="block text-xs text-on-surface-variant">
-                  After each forge run, a cheap model updates the prompt-lessons note that future prompts include. Editable in Notes.
+                  After each forge run, a cheap model proposes lessons in the prompt-lessons-proposals note for you to review and copy into prompt-lessons. Editable in Notes.
                 </span>
               </label>
             </div>

@@ -11,6 +11,7 @@ import { killTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { redactSecrets } from "./redact.js";
 import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames } from "./sandbox.js";
+import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
 import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths } from "./policy.js";
 import { pickAgents, escalate, pairsForRole, type Pick, type RoutingStrategy } from "./router.js";
 import { updateTicket } from "../services/tickets.js";
@@ -396,12 +397,28 @@ async function pipeline(
   const findings = lastReview ? `\n\nPrevious review findings (address ALL of these):\n${fenceUntrusted("prior-review-findings", lastReview.body)}` : "";
   const workPrompt = composeWorkPrompt({ ticket, plan, knowledge, workdir: sandbox })
     + findings + NARRATION + "\n\nDo NOT run git commit; the supervisor commits for you." + lessons + roleStyle("work", styleSetting) + extra;
+  // Sandbox-escape sentinel: snapshot known-sensitive files OUTSIDE the sandbox
+  // before the work stage runs. Bash in a work lane is not OS-jailed, so a diff
+  // gate (which only sees the worktree) cannot catch a write to the installed
+  // app or another repo. Detect+restore after work converts a silent compromise
+  // into a reverted, visible, run-failing one. See docs/AGENT_CLIS.md.
+  const sentinelSnaps = snapshotSensitive(resolveSensitivePaths(await getSetting("forge.sensitivePaths")));
   const workRes = await track(actorId, ticket.id, "work", run.agents.work, () =>
     runAgent(agents.work, workPrompt, sandbox, onData,
       (child) => { run.child = child; }, (abort) => { run.abort = abort; },
       modelOf(run.agents.work)));
   run.child = undefined;
   run.abort = undefined;
+  const tampered = detectAndRestore(sentinelSnaps);
+  if (tampered.length) {
+    const report =
+      `\n[forge: SANDBOX-ESCAPE — the work stage wrote outside its sandbox to protected ` +
+      `path(s); each has been restored to its pre-run bytes and the run is failed]\n` +
+      tampered.map((p) => `  - ${p}`).join("\n") + "\n";
+    append(run, report);
+    await bounce(run, actorId, "sandbox escape: protected path written outside the worktree", report);
+    return settle(run, "failed");
+  }
   if (run.stopped) { await bounce(run, actorId, "run stopped", ""); return settle(run, "stopped"); }
   applyVerification(workRes, run.agents.work, run, config);
   if (!workRes.ok) { await bounce(run, actorId, "worker failed", workRes.output); return settle(run, "failed"); }

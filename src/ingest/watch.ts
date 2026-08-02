@@ -180,27 +180,26 @@ async function startProjectVault(projectId: string, dir: string, embedder: Embed
 
 let rescanChain: Promise<void> = Promise.resolve();
 // Serialized so a boot rescan and a settings-triggered rescan never double-watch.
-export function rescanProjectVaults(embedder: Embedder = getEmbedder()): Promise<void> {
+// Optional projectIds filter: when provided, only those projects are rescanned
+// (used by tests to avoid full-DB scan; production passes no filter).
+export function rescanProjectVaults(embedder: Embedder = getEmbedder(), projectIds?: string[]): Promise<void> {
   rescanChain = rescanChain
-    .then(() => doRescanProjectVaults(embedder))
+    .then(() => doRescanProjectVaults(embedder, projectIds))
     .catch((e) => { console.warn(`project vault rescan failed: ${(e as Error).message}`); });
   return rescanChain;
 }
 
-async function doRescanProjectVaults(embedder: Embedder): Promise<void> {
+async function doRescanProjectVaults(embedder: Embedder, projectIds?: string[]): Promise<void> {
   const allProjects = await listProjects();
+  const projects = projectIds ? allProjects.filter((p) => projectIds.includes(p.id)) : allProjects;
   const desired = new Map<string, string>();
-  for (const p of allProjects) {
-    const dir = await resolveProjectVaultPath(p.id);
-    // Only watch if the vault directory exists or there's an explicit override.
-    // This avoids creating vault dirs for every project at boot (which is slow).
-    // The vault gets created on demand when the user first visits vault settings.
-    if (dir !== defaultProjectVaultPath(p.id) || existsSync(dir)) {
-      desired.set(p.id, dir);
-    }
+  for (const p of projects) {
+    desired.set(p.id, await resolveProjectVaultPath(p.id));
   }
   // Stop watchers for removed projects or changed override paths.
+  // When filtering, only consider filtered project IDs for stop logic.
   for (const [pid, w] of projectWatchers) {
+    if (projectIds && !projectIds.includes(pid)) continue; // not in filter scope
     if (!desired.has(pid) || watchedPath.get(pid) !== desired.get(pid)) {
       await w.close();
       projectWatchers.delete(pid);

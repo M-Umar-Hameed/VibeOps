@@ -32,6 +32,9 @@ const MAX_ACTIVE = 3;
 const KEEP_FINISHED = 20;
 const MAX_EXTRA_PROMPT = 10_000;
 const MAX_OPERATOR_NOTES = 2000;
+// Was 2000 and shared across all requests, which was smaller than a single
+// detailed request -- one review round could exhaust it on its own.
+const CHANGE_REQUEST_BUDGET = 12_000;
 export const DIFF_PROMPT_CAP = 40_000;
 
 // Large diffs blow the reviewer's context for little benefit; past the cap, a
@@ -331,8 +334,20 @@ async function pipeline(
   const planCommentIndex = allComments.map(c => c.kind).lastIndexOf("plan");
   const recentComments = planCommentIndex === -1 ? allComments : allComments.slice(planCommentIndex + 1);
   const changeRequests = recentComments.filter(c => c.body.startsWith("CHANGE REQUEST:"));
-  const changeRequestsText = changeRequests.map(c => c.body).join("\n\n").slice(0, 2000);
-  if (changeRequestsText) {
+  // Newest first, and whole requests only: joining oldest-first and slicing
+  // dropped the LATEST feedback whenever an earlier request filled the budget,
+  // so a rework silently re-did the previous pass. Truncation is now announced.
+  const kept: string[] = [];
+  let budget = CHANGE_REQUEST_BUDGET;
+  for (const c of [...changeRequests].reverse()) {
+    if (c.body.length > budget) break;
+    kept.push(c.body);
+    budget -= c.body.length + 2;
+  }
+  const dropped = changeRequests.length - kept.length;
+  const changeRequestsText = kept.join("\n\n")
+    + (dropped ? `\n\n[${dropped} older change request(s) omitted for length -- the newest are above]` : "");
+  if (kept.length) {
     extra += `\n\nChange Requests:\n${fenceUntrusted("change-requests", redactSecrets(changeRequestsText))}`;
   }
 

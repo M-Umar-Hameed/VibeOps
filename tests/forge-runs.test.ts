@@ -682,6 +682,27 @@ describe("forge run manager", () => {
     expect(output?.chunk).toContain("CHANGE REQUEST:");
     expect(output?.chunk).toContain("Fix the typo");
   });
+
+  it("keeps the NEWEST change request when the budget cannot hold them all", async () => {
+    const { actorId, ticket } = await seedTicket("Change Request budget");
+    await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+    // Oldest-first joining used to drop the latest feedback entirely, so a
+    // rework silently repeated the previous pass. Newest must survive.
+    await addComment(actorId, ticket.id, `CHANGE REQUEST:\nOLD-MARKER ${"x".repeat(13_000)}`, "comment");
+    await addComment(actorId, ticket.id, "CHANGE REQUEST:\nNEW-MARKER fix the test, not the source", "comment");
+
+    setScript("echo-prompt");
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).toContain("NEW-MARKER");
+    expect(output?.chunk).not.toContain("OLD-MARKER");
+    expect(output?.chunk).toContain("older change request(s) omitted");
+  });
 });
 
 

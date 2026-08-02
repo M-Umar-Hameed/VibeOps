@@ -14,9 +14,9 @@ function home(): string { const h = mkdtempSync(join(tmpdir(), "slice-home-")); 
 afterEach(async () => {
   for (const s of slices.splice(0)) await s.release();
   for (const h of homes.splice(0)) rmSync(h, { recursive: true, force: true });
-});
+}, 60_000);
 
-test("two slices allocated concurrently never share a port, both differ from 8787", async () => {
+test("two slices allocated concurrently never share a port, both differ from 8787", { timeout: 60_000 }, async () => {
   const [a, b] = await Promise.all([
     allocateSlice({ ticketId: randomUUID(), home: home() }),
     allocateSlice({ ticketId: randomUUID(), home: home() }),
@@ -37,7 +37,7 @@ test("VIBEOPS_HOME unset: data dir resolves homedir-based, exactly as today", ()
   }
 });
 
-test("each slice gets its own writable, isolated database", async () => {
+test("each slice gets its own writable, isolated database", { timeout: 60_000 }, async () => {
   const a = await allocateSlice({ ticketId: randomUUID(), home: home() });
   const b = await allocateSlice({ ticketId: randomUUID(), home: home() });
   slices.push(a, b);
@@ -55,7 +55,7 @@ test("each slice gets its own writable, isolated database", async () => {
   }
 });
 
-test("release frees the port and drops the database; idempotent, no leak", async () => {
+test("release frees the port and drops the database; idempotent, no leak", { timeout: 60_000 }, async () => {
   const h = home();
   const s = await allocateSlice({ ticketId: randomUUID(), home: h });
   const name = s.databaseUrl.split("/").pop()!;

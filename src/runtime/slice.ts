@@ -15,7 +15,7 @@ import { assertTicketId, sandboxPathIn } from "../forge/sandbox.js";
 // problem is suite-vs-suite contention on :5433. Override the instance via
 // VIBEOPS_TEST_PG_BASE if the test DB moves; default is the compose port.
 // Upgrade path: derive from DATABASE_URL's host if the base ever varies per env.
-const PG_BASE = process.env.VIBEOPS_TEST_PG_BASE ?? "postgres://tickets:tickets@localhost:5433";
+export const PG_BASE = process.env.VIBEOPS_TEST_PG_BASE ?? "postgres://tickets:tickets@localhost:5433";
 const TEMPLATE = "vibeops_test_template";
 const TEMPLATE_LOCK = 918273; // fixed advisory-lock key: serialize template build
 
@@ -44,7 +44,12 @@ function reservePort(): Promise<{ port: number; server: Server }> {
   });
 }
 
-async function ensureTemplate(admin: ReturnType<typeof postgres>): Promise<void> {
+export async function ensureTemplate(admin: ReturnType<typeof postgres>): Promise<void> {
+  // Fast path: check without lock. Avoids bottleneck when many files run in parallel.
+  const [exists] = await admin`SELECT 1 AS ok FROM pg_database WHERE datname = ${TEMPLATE}`;
+  if (exists) return;
+
+  // Slow path: serialize template creation.
   await admin`SELECT pg_advisory_lock(${TEMPLATE_LOCK})`;
   try {
     const [row] = await admin`SELECT 1 AS ok FROM pg_database WHERE datname = ${TEMPLATE}`;

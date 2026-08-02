@@ -2,6 +2,7 @@ import { WorkspacesCard, ProjectWorkspaceRow } from "./WorkspacesCard.js";
 import { ObsidianIntegrationCard } from "./ObsidianIntegrationCard.js";
 import { PlatformIntegrationCard } from "./PlatformIntegrationCard.js";
 import { ProjectBindingsCard } from "./ProjectBindingsCard.js";
+import { ProjectVaultCard } from "./ProjectVaultCard.js";
 import { useProject } from "../../context/project.js";
 
 export function IntegrationsTab() {
@@ -33,6 +34,8 @@ export function IntegrationsTab() {
               <ProjectWorkspaceRow project={activeProject} />
             </div>
           </div>
+
+          <ProjectVaultCard projectId={activeProject.id} projectName={activeProject.name} />
 
           <ProjectBindingsCard
             projectId={activeProject.id}

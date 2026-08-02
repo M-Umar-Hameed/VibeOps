@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { statSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
+import { resolveProjectVaultPath } from "../ingest/vault-path.js";
 import { and, eq, isNull, inArray, like, notInArray, sql as dsql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { embeddings, notes, projects } from "../db/schema.js";
@@ -9,6 +10,14 @@ import { ConflictError, NotFoundError } from "./errors.js";
 import { chunkMarkdown } from "../knowledge/chunker.js";
 import { getEmbedder, type Embedder } from "../knowledge/embedder.js";
 import { redactSecrets } from "../forge/redact.js";
+
+// vault sourceRef is either a legacy absolute path (global vault) or
+// "<projectId>:<relPosix>" for a project vault; map the latter back to disk.
+async function resolveVaultRefPath(ref: string): Promise<string> {
+  const m = /^([0-9a-fA-F-]{36}):(.+)$/.exec(ref);
+  if (!m) return ref;
+  return join(await resolveProjectVaultPath(m[1]), m[2]);
+}
 
 export function fileHash(text: string): string {
   return createHash("sha256").update(text).digest("hex");
@@ -154,12 +163,13 @@ export async function repoIndexed(projectId: string): Promise<boolean> {
 // Single source of truth for project knowledge scoping, shared by searchKnowledge
 // (combined) and knowledgeGraph (split, to budget project-first). Each returns a
 // bare parenthesized boolean SQL fragment (no WHERE keyword).
-// VAULT RULE lives here: vault+session are global today. To make vault
-// per-project, remove 'vault' from globalScopeWhere's IN list below and add a
-// vault branch to projectScopeWhere — one place, every caller follows.
+// VAULT RULE: project vault chunks carry a "<projectId>:" ref prefix (like repo)
+// and belong to that project; legacy global-vault chunks are absolute paths (no
+// uuid prefix) and stay global. Session stays global.
 function projectScopeWhere(projectId: string) {
   return dsql`(
         (source_kind = 'repo' AND source_ref LIKE ${projectId + ":%"})
+        OR (source_kind = 'vault' AND source_ref LIKE ${projectId + ":%"})
         OR (source_kind = 'note' AND source_ref IN (
           SELECT n.id::text FROM notes n
           LEFT JOIN tickets t ON t.id = n.ref_id
@@ -173,7 +183,8 @@ function projectScopeWhere(projectId: string) {
 
 function globalScopeWhere() {
   return dsql`(
-        source_kind IN ('vault','session')
+        source_kind = 'session'
+        OR (source_kind = 'vault' AND source_ref !~ '^[0-9a-fA-F-]{36}:')
         OR (source_kind = 'note' AND source_ref IN (
           SELECT n.id::text FROM notes n
           WHERE n.deleted_at IS NULL AND n.scope = 'global'
@@ -261,7 +272,7 @@ export async function getKnowledgeSource(kind: string, ref: string): Promise<str
       .where(and(eq(embeddings.sourceKind, "vault"), eq(embeddings.sourceRef, ref))).limit(1);
     if (!indexed) return `Error: ${ref} is not an indexed vault source.`;
     try {
-      return await readFile(ref, "utf-8");
+      return await readFile(await resolveVaultRefPath(ref), "utf-8");
     } catch (e) {
       return `Error: Could not read vault file ${ref}.`;
     }

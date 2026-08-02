@@ -12,7 +12,7 @@ import { listActors, createActor, revokeActor } from "../services/actors.js";
 import { requireAdmin } from "./auth.js";
 import { getSystemMetrics, getSystemLogs, getSystemTopology, getAiUsage, getSystemStatus } from "../services/system.js";
 import { getSetting, setSetting } from "../services/settings.js";
-import { getVaultStatus, startWatcher, stopWatcher } from "../ingest/watch.js";
+import { getVaultStatus, startWatcher, stopWatcher, rescanProjectVaults, getProjectVaultStatus } from "../ingest/watch.js";
 import { fetchDocs } from "../knowledge/docs.js";
 import { getEmbedder } from "../knowledge/embedder.js";
 import { execFileSync } from "node:child_process";
@@ -80,7 +80,9 @@ app.get("/search", async (c) => c.json(await searchTickets(c.req.query("q") ?? "
 app.get("/projects", async (c) => c.json(await listProjects()));
 app.post("/projects", async (c) => {
   const { key, name } = await c.req.json();
-  return c.json(await createProject({ key, name }), 201);
+  const p = await createProject({ key, name });
+  void rescanProjectVaults();
+  return c.json(p, 201);
 });
 app.patch("/projects/:id", requireAdmin, async (c) => {
   const { repoPath } = await c.req.json().catch(() => ({}));
@@ -95,6 +97,7 @@ app.patch("/projects/:id", requireAdmin, async (c) => {
 app.post("/projects/:id/git-init", requireAdmin, async (c) => c.json(await gitInitProject(c.req.param("id"))));
 app.post("/projects/:id/index-repo", requireAdmin, async (c) =>
   c.json(await indexRepoDocs(c.req.param("id"))));
+app.get("/projects/:id/vault", async (c) => c.json(await getProjectVaultStatus(c.req.param("id"))));
 
 app.post("/projects/scan", requireAdmin, async (c) => {
   const { path } = await c.req.json().catch(() => ({}));
@@ -127,6 +130,7 @@ app.put("/projects/:id/settings/:key", requireAdmin, async (c) => {
   if (typeof value !== "string") return c.json({ error: "value must be a string" }, 400);
   try {
     await setProjectSetting(c.req.param("id"), c.req.param("key"), value);
+    if (c.req.param("key") === "vault.path") void rescanProjectVaults();
     return c.json({ ok: true });
   } catch (e) {
     if (e instanceof NotFoundError) throw e;

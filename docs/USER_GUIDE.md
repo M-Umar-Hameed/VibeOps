@@ -32,7 +32,9 @@ VibeOps organizes work into projects. Use **Add project** to create a new one, o
 In the **Integrations** tab, you can bind a project to a GitHub repository by providing a token and setting the Repository to the `owner/repo` format. Click **Sync now** to pull issues into your VibeOps queue. This integration is two-way: closing a ticket in VibeOps will mirror the closure in GitHub on the second sync.
 
 ## Knowledge & vault
-VibeOps provides a persistent knowledge base for your agents. Just drop markdown or PDF files into `~/.vibeops/vault` and they are automatically indexed. The system falls back to a local, zero-key embedder if this is empty, meaning knowledge search works immediately without any API keys.
+Each project has its own vault so knowledge never gets entangled across repos. Drop markdown or PDF files into a project's vault (default `~/.vibeops/vaults/<project>`) and they are automatically indexed and scoped to that project — a search run for project A never returns project B's vault content. Override a project's vault path from Settings → Integrations while that project is active.
+
+The original shared vault at `~/.vibeops/vault` still works and is indexed as a legacy shared source visible to every project; new content should go to per-project vaults. The system falls back to a local, zero-key embedder if a vault is empty, so knowledge search works immediately without any API keys.
 
 ## Troubleshooting
 - **Too Many Requests (429):** The VibeOps window is holding a stale VibeOps API key (stored in the app's own settings store), not a provider key. Restart the app to refresh it.

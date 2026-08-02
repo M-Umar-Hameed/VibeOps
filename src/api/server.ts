@@ -4,7 +4,7 @@ import { isEmbedded } from "../db/client.js";
 import { runBootstrap } from "../bootstrap.js";
 import { ensureIndex } from "../db/vector-setup.js";
 import { applyEnvSettings } from "../services/settings.js";
-import { startWatcher } from "../ingest/watch.js";
+import { startWatcher, rescanProjectVaults } from "../ingest/watch.js";
 import { reapStaleTickets } from "../services/reaper.js";
 import { markInterruptedRuns, startPipeline } from "../forge/runs.js";
 import { getSetting } from "../services/settings.js";
@@ -21,6 +21,7 @@ if (isEmbedded) {
 await applyEnvSettings();
 // Vault indexing is on by default; never blocks or crashes boot.
 void startWatcher().catch((e) => console.warn(`vault watcher failed to start: ${(e as Error).message}`));
+void rescanProjectVaults().catch((e) => console.warn(`project vault watchers failed to start: ${(e as Error).message}`));
 void reapStaleTickets().then(n => { if (n) console.log(`reaper: bounced ${n} stale ticket(s)`); }).catch(() => {});
 
 async function handleInterruptedRuns() {

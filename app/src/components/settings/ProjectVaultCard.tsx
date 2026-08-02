@@ -2,45 +2,26 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api.js";
 
-export function ObsidianIntegrationCard() {
+export function ProjectVaultCard({ projectId, projectName }: { projectId: string; projectName: string }) {
   const queryClient = useQueryClient();
   const [vaultPath, setVaultPath] = useState("");
   const [editingPath, setEditingPath] = useState(false);
 
   const { data: status, isLoading } = useQuery({
-    queryKey: ["obsidian-status"],
-    queryFn: async () => {
-      return await api.get("/knowledge/obsidian");
-    },
+    queryKey: ["project-vault", projectId],
+    queryFn: async () => await api.get(`/projects/${projectId}/vault`),
     refetchInterval: 5000,
   });
 
-  const startWatcher = useMutation({
+  const savePath = useMutation({
     mutationFn: async (path: string) => {
-      await api.post("/knowledge/obsidian/start", { vaultPath: path });
+      await api.put(`/projects/${projectId}/settings/vault.path`, { value: path });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["obsidian-status"] });
+      setEditingPath(false);
+      queryClient.invalidateQueries({ queryKey: ["project-vault", projectId] });
     },
   });
-
-  const stopWatcher = useMutation({
-    mutationFn: async () => {
-      await api.post("/knowledge/obsidian/stop");
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["obsidian-status"] });
-    },
-  });
-
-  const handleSavePath = async () => {
-    await api.patch("/settings/obsidian.vault_path", { value: vaultPath });
-    setEditingPath(false);
-    // Re-point the watcher at the new path and refresh status.
-    await api.post("/knowledge/obsidian/stop").catch(() => {});
-    await api.post("/knowledge/obsidian/start", { vaultPath }).catch(() => {});
-    queryClient.invalidateQueries({ queryKey: ["obsidian-status"] });
-  };
 
   return (
     <div className="glass-card rounded-xl overflow-hidden border border-white/10 flex flex-col group hover:border-[#7A52B3]/30 transition-all duration-300">
@@ -50,10 +31,10 @@ export function ObsidianIntegrationCard() {
         </div>
         <div>
           <h3 className="font-headline-sm text-on-surface font-bold">Knowledge Vault</h3>
-          <p className="text-xs text-on-surface-variant">Legacy shared vault &middot; indexed for all projects &middot; new content should go to project vaults</p>
+          <p className="text-xs text-on-surface-variant">Project vault for <span className="text-on-surface">{projectName}</span></p>
         </div>
       </div>
-      
+
       <div className="p-6 flex-1 flex flex-col gap-4">
         {isLoading ? (
           <div className="flex-1 flex items-center justify-center">
@@ -63,11 +44,11 @@ export function ObsidianIntegrationCard() {
           <>
             <div>
               <label className="text-xs font-code-sm text-on-surface-variant/70 mb-1 block">Vault Path</label>
-              {!editingPath && status?.vaultPath ? (
+              {!editingPath ? (
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-code-sm text-on-surface">{status.vaultPath}</span>
-                  <button 
-                    onClick={() => { setVaultPath(status.vaultPath || ""); setEditingPath(true); }}
+                  <span className="text-sm font-code-sm text-on-surface">{status?.vaultPath}</span>
+                  <button
+                    onClick={() => { setVaultPath(status?.vaultPath || ""); setEditingPath(true); }}
                     className="text-xs text-primary hover:underline ml-auto"
                   >
                     Edit
@@ -75,21 +56,19 @@ export function ObsidianIntegrationCard() {
                 </div>
               ) : (
                 <div className="flex gap-2">
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     className="flex-1 bg-surface-container-lowest/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface focus:border-primary outline-none transition-colors"
-                    placeholder="Leave blank for the default ~/.vibeops/vault"
+                    placeholder="Leave blank for the default ~/.vibeops/vaults/<project>"
                     value={vaultPath}
                     onChange={(e) => setVaultPath(e.target.value)}
                   />
-                  {editingPath && (
-                    <button 
-                      onClick={handleSavePath}
-                      className="px-3 py-1 bg-primary/20 text-primary rounded hover:bg-primary/30"
-                    >
-                      Save
-                    </button>
-                  )}
+                  <button
+                    onClick={() => savePath.mutate(vaultPath)}
+                    className="px-3 py-1 bg-primary/20 text-primary rounded hover:bg-primary/30"
+                  >
+                    Save
+                  </button>
                 </div>
               )}
             </div>
@@ -117,21 +96,6 @@ export function ObsidianIntegrationCard() {
                 </div>
               )}
             </div>
-            
-            <button 
-              onClick={() => status?.isRunning ? stopWatcher.mutate() : startWatcher.mutate(status?.vaultPath || vaultPath)}
-              disabled={startWatcher.isPending || stopWatcher.isPending || (!status?.vaultPath && !vaultPath)}
-              className={`mt-auto w-full py-2.5 rounded text-sm font-medium transition-all flex items-center justify-center gap-2 ${
-                status?.isRunning 
-                  ? "bg-red-500/20 text-red-400 hover:bg-red-500/30" 
-                  : "bg-white/5 hover:bg-[#7A52B3] hover:text-white text-on-surface"
-              }`}
-            >
-              <span className="material-symbols-outlined text-sm">
-                {status?.isRunning ? "stop_circle" : "play_circle"}
-              </span>
-              {status?.isRunning ? "Stop Watcher" : "Connect Vault"}
-            </button>
           </>
         )}
       </div>

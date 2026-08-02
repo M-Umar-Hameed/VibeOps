@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { getLessons, setLessons, lessonsClause, composeAnalyzerPrompt, parseOps, applyOps, recordOutcome, settleCandidate, pushRejected, loadEvoState, saveEvoState } from "../src/forge/lessons.js";
+import { getLessons, setLessons, lessonsClause, composeAnalyzerPrompt, parseOps, applyOps, recordOutcome, settleCandidate, pushRejected, loadEvoState } from "../src/forge/lessons.js";
 import { createActor } from "../src/services/actors.js";
 
 process.env.EMBED_PROVIDER = "fake";
@@ -145,6 +145,8 @@ import { startPipeline, awaitRun } from "../src/forge/runs.js";
 import { createProject } from "../src/services/projects.js";
 import { createTicket } from "../src/services/tickets.js";
 import { getSetting } from "../src/services/settings.js";
+import { getNote, saveNote, updateNote } from "../src/services/notes.js";
+import { randomUUID } from "node:crypto";
 import { withSetting, clearSetting } from "./helpers/settings.js";
 import type { RelayConfig } from "../src/relay/config.js";
 
@@ -253,43 +255,39 @@ describe("forge lessons integration", () => {
 
   it("promote/revert against a real note", async () => {
     const { actorId } = await seedTicket("fake-for-actor");
+    // Own row, keyed by a unique title and read back by id — never the shared
+    // "prompt-lessons" singleton, so concurrent analyzers can't clobber it.
+    const title = `lessons-note-${randomUUID()}`;
     const baselineDoc = "line1";
-    await setLessons(actorId, baselineDoc);
-    
-    // Build candidate
+    let note = await saveNote(actorId, { body: baselineDoc, scope: "global", title });
+
     const ops: any[] = [{ op: "add", text: "line2" }];
     const { doc: candidateDoc } = applyOps(baselineDoc, ops);
-    await setLessons(actorId, candidateDoc);
-    
-    let state = await loadEvoState();
-    state.baseline.rate = 0.5;
+    note = await updateNote(actorId, note.id, note.version, { body: candidateDoc });
+
+    // Evo state stays in-memory: never write the shared prompts.selfImprove.state key.
+    let state: any = { version: 0, baseline: { rate: 0.5, window: [] }, candidate: null, rejected: [] };
     state.candidate = { version: 1, parentDoc: baselineDoc, ops, window: [] };
-    
+
     // Fail 6 times -> revert
-    for (let i = 0; i < 6; i++) {
-      state = recordOutcome(state, false);
-    }
+    for (let i = 0; i < 6; i++) state = recordOutcome(state, false);
     const g = settleCandidate(state);
     expect(g.action).toBe("revert");
-    await setLessons(actorId, g.revertDoc!);
+    note = await updateNote(actorId, note.id, note.version, { body: g.revertDoc! });
     state = g.state;
-    await saveEvoState(state);
-    
-    expect(await getLessons()).toBe(baselineDoc);
+
+    expect((await getNote(note.id)).body).toBe(baselineDoc);
     expect(state.rejected.length).toBe(1);
-    
+
     // Promote case
-    await setLessons(actorId, candidateDoc);
+    note = await updateNote(actorId, note.id, note.version, { body: candidateDoc });
     state.candidate = { version: 2, parentDoc: baselineDoc, ops, window: [] };
-    for (let i = 0; i < 6; i++) {
-      state = recordOutcome(state, true);
-    }
+    for (let i = 0; i < 6; i++) state = recordOutcome(state, true);
     const g2 = settleCandidate(state);
     expect(g2.action).toBe("promote");
     state = g2.state;
-    await saveEvoState(state);
-    
-    expect(await getLessons()).toBe(candidateDoc);
+
+    expect((await getNote(note.id)).body).toBe(candidateDoc);
     expect(state.baseline.rate).toBe(1);
   });
 });

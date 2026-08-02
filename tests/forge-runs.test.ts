@@ -242,7 +242,7 @@ describe("forge run manager", () => {
     expect(persisted.finishedAt).toBeTruthy();
   });
 
-  it("FAIL verdict bounces to planned, sandbox kept", async () => {
+  it("FAIL verdict settles rejected, bounces to planned, sandbox kept", async () => {
     const { actorId, ticket } = await seedTicket("Fail path");
     setScript("plan,work,review-fail");
 
@@ -251,9 +251,12 @@ describe("forge run manager", () => {
     });
     await awaitRun(runId);
 
-    expect(getRunOutput(runId, 0)?.status).toBe("passed");
+    expect(getRunOutput(runId, 0)?.status).toBe("rejected");
     expect((await getTicket(ticket.id)).status).toBe("planned");
     expect(sandboxExists(ticket.id)).toBe(true);
+
+    const persisted = await waitForPersistedRun(runId);
+    expect(persisted.status).toBe("rejected");
   });
 
   it("executes project checks and feeds failures to the review prompt without hard-failing the pipeline", async () => {

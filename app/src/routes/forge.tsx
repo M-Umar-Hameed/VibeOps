@@ -189,7 +189,7 @@ export function ForgeScreen() {
       setRunStage(latest.stage);
       setRunStatus("running");
       setActiveRunId(latest.id);
-    } else if (latest?.status === "passed" || latest?.status === "failed" || latest?.status === "stopped") {
+    } else if (latest?.status === "passed" || latest?.status === "rejected" || latest?.status === "failed" || latest?.status === "stopped") {
       setActiveRunId(null);
       setIsSubmitting(false);
       setRunStage(latest.stage);
@@ -1063,7 +1063,7 @@ export function ForgeScreen() {
                       <div className="flex flex-col gap-1">
                         <div className="flex items-center gap-2">
                           <span className="font-code-sm text-sm text-on-surface">Run {run.id.substring(0, 8)}</span>
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-code-label uppercase ${run.status === 'passed' ? 'bg-green-500/20 text-green-400' : run.status === 'failed' ? 'bg-red-500/20 text-red-400' : 'bg-surface-container text-on-surface-variant'}`}>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-code-label uppercase ${run.status === 'passed' ? 'bg-green-500/20 text-green-400' : run.status === 'failed' || run.status === 'rejected' ? 'bg-red-500/20 text-red-400' : 'bg-surface-container text-on-surface-variant'}`}>
                             {run.status}
                           </span>
                           {run.effort && (

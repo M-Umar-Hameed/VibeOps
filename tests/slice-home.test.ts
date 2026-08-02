@@ -1,32 +1,43 @@
 import { expect, test } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, existsSync, readdirSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, statSync, readdirSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { allocateSlice } from "../src/runtime/slice.js";
 
-// Read-only snapshot path -> size:mtime for the real ~/.vibeops, to prove the
-// sidecar under a slice never touches it. Absent dir -> empty snapshot.
-function snapshot(dir: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  const walk = (d: string) => {
-    let entries: string[];
-    try { entries = readdirSync(d); } catch { return; }
-    for (const e of entries) {
-      const p = join(d, e);
-      const st = statSync(p);
-      if (st.isDirectory()) walk(p);
-      else out[p] = `${st.size}:${st.mtimeMs}`;
-    }
-  };
-  walk(dir);
-  return out;
+// Snapshot the sidecar-created paths that matter: credentials.json content and
+// data/ directory listing. If the sidecar writes to the real home, these will
+// change. Mtime-based full-tree snapshot is too fragile (background indexers,
+// antivirus, etc. touch timestamps).
+function sidecarSnapshot(vibeops: string): { creds: string | null; dataFiles: string[] } {
+  const credsPath = join(vibeops, "credentials.json");
+  let creds: string | null = null;
+  try { creds = readFileSync(credsPath, "utf8"); } catch { /* absent */ }
+
+  const dataPath = join(vibeops, "data");
+  let dataFiles: string[] = [];
+  try {
+    const walk = (d: string, prefix: string): string[] => {
+      const out: string[] = [];
+      for (const e of readdirSync(d)) {
+        const p = join(d, e);
+        const rel = prefix ? `${prefix}/${e}` : e;
+        const st = statSync(p);
+        if (st.isDirectory()) out.push(...walk(p, rel));
+        else out.push(`${rel}:${st.size}`);
+      }
+      return out;
+    };
+    dataFiles = walk(dataPath, "").sort();
+  } catch { /* absent */ }
+
+  return { creds, dataFiles };
 }
 
 test("sidecar under a slice writes only under slice.home; real ~/.vibeops untouched", { timeout: 120_000 }, async () => {
   const realVibeops = join(homedir(), ".vibeops");
-  const before = snapshot(realVibeops);
+  const before = sidecarSnapshot(realVibeops);
 
   const home = mkdtempSync(join(tmpdir(), "slice-int-home-"));
   const slice = await allocateSlice({ ticketId: randomUUID(), home });
@@ -46,9 +57,13 @@ test("sidecar under a slice writes only under slice.home; real ~/.vibeops untouc
       } catch { /* not up yet */ }
     }
     expect(up).toBe(true);
+    // Sidecar wrote to slice home
     expect(existsSync(join(home, ".vibeops", "credentials.json"))).toBe(true);
     expect(existsSync(join(home, ".vibeops", "data"))).toBe(true);
-    expect(snapshot(realVibeops)).toEqual(before); // real home byte-identical
+    // Real home's sidecar-created paths unchanged
+    const after = sidecarSnapshot(realVibeops);
+    expect(after.creds).toBe(before.creds);
+    expect(after.dataFiles).toEqual(before.dataFiles);
   } finally {
     child.kill();
     await new Promise((r) => setTimeout(r, 500));

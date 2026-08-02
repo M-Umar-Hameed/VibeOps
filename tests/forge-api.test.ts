@@ -495,6 +495,53 @@ describe("forge API", () => {
     await app.request(`/forge/runs/${run2}/stop`, { method: "POST", headers: h });
     await pollUntilDone(h, run2);
   });
+
+  it("sandbox panel diff is computed against the sandbox base, not a moving master (BUG2)", async () => {
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+    // FAKE_WRITE=1 makes the work stage write 'forge-made.txt'.
+    // The review stage uses 'slow' to hang for 2 seconds, keeping the run in flight.
+    setScript("plan,work,slow", true);
+
+    const startRes = await app.request("/forge/pipeline", {
+      method: "POST", headers: h,
+      body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+    });
+    const { runId } = await startRes.json();
+    
+    // Wait until stage is 'review' so that the work commit has definitely occurred
+    const deadline = Date.now() + 5000;
+    let stage = "";
+    while (stage !== "review" && Date.now() < deadline) {
+      const out = await app.request(`/forge/runs/${runId}/output?after=0`, { headers: h });
+      stage = (await out.json()).stage;
+      if (stage !== "review") await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(stage).toBe("review");
+
+    // Master advances DURING the run
+    writeFileSync(join(workdir, "master-added.txt"), "supervisor fix\\n");
+    execFileSync("git", ["add", "-A"], { cwd: workdir });
+    execFileSync("git", ["commit", "-m", "supervisor commit while run in flight"], { cwd: workdir });
+
+    // Assert the reported sandbox activity contains ONLY the sandbox's own changed files
+    const activityRes = await app.request(`/forge/tickets/${ticket.id}/sandbox/activity`, { headers: h });
+    const activity = await activityRes.json();
+    const paths = activity.files.map((f: any) => f.path);
+    
+    expect(paths).toContain("forge-made.txt");
+    expect(paths).not.toContain("master-added.txt");
+    expect(activity.totalDeletions).toBe(0);
+
+    // Assert the reported sandbox diff
+    const diffRes = await app.request(`/forge/tickets/${ticket.id}/diff?worktree=true`, { headers: h });
+    const diffBody = await diffRes.json();
+    expect(diffBody.diff).toContain("forge-made.txt");
+    expect(diffBody.diff).not.toContain("master-added.txt");
+
+    await app.request(`/forge/runs/${runId}/stop`, { method: "POST", headers: h });
+    await pollUntilDone(h, runId);
+  });
 });
 
 it("GET /forge/doctor returns per-agent probe/auth status for the configured relay agents", async () => {

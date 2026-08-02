@@ -681,7 +681,7 @@ describe("forge run manager", () => {
     await awaitRun(runId);
 
     const output = getRunOutput(runId, 0);
-    expect(output?.chunk).toContain("Change Requests:");
+    expect(output?.chunk).toContain("Comments since last plan:");
     expect(output?.chunk).toContain("CHANGE REQUEST:");
     expect(output?.chunk).toContain("Fix the typo");
   });
@@ -704,7 +704,66 @@ describe("forge run manager", () => {
     const output = getRunOutput(runId, 0);
     expect(output?.chunk).toContain("NEW-MARKER");
     expect(output?.chunk).not.toContain("OLD-MARKER");
-    expect(output?.chunk).toContain("older change request(s) omitted");
+    expect(output?.chunk).toContain("older comment(s) omitted");
+  });
+
+  it("an unmarked human comment reaches the worker (no CHANGE REQUEST prefix required)", async () => {
+    const { actorId, ticket } = await seedTicket("Unmarked comment reaches worker");
+    await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+    // Live incident: a "Supervisor addendum" with no marker was silently dropped.
+    await addComment(actorId, ticket.id, "Supervisor addendum: also cover the protected-path test", "comment");
+
+    setScript("echo-prompt");
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).toContain("Comments since last plan:");
+    expect(output?.chunk).toContain("Supervisor addendum: also cover the protected-path test");
+    expect(output?.chunk).toContain("<UNTRUSTED label=\"ticket-comments\">");
+  });
+
+  it("an excluded comment is reported in the run output with counts", async () => {
+    const { actorId, ticket } = await seedTicket("Excluded comment reported");
+    await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+    // Older comment overflows the 12k budget on its own -> excluded. Newer kept.
+    await addComment(actorId, ticket.id, `OLD ${"x".repeat(13_000)}`, "comment");
+    await addComment(actorId, ticket.id, "NEW short guidance", "comment");
+
+    setScript("echo-prompt");
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    // Visibility: run output states considered/included/omitted counts.
+    expect(output?.chunk).toContain("2 considered, 1 included, 1 omitted for length");
+    // Kept comment reaches the prompt; excluded one does not.
+    expect(output?.chunk).toContain("NEW short guidance");
+    expect(output?.chunk).not.toContain(`OLD ${"x".repeat(13_000)}`);
+  });
+
+  it("agent-authored comments are not treated as guidance", async () => {
+    const { actorId, ticket } = await seedTicket("Agent comments excluded");
+    await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+    // A report written after the plan must NOT be injected as human guidance.
+    await addComment(actorId, ticket.id, "REPORTONLY-MARKER worker report body", "report");
+
+    setScript("echo-prompt");
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).not.toContain("Comments since last plan:");
+    expect(output?.chunk).not.toContain("REPORTONLY-MARKER");
   });
 });
 

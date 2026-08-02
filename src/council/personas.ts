@@ -42,7 +42,7 @@ export function composeChairmanPrompt(input: {
 
   if (input.qa && input.qa.length > 0) {
     const qaBlock = input.qa.map(qa => `Q: ${qa.question}\nA: ${qa.answer}`).join("\n\n");
-    parts.push(`Q&A:\n${qaBlock}`);
+    parts.push(`Q&A:\n${fenceUntrusted("qa", qaBlock)}`);
   }
 
   parts.push(UNTRUSTED_CLAUSE);

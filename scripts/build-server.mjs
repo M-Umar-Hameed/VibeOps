@@ -21,12 +21,15 @@ await build({
   format: "esm",
   target: "node20",
   outfile: join(outDir, "server.mjs"),
-  external: ["@electric-sql/pglite", "@huggingface/transformers"],
+  // claude-agent-sdk spawns its own cli.js and resolves it relative to its
+  // package dir, so it must stay on disk rather than be inlined.
+  external: ["@electric-sql/pglite", "@huggingface/transformers", "@anthropic-ai/claude-agent-sdk"],
   banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
   logLevel: "info",
 });
 
 cpSync("node_modules/@electric-sql/pglite", join(outDir, "node_modules", "@electric-sql", "pglite"), { recursive: true });
+cpSync("node_modules/@anthropic-ai/claude-agent-sdk", join(outDir, "node_modules", "@anthropic-ai", "claude-agent-sdk"), { recursive: true });
 cpSync("drizzle", join(outDir, "drizzle"), { recursive: true });
 
 // Local-embeddings stack: npm resolves the native tree (onnxruntime, sharp) into

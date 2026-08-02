@@ -34,6 +34,21 @@ describe("forge SDK lane", () => {
     expect(res.usage).toEqual({ tokens: 30, cost: 5000 });
   });
 
+  it("passes the picked model through to the SDK, and omits it when unset", async () => {
+    const seen: any[] = [];
+    (query as any).mockImplementation(async function* (args: any) {
+      seen.push(args.options);
+      yield { type: "result", subtype: "success", is_error: false };
+    });
+    const agent = { type: "sdk" as const, roles: ["work"], cmd: [] };
+
+    await runAgentSdk(agent, "prompt", workdir, undefined, undefined, "opus");
+    expect(seen[0].model).toBe("opus");
+
+    await runAgentSdk(agent, "prompt", workdir);
+    expect("model" in seen[1]).toBe(false);
+  });
+
   it("stops via abort controller", async () => {
     let capturedAbort: AbortController | undefined;
     (query as any).mockImplementation(async function* (args: any) {

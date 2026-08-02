@@ -143,6 +143,12 @@ function composite(pick: Pick): string {
   return pick.model ? `${pick.agent}:${pick.model}` : pick.agent;
 }
 
+// Inverse of composite(): the model half, or undefined for a bare agent name.
+// Only the sdk lane needs this; cli agents get the model via resolveCmd.
+function modelOf(composited: string): string | undefined {
+  return composited.split(":")[1];
+}
+
 // "agent:model" (or bare "agent") from a forge.defaultModel.<role> setting.
 // ponytail: split on the first ":" — agent/model names carry no colons today.
 function parsePair(value: string): Pick {
@@ -377,7 +383,8 @@ async function pipeline(
     + findings + NARRATION + "\n\nDo NOT run git commit; the supervisor commits for you." + lessons + roleStyle("work", styleSetting) + extra;
   const workRes = await track(actorId, ticket.id, "work", run.agents.work, () =>
     runAgent(agents.work, workPrompt, sandbox, onData,
-      (child) => { run.child = child; }, (abort) => { run.abort = abort; }));
+      (child) => { run.child = child; }, (abort) => { run.abort = abort; },
+      modelOf(run.agents.work)));
   run.child = undefined;
   run.abort = undefined;
   if (run.stopped) { await bounce(run, actorId, "run stopped", ""); return settle(run, "stopped"); }

@@ -60,6 +60,7 @@ export async function runAgentSdk(
   agent: RelayAgent, prompt: string, workdir: string,
   onData?: (chunk: string) => void,
   onAbort?: (abort: () => void) => void,
+  model?: string,
 ): Promise<AgentResult> {
   if (!hasCredentials()) {
     const msg = "\n[forge: SDK lane has no Claude credentials on this machine. Run `claude setup-token` (or `claude login`) and retry.]\n";
@@ -80,6 +81,7 @@ export async function runAgentSdk(
       prompt,
       options: {
         cwd: workdir,
+        ...(model ? { model } : {}),
         abortController: controller,
         canUseTool: async (toolName, toolInput) =>
           checkToolPermission(toolName, toolInput as Record<string, unknown>, workdir, onData),

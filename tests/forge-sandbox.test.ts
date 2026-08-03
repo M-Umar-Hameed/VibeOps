@@ -7,6 +7,7 @@ import {
   assertTicketId, sandboxPath, sandboxExists, ensureSandbox, branchName,
   forgeCommit, sandboxDiff, sandboxDiffSummary, promoteSandbox, discardSandbox,
   unlinkDeps, hasCommitsToPromote, sandboxActivity, sandboxWorkingDiff,
+  snapshotDeps, detectDepsLeak,
 } from "../src/forge/sandbox.js";
 import { ConflictError } from "../src/services/errors.js";
 
@@ -102,6 +103,26 @@ describe("forge sandbox", () => {
     await expect(promoteSandbox(workdir, TID)).rejects.toThrow(ConflictError);
     expect(git(workdir, "status", "--porcelain").trim()).toBe(""); // merge aborted
     expect(sandboxExists(TID)).toBe(true);
+  });
+
+  it("promote conflict message names the conflicting file, sandbox and branch intact", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    writeFileSync(join(sp, "a.txt"), "sandbox version\n");
+    await forgeCommit(TID, "conflict");
+    writeFileSync(join(workdir, "a.txt"), "base version\n");
+    git(workdir, "add", "-A");
+    git(workdir, "commit", "-m", "diverge");
+
+    let err: any;
+    try { await promoteSandbox(workdir, TID); } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(ConflictError);
+    expect(err.message).toContain("a.txt");
+    expect(err.message).toContain("conflicts with the base");
+    // Sandbox still exists after the failed promote
+    expect(sandboxExists(TID)).toBe(true);
+    // Branch still exists and has commits
+    expect(git(workdir, "rev-parse", `forge/${TID}`).trim()).toBeTruthy();
+    expect(await hasCommitsToPromote(workdir, TID)).toBe(true);
   });
 
   it("discard removes tree and branch, base repo untouched", async () => {
@@ -221,5 +242,36 @@ describe("forge sandbox", () => {
     const diff = await sandboxWorkingDiff(workdir, TID);
     expect(diff).toContain("b.txt");
     expect(diff).not.toContain("master-added.txt");
+  });
+});
+
+describe("deps leak guard", () => {
+  it("clean case: snapshotDeps then no changes returns empty detectDepsLeak", () => {
+    const baseline = snapshotDeps(workdir);
+    const leaked = detectDepsLeak(baseline);
+    expect(leaked).toEqual([]);
+  });
+
+  it("addition case: new file in node_modules is reverted and reported", () => {
+    const baseline = snapshotDeps(workdir);
+    const evilPath = join(workdir, "node_modules", "EVIL.txt");
+    writeFileSync(evilPath, "bad\n");
+    const leaked = detectDepsLeak(baseline);
+    expect(leaked.length).toBe(1);
+    expect(leaked[0]).toContain("EVIL.txt");
+    expect(leaked[0]).toContain("added; reverted");
+    expect(existsSync(evilPath)).toBe(false);
+  });
+
+  it("modification case: touching existing file reports modified, file still exists", () => {
+    const baseline = snapshotDeps(workdir);
+    const markerPath = join(workdir, "node_modules", "marker.txt");
+    // Bump mtime by writing new content
+    writeFileSync(markerPath, "modified content\n");
+    const leaked = detectDepsLeak(baseline);
+    expect(leaked.length).toBe(1);
+    expect(leaked[0]).toContain("marker.txt");
+    expect(leaked[0]).toContain("(modified)");
+    expect(existsSync(markerPath)).toBe(true);
   });
 });

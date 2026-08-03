@@ -15,35 +15,44 @@ export const isEmbedded = !url && !process.env.VITEST;
 // embedded mode (no runtime code path uses `sql` there after this slice).
 export const sql = postgres(url ?? "postgres://tickets:tickets@localhost:5433/tickets");
 
-// Handle for graceful shutdown — set inside makeDb when embedded.
-let pgliteClient: { close: () => Promise<void> } | undefined;
+export let db!: ReturnType<typeof drizzlePg<typeof schema>>;
+export let embeddedDbError: import("./lifecycle.js").EmbeddedDbOpenError | null = null;
 
-export async function closeDb(): Promise<void> {
-  try {
-    if (isEmbedded) await pgliteClient?.close();
-    else await sql.end({ timeout: 5 });
-  } catch { /* shutdown is best-effort; never throw on the way out */ }
-}
+// Default close = end the postgres-js pool (non-embedded / test lanes).
+let closeImpl: () => Promise<void> = async () => { await sql.end({ timeout: 5 }); };
+export function closeDb(): Promise<void> { return closeImpl(); }
 
-async function makeDb() {
-  if (!isEmbedded) return drizzlePg(sql, { schema });
+async function makeDb(): Promise<void> {
+  if (!isEmbedded) { db = drizzlePg(sql, { schema }); return; }
   const { PGlite } = await import("@electric-sql/pglite");
   const { vector } = await import("@electric-sql/pglite/vector");
   const { drizzle: drizzlePglite } = await import("drizzle-orm/pglite");
   const { migrate } = await import("drizzle-orm/pglite/migrator");
+  const { openEmbedded, EmbeddedDbOpenError } = await import("./lifecycle.js");
   // PGlite's mkdir is not recursive; create the data dir (and ~/.vibeops) first.
   const dataDir = join(vibeopsHome(), ".vibeops", "data");
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-  const client = new PGlite(dataDir, { extensions: { vector } });
-  pgliteClient = client as unknown as { close: () => Promise<void> };
-  await client.exec("CREATE EXTENSION IF NOT EXISTS vector");
+
+  let client;
+  try {
+    ({ client } = await openEmbedded(dataDir, {
+      makeClient: (dir) => new PGlite(dir, { extensions: { vector } }),
+      now: () => new Date().toISOString().replace(/[:.]/g, "-"),
+    }));
+  } catch (e) {
+    // Corrupt cluster: do NOT crash the sidecar. Record it; server.ts serves a
+    // degraded diagnostic so the failure reaches the user, not just stderr.
+    if (e instanceof EmbeddedDbOpenError) { embeddedDbError = e; return; }
+    throw e;
+  }
+  closeImpl = () => client.close();
   const d = drizzlePglite(client as never, { schema });
   // The import.meta fallback only resolves in the source tree; the bundled payload
   // (server.mjs in resources/) MUST set VIBEOPS_MIGRATIONS_DIR (the launcher does).
   const migrationsDir = process.env.VIBEOPS_MIGRATIONS_DIR
     ?? fileURLToPath(new URL("../../drizzle", import.meta.url));
   await migrate(d as never, { migrationsFolder: migrationsDir });
-  return d;
+  db = d as never;
 }
 
-export const db = (await makeDb()) as ReturnType<typeof drizzlePg<typeof schema>>;
+await makeDb();

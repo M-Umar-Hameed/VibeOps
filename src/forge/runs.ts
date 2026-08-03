@@ -10,7 +10,7 @@ import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict
 import { killTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { redactSecrets } from "./redact.js";
-import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxExists, hasCommitsToPromote } from "./sandbox.js";
+import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
 import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths } from "./policy.js";
 import { pickAgents, escalate, pairsForRole, type Pick, type RoutingStrategy } from "./router.js";
@@ -29,8 +29,15 @@ import { verifyModel, MISMATCH_WARNING, computeVerificationStatus } from "./veri
 import { resolveChecks, runChecks, formatChecks } from "./checks.js";
 
 const OUTPUT_CAP = 400_000;
-const MAX_ACTIVE = 3;
 const KEEP_FINISHED = 20;
+
+// forge.maxActiveRuns: positive-integer cap on concurrent runs. Malformed or
+// unset falls back to the default so a bad setting can never break run start.
+const DEFAULT_MAX_ACTIVE = 3;
+export function resolveMaxActive(setting: string | null): number {
+  const n = parseInt(setting ?? "", 10);
+  return Number.isInteger(n) && n >= 1 ? n : DEFAULT_MAX_ACTIVE;
+}
 const MAX_EXTRA_PROMPT = 10_000;
 const MAX_OPERATOR_NOTES = 2000;
 // Was 2000 and shared across all requests, which was smaller than a single
@@ -283,7 +290,15 @@ export async function startPipeline(
   if (activeRuns().some((r) => r.ticketId === opts.ticketId)) {
     throw new ConflictError(`ticket ${opts.ticketId} already has an active run`);
   }
-  if (activeRuns().length >= MAX_ACTIVE) throw new ConflictError("too many active runs");
+  const cap = resolveMaxActive(await getSetting("forge.maxActiveRuns"));
+  const active = activeRuns();
+  if (active.length >= cap) {
+    const occupying = active.map((r) => `${r.ticketId} (${r.stage})`).join(", ");
+    throw new ConflictError(
+      `concurrency cap reached: ${active.length}/${cap} runs active. In flight: ${occupying}. ` +
+      `Stop a run or wait for one to finish before starting another.`,
+    );
+  }
 
   const ticket = await getTicket(opts.ticketId);
   const allowed = opts.resumeStage === "review"
@@ -426,6 +441,7 @@ async function pipeline(
   // gate (which only sees the worktree) cannot catch a write to the installed
   // app or another repo. Detect+restore after work converts a silent compromise
   // into a reverted, visible, run-failing one. See docs/AGENT_CLIS.md.
+  const depsBaseline = snapshotDeps(workdir);
   const sentinelSnaps = snapshotSensitive(resolveSensitivePaths(await getSetting("forge.sensitivePaths")));
   const workRes = await track(actorId, ticket.id, "work", run.agents.work, () =>
     runAgent(agents.work, workPrompt, sandbox, onData,
@@ -441,6 +457,16 @@ async function pipeline(
       tampered.map((p) => `  - ${p}`).join("\n") + "\n";
     append(run, report);
     await bounce(run, actorId, "sandbox escape: protected path written outside the worktree", report);
+    return settle(run, "failed");
+  }
+  const depsLeak = detectDepsLeak(depsBaseline);
+  if (depsLeak.length) {
+    const report =
+      `\n[forge: DEPS-LEAK — the work stage wrote through the shared node_modules ` +
+      `link into the base repo; additions reverted, run failed]\n` +
+      depsLeak.map((p) => `  - ${p}`).join("\n") + "\n";
+    append(run, report);
+    await bounce(run, actorId, "deps leak: wrote through shared node_modules link", report);
     return settle(run, "failed");
   }
   if (run.stopped) { await bounce(run, actorId, "run stopped", ""); return settle(run, "stopped"); }

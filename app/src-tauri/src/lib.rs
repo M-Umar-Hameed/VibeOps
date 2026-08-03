@@ -1,5 +1,5 @@
 use std::net::TcpStream;
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::path::BaseDirectory;
@@ -40,6 +40,7 @@ pub fn run() {
             }
             let mut cmd = Command::new(&node);
             cmd.arg(&server)
+                .stdin(Stdio::piped())
                 .env_remove("DATABASE_URL")
                 .env("PORT", &port)
                 .env("VIBEOPS_MIGRATIONS_DIR", &migrations);
@@ -60,7 +61,18 @@ pub fn run() {
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }) {
                 if let Some(mut child) = app.state::<Sidecar>().0.lock().unwrap().take() {
-                    let _ = child.kill();
+                    // Drop the sidecar's stdin: EOF tells Node to checkpoint the
+                    // embedded database and exit cleanly. Wait up to ~5s, then
+                    // hard-kill only as a last resort.
+                    drop(child.stdin.take());
+                    let mut exited = false;
+                    for _ in 0..50 {
+                        match child.try_wait() {
+                            Ok(Some(_)) => { exited = true; break; }
+                            _ => std::thread::sleep(Duration::from_millis(100)),
+                        }
+                    }
+                    if !exited { let _ = child.kill(); }
                 }
             }
         });

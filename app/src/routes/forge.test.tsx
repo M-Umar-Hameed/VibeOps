@@ -800,3 +800,37 @@ test("protected-path violation shows the waive action, hides Approve, and posts 
     body: { paths: ["vitest.config.ts"] },
   }));
 });
+
+test("in-flight runs strip shows count, ticket titles, and cost note", async () => {
+  apiFetch.mockImplementation(async (path) => {
+    if (path === "/tickets") return [
+      { id: "t1", title: "Task Alpha", status: "in_progress" },
+      { id: "t2", title: "Task Beta", status: "in_progress" },
+      { id: "t3", title: "Selected Ticket", status: "open" },
+    ];
+    if (path === "/forge/agents") return [
+      { name: "PlanGPT", roles: ["plan"] },
+      { name: "WorkGPT", roles: ["work"] },
+      { name: "ReviewGPT", roles: ["review"] },
+    ];
+    if (path === "/forge/skills") return [];
+    if (path === "/forge/runs") return [
+      { id: "run1", ticketId: "t1", status: "running", stage: "work", startedAt: "2026-07-18T00:00:00Z" },
+      { id: "run2", ticketId: "t2", status: "running", stage: "review", startedAt: "2026-07-18T00:01:00Z" },
+    ];
+    if (path.includes("/sandbox")) return { exists: false };
+    return {};
+  });
+
+  render(wrap(<ForgeScreen />));
+  await waitFor(() => expect(screen.getByText("Selected Ticket")).toBeInTheDocument());
+  fireEvent.click(screen.getByText("Selected Ticket"));
+
+  await waitFor(() => expect(screen.getByText("2 runs in flight")).toBeInTheDocument());
+  // Tickets appear in the list and in the in-flight strip; just ensure they render
+  expect(screen.getAllByText(/Task Alpha/).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(/Task Beta/).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(/work/).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(/review/).length).toBeGreaterThan(0);
+  expect(screen.getByText(/Concurrent runs multiply token spend/)).toBeInTheDocument();
+});

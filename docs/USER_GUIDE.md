@@ -41,3 +41,21 @@ The original shared vault at `~/.vibeops/vault` still works and is indexed as a 
 - **Red dot in Agent Doctor:** The CLI is either not installed or not authenticated. Run the vendor login command again.
 - **Empty diff on forge run:** This is often caused by missing agent permission flags (e.g., missing `--sandbox` or dangerously flags).
 - **Where logs live:** Agent token usage is observed by VibeOps from local session logs, across ALL projects, and surfaced in the UI under Settings > AI Models > Token Usage.
+
+## Database recovery
+
+If the app starts in recovery mode (every request returns 503 "embedded_db_open_failed"),
+the embedded database's write-ahead log was corrupted by an unclean shutdown (hard kill,
+crash, or power loss). Your data files are intact. A timestamped backup copy of the data
+directory was made automatically (see `backupPath` in the error, e.g. `~/.vibeops/data.broken-<timestamp>`).
+
+PGlite cannot reset the WAL in-process. To recover:
+
+1. Copy `~/.vibeops/data` into a Postgres 16 container:
+   `pgvector/pgvector:pg16` matches PGlite's embedded major version.
+2. Run `pg_resetwal -f /path/to/data` inside the container.
+3. Copy the repaired directory back to `~/.vibeops/data`.
+4. Restart the app.
+
+Transactions after the last checkpoint are lost; everything before it is recovered.
+The app never deletes or reinitialises your data directory on its own.

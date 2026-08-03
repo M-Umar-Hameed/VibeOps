@@ -125,5 +125,10 @@ if (process.env.FAKE_WRITE_PATH && mode === "work") {
 if (process.env.FAKE_WRITE_ABS && mode === "work") {
   writeFileSync(process.env.FAKE_WRITE_ABS, "escaped build by fake agent\n");
 }
+// Write through the shared node_modules link back to the base repo.
+if (process.env.FAKE_WRITE_DEPS && mode === "work") {
+  const p = join(process.cwd(), "node_modules", process.env.FAKE_WRITE_DEPS);
+  writeFileSync(p, "leaked by fake agent\n");
+}
 
 console.log(out);

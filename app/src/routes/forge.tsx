@@ -754,6 +754,28 @@ export function ForgeScreen() {
                 )}
               </div>
 
+              {/* In-flight runs strip */}
+              {(() => {
+                const allRuns = Array.isArray(runsQ.data) ? runsQ.data : [];
+                const running = allRuns.filter((r: any) => r.status === "running");
+                if (!running.length) return null;
+                const ticketTitle = (id: string) => tickets.find((t) => t.id === id)?.title ?? id;
+                return (
+                  <div className="p-3 rounded-lg bg-surface-container border border-white/10 text-sm text-on-surface-variant mb-2">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="w-2 h-2 rounded-full bg-secondary animate-pulse" />
+                      <span className="font-bold text-on-surface">{running.length} run{running.length > 1 ? "s" : ""} in flight</span>
+                    </div>
+                    <ul className="text-xs space-y-0.5">
+                      {running.map((r: any) => (
+                        <li key={r.id}>{ticketTitle(r.ticketId)} <span className="text-on-surface-variant/70">({r.stage})</span></li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 text-[11px] text-on-surface-variant/70">Note: Concurrent runs multiply token spend and can hit provider rate limits.</p>
+                  </div>
+                );
+              })()}
+
               <div className="flex items-center flex-wrap gap-4 gap-y-2 pt-2">
                 <button
                   onClick={() => handleRun()}

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readlinkSync, rmdirSync, symlinkSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readlinkSync, rmdirSync, symlinkSync, statSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { ConflictError } from "../services/errors.js";
 import { vibeopsHome } from "../runtime/home.js";
@@ -234,8 +234,14 @@ export async function promoteSandbox(workdir: string, ticketId: string): Promise
   const merge = await git(workdir, "merge", "--no-ff", branchName(ticketId),
     "-m", `forge: promote ${ticketId}`);
   if (merge.code !== 0) {
+    const conflicts = await git(workdir, "diff", "--name-only", "--diff-filter=U");
     await git(workdir, "merge", "--abort");
-    throw new ConflictError(`merge failed: ${merge.out.trim().slice(0, 500)}`);
+    const files = conflicts.out.split("\n").map((l) => l.replace(/\r$/, "").trim()).filter(Boolean);
+    const named = files.length ? files.join(", ") : merge.out.trim().slice(0, 200);
+    throw new ConflictError(
+      `promote blocked: ${branchName(ticketId)} conflicts with the base in ${files.length} file(s): ${named}. ` +
+      `The sandbox and branch are left intact; rework the ticket and re-run, or resolve the conflict before promoting again.`,
+    );
   }
   await cleanup(workdir, ticketId);
 }
@@ -252,4 +258,53 @@ async function cleanup(workdir: string, ticketId: string): Promise<void> {
   await git(workdir, "worktree", "remove", "--force", sandboxPath(ticketId));
   await git(workdir, "branch", "-D", branchName(ticketId));
   await git(workdir, "worktree", "prune");
+}
+
+export type DepsBaseline = { dir: string; entries: Map<string, number> }[];
+
+// Top-level name->mtime snapshot of the base repo's shared deps dirs, taken
+// OUTSIDE any sandbox before the work stage. A run that writes THROUGH the shared
+// junction mutates these real dirs; comparing top-level entries after the run
+// catches new/replaced top-level entries and lets us revert additions.
+// ponytail: top-level only -- an in-place edit of an existing NESTED file bumps
+// no top-level mtime and is not caught. Upgrade path: full recursive walk if a
+// real postinstall is ever seen deep-writing the base.
+export function snapshotDeps(workdir: string): DepsBaseline {
+  const out: DepsBaseline = [];
+  for (const rel of DEPS_DIRS) {
+    const dir = resolve(join(workdir, rel));
+    try {
+      const entries = new Map<string, number>();
+      for (const name of readdirSync(dir)) {
+        try { entries.set(name, statSync(join(dir, name)).mtimeMs); } catch { /* vanished mid-scan */ }
+      }
+      out.push({ dir, entries });
+    } catch { /* base has no such deps dir -- nothing to protect */ }
+  }
+  return out;
+}
+
+// Compare live base deps dirs against the baseline. ADDED top-level entries are
+// deleted from the base (revert the leak) and reported; TOUCHED entries are
+// reported but not restored (no byte snapshot). Empty array => clean.
+export function detectDepsLeak(baseline: DepsBaseline): string[] {
+  const leaked: string[] = [];
+  for (const { dir, entries } of baseline) {
+    let now: string[];
+    try { now = readdirSync(dir); } catch { continue; }
+    const nowSet = new Set(now);
+    for (const name of now) {
+      if (entries.has(name)) continue;
+      const p = join(dir, name);
+      try { rmSync(p, { recursive: true, force: true }); } catch { /* best-effort revert */ }
+      leaked.push(`${p} (added; reverted)`);
+    }
+    for (const [name, mtime] of entries) {
+      if (!nowSet.has(name)) continue;
+      let cur: number;
+      try { cur = statSync(join(dir, name)).mtimeMs; } catch { continue; }
+      if (cur > mtime) leaked.push(`${join(dir, name)} (modified)`);
+    }
+  }
+  return leaked;
 }

@@ -186,3 +186,9 @@ evaluated and is a feature-sized project on Windows, not a bounded change:
 - **Optional Windows hardening** meanwhile: an `icacls /deny` write ACE on the
   enumerated `forge.sensitivePaths` for the work-stage duration (prevents rather
   than reverts, same enumerated scope as the sentinel).
+
+## Concurrency
+
+- **Cap setting:** `forge.maxActiveRuns` (default 3) limits simultaneous pipeline runs. Invalid or empty values fall back to the default.
+- **Node_modules leak guard:** the work stage snapshots top-level `node_modules` entries before running; additions through the shared junction are reverted and fail the run. In-place nested edits are not caught (ceiling documented in code).
+- **Promote conflict:** `promoteSandbox` aborts on merge conflict, names the conflicting files in the error, and leaves the sandbox and branch intact for rework.

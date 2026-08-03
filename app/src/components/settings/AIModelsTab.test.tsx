@@ -60,3 +60,22 @@ test("Local Node / Ollama passthrough control is removed", async () => {
   expect(screen.queryByText("Local Node")).toBeNull();
   expect(screen.queryByText(/Ollama/i)).toBeNull();
 });
+
+test("concurrent run cap renders fetched value and patches on change", async () => {
+  apiFetch.mockReset().mockImplementation((path: string, opts?: any) => {
+    if (path === "/settings/forge.maxActiveRuns" && !opts) return Promise.resolve({ value: "5" });
+    if (path === "/settings/forge.maxActiveRuns" && opts?.method === "PATCH") return Promise.resolve({ value: opts.body.value });
+    if (path === "/settings/ai.routing_strategy") return Promise.resolve({ value: "cost" });
+    if (path === "/settings/agents.commProfile") return Promise.resolve({ value: "off" });
+    return Promise.resolve({ value: "" });
+  });
+
+  render(wrap(<AIModelsTab />));
+  const input = await screen.findByTestId("maxActiveRuns");
+  await waitFor(() => expect(input).toHaveValue(5));
+
+  fireEvent.change(input, { target: { value: "2" } });
+  await waitFor(() =>
+    expect(apiFetch).toHaveBeenCalledWith("/settings/forge.maxActiveRuns", { method: "PATCH", body: { value: "2" } }),
+  );
+});

@@ -9,6 +9,7 @@ import { getSetting } from "../services/settings.js";
 import { redactSecrets } from "../forge/redact.js";
 import { ConflictError, NotFoundError } from "../services/errors.js";
 import { createTicket } from "../services/tickets.js";
+import { loadCouncilSessions, saveCouncilSessions } from "./store.js";
 
 type Session = {
   id: string;
@@ -32,6 +33,30 @@ const KEEP_FINISHED = 20;
 const OUTPUT_CAP = 400_000;
 
 const sessions = new Map<string, Session>();
+
+function persist(): void {
+  // ponytail: whole-map snapshot on each transition; <=23 sessions, negligible.
+  // Live console output is excluded — it is ephemeral and can be large.
+  void saveCouncilSessions([...sessions.values()].map(({ output, ...s }) => s)).catch(() => {});
+}
+
+export async function restoreCouncilSessions(list?: Session[]): Promise<void> {
+  // `list` overload is for deterministic tests; production loads from the store.
+  const rows = (list ?? (await loadCouncilSessions())) as Session[];
+  for (const s of rows) {
+    if (sessions.has(s.id)) continue;
+    // A session still "running" when the process died cannot resume. Report it
+    // as failed rather than leaving it running forever. awaiting-answers sessions
+    // wait on the human, not on compute, so they survive unchanged.
+    if (s.status === "running") {
+      s.status = "failed";
+      s.finishedAt = s.finishedAt ?? new Date().toISOString();
+    }
+    s.output = "";
+    sessions.set(s.id, s);
+  }
+  persist();
+}
 
 function trim(): void {
   const finished = [...sessions.values()].filter((s) => s.status !== "running" && s.status !== "awaiting-answers")
@@ -71,11 +96,13 @@ export async function startCouncil(
   };
   sessions.set(id, session);
   trim();
+  persist();
 
   runCouncilPipeline(session, config).catch((e) => {
     append(session, `\ncouncil error: ${(e as Error).message}\n`);
     session.status = "failed";
     session.finishedAt = new Date().toISOString();
+    persist();
   });
 
   return { councilId: id };
@@ -117,6 +144,7 @@ async function runPersonas(session: Session, config: RelayConfig): Promise<void>
     investor: session.investor!,
     skeptic: session.skeptic!,
   }];
+  persist();
 }
 
 async function runCouncilPipeline(session: Session, config: RelayConfig): Promise<void> {
@@ -149,6 +177,7 @@ async function runChairman(session: Session, config: RelayConfig): Promise<void>
   } else {
     session.status = "awaiting-answers";
   }
+  persist();
 }
 
 export async function submitAnswers(councilId: string, config: RelayConfig, answers: string[]): Promise<void> {
@@ -161,6 +190,7 @@ export async function submitAnswers(councilId: string, config: RelayConfig, answ
   session.qa = [...(session.qa || []), ...qa];
   session.round++;
   session.status = "running";
+  persist();
 
   runPersonas(session, config)
     .then(() => runChairman(session, config))
@@ -168,6 +198,7 @@ export async function submitAnswers(councilId: string, config: RelayConfig, answ
       append(session, `\ncouncil error: ${(e as Error).message}\n`);
       session.status = "failed";
       session.finishedAt = new Date().toISOString();
+      persist();
     });
 }
 
@@ -198,6 +229,7 @@ export async function createTicketFromCouncil(
   const ticket = await createTicket(actorId, { projectId, title, body, status: "open" });
   session.status = "consumed";
   session.finishedAt = new Date().toISOString();
+  persist();
   return ticket;
 }
 

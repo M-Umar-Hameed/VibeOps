@@ -11,6 +11,7 @@ import { getSetting } from "../services/settings.js";
 import { listActors } from "../services/actors.js";
 import { getTicket } from "../services/history.js";
 import { loadRelayConfig } from "../relay/config.js";
+import { restoreCouncilSessions } from "../council/runs.js";
 
 const port = Number(process.env.PORT ?? 8787);
 
@@ -28,6 +29,7 @@ async function bootNormally() {
     if (bootstrapped) console.log("first run: created Inbox project + owner key -> ~/.vibeops/credentials.json");
   }
   await applyEnvSettings();
+  await restoreCouncilSessions();
   // Vault indexing is on by default; never blocks or crashes boot.
   void startWatcher().catch((e) => console.warn(`vault watcher failed to start: ${(e as Error).message}`));
   void rescanProjectVaults().catch((e) => console.warn(`project vault watchers failed to start: ${(e as Error).message}`));

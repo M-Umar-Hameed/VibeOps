@@ -141,6 +141,12 @@ export function CreateScreen() {
 type Project = { id: string; name: string };
 type CouncilStatus = "idle" | "running" | "awaiting-answers" | "decided" | "consumed" | "failed";
 type Decision = "GO" | "NO-GO" | "NEEDS-INFO";
+type CouncilRow = { id: string; status: CouncilStatus; round: number; startedAt: string; promptPreview: string };
+type CouncilDetail = {
+  status: CouncilStatus; round?: number; rating?: number; decision?: Decision;
+  questions?: string[]; title?: string; spec?: string;
+  believer?: string; investor?: string; skeptic?: string;
+};
 
 function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[]; activeProjectId: string | null; nav: ReturnType<typeof useNavigate> }) {
   const [ideaPrompt, setIdeaPrompt] = useState("");
@@ -170,6 +176,16 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
   const [councilError, setCouncilError] = useState("");
   const nextOffsetRef = useRef(0);
   const outputRef = useRef<HTMLPreElement>(null);
+
+  const [councilRound, setCouncilRound] = useState(1);
+  const MAX_ACTIVE = 3; // mirrors MAX_ACTIVE in src/council/runs.ts
+  const councilListQ = useQuery({
+    queryKey: ["council", "list"],
+    queryFn: () => api.get("/council") as Promise<CouncilRow[]>,
+    refetchInterval: 4000,
+  });
+  const rows = Array.isArray(councilListQ.data) ? councilListQ.data : [];
+  const activeRows = rows.filter((r) => r.status === "running" || r.status === "awaiting-answers");
 
   useEffect(() => {
     if (!councilId || councilStatus !== "running") return;
@@ -203,12 +219,13 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
     const poll = async () => {
       try {
         const res = await api.get(`/council/${councilId}`) as {
-          status: CouncilStatus; rating?: number; decision?: Decision;
+          status: CouncilStatus; round?: number; rating?: number; decision?: Decision;
           questions?: string[]; title?: string; spec?: string;
           believer?: string; investor?: string; skeptic?: string;
         };
         if (!running) return;
         setCouncilStatus(res.status);
+        if (res.round !== undefined) setCouncilRound(res.round);
         if (res.rating !== undefined) setCouncilRating(res.rating);
         if (res.decision !== undefined) setCouncilDecision(res.decision);
         if (res.questions !== undefined) {
@@ -230,31 +247,31 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
     return () => { running = false; clearInterval(interval); };
   }, [councilId, councilStatus]);
 
+  const loadCouncil = async (id: string) => {
+    const res = await api.get(`/council/${id}`) as CouncilDetail;
+    setCouncilId(id);
+    localStorage.setItem(COUNCIL_KEY, id);
+    setCouncilStatus(res.status);
+    if (res.round !== undefined) setCouncilRound(res.round);
+    if (res.rating !== undefined) setCouncilRating(res.rating);
+    if (res.decision !== undefined) setCouncilDecision(res.decision);
+    if (res.questions !== undefined) { setCouncilQuestions(res.questions); setAnswers(res.questions.map(() => "")); }
+    if (res.title !== undefined) setCouncilTitle(res.title);
+    if (res.spec !== undefined) setCouncilSpec(res.spec);
+    setPersonaTexts({ believer: res.believer, investor: res.investor, skeptic: res.skeptic });
+    nextOffsetRef.current = 0;
+  };
+
   useEffect(() => {
     const saved = localStorage.getItem(COUNCIL_KEY);
     if (!saved) return;
     let cancelled = false;
     (async () => {
       try {
-        const res = await api.get(`/council/${saved}`) as {
-          status: CouncilStatus; rating?: number; decision?: Decision;
-          questions?: string[]; title?: string; spec?: string;
-          believer?: string; investor?: string; skeptic?: string;
-        };
+        const res = await api.get(`/council/${saved}`) as CouncilDetail;
         if (cancelled) return;
         if (res.status === "running" || res.status === "awaiting-answers" || res.status === "decided") {
-          setCouncilId(saved);
-          setCouncilStatus(res.status);
-          if (res.rating !== undefined) setCouncilRating(res.rating);
-          if (res.decision !== undefined) setCouncilDecision(res.decision);
-          if (res.questions !== undefined) {
-            setCouncilQuestions(res.questions);
-            setAnswers(res.questions.map(() => ""));
-          }
-          if (res.title !== undefined) setCouncilTitle(res.title);
-          if (res.spec !== undefined) setCouncilSpec(res.spec);
-          setPersonaTexts({ believer: res.believer, investor: res.investor, skeptic: res.skeptic });
-          nextOffsetRef.current = 0;
+          await loadCouncil(saved);
         } else {
           localStorage.removeItem(COUNCIL_KEY);
         }
@@ -268,6 +285,11 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
   const handleEvaluate = async () => {
     const prompt = ideaPrompt.trim();
     if (!prompt || !councilProjectId) return;
+    if (activeRows.length >= MAX_ACTIVE) {
+      const holding = activeRows.map((r) => `"${r.promptPreview}"`).join(", ");
+      setCouncilError(`Max ${MAX_ACTIVE} councils active. Finish or answer one first: ${holding}`);
+      return;
+    }
     setEvaluating(true);
     setCouncilError("");
     try {
@@ -349,12 +371,23 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
       <PersonaCard name="Skeptic" text={personaTexts.skeptic} onExpand={() => setExpanded("skeptic")} />
     </div>
   );
+
+  const personaGridLabeled = (
+    <div className="space-y-2">
+      <div className="font-code-sm text-on-surface-variant uppercase tracking-widest">Round {councilRound} positions</div>
+      {personaGrid}
+    </div>
+  );
+
   const allPersonasHaveText = !!(personaTexts.believer && personaTexts.investor && personaTexts.skeptic);
 
   return (
     <div className="glass-card rounded-lg p-8 relative overflow-hidden space-y-6">
       {councilStatus === "idle" && (
-        <div className="space-y-4">
+        <div className="space-y-6">
+          <CouncilList rows={rows} activeCount={activeRows.length} max={MAX_ACTIVE} onOpen={loadCouncil} />
+          <div className="space-y-4">
+
           <div className="space-y-2">
             <label className="font-code-sm text-on-surface-variant uppercase tracking-widest">Idea</label>
             <textarea
@@ -385,12 +418,13 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
           >
             Convene council
           </button>
+          </div>
         </div>
       )}
 
       {councilId && councilStatus === "running" && (
         <div className="space-y-4">
-          {personaGrid}
+          {personaGridLabeled}
           {allPersonasHaveText ? (
             <div className="text-xs uppercase tracking-widest text-primary-fixed-dim animate-pulse">Chairman deliberating...</div>
           ) : (
@@ -404,7 +438,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
         <div className="space-y-4">
           <VerdictCard rating={councilRating} decision={councilDecision} councilId={councilId} />
           <SpecBlock spec={councilSpec} onExpand={() => setExpanded("spec")} />
-          {personaGrid}
+          {personaGridLabeled}
           <ConsoleToggle show={showConsole} onToggle={() => setShowConsole(s => !s)} output={councilOutput} />
           {councilQuestions.map((q, i) => (
             <div key={i} className="space-y-1">
@@ -430,7 +464,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
       {councilId && councilStatus === "decided" && (
         <div className="space-y-4">
           <VerdictCard rating={councilRating} decision={councilDecision} councilId={councilId} />
-          {personaGrid}
+          {personaGridLabeled}
           <SpecBlock spec={councilSpec} onExpand={() => setExpanded("spec")} />
           <ConsoleToggle show={showConsole} onToggle={() => setShowConsole(s => !s)} output={councilOutput} />
           {councilDecision !== "GO" && (
@@ -500,6 +534,39 @@ function SpecBlock({ spec, onExpand }: { spec: string; onExpand: () => void }) {
         </button>
       </div>
       <Markdown text={spec} className="text-sm text-on-surface space-y-2 leading-relaxed text-left max-w-[72ch]" />
+    </div>
+  );
+}
+
+function CouncilList({ rows, activeCount, max, onOpen }: {
+  rows: CouncilRow[]; activeCount: number; max: number; onOpen: (id: string) => void;
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="font-code-sm text-on-surface-variant uppercase tracking-widest">Sessions</div>
+        <div className="text-xs text-on-surface-variant">{activeCount}/{max} active</div>
+      </div>
+      <ul className="space-y-1">
+        {rows.map((r) => {
+          const awaiting = r.status === "awaiting-answers";
+          return (
+            <li key={r.id}>
+              <button
+                type="button"
+                onClick={() => onOpen(r.id)}
+                className={`w-full text-left flex items-center gap-3 px-3 py-2 rounded-sm border cursor-pointer ${awaiting ? "border-amber-500/40 bg-amber-500/10" : "border-white/10 bg-surface-container-lowest"}`}
+              >
+                <span className={`px-2 py-0.5 rounded-sm text-[10px] uppercase tracking-wider ${awaiting ? "bg-amber-500/20 text-amber-400" : "bg-surface-container-highest text-on-surface-variant"}`}>{r.status}</span>
+                <span className="text-xs text-on-surface-variant">R{r.round}</span>
+                <span className="flex-1 truncate text-sm text-on-surface">{r.promptPreview}</span>
+                {awaiting && <span className="text-[10px] uppercase tracking-wider text-amber-400">Answer</span>}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

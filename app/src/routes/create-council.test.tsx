@@ -332,3 +332,86 @@ test("all personas populated while running shows chairman deliberating, verdict 
   await waitFor(() => expect(screen.getByText("GO")).toBeInTheDocument(), { timeout: 6000 });
   expect(screen.queryByText(/Chairman deliberating/i)).toBeNull();
 });
+
+test("session list renders each session with status and round; awaiting is distinguishable", async () => {
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/council") return [
+      { id: "a1", status: "running", round: 1, startedAt: "2026-08-01T00:00:00Z", promptPreview: "alpha idea" },
+      { id: "a2", status: "awaiting-answers", round: 2, startedAt: "2026-08-01T00:00:00Z", promptPreview: "beta idea" },
+      { id: "a3", status: "decided", round: 3, startedAt: "2026-08-01T00:00:00Z", promptPreview: "gamma idea" },
+    ];
+    return {};
+  });
+  render(wrap(<CreateScreen />));
+  await waitFor(() => expect(screen.getByText("alpha idea")).toBeInTheDocument());
+  expect(screen.getByText("beta idea")).toBeInTheDocument();
+  expect(screen.getByText("gamma idea")).toBeInTheDocument();
+  expect(screen.getByText("running")).toBeInTheDocument();
+  expect(screen.getByText("awaiting-answers")).toBeInTheDocument();
+  expect(screen.getByText("R2")).toBeInTheDocument();
+  // awaiting row carries an explicit "Answer" affordance
+  expect(screen.getByText("Answer")).toBeInTheDocument();
+});
+
+test("awaiting-answers session reopens from the list and answers submit", async () => {
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/council") return [
+      { id: "c5", status: "awaiting-answers", round: 1, startedAt: "2026-08-01T00:00:00Z", promptPreview: "reopen me" },
+    ];
+    if (path === "/council/c5") return { status: "awaiting-answers", round: 1, rating: 6, decision: "NEEDS-INFO", questions: ["Budget?"], spec: "s" };
+    if (path === "/council/c5/answers") return { ok: true };
+    return {};
+  });
+  render(wrap(<CreateScreen />));
+  await waitFor(() => expect(screen.getByText("reopen me")).toBeInTheDocument());
+  fireEvent.click(screen.getByText("reopen me"));
+  await waitFor(() => expect(screen.getByText("Budget?")).toBeInTheDocument());
+  fireEvent.change(screen.getAllByRole("textbox")[0], { target: { value: "10k" } });
+  fireEvent.click(screen.getByText(/Submit answers/i));
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/council/c5/answers", {
+    method: "POST", body: { answers: ["10k"] },
+  }));
+});
+
+test("fourth council attempt is blocked with a message naming the active sessions", async () => {
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/council") return [
+      { id: "x1", status: "running", round: 1, startedAt: "2026-08-01T00:00:00Z", promptPreview: "first" },
+      { id: "x2", status: "running", round: 1, startedAt: "2026-08-01T00:00:00Z", promptPreview: "second" },
+      { id: "x3", status: "awaiting-answers", round: 1, startedAt: "2026-08-01T00:00:00Z", promptPreview: "third" },
+    ];
+    return {};
+  });
+  render(wrap(<CreateScreen />));
+  await waitFor(() => screen.getByText("Proj"));
+  await waitFor(() => expect(screen.getByText("first")).toBeInTheDocument());
+  fireEvent.change(screen.getByPlaceholderText(/Describe the idea/i), { target: { value: "a new idea here" } });
+  fireEvent.change(screen.getAllByRole("combobox")[0], { target: { value: "p1" } });
+  fireEvent.click(screen.getByText(/Convene council/i));
+  await waitFor(() => expect(screen.getByText(/Finish or answer one first/i)).toBeInTheDocument());
+  expect(screen.getByText(/"first".*"second".*"third"/)).toBeInTheDocument();
+  expect(apiFetch).not.toHaveBeenCalledWith("/council/evaluate", expect.anything());
+});
+
+test("persona panels are labeled with the round they belong to", async () => {
+  let statusCall = 0;
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/council") return [];
+    if (path === "/council/evaluate") return { councilId: "c1" };
+    if (path.startsWith("/council/c1/output")) return { chunk: "", next: 0, status: "running" };
+    if (path === "/council/c1") {
+      statusCall++;
+      if (statusCall === 1) return { status: "running", round: 1 };
+      return { status: "decided", round: 3, rating: 8, decision: "GO", questions: [], title: "T", spec: "spec",
+               believer: "b", investor: "i", skeptic: "s" };
+    }
+    return {};
+  });
+  render(wrap(<CreateScreen />));
+  await waitFor(() => screen.getByText("Proj"));
+  fireEvent.change(screen.getByPlaceholderText(/Describe the idea/i), { target: { value: "Build a thing" } });
+  fireEvent.change(screen.getAllByRole("combobox")[0], { target: { value: "p1" } });
+  fireEvent.click(screen.getByText(/Convene council/i));
+  await act(async () => { vi.advanceTimersByTime(2000); });
+  await waitFor(() => expect(screen.getByText(/Round 3 positions/i)).toBeInTheDocument(), { timeout: 6000 });
+});

@@ -75,6 +75,11 @@ if (mode === "slow") {
   console.log(OUTPUTS.plan);
   process.exit(0);
 }
+if (mode === "work-hang") {
+  // Write partial edits then hang forever (to simulate being killed mid-work)
+  writeFileSync(join(process.cwd(), "partial.txt"), "partial work\n");
+  await new Promise(() => {}); // hang forever
+}
 if (mode === "leaky") {
   console.log("token sk-abcdefghij0123456789");
   process.exit(0);

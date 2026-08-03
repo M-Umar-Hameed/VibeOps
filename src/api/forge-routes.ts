@@ -7,7 +7,7 @@ import type { Actor } from "../db/schema.js";
 import { loadRelayConfig } from "../relay/config.js";
 import { runDoctor } from "../relay/doctor.js";
 import { parseVerdict } from "../relay/prompts.js";
-import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived } from "../forge/runs.js";
+import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns } from "../forge/runs.js";
 import {
   sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash, sandboxActivity, sandboxWorkingDiff
 } from "../forge/sandbox.js";
@@ -141,6 +141,10 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
 
   app.get("/forge/runs", requireAdmin, async (c) => c.json(await listRunsWithHistory()));
 
+  app.get("/forge/recovery", requireAdmin, async (c) => {
+    return c.json({ interrupted: await listInterruptedRuns(forgeConfig()) });
+  });
+
   app.get("/forge/runs/:id/output", requireAdmin, async (c) => {
     const after = Number(c.req.query("after")) || 0;
     const out = getRunOutput(c.req.param("id"), after);
@@ -185,14 +189,20 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
 
   app.post("/forge/tickets/:id/resume", requireAdmin, async (c) => {
     const ticketId = c.req.param("id");
+    const config = forgeConfig();
+    const item = (await listInterruptedRuns(config)).find((r) => r.ticketId === ticketId);
     const ticket = await getTicket(ticketId);
-    if (ticket.status !== "open" && ticket.status !== "planned") {
+    // No interrupted run recorded: fall back to a normal open/planned start.
+    if (item && !item.resumable) return c.json({ error: item.reason }, 409);
+    const resumeStage = item?.resumeMode === "review" ? "review"
+      : item?.resumeMode === "work" ? "work" : undefined;
+    if (!resumeStage && ticket.status !== "open" && ticket.status !== "planned") {
       return c.json({ error: "ticket must be open or planned to resume" }, 409);
     }
     const body = await c.req.json().catch(() => ({}));
     const operatorNotes = typeof body.operatorNotes === "string" ? body.operatorNotes : undefined;
-    const { runId, doctorWarnings } = await startPipeline(c.get("actor").id, forgeConfig(), {
-      ticketId, planAgent: "auto", workAgent: "auto", reviewAgent: "auto", operatorNotes,
+    const { runId, doctorWarnings } = await startPipeline(c.get("actor").id, config, {
+      ticketId, planAgent: "auto", workAgent: "auto", reviewAgent: "auto", operatorNotes, resumeStage,
     });
     return c.json({ runId, doctorWarnings }, 201);
   });

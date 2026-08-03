@@ -1,16 +1,12 @@
 import { serve } from "@hono/node-server";
 import { app } from "./app.js";
-import { isEmbedded } from "../db/client.js";
+import { isEmbedded, closeDb } from "../db/client.js";
 import { runBootstrap } from "../bootstrap.js";
 import { ensureIndex } from "../db/vector-setup.js";
 import { applyEnvSettings } from "../services/settings.js";
 import { startWatcher, rescanProjectVaults } from "../ingest/watch.js";
 import { reapStaleTickets } from "../services/reaper.js";
-import { markInterruptedRuns, startPipeline } from "../forge/runs.js";
-import { getSetting } from "../services/settings.js";
-import { listActors } from "../services/actors.js";
-import { getTicket } from "../services/history.js";
-import { loadRelayConfig } from "../relay/config.js";
+import { markInterruptedRuns } from "../forge/runs.js";
 import { restoreCouncilSessions } from "../council/runs.js";
 
 const port = Number(process.env.PORT ?? 8787);
@@ -28,26 +24,7 @@ void reapStaleTickets().then(n => { if (n) console.log(`reaper: bounced ${n} sta
 
 async function handleInterruptedRuns() {
   const ticketIds = await markInterruptedRuns();
-  if (ticketIds.length) console.log(`forge: marked ${ticketIds.length} interrupted run(s)`);
-  if ((await getSetting("forge.autoResume")) !== "true") return;
-  const config = loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG);
-  const admin = (await listActors()).find((a) => a.role === "admin");
-  if (!admin) return;
-  let resumes = 0;
-  for (const id of ticketIds) {
-    if (resumes >= 2) break;
-    try {
-      const t = await getTicket(id);
-      if (t.status === "open" || t.status === "planned") {
-        await startPipeline(admin.id, config, {
-          ticketId: id, planAgent: "auto", workAgent: "auto", reviewAgent: "auto"
-        });
-        resumes++;
-      }
-    } catch (e) {
-      console.warn(`forge: auto-resume failed for ticket ${id}:`, (e as Error).message);
-    }
-  }
+  if (ticketIds.length) console.log(`forge: marked ${ticketIds.length} interrupted run(s) — resume is a manual action`);
 }
 void handleInterruptedRuns().catch(() => {});
 
@@ -75,6 +52,11 @@ async function autoSyncSessions(): Promise<void> {
 }
 void autoSyncSessions();
 setInterval(() => void autoSyncSessions(), 6 * 60 * 60_000).unref();
+// Graceful shutdown: flush the database before exit so no stale postmaster.pid / corrupt WAL.
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  process.once(sig, () => { void closeDb().finally(() => process.exit(0)); });
+}
+
 // Embedded (installed desktop) mode is loopback-only; external-Postgres deployments
 // legitimately serve other hosts.
 // overrideGlobalObjects:false — hono's lightweight global Response breaks

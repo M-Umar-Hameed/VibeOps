@@ -15,6 +15,16 @@ export const isEmbedded = !url && !process.env.VITEST;
 // embedded mode (no runtime code path uses `sql` there after this slice).
 export const sql = postgres(url ?? "postgres://tickets:tickets@localhost:5433/tickets");
 
+// Handle for graceful shutdown — set inside makeDb when embedded.
+let pgliteClient: { close: () => Promise<void> } | undefined;
+
+export async function closeDb(): Promise<void> {
+  try {
+    if (isEmbedded) await pgliteClient?.close();
+    else await sql.end({ timeout: 5 });
+  } catch { /* shutdown is best-effort; never throw on the way out */ }
+}
+
 async function makeDb() {
   if (!isEmbedded) return drizzlePg(sql, { schema });
   const { PGlite } = await import("@electric-sql/pglite");
@@ -25,6 +35,7 @@ async function makeDb() {
   const dataDir = join(vibeopsHome(), ".vibeops", "data");
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const client = new PGlite(dataDir, { extensions: { vector } });
+  pgliteClient = client as unknown as { close: () => Promise<void> };
   await client.exec("CREATE EXTENSION IF NOT EXISTS vector");
   const d = drizzlePglite(client as never, { schema });
   // The import.meta fallback only resolves in the source tree; the bundled payload

@@ -10,7 +10,7 @@ import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict
 import { killTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { redactSecrets } from "./redact.js";
-import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames } from "./sandbox.js";
+import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxExists, hasCommitsToPromote } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
 import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths } from "./policy.js";
 import { pickAgents, escalate, pairsForRole, type Pick, type RoutingStrategy } from "./router.js";
@@ -207,6 +207,7 @@ export async function startPipeline(
   opts: {
     ticketId: string; planAgent: string; workAgent: string; reviewAgent: string; extraPrompt?: string; operatorNotes?: string;
     planModel?: string; workModel?: string; reviewModel?: string; force?: boolean; effort?: Effort;
+    resumeStage?: Stage;
   },
 ): Promise<{ runId: string; doctorWarnings: string[] }> {
   if ((opts.extraPrompt ?? "").length > MAX_EXTRA_PROMPT) throw new Error("extraPrompt too long");
@@ -285,8 +286,13 @@ export async function startPipeline(
   if (activeRuns().length >= MAX_ACTIVE) throw new ConflictError("too many active runs");
 
   const ticket = await getTicket(opts.ticketId);
-  if (ticket.status !== "open" && ticket.status !== "planned") {
-    throw new ConflictError(`ticket is ${ticket.status}; pipeline needs open or planned`);
+  const allowed = opts.resumeStage === "review"
+    ? ["review"]
+    : opts.resumeStage === "work"
+      ? ["open", "planned", "in_progress"]
+      : ["open", "planned"];
+  if (!allowed.includes(ticket.status)) {
+    throw new ConflictError(`ticket is ${ticket.status}; pipeline needs ${allowed.join(" or ")}`);
   }
   const workdir = await resolveWorkdir(ticket.projectId, config);
 
@@ -309,7 +315,7 @@ export async function startPipeline(
   runs.set(run.id, run);
   trim();
   await persistRun(run);
-  run.done = pipeline(run, actorId, agents, workdir, styleSetting ?? "", lessons, config, opts.extraPrompt).catch(async (e) => {
+  run.done = pipeline(run, actorId, agents, workdir, styleSetting ?? "", lessons, config, opts.extraPrompt, opts.resumeStage).catch(async (e) => {
     append(run, `\nforge: pipeline error: ${(e as Error).message}\n`);
     // Uphold the never-stuck-in_progress invariant even for unexpected throws
     // (forgeCommit/addComment failures land here, after the claim).
@@ -325,11 +331,22 @@ export async function startPipeline(
 async function pipeline(
   run: Run, actorId: string,
   agents: { plan: RelayAgent; work: RelayAgent; review: RelayAgent }, workdir: string, styleSetting: string,
-  lessons: string, config: RelayConfig, extraPrompt?: string,
+  lessons: string, config: RelayConfig, extraPrompt?: string, resumeStage?: Stage,
 ): Promise<void> {
   let extra = extraPrompt ? `\n\nOperator instructions:\n${extraPrompt}` : "";
   const onData = (c: string) => append(run, c);
   let ticket = await getTicket(run.ticketId);
+
+  // Resume straight to review: skip plan+work, read existing comments for plan/report
+  if (resumeStage === "review") {
+    run.stage = "review";
+    const comments = await listComments(ticket.id);
+    const plan = [...comments].reverse().find((c) => c.kind === "plan")?.body ?? "";
+    const report = [...comments].reverse().find((c) => c.kind === "report")?.body ?? "";
+    const sandbox = await ensureSandbox(workdir, ticket.id);
+    append(run, `\n=== FORGE resume: straight to review (existing sandbox) ===\n`);
+    return reviewStage(run, actorId, agents.review, workdir, sandbox, ticket, plan, report, styleSetting, config);
+  }
 
   const allComments = await listComments(ticket.id);
   const planCommentIndex = allComments.map(c => c.kind).lastIndexOf("plan");
@@ -434,8 +451,24 @@ async function pipeline(
   ticket = await updateTicket(actorId, ticket.id, ticket.version, { status: "review" });
 
   // review — against the sandbox branch diff
+  return reviewStage(run, actorId, agents.review, workdir, sandbox, ticket, plan, workRes.output, styleSetting, config);
+}
+
+function settle(run: Run, status: Status): void {
+  run.status = status;
+  run.finishedAt = new Date().toISOString();
+  void persistRun(run); // fire-and-forget: history must never break a pipeline
+}
+
+// Extracted for resume-to-review: runs the review stage against an existing sandbox.
+async function reviewStage(
+  run: Run, actorId: string, reviewAgent: RelayAgent, workdir: string,
+  sandbox: string, ticket: Ticket, plan: string, reportOutput: string,
+  styleSetting: string, config: RelayConfig,
+): Promise<void> {
   run.stage = "review";
   append(run, `\n=== FORGE review (${run.agents.review}) ===\n`);
+  const onData = (c: string) => append(run, c);
 
   // Checks: project static gates run in the SANDBOX (T17 shipped a tsc break —
   // reviewer reads diffs, vitest transpiles without typechecking). A failing
@@ -478,8 +511,8 @@ async function pipeline(
   const diff = await sandboxDiff(workdir, ticket.id);
   const stat = await sandboxDiffSummary(workdir, ticket.id);
   const reviewRes = await track(actorId, ticket.id, "review", run.agents.review, () => runAgent(
-    agents.review,
-    composeReviewPrompt({ ticket, plan, report: workRes.output, diff: reviewDiffPayload(diff, stat), operatorNotes: run.operatorNotes, checks: checksText, protectedViolation: protectedFinding }) + roleStyle("review", styleSetting),
+    reviewAgent,
+    composeReviewPrompt({ ticket, plan, report: reportOutput, diff: reviewDiffPayload(diff, stat), operatorNotes: run.operatorNotes, checks: checksText, protectedViolation: protectedFinding }) + roleStyle("review", styleSetting),
     workdir, onData,
     (child) => { run.child = child; },
   ));
@@ -497,12 +530,6 @@ async function pipeline(
   }
   // PASS: ticket STAYS in review — promotion is a human action.
   settle(run, "passed");
-}
-
-function settle(run: Run, status: Status): void {
-  run.status = status;
-  run.finishedAt = new Date().toISOString();
-  void persistRun(run); // fire-and-forget: history must never break a pipeline
 }
 
 // Single choke point for run-history rows. Best-effort: comments already hold
@@ -716,4 +743,54 @@ export async function markInterruptedRuns(): Promise<string[]> {
     console.warn("forge: failed to mark interrupted runs:", (e as Error).message);
     return [];
   }
+}
+
+export type RecoveryItem = {
+  runId: string; ticketId: string; ticketTitle: string; stage: Stage;
+  sandboxExists: boolean; hasCommits: boolean;
+  resumable: boolean; resumeMode: "plan" | "work" | "review" | null;
+  reason: string; startedAt: string;
+};
+
+// Interrupted runs still worth recovering: latest run per ticket, only if that
+// latest run is itself interrupted (a newer run supersedes it). Read-only —
+// computes disk truth (sandbox, branch commits) but never starts anything.
+export async function listInterruptedRuns(config: RelayConfig): Promise<RecoveryItem[]> {
+  const rows = await db.select().from(forgeRuns).orderBy(desc(forgeRuns.startedAt)).limit(60);
+  const latestByTicket = new Map<string, typeof rows[number]>();
+  for (const r of rows) if (!latestByTicket.has(r.ticketId)) latestByTicket.set(r.ticketId, r);
+  const items: RecoveryItem[] = [];
+  for (const r of latestByTicket.values()) {
+    if (r.status !== "interrupted") continue;
+    let ticket; try { ticket = await getTicket(r.ticketId); } catch { continue; }
+    if (ticket.status === "closed") continue;
+    const workdir = await resolveWorkdir(ticket.projectId, config).catch(() => config.workdir);
+    const sbx = sandboxExists(r.ticketId);
+    const commits = await hasCommitsToPromote(workdir, r.ticketId).catch(() => false);
+    const stage = r.stage as Stage;
+    let resumeMode: RecoveryItem["resumeMode"] = null, resumable = false, reason = "";
+    if (stage === "plan") {
+      resumeMode = "plan"; resumable = true;
+      reason = "died during planning; no sandbox exists yet — resume restarts the pipeline from planning";
+    } else if (stage === "work") {
+      resumeMode = "work"; resumable = true;
+      reason = sbx
+        ? "died during work; sandbox has uncommitted partial edits and the agent context is gone — resume re-runs the work stage from the plan (not mid-stage)"
+        : "died during work; sandbox is no longer on disk — resume starts the work stage fresh";
+    } else { // review
+      if (commits) {
+        resumeMode = "review"; resumable = true;
+        reason = "died during review; work committed a complete diff — resume goes straight to review against the existing sandbox, no work re-run";
+      } else {
+        resumeMode = null; resumable = false;
+        reason = "died during review but the committed sandbox is gone — nothing to review; start a new run instead";
+      }
+    }
+    items.push({
+      runId: r.id, ticketId: r.ticketId, ticketTitle: ticket.title, stage,
+      sandboxExists: sbx, hasCommits: commits, resumable, resumeMode,
+      reason, startedAt: r.startedAt.toISOString(),
+    });
+  }
+  return items;
 }

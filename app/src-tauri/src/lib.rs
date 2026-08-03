@@ -7,8 +7,8 @@ use tauri::Manager;
 
 struct Sidecar(Mutex<Option<Child>>);
 
-fn port_in_use() -> bool {
-    TcpStream::connect_timeout(&"127.0.0.1:8787".parse().unwrap(), Duration::from_millis(300)).is_ok()
+fn port_in_use(port: u16) -> bool {
+    TcpStream::connect_timeout(&format!("127.0.0.1:{port}").parse().unwrap(), Duration::from_millis(300)).is_ok()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -22,7 +22,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Sidecar(Mutex::new(None)))
         .setup(|app| {
-            if port_in_use() {
+            let port = std::env::var("PORT").unwrap_or_else(|_| "8787".to_string());
+            if port_in_use(port.parse().unwrap_or(8787)) {
                 return Ok(()); // dev server / other instance already serving
             }
             let resources = app.path().resolve("resources", BaseDirectory::Resource)?;
@@ -41,7 +42,7 @@ pub fn run() {
             cmd.arg(&server)
                 .stdin(Stdio::piped())
                 .env_remove("DATABASE_URL")
-                .env("PORT", "8787")
+                .env("PORT", &port)
                 .env("VIBEOPS_MIGRATIONS_DIR", &migrations);
             #[cfg(windows)]
             {

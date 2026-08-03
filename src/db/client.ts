@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { vibeopsHome } from "../runtime/home.js";
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
@@ -30,7 +30,7 @@ async function makeDb(): Promise<void> {
   const { migrate } = await import("drizzle-orm/pglite/migrator");
   const { openEmbedded, EmbeddedDbOpenError } = await import("./lifecycle.js");
   // PGlite's mkdir is not recursive; create the data dir (and ~/.vibeops) first.
-  const dataDir = join(homedir(), ".vibeops", "data");
+  const dataDir = join(vibeopsHome(), ".vibeops", "data");
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 
   let client;

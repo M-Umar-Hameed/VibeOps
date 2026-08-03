@@ -334,22 +334,29 @@ async function pipeline(
   const allComments = await listComments(ticket.id);
   const planCommentIndex = allComments.map(c => c.kind).lastIndexOf("plan");
   const recentComments = planCommentIndex === -1 ? allComments : allComments.slice(planCommentIndex + 1);
-  const changeRequests = recentComments.filter(c => c.body.startsWith("CHANGE REQUEST:"));
-  // Newest first, and whole requests only: joining oldest-first and slicing
-  // dropped the LATEST feedback whenever an earlier request filled the budget,
-  // so a rework silently re-did the previous pass. Truncation is now announced.
+  // Include ALL human comments (kind "comment") written since the last plan;
+  // agent-authored kinds (plan/report/review/verification/diff-summary) are not
+  // guidance. The CHANGE REQUEST: marker is gone: unmarked guidance used to be
+  // dropped silently (a "Supervisor addendum" never reached the worker).
+  // Newest first, whole comments only: an earlier comment filling the budget
+  // must not silently drop the LATEST feedback. Omissions are announced in the
+  // prompt AND in the run output so a dropped comment is observable.
+  const humanComments = recentComments.filter(c => c.kind === "comment");
   const kept: string[] = [];
   let budget = CHANGE_REQUEST_BUDGET;
-  for (const c of [...changeRequests].reverse()) {
+  for (const c of [...humanComments].reverse()) {
     if (c.body.length > budget) break;
     kept.push(c.body);
     budget -= c.body.length + 2;
   }
-  const dropped = changeRequests.length - kept.length;
-  const changeRequestsText = kept.join("\n\n")
-    + (dropped ? `\n\n[${dropped} older change request(s) omitted for length -- the newest are above]` : "");
+  const dropped = humanComments.length - kept.length;
+  if (humanComments.length) {
+    append(run, `=== FORGE comments since last plan: ${humanComments.length} considered, ${kept.length} included${dropped ? `, ${dropped} omitted for length` : ""} ===\n`);
+  }
+  const commentsText = kept.join("\n\n")
+    + (dropped ? `\n\n[${dropped} older comment(s) omitted for length -- the newest are above]` : "");
   if (kept.length) {
-    extra += `\n\nChange Requests:\n${fenceUntrusted("change-requests", redactSecrets(changeRequestsText))}`;
+    extra += `\n\nComments since last plan:\n${fenceUntrusted("ticket-comments", redactSecrets(commentsText))}`;
   }
 
   // plan

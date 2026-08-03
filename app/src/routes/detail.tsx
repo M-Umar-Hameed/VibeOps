@@ -185,7 +185,7 @@ export function DetailScreen({ id }: { id: string }) {
           <div className="relative mt-8">
             <textarea 
               className="w-full bg-surface-container-lowest border border-white/10 rounded-xl p-4 text-sm text-on-surface focus:border-primary-fixed-dim focus:ring-1 focus:ring-primary-fixed-dim/30 outline-none transition-all min-h-[100px] resize-y" 
-              placeholder="Type your comment..."
+              placeholder="Comment — reaches the next run's planner and worker"
               value={comment}
               onChange={(e) => setComment(e.target.value)}
             ></textarea>

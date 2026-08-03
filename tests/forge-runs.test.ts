@@ -905,18 +905,19 @@ it("exceeding configured cap rejects with ConflictError naming active runs", asy
       ticketId: t1.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
     });
     try {
+      // First assertion: rejects with ConflictError
       await expect(startPipeline(a2, relayConfig(), {
         ticketId: t2.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
       })).rejects.toThrow(ConflictError);
 
-      try {
-        await startPipeline(a2, relayConfig(), {
-          ticketId: t2.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
-        });
-      } catch (err: any) {
-        expect(err.message).toContain("concurrency cap reached: 1/1");
-        expect(err.message).toContain(t1.id);
-      }
+      // Second assertion: message contains the cap and ticket id
+      await expect(startPipeline(a2, relayConfig(), {
+        ticketId: t2.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      })).rejects.toThrow(/concurrency cap reached: 1\/1/);
+
+      await expect(startPipeline(a2, relayConfig(), {
+        ticketId: t2.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      })).rejects.toThrow(new RegExp(t1.id));
     } finally {
       stopRun(runId);
       await awaitRun(runId);
@@ -929,36 +930,69 @@ describe("concurrency integration", () => {
     const { actorId: a1, ticket: t1 } = await seedTicket("Concurrent A");
     const { actorId: a2, ticket: t2 } = await seedTicket("Concurrent B");
 
-    // Run pipelines serially to avoid counter race, but test that both sandboxes
-    // are correctly isolated. FAKE_WRITE writes "forge-made.txt" in each sandbox.
-    setScript("plan,work,review-pass", true);
-    const r1 = await startPipeline(a1, relayConfig(), {
+    // Each run gets its own counter file via agent.env to avoid desync when
+    // two pipelines consume the script concurrently.
+    const counter1 = join(counterDir, "counter1.txt");
+    const counter2 = join(counterDir, "counter2.txt");
+
+    // Each run writes a DISTINCT filename so we can assert mutual exclusion.
+    const file1 = "run1-output.txt";
+const file2 = "run2-output.txt";
+
+    const config1 = (): RelayConfig => ({
+      workdir,
+      agents: {
+        fake: {
+          cmd: [process.execPath, FAKE_AGENT, "{prompt}", "--model", "{model}"],
+          roles: ["plan", "work", "review"],
+          models: [{ name: "fast", tier: "free", quality: 2 }, { name: "smart", tier: "expensive", quality: 5 }],
+          env: {
+            FAKE_SCRIPT: "plan,work,review-pass",
+            FAKE_COUNTER_FILE: counter1,
+            FAKE_WRITE_PATH: file1,
+          },
+        },
+      },
+    });
+    const config2 = (): RelayConfig => ({
+      workdir,
+      agents: {
+        fake: {
+          cmd: [process.execPath, FAKE_AGENT, "{prompt}", "--model", "{model}"],
+          roles: ["plan", "work", "review"],
+          models: [{ name: "fast", tier: "free", quality: 2 }, { name: "smart", tier: "expensive", quality: 5 }],
+          env: {
+            FAKE_SCRIPT: "plan,work,review-pass",
+            FAKE_COUNTER_FILE: counter2,
+            FAKE_WRITE_PATH: file2,
+          },
+        },
+      },
+    });
+
+    // Start both pipelines and await them CONCURRENTLY via Promise.all
+    const r1 = await startPipeline(a1, config1(), {
       ticketId: t1.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
     });
-    await awaitRun(r1.runId);
-
-    // Reset counter for the second run so fake-agent script restarts from "plan"
-    if (existsSync(counterFile)) rmSync(counterFile);
-    setScript("plan,work,review-pass", true);
-    const r2 = await startPipeline(a2, relayConfig(), {
+    const r2 = await startPipeline(a2, config2(), {
       ticketId: t2.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
     });
-    await awaitRun(r2.runId);
+    await Promise.all([awaitRun(r1.runId), awaitRun(r2.runId)]);
 
     expect(getRunOutput(r1.runId, 0)?.status).toBe("passed");
     expect(getRunOutput(r2.runId, 0)?.status).toBe("passed");
 
     const diff1 = await sandboxDiff(workdir, t1.id);
     const diff2 = await sandboxDiff(workdir, t2.id);
-    // Each diff has forge-made.txt
-    expect(diff1).toContain("forge-made.txt");
-    expect(diff2).toContain("forge-made.txt");
-    // Both sandboxes exist independently (isolation)
+    // Each diff contains only ITS OWN file
+    expect(diff1).toContain(file1);
+    expect(diff2).toContain(file2);
+    // Cross-contamination assertions: each diff EXCLUDES the other's filename
+    expect(diff1).not.toContain(file2);
+    expect(diff2).not.toContain(file1);
+    // Both sandboxes exist independently
     expect(sandboxExists(t1.id)).toBe(true);
     expect(sandboxExists(t2.id)).toBe(true);
-    // Cross-contamination check: each sandbox's diff doesn't reference the other's branch
-    expect(diff1).not.toContain(t2.id);
-    expect(diff2).not.toContain(t1.id);
   });
 
   it("deps leak through shared node_modules fails the run and reverts the base", async () => {

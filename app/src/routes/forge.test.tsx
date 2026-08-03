@@ -192,18 +192,21 @@ test("console appends polled chunks (mock two successive output responses, use f
   
   await waitFor(() => expect(screen.getByRole("button", { name: /Run pipeline/i })).not.toBeDisabled());
   fireEvent.click(screen.getByRole("button", { name: /Run pipeline/i }));
-  
+
+  // Raw output is behind "Show details" toggle now
+  await waitFor(() => expect(screen.getByRole("button", { name: /Show details/i })).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: /Show details/i }));
   await waitFor(() => expect(screen.getByText("starting...")).toBeInTheDocument());
-  
+
   await act(async () => {
     vi.advanceTimersByTime(1000);
   });
-  
+
   await waitFor(() => {
     const pre = document.querySelector("pre");
     expect(pre?.textContent).toBe("starting...done!");
   });
-  
+
   const callCountAfterSettle = pollCount;
   
   await act(async () => {
@@ -233,6 +236,9 @@ test("reattaches to a running run on ticket select: resumes polling and renders 
   await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
   fireEvent.click(screen.getByText("My Ticket"));
 
+  // Raw output is behind "Show details" toggle now
+  await waitFor(() => expect(screen.getByRole("button", { name: /Show details/i })).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: /Show details/i }));
   await waitFor(() => expect(screen.getByText("resumed buffered output")).toBeInTheDocument());
   expect(screen.getByRole("button", { name: /Run pipeline/i })).toBeDisabled();
   expect(screen.getByRole("button", { name: /Stop/i })).toBeInTheDocument();
@@ -257,6 +263,9 @@ test("shows final console + verdict state for a recently settled run instead of 
   await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
   fireEvent.click(screen.getByText("My Ticket"));
 
+  // Raw output is behind "Show details" toggle now
+  await waitFor(() => expect(screen.getByRole("button", { name: /Show details/i })).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: /Show details/i }));
   await waitFor(() => expect(screen.getByText("final review output")).toBeInTheDocument());
   expect(screen.getAllByText("review").length).toBeGreaterThan(0); // runStage badge
   expect(screen.getAllByText("passed").length).toBeGreaterThan(0); // runStatus badge
@@ -280,6 +289,9 @@ test("shows an unavailable note when the settled run's output buffer 404s after 
   await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
   fireEvent.click(screen.getByText("My Ticket"));
 
+  // Raw output (or unavailable note) is behind "Show details" toggle now
+  await waitFor(() => expect(screen.getByRole("button", { name: /Show details/i })).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: /Show details/i }));
   await waitFor(() => expect(screen.getByText(/view previous run output unavailable after restart/i)).toBeInTheDocument());
 });
 
@@ -302,7 +314,7 @@ test("no runs for ticket -> pristine start state, no console, buttons enabled", 
   fireEvent.click(screen.getByText("My Ticket"));
 
   await waitFor(() => expect(screen.getByRole("button", { name: /Run pipeline/i })).not.toBeDisabled());
-  expect(screen.queryByText(/Live Console/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Run status/i)).not.toBeInTheDocument();
 });
 
 test("renders a red health dot for an agent whose doctor probe failed", async () => {
@@ -833,4 +845,85 @@ test("in-flight runs strip shows count, ticket titles, and cost note", async () 
   expect(screen.getAllByText(/work/).length).toBeGreaterThan(0);
   expect(screen.getAllByText(/review/).length).toBeGreaterThan(0);
   expect(screen.getByText(/Concurrent runs multiply token spend/)).toBeInTheDocument();
+});
+
+test("running work stage: primary view shows stage, elapsed, and file count, no raw narration", async () => {
+  localStorage.setItem("vibeops.forgeSelectedTicketId", "t1");
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/tickets") return [{ id: "t1", title: "My Ticket", status: "in_progress", version: 1, body: "b" }];
+    if (path === "/forge/agents") return [];
+    if (path === "/forge/skills") return [];
+    if (path === "/actors") return [];
+    if (path === "/forge/doctor") return [];
+    if (path === "/forge/runs") return [
+      { id: "run1", ticketId: "t1", status: "running", stage: "work", startedAt: "2026-07-18T00:00:00Z" },
+    ];
+    if (path === "/forge/runs/run1/output?after=0")
+      return { chunk: "Let me modify startProjectVault to only create the directory...", next: 60, stage: "work", status: "running" };
+    if (path.includes("/output")) return { chunk: "", next: 60, stage: "work", status: "running" };
+    if (path.includes("/sandbox/activity"))
+      return { stage: "work", files: [
+        { path: "a.ts", status: "M", additions: 3, deletions: 1 },
+        { path: "b.ts", status: "M", additions: 2, deletions: 0 },
+        { path: "c.ts", status: "A", additions: 5, deletions: 0 },
+      ], totalAdditions: 10, totalDeletions: 1, lastChangeAt: "2026-07-18T00:01:00Z" };
+    if (path.includes("/sandbox")) return { exists: true, branch: "forge/t1", lastVerdict: "none" };
+    if (path.includes("/comments")) return [];
+    return {};
+  });
+
+  render(wrap(<ForgeScreen />));
+  await waitFor(() => expect(screen.getByTestId("run-stage-label")).toHaveTextContent("Writing and editing code"));
+  await waitFor(() => expect(screen.getByTestId("run-file-count")).toHaveTextContent("3"));
+  expect(screen.getByTestId("run-elapsed")).toBeInTheDocument();
+  // raw narration must NOT be present while details are collapsed
+  expect(screen.queryByText(/Let me modify startProjectVault/)).not.toBeInTheDocument();
+});
+
+test("raw output is reachable behind Show details and is complete", async () => {
+  localStorage.setItem("vibeops.forgeSelectedTicketId", "t1");
+  const RAW = "Let me modify startProjectVault...:Now run typecheck then tests:All 4 tests pass.";
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/tickets") return [{ id: "t1", title: "My Ticket", status: "in_progress", version: 1, body: "b" }];
+    if (path === "/forge/agents") return [];
+    if (path === "/forge/skills") return [];
+    if (path === "/actors") return [];
+    if (path === "/forge/doctor") return [];
+    if (path === "/forge/runs") return [
+      { id: "run1", ticketId: "t1", status: "running", stage: "work", startedAt: "2026-07-18T00:00:00Z" },
+    ];
+    if (path === "/forge/runs/run1/output?after=0") return { chunk: RAW, next: RAW.length, stage: "work", status: "running" };
+    if (path.includes("/output")) return { chunk: "", next: RAW.length, stage: "work", status: "running" };
+    if (path.includes("/sandbox/activity")) return { stage: "work", files: [], totalAdditions: 0, totalDeletions: 0, lastChangeAt: "" };
+    if (path.includes("/sandbox")) return { exists: true, branch: "forge/t1", lastVerdict: "none" };
+    if (path.includes("/comments")) return [];
+    return {};
+  });
+
+  render(wrap(<ForgeScreen />));
+  await waitFor(() => expect(screen.getByRole("button", { name: /Show details/i })).toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: /Show details/i }));
+  await waitFor(() => expect(screen.getByText(RAW)).toBeInTheDocument());
+});
+
+test("failed stage renders a plain-language failure line", async () => {
+  localStorage.setItem("vibeops.forgeSelectedTicketId", "t1");
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/tickets") return [{ id: "t1", title: "My Ticket", status: "planned", version: 1, body: "b" }];
+    if (path === "/forge/agents") return [];
+    if (path === "/forge/skills") return [];
+    if (path === "/actors") return [];
+    if (path === "/forge/doctor") return [];
+    if (path === "/forge/runs") return [
+      { id: "run1", ticketId: "t1", status: "failed", stage: "work", startedAt: "2026-07-18T00:00:00Z" },
+    ];
+    if (path === "/forge/runs/run1/output?after=0") return { chunk: "worker failed", next: 12, stage: "work", status: "failed" };
+    if (path.includes("/sandbox")) return { exists: false };
+    if (path.includes("/comments")) return [];
+    return {};
+  });
+
+  render(wrap(<ForgeScreen />));
+  await waitFor(() => expect(screen.getByTestId("run-failure-line")).toHaveTextContent(/returned to planned/));
+  expect(screen.queryByTestId("run-elapsed")).not.toBeInTheDocument(); // no elapsed once terminal
 });

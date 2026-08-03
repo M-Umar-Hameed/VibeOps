@@ -1,0 +1,40 @@
+import { expect, test } from "vitest";
+import { stageLabel, parseChecks, elapsedLabel, failureLine } from "./run-summary.js";
+
+test("stageLabel maps known stages, falls back otherwise", () => {
+  expect(stageLabel("plan")).toBe("Planning the change");
+  expect(stageLabel("work")).toBe("Writing and editing code");
+  expect(stageLabel("review")).toBe("Reviewing the diff and running checks");
+  expect(stageLabel("")).toBe("Starting");
+  expect(stageLabel("weird")).toBe("weird");
+});
+
+test("parseChecks extracts commands and exit codes from the forge checks block", () => {
+  const output =
+    "some narration here\n=== FORGE checks ===\n$ npm run typecheck\nexit 0\nall good\n\n$ npm test\nexit 1\n1 failing\n";
+  expect(parseChecks(output)).toEqual([
+    { command: "npm run typecheck", code: 0 },
+    { command: "npm test", code: 1 },
+  ]);
+});
+
+test("parseChecks returns [] when no checks block present", () => {
+  expect(parseChecks("just narration, no checks yet")).toEqual([]);
+});
+
+test("elapsedLabel formats seconds and minutes, clamps negatives", () => {
+  expect(elapsedLabel(1000, 1000)).toBe("0s");
+  expect(elapsedLabel(0, 45_000)).toBe("45s");
+  expect(elapsedLabel(0, 125_000)).toBe("2m 5s");
+  expect(elapsedLabel(5000, 0)).toBe("0s");
+});
+
+test("failureLine is plain-language for terminal failures, null otherwise", () => {
+  expect(failureLine("failed")).toMatch(/returned to planned/);
+  expect(failureLine("rejected")).toMatch(/blocking issues/);
+  expect(failureLine("stopped")).toMatch(/Run stopped/);
+  expect(failureLine("error", "token cap exceeded")).toBe("token cap exceeded");
+  expect(failureLine("error")).toBe("The run could not be started.");
+  expect(failureLine("running")).toBeNull();
+  expect(failureLine("passed")).toBeNull();
+});

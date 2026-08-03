@@ -11,6 +11,9 @@ import { ConflictError } from "../src/services/errors.js";
 import type { RelayConfig } from "../src/relay/config.js";
 import { app } from "../src/api/app.js";
 import { getTicket } from "../src/services/history.js";
+import { randomUUID } from "node:crypto";
+import { restoreCouncilSessions } from "../src/council/runs.js";
+import { loadCouncilSessions, saveCouncilSessions } from "../src/council/store.js";
 
 process.env.EMBED_PROVIDER = "fake";
 
@@ -229,5 +232,34 @@ describe("council engine", () => {
     const src = readFileSync(join(__dirname, "..", "src", "council", "runs.ts"), "utf-8");
     expect(src.match(/runPersona\("believer"\)/g) ?? []).toHaveLength(1);
     expect(src.match(/async function runPersonas\b/g) ?? []).toHaveLength(1);
+  });
+
+  it("(j) restore revives a running session as failed and keeps awaiting-answers", async () => {
+    const runningId = randomUUID();
+    const awaitingId = randomUUID();
+    const now = new Date().toISOString();
+    await restoreCouncilSessions([
+      { id: runningId, prompt: "interrupted mid round", status: "running", round: 2, output: "", startedAt: now } as any,
+      { id: awaitingId, prompt: "waiting on human", status: "awaiting-answers", round: 1, output: "", startedAt: now,
+        verdict: { rating: 5, decision: "NEEDS-INFO", questions: ["q?"], spec: "s", title: "t" } } as any,
+    ]);
+
+    expect(getCouncil(runningId).status).toBe("failed");
+    expect(getCouncil(awaitingId).status).toBe("awaiting-answers");
+    expect((getCouncil(awaitingId) as any).questions).toEqual(["q?"]);
+  });
+
+  it("(k) a started session is written to the persistence store", async () => {
+    const { actor } = await createActor({ name: uniq("council-actor"), kind: "human" });
+    setScript("persona,persona,persona,chairman-go");
+    const { councilId } = await startCouncil(actor.id, relayConfig(), { prompt: "a prompt long enough to pass" });
+    await waitForStatus(councilId, ["decided"]);
+    await new Promise((r) => setTimeout(r, 100));
+
+    const saved = (await loadCouncilSessions()) as any[];
+    const row = saved.find((s) => s.id === councilId);
+    expect(row).toBeTruthy();
+    expect(row.status).toBe("decided");
+    expect(row.output).toBeUndefined();
   });
 });

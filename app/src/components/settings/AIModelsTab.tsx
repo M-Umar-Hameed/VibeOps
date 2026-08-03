@@ -106,6 +106,19 @@ export function AIModelsTab() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings", "ai.budget.perDayTokens"] }),
   });
 
+  const { data: maxActiveRuns } = useQuery({
+    queryKey: ["settings", "forge.maxActiveRuns"],
+    queryFn: async () => {
+      const res = await api.get("/settings/forge.maxActiveRuns");
+      return (res.value as string) || "";
+    },
+  });
+
+  const setMaxActiveRuns = useMutation({
+    mutationFn: (value: string) => api.patch("/settings/forge.maxActiveRuns", { value }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings", "forge.maxActiveRuns"] }),
+  });
+
   return (
     <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
       <div className="mb-8 border-b border-white/10 pb-6">
@@ -222,6 +235,18 @@ export function AIModelsTab() {
                   placeholder="e.g. 2000000"
                 />
               </div>
+            </div>
+            <div className="flex flex-col gap-1 w-1/2">
+              <label className="text-sm text-on-surface">Concurrent run cap</label>
+              <input
+                type="number"
+                data-testid="maxActiveRuns"
+                className="bg-surface-container-highest border border-white/10 rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:border-primary transition-colors"
+                value={maxActiveRuns ?? ""}
+                onChange={(e) => setMaxActiveRuns.mutate(e.target.value)}
+                placeholder="3"
+              />
+              <p className="text-[11px] text-on-surface-variant/60 mt-1">Max simultaneous forge runs. Empty/invalid defaults to 3.</p>
             </div>
           </div>
 

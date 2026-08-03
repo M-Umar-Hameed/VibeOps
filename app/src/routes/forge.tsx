@@ -4,6 +4,7 @@ import { api } from "../lib/api.js";
 import { NotFoundError } from "../api/errors.js";
 import { useProject } from "../context/project.js";
 import { parseUnifiedDiff, type DiffFile } from "../lib/diff-parse.js";
+import { stageLabel, parseChecks, elapsedLabel, failureLine } from "../lib/run-summary.js";
 import { SpecEditor } from "../components/SpecEditor.js";
 import { CommentList } from "../components/CommentList.js";
 import { WorkOrderComposer, modelOptionsForRole } from "../components/WorkOrderComposer.js";
@@ -41,6 +42,9 @@ export function ForgeScreen() {
   const [runStatus, setRunStatus] = useState("");
   const [runError, setRunError] = useState("");
   const [outputUnavailable, setOutputUnavailable] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const nextOffsetRef = useRef<number>(0);
   const outputRef = useRef<HTMLPreElement>(null);
   const prevStageRef = useRef("");
@@ -153,6 +157,8 @@ export function ForgeScreen() {
       setCommentInput("");
       setCommentError("");
       setOutputUnavailable(false);
+      setRunStartedAt(null);
+      setShowDetails(false);
     }
   }, [selectedTicket?.id]);
 
@@ -189,6 +195,7 @@ export function ForgeScreen() {
       setRunStage(latest.stage);
       setRunStatus("running");
       setActiveRunId(latest.id);
+      setRunStartedAt(Date.parse(latest.startedAt));
     } else if (latest?.status === "passed" || latest?.status === "rejected" || latest?.status === "failed" || latest?.status === "stopped") {
       setActiveRunId(null);
       setIsSubmitting(false);
@@ -332,6 +339,12 @@ export function ForgeScreen() {
     return () => { running = false; clearInterval(interval); };
   }, [activeRunId, selectedTicket]);
 
+  useEffect(() => {
+    if (runStatus !== "running") return;
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [runStatus]);
+
   const handleRun = async (force = false) => {
     if (!selectedTicket) return;
     setIsSubmitting(true);
@@ -340,6 +353,8 @@ export function ForgeScreen() {
     setOutputUnavailable(false);
     setRunStage("");
     setRunStatus("running");
+    setRunStartedAt(Date.now());
+    setShowDetails(false);
     nextOffsetRef.current = 0;
     try {
 
@@ -381,6 +396,8 @@ export function ForgeScreen() {
     setOutputUnavailable(false);
     setRunStage("");
     setRunStatus("running");
+    setRunStartedAt(Date.now());
+    setShowDetails(false);
     nextOffsetRef.current = 0;
     try {
       const res = await api.post(`/forge/tickets/${selectedTicket.id}/resume`) as { runId: string };
@@ -823,21 +840,81 @@ export function ForgeScreen() {
               {runError && <div className="text-error text-sm">{runError}</div>}
             </div>
 
-            {(activeRunId || runOutput || outputUnavailable) && (
+            {(activeRunId || runOutput || outputUnavailable) && (() => {
+              const checks = parseChecks(runOutput);
+              const fail = failureLine(runStatus, runError);
+              const fileCount = sandboxActivity?.files?.length ?? 0;
+              const reviewChecksPending = runStatus === "running" && runStage === "review" && checks.length === 0;
+              return (
               <div className="glass-card rounded-xl border border-white/10 overflow-hidden flex flex-col">
                 <div className="p-3 bg-surface-container/50 border-b border-white/5 flex items-center justify-between">
-                  <span className="font-code-sm text-xs text-on-surface-variant uppercase tracking-widest">Live Console</span>
+                  <span className="font-code-sm text-xs text-on-surface-variant uppercase tracking-widest">Run status</span>
                   {activeRunId && <span className="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>}
                 </div>
-                {outputUnavailable ? (
-                  <div className="p-4 text-on-surface-variant italic text-sm">view previous run output unavailable after restart</div>
-                ) : (
-                  <pre ref={outputRef} className="p-4 h-64 overflow-y-auto bg-background/80 text-code-sm text-on-surface font-mono whitespace-pre-wrap custom-scrollbar">
-                    {runOutput}
-                  </pre>
-                )}
+                <div className="p-4 space-y-3">
+                  <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+                    <div>
+                      <span className="text-on-surface-variant">Stage: </span>
+                      <span className="text-on-surface font-medium" data-testid="run-stage-label">{stageLabel(runStage)}</span>
+                    </div>
+                    {runStatus === "running" && runStartedAt !== null && (
+                      <div>
+                        <span className="text-on-surface-variant">Elapsed: </span>
+                        <span className="text-on-surface font-medium" data-testid="run-elapsed">{elapsedLabel(runStartedAt, nowMs)}</span>
+                      </div>
+                    )}
+                    <div>
+                      <span className="text-on-surface-variant">Files changed: </span>
+                      <span className="text-on-surface font-medium" data-testid="run-file-count">{fileCount}</span>
+                      {sandboxActivity && (fileCount > 0) && (
+                        <span className="ml-2 font-code-sm text-xs">
+                          <span className="text-green-400">+{sandboxActivity.totalAdditions ?? 0}</span>{" "}
+                          <span className="text-red-400">-{sandboxActivity.totalDeletions ?? 0}</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {(checks.length > 0 || reviewChecksPending) && (
+                    <div className="flex flex-wrap items-center gap-2" data-testid="run-checks">
+                      <span className="text-on-surface-variant text-sm">Checks:</span>
+                      {reviewChecksPending ? (
+                        <span className="text-on-surface-variant text-sm italic animate-pulse">running...</span>
+                      ) : checks.map((ck) => (
+                        <span
+                          key={ck.command}
+                          className={`px-2 py-0.5 rounded text-[10px] font-code-label uppercase ${ck.code === 0 ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"}`}
+                        >
+                          {ck.command} {ck.code === 0 ? "pass" : "fail"}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {fail && (
+                    <div className="text-sm text-error" data-testid="run-failure-line">{fail}</div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setShowDetails((s) => !s)}
+                    className="text-xs uppercase tracking-widest text-on-surface-variant hover:text-on-surface cursor-pointer"
+                  >
+                    {showDetails ? "Hide details" : "Show details"}
+                  </button>
+                  {showDetails && (
+                    outputUnavailable ? (
+                      <div className="p-4 text-on-surface-variant italic text-sm">view previous run output unavailable after restart</div>
+                    ) : (
+                      <pre ref={outputRef} className="p-4 h-64 overflow-y-auto bg-background/80 text-code-sm text-on-surface font-mono whitespace-pre-wrap custom-scrollbar border border-white/10 rounded-lg">
+                        {runOutput}
+                      </pre>
+                    )
+                  )}
+                </div>
               </div>
-            )}
+              );
+            })()}
 
             {runStatus === "running" && sandboxActivity && (
               <div className="glass-card rounded-xl border border-white/10 p-6 flex flex-col gap-4">

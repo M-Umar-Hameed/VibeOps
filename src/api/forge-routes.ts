@@ -296,7 +296,7 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     if (!(await hasCommitsToPromote(workdir, ticketId))) {
       return c.json({ error: "sandbox has no commits to promote" }, 409);
     }
-    await promoteSandbox(workdir, ticketId);
+    await promoteSandbox(workdir, ticketId, ticket.title);
     // Repo files just changed on disk (sandbox merged into the project repo); refresh the
     // doc index so stale README/CLAUDE/AGENTS text stops feeding plan/work prompts. Only this
     // project. Non-blocking, swallow failures — matches the first-time index at runs.ts:316.

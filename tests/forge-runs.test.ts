@@ -645,7 +645,7 @@ describe("forge run manager", () => {
 
     const resolved = await resolveWorkdir(project.id, relayConfig());
     expect(resolved).toBe(projectRepo);
-    await promoteSandbox(resolved, ticket.id);
+    await promoteSandbox(resolved, ticket.id, ticket.title);
     expect(existsSync(join(projectRepo, "forge-made.txt"))).toBe(true);
     expect(sandboxExists(ticket.id)).toBe(false);
 
@@ -1155,12 +1155,12 @@ const file2 = "run2-output.txt";
     g2("commit", "-m", "conflict B");
 
     // First promote succeeds
-    await promoteSandbox(workdir, t1.id);
+    await promoteSandbox(workdir, t1.id, t1.title);
     expect(sandboxExists(t1.id)).toBe(false);
 
     // Second promote conflicts
     let err: any;
-    try { await promoteSandbox(workdir, t2.id); } catch (e) { err = e; }
+    try { await promoteSandbox(workdir, t2.id, t2.title); } catch (e) { err = e; }
     expect(err).toBeInstanceOf(ConflictError);
     expect(err.message).toContain("readme.md");
     expect(err.message).toContain("conflicts with the base");

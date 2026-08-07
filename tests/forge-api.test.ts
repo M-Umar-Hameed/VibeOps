@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { createActor } from "../src/services/actors.js";
@@ -66,15 +66,30 @@ beforeEach(() => {
   writeRelayConfig();
 });
 
-afterEach(() => {
+afterEach(async () => {
   delete process.env.VIBEOPS_SANDBOX_ROOT;
   delete process.env.VIBEOPS_RELAY_CONFIG;
   delete process.env.FAKE_SCRIPT;
   delete process.env.FAKE_COUNTER_FILE;
   delete process.env.FAKE_WRITE;
   delete process.env.FAKE_WRITE_PATH;
-  rmSync(workdir, { recursive: true, force: true });
+  // Deregister any worktree a stopped/undiscarded run left behind BEFORE removing the
+  // base repo. On Windows, rmSync of the base while a worktree is still registered in
+  // its .git EPERMs. git worktree remove also deletes the sandbox working dir.
+  const wts = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: workdir, encoding: "utf8" });
+  for (const line of wts.split("\n")) {
+    if (!line.startsWith("worktree ")) continue;
+    const wt = line.slice(9).trim();
+    if (resolve(wt) === resolve(workdir)) continue;
+    execFileSync("git", ["worktree", "remove", "--force", wt], { cwd: workdir });
+  }
+  execFileSync("git", ["worktree", "prune"], { cwd: workdir });
+  // Give Windows time to release file handles after process termination
+  if (process.platform === "win32") await new Promise((r) => setTimeout(r, 2000));
   rmSync(sandboxRoot, { recursive: true, force: true });
+  rmSync(workdir, { recursive: true, force: true });
+  rmSync(dirname(relayConfigPath), { recursive: true, force: true });
+  rmSync(dirname(counterFile), { recursive: true, force: true });
 });
 
 function setScript(script: string, write?: boolean): void {
@@ -581,7 +596,7 @@ it("POST /forge/pipeline response includes doctorWarnings", async () => {
 it("POST /forge/pipeline 400s naming the agent when the cached probe is a spawn-level failure", async () => {
   const h = await adminHeaders();
   const ticket = await seedTicket();
-  const missingPath = join(mkdtempSync(join(tmpdir(), "forge-api-doctor-missing-")), "gone-binary");
+  const missingPath = join(dirname(counterFile), "gone-binary");
   writeFileSync(relayConfigPath, JSON.stringify({
     workdir,
     agents: { fake: { cmd: [missingPath], roles: ["plan", "work", "review"] } },

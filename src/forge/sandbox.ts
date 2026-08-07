@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readlinkSync, rmdirSync, symlinkSync, statSync, readdirSync, rmSync, cpSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { ConflictError } from "../services/errors.js";
+import { redactSecrets } from "./redact.js";
 import { vibeopsHome } from "../runtime/home.js";
 
 // Candidate deps dirs to link from the base repo into a sandbox, so work agents
@@ -252,13 +253,28 @@ export async function hasCommitsToPromote(workdir: string, ticketId: string): Pr
   return parseInt(out.trim(), 10) > 0;
 }
 
-export async function promoteSandbox(workdir: string, ticketId: string): Promise<void> {
+const PROMOTE_SUBJECT_MAX = 72;
+
+function promoteMessages(ticketId: string, title: string): { subject: string; body: string } {
+  const safe = redactSecrets(title).replace(/\s+/g, " ").trim();
+  let subject = `forge: promote ${safe}`;
+  let truncated = false;
+  if (subject.length > PROMOTE_SUBJECT_MAX) {
+    subject = subject.slice(0, PROMOTE_SUBJECT_MAX - 3).trimEnd() + "...";
+    truncated = true;
+  }
+  const body = truncated ? `${ticketId}\n\n${safe}` : ticketId;
+  return { subject, body };
+}
+
+export async function promoteSandbox(workdir: string, ticketId: string, title: string): Promise<void> {
   const dirty = await git(workdir, "status", "--porcelain");
   if (dirty.out.trim()) {
     throw new ConflictError("workdir has uncommitted changes; commit or stash before promoting");
   }
+  const { subject, body } = promoteMessages(ticketId, title);
   const merge = await git(workdir, "merge", "--no-ff", branchName(ticketId),
-    "-m", `forge: promote ${ticketId}`);
+    "-m", subject, "-m", body);
   if (merge.code !== 0) {
     const conflicts = await git(workdir, "diff", "--name-only", "--diff-filter=U");
     await git(workdir, "merge", "--abort");

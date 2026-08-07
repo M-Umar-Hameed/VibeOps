@@ -462,10 +462,13 @@ async function pipeline(
   }
   const depsLeak = detectDepsLeak(depsBaseline);
   if (depsLeak.length) {
-    const report =
+    let report =
       `\n[forge: DEPS-LEAK — the work stage wrote through the shared node_modules ` +
       `link into the base repo; additions reverted, run failed]\n` +
       depsLeak.map((p) => `  - ${p}`).join("\n") + "\n";
+    if (!frontendDeps && depsLeak.some(p => p.includes("app/node_modules") || p.includes("app\\node_modules"))) {
+      report += `Hint: a frontend build needs forge.frontendDeps set to true. This costs a per-sandbox copy of app/node_modules.\n`;
+    }
     append(run, report);
     await bounce(run, actorId, "deps leak: wrote through shared node_modules link", report);
     return settle(run, "failed");

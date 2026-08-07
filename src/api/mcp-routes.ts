@@ -22,7 +22,7 @@ export function registerMcpRoutes(app: Hono<AppEnv>): void {
     const { client } = await c.req.json().catch(() => ({}));
     if (!INSTALLABLE_CLIENTS.includes(client)) {
       return c.json({
-        error: `client '${String(client)}' is not auto-installable; supported: ${INSTALLABLE_CLIENTS.join(", ")}. For codex and Claude Code use GET /mcp/config for a copyable snippet.`,
+        error: `client '${String(client)}' is not auto-installable; supported: ${INSTALLABLE_CLIENTS.join(", ")}. For Claude Code use GET /mcp/config for a copyable snippet.`,
       }, 400);
     }
     const url = `http://127.0.0.1:${process.env.PORT ?? 8787}/mcp`;

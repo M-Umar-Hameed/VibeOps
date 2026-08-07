@@ -34,6 +34,20 @@ describe("forge lessons", () => {
     expect(parseProposal(`PROPOSAL:\n[1,2]`)).toBeNull();
   });
 
+  it("parseProposal: real model outputs parse correctly", () => {
+    const caseA = `PROPOSAL: {"decision":"decline","reason":"Junction leak writes into gitignored node_modules, so it never shows in the diff and no existing npm script or sidecar boot observes the filesystem side-effect."}`;
+    expect(parseProposal(caseA)).toEqual({ decision: "decline", reason: "Junction leak writes into gitignored node_modules, so it never shows in the diff and no existing npm script or sidecar boot observes the filesystem side-effect." });
+
+    const caseB = `PROPOSAL: {"decision":"propose","kind":"boot-sidecar"}\n\nReason: failure is bundle-only boot breakage dev mode hid — exactly what boot-sidecar catches. Both instances (import cycle, boot restructure) surface as sidecar fail-to-boot, mechanically reproducible by building payload + booting.`;
+    expect(parseProposal(caseB)).toEqual({ decision: "propose", kind: "boot-sidecar" });
+
+    const caseC = `PROPOSAL: {"decision":"decline","reason":"Missing regression guard is non-mechanical: no regex or script proves a test fails without the fix."}`;
+    expect(parseProposal(caseC)).toEqual({ decision: "decline", reason: "Missing regression guard is non-mechanical: no regex or script proves a test fails without the fix." });
+
+    const caseD = `PROPOSAL: {"decision":"decline","reason":"Test name-vs-behavior mismatch is semantic; no regex/script/boot can tell that a test labeled 'concurrent' runs serially."}`;
+    expect(parseProposal(caseD)).toEqual({ decision: "decline", reason: "Test name-vs-behavior mismatch is semantic; no regex/script/boot can tell that a test labeled 'concurrent' runs serially." });
+  });
+
   it("formatProposal renders each shape", () => {
     expect(formatProposal({ decision: "propose", kind: "boot-sidecar" })).toBe("PROPOSE check: boot-sidecar");
     expect(formatProposal({ decision: "propose", kind: "npm-script", script: "typecheck" })).toBe("PROPOSE check: npm-script typecheck");

@@ -70,14 +70,52 @@ export type Proposal =
   | { decision: "decline"; reason: string };
 
 export function parseProposal(output: string): Proposal | null {
-  const matches = [...output.matchAll(/^\s*PROPOSAL:\s*$/gim)];
-  const last = matches.at(-1);
-  if (!last || last.index === undefined) return null;
-  const rest = output.slice(last.index + last[0].length).trim();
+  const marker = "PROPOSAL:";
+  const markerIdx = output.lastIndexOf(marker);
+  if (markerIdx === -1) return null;
+
+  const rest = output.slice(markerIdx + marker.length);
+  const startIdx = rest.indexOf("{");
+  if (startIdx === -1) return null;
+
+  let endIdx = -1;
+  let braceCount = 0;
+  let inString = false;
+  let escapeNext = false;
+
+  for (let i = startIdx; i < rest.length; i++) {
+    const char = rest[i];
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+    if (char === '\\') {
+      escapeNext = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (!inString) {
+      if (char === '{') {
+        braceCount++;
+      } else if (char === '}') {
+        braceCount--;
+        if (braceCount === 0) {
+          endIdx = i;
+          break;
+        }
+      }
+    }
+  }
+
+  if (endIdx === -1) return null;
+  const jsonStr = rest.slice(startIdx, endIdx + 1);
 
   let parsed: any;
   try {
-    parsed = JSON.parse(rest);
+    parsed = JSON.parse(jsonStr);
   } catch {
     return null;
   }

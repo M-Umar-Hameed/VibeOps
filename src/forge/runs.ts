@@ -428,7 +428,8 @@ async function pipeline(
   run.stage = "work";
   append(run, `\n=== FORGE work (${run.agents.work}) ===\n`);
   ticket = await updateTicket(actorId, ticket.id, ticket.version, { status: "in_progress" });
-  const sandbox = await ensureSandbox(workdir, ticket.id);
+  const frontendDeps = (await getSetting("forge.frontendDeps")) === "true";
+  const sandbox = await ensureSandbox(workdir, ticket.id, frontendDeps);
   const knowledge = await getKnowledgeSafe(ticket.title, ticket.projectId);
   // Rework passes must see why the last review failed, or the worker repeats
   // the same mistakes (live-hit on the first dogfood ticket).

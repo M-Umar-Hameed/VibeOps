@@ -6,7 +6,9 @@ import { getTicket, getTicketHistory, listTickets, searchTickets } from "../serv
 import { saveNote, updateNote, deleteNote, listNotes, getNote } from "../services/notes.js";
 import { searchKnowledge, getKnowledgeSource, upsertSourceDoc, listSessionDocs, knowledgeGraph, indexRepoDocs } from "../services/knowledge.js";
 import { AuthError, ConflictError, ForbiddenError, NotFoundError, StaleVersionError } from "../services/errors.js";
-import { listProjects, createProject, updateProjectRepo, gitInitProject, getProjectSettings, setProjectSetting, scanFolder, importProjects } from "../services/projects.js";
+import { listProjects, createProject, updateProjectRepo, gitInitProject, getProjectSettings, setProjectSetting, scanFolder, importProjects, deleteProject } from "../services/projects.js";
+import { clearProjectKnowledge } from "../services/knowledge.js";
+import { activeRunForProject } from "../forge/runs.js";
 import { syncProject } from "../sync/run.js";
 import { listActors, createActor, revokeActor } from "../services/actors.js";
 import { requireAdmin } from "./auth.js";
@@ -98,6 +100,19 @@ app.post("/projects/:id/git-init", requireAdmin, async (c) => c.json(await gitIn
 app.post("/projects/:id/index-repo", requireAdmin, async (c) =>
   c.json(await indexRepoDocs(c.req.param("id"))));
 app.get("/projects/:id/vault", async (c) => c.json(await getProjectVaultStatus(c.req.param("id"))));
+
+app.delete("/projects/:id/knowledge", requireAdmin, async (c) => {
+  const removed = await clearProjectKnowledge(c.req.param("id"));
+  return c.json({ removed });
+});
+
+app.delete("/projects/:id", requireAdmin, async (c) => {
+  const id = c.req.param("id");
+  const runId = await activeRunForProject(id);
+  if (runId) return c.json({ error: `project has an active forge run: ${runId}`, runId }, 409);
+  await deleteProject(id);
+  return c.json({ ok: true });
+});
 
 app.post("/projects/scan", requireAdmin, async (c) => {
   const { path } = await c.req.json().catch(() => ({}));

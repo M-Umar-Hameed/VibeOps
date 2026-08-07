@@ -4,6 +4,7 @@ import { tickets, events, comments, actors, type Ticket } from "../db/schema.js"
 import { NotFoundError, StaleVersionError, ConflictError } from "./errors.js";
 import { parseVerification } from "../relay/prompts.js";
 
+type Executor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 export async function createTicket(
   actorId: string,
   input: {
@@ -12,8 +13,9 @@ export async function createTicket(
     status?: "open" | "in_progress" | "closed" | "planned" | "review";
     requiresVerification?: boolean;
   },
+  executor: Executor = db,
 ): Promise<Ticket> {
-  return db.transaction(async (tx) => {
+  return executor.transaction(async (tx) => {
     const [ticket] = await tx.insert(tickets).values({
       projectId: input.projectId, title: input.title, body: input.body ?? "",
       priority: input.priority ?? "normal", assigneeId: input.assigneeId, status: input.status,

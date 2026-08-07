@@ -3,7 +3,10 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
 import { createActor } from "../src/services/actors.js";
-import { createProject, updateProjectRepo } from "../src/services/projects.js";
+import { createProject, updateProjectRepo, importProjects } from "../src/services/projects.js";
+import { db } from "../src/db/client.js";
+import { projects } from "../src/db/schema.js";
+import { eq } from "drizzle-orm";
 import { app } from "../src/api/app.js";
 
 function uniq(prefix: string) {
@@ -181,6 +184,21 @@ describe("project import: import", () => {
     const afterRes = await app.request("/projects", { method: "GET", headers: h });
     const afterProjects = await afterRes.json();
     expect(afterProjects.some((p: any) => p.repoPath === dirA || p.name === "Good" || p.name === "Evil")).toBe(false);
+
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe("project import: atomicity", () => {
+  it("rolls back the project row when the repoPath write fails (no orphan)", async () => {
+    const root = tmpDir();
+    const badPath = join(root, "vanished"); // absolute, passes assertSafePath, does NOT exist on disk
+    const name = uniq("orphan");
+
+    await expect(importProjects([{ name, path: badPath }])).rejects.toThrow();
+
+    const rows = await db.select().from(projects).where(eq(projects.name, name));
+    expect(rows).toHaveLength(0);
 
     rmSync(root, { recursive: true, force: true });
   });

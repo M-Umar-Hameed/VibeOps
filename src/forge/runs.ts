@@ -358,6 +358,10 @@ async function pipeline(
     const comments = await listComments(ticket.id);
     const plan = [...comments].reverse().find((c) => c.kind === "plan")?.body ?? "";
     const report = [...comments].reverse().find((c) => c.kind === "report")?.body ?? "";
+    // ponytail: resume-to-review reuses the stale plan without passing
+    // change-request comments as amendments (see reviewStage caller below).
+    // Upgrade path: thread amendments here too if resume-to-review reworks
+    // that add scope start recurring.
     const sandbox = await ensureSandbox(workdir, ticket.id);
     append(run, `\n=== FORGE resume: straight to review (existing sandbox) ===\n`);
     return reviewStage(run, actorId, agents.review, workdir, sandbox, ticket, plan, report, styleSetting, config);
@@ -393,7 +397,8 @@ async function pipeline(
 
   // plan
   let plan: string;
-  if (ticket.status === "open") {
+  const planRegenerated = ticket.status === "open";
+  if (planRegenerated) {
     append(run, `=== FORGE plan (${run.agents.plan}) ===\n`);
     const knowledge = await getKnowledgeSafe(ticket.title, ticket.projectId);
     const res = await track(actorId, ticket.id, "plan", run.agents.plan, () => runAgent(
@@ -480,8 +485,12 @@ async function pipeline(
   await addComment(actorId, ticket.id, redactSecrets(workRes.output), "report");
   ticket = await updateTicket(actorId, ticket.id, ticket.version, { status: "review" });
 
-  // review — against the sandbox branch diff
-  return reviewStage(run, actorId, agents.review, workdir, sandbox, ticket, plan, workRes.output, styleSetting, config);
+  // review — against the sandbox branch diff. On a rework the plan stage was
+  // skipped (stale plan), so change-request comments the supervisor added since
+  // that plan are not reflected in it; pass them to the reviewer as authoritative
+  // amendments so supervisor-requested scope is not flagged as scope creep.
+  const amendments = !planRegenerated && kept.length ? redactSecrets(commentsText) : undefined;
+  return reviewStage(run, actorId, agents.review, workdir, sandbox, ticket, plan, workRes.output, styleSetting, config, amendments);
 }
 
 function settle(run: Run, status: Status): void {
@@ -494,7 +503,7 @@ function settle(run: Run, status: Status): void {
 async function reviewStage(
   run: Run, actorId: string, reviewAgent: RelayAgent, workdir: string,
   sandbox: string, ticket: Ticket, plan: string, reportOutput: string,
-  styleSetting: string, config: RelayConfig,
+  styleSetting: string, config: RelayConfig, amendments?: string,
 ): Promise<void> {
   run.stage = "review";
   append(run, `\n=== FORGE review (${run.agents.review}) ===\n`);
@@ -542,7 +551,7 @@ async function reviewStage(
   const stat = await sandboxDiffSummary(workdir, ticket.id);
   const reviewRes = await track(actorId, ticket.id, "review", run.agents.review, () => runAgent(
     reviewAgent,
-    composeReviewPrompt({ ticket, plan, report: reportOutput, diff: reviewDiffPayload(diff, stat), operatorNotes: run.operatorNotes, checks: checksText, protectedViolation: protectedFinding }) + roleStyle("review", styleSetting),
+    composeReviewPrompt({ ticket, plan, report: reportOutput, diff: reviewDiffPayload(diff, stat), operatorNotes: run.operatorNotes, checks: checksText, protectedViolation: protectedFinding, amendments }) + roleStyle("review", styleSetting),
     workdir, onData,
     (child) => { run.child = child; },
   ));

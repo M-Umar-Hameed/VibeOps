@@ -689,6 +689,45 @@ describe("forge run manager", () => {
     expect(output?.chunk).toContain("Fix the typo");
   });
 
+  it("rework: the change request reaches the REVIEW prompt as an authoritative amendment", async () => {
+    const { actorId, ticket } = await seedTicket("Rework amendment reaches reviewer");
+    await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+    await addComment(actorId, ticket.id, "CHANGE REQUEST:\nAMEND-MARKER add the DEPS-LEAK hint and a test", "comment");
+
+    setScript("echo-prompt");
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const chunk = getRunOutput(runId, 0)?.chunk ?? "";
+    const reviewIdx = chunk.indexOf("=== FORGE review");
+    expect(reviewIdx).toBeGreaterThan(-1);
+    const reviewPortion = chunk.slice(reviewIdx);
+    // The reviewer is told the supervisor's scope is requested, not scope creep.
+    expect(reviewPortion).toContain("AUTHORITATIVE PLAN AMENDMENTS");
+    expect(reviewPortion).toContain("AMEND-MARKER add the DEPS-LEAK hint and a test");
+    expect(reviewPortion).toContain('<UNTRUSTED label="plan-amendments">');
+  });
+
+  it("no change request: the REVIEW prompt has no amendments section (unrequested scope still judged against the plan alone)", async () => {
+    const { actorId, ticket } = await seedTicket("No amendment no section");
+    await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+
+    setScript("echo-prompt");
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const chunk = getRunOutput(runId, 0)?.chunk ?? "";
+    const reviewIdx = chunk.indexOf("=== FORGE review");
+    expect(reviewIdx).toBeGreaterThan(-1);
+    expect(chunk.slice(reviewIdx)).not.toContain("AUTHORITATIVE PLAN AMENDMENTS");
+  });
+
   it("keeps the NEWEST change request when the budget cannot hold them all", async () => {
     const { actorId, ticket } = await seedTicket("Change Request budget");
     await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });

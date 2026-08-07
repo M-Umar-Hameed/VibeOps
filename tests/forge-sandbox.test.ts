@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync, rmdirSync, readFileSync, readlinkSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync, rmdirSync, readFileSync, readlinkSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -318,5 +318,48 @@ describe("frontend deps mode", () => {
     expect(leaked[0]).toContain("EVIL.txt");
     expect(leaked[0]).toContain("added; reverted");
     expect(existsSync(join(workdir, "node_modules", "EVIL.txt"))).toBe(false); // reverted
+  });
+
+  it("enabling frontendDeps on an existing OFF sandbox converts the junction to a real copy; base untouched", async () => {
+    // base app/node_modules (beforeEach only builds root node_modules)
+    mkdirSync(join(workdir, "app", "node_modules"), { recursive: true });
+    writeFileSync(join(workdir, "app", "node_modules", "app-marker.txt"), "app-base\n");
+    const baseAppDeps = join(workdir, "app", "node_modules");
+    const baseEntriesBefore = readdirSync(baseAppDeps).sort();
+
+    // 1. create sandbox with frontendDeps OFF -> app/node_modules is a junction
+    const sp = await ensureSandbox(workdir, TID, false);
+    expect(readlinkSync(join(sp, "app", "node_modules"))).toBeTruthy(); // is a link
+
+    // 2. enable the setting and re-run ensureSandbox on the SAME tree
+    const again = await ensureSandbox(workdir, TID, true);
+    expect(again).toBe(sp);
+
+    // 3. app/node_modules is now a real directory, not a reparse point
+    expect(() => readlinkSync(join(sp, "app", "node_modules"))).toThrow();
+    expect(readFileSync(join(sp, "app", "node_modules", "app-marker.txt"), "utf-8")).toBe("app-base\n");
+
+    // 4. BASE app/node_modules is byte-identical: same entries, same marker content
+    expect(readdirSync(baseAppDeps).sort()).toEqual(baseEntriesBefore);
+    expect(readFileSync(join(baseAppDeps, "app-marker.txt"), "utf-8")).toBe("app-base\n");
+
+    // 5. root node_modules stays a link across both modes
+    expect(readlinkSync(join(sp, "node_modules"))).toBeTruthy();
+
+    // writes into the converted copy do not reach the base
+    mkdirSync(join(sp, "app", "node_modules", ".vite-temp"), { recursive: true });
+    writeFileSync(join(sp, "app", "node_modules", ".vite-temp", "cfg.mjs"), "x\n");
+    expect(existsSync(join(baseAppDeps, ".vite-temp"))).toBe(false);
+  });
+
+  it("root node_modules stays a link in both OFF and ON modes", async () => {
+    mkdirSync(join(workdir, "app", "node_modules"), { recursive: true });
+    writeFileSync(join(workdir, "app", "node_modules", "app-marker.txt"), "app-base\n");
+
+    const sp = await ensureSandbox(workdir, TID, false);
+    expect(readlinkSync(join(sp, "node_modules"))).toBeTruthy(); // OFF: link
+
+    await ensureSandbox(workdir, TID, true);
+    expect(readlinkSync(join(sp, "node_modules"))).toBeTruthy(); // ON: still link
   });
 });

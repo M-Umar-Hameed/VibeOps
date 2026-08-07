@@ -337,6 +337,42 @@ describe("forge API", () => {
     expect(discardAgain.status).toBe(404);
   });
 
+  it("discard 409s while the pipeline is running and does not touch the sandbox", async () => {
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+    setScript("plan,slow");
+
+    const startRes = await app.request("/forge/pipeline", {
+      method: "POST", headers: h,
+      body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+    });
+    const { runId } = await startRes.json();
+
+    // wait for work stage (sandbox now exists, run still "running")
+    const deadline = Date.now() + 5000;
+    let stage = "";
+    while (stage !== "work" && Date.now() < deadline) {
+      const out = await app.request(`/forge/runs/${runId}/output?after=0`, { headers: h });
+      stage = (await out.json()).stage;
+      if (stage !== "work") await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(stage).toBe("work");
+    while (!(await (await app.request(`/forge/tickets/${ticket.id}/sandbox`, { headers: h })).json()).exists && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+
+    const discardMidRun = await app.request(`/forge/tickets/${ticket.id}/discard`, { method: "POST", headers: h });
+    expect(discardMidRun.status).toBe(409);
+    expect((await discardMidRun.json()).error).toBe("run in progress for this ticket");
+
+    // guard held: sandbox untouched, still present while the run is live
+    const sandboxRes = await app.request(`/forge/tickets/${ticket.id}/sandbox`, { headers: h });
+    expect((await sandboxRes.json()).exists).toBe(true);
+
+    await app.request(`/forge/runs/${runId}/stop`, { method: "POST", headers: h });
+    await pollUntilDone(h, runId);
+  });
+
   it("pipeline rejects invalid effort with 400", async () => {
     const h = await adminHeaders();
     const ticket = await seedTicket();

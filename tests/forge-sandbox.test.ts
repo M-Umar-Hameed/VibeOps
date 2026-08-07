@@ -56,7 +56,7 @@ describe("forge sandbox", () => {
     const diff = await sandboxDiff(workdir, TID);
     expect(diff).toContain("b.txt");
     expect(diff).toContain("+new file");
-    await promoteSandbox(workdir, TID);
+    await promoteSandbox(workdir, TID, "add b file");
     expect(existsSync(join(workdir, "b.txt"))).toBe(true);
     expect(sandboxExists(TID)).toBe(false);
     expect(git(workdir, "branch", "--list", `forge/${TID}`).trim()).toBe("");
@@ -89,7 +89,7 @@ describe("forge sandbox", () => {
     writeFileSync(join(sp, "b.txt"), "x\n");
     await forgeCommit(TID, "b");
     writeFileSync(join(workdir, "a.txt"), "dirty\n");
-    await expect(promoteSandbox(workdir, TID)).rejects.toThrow(ConflictError);
+    await expect(promoteSandbox(workdir, TID, "dirty workdir")).rejects.toThrow(ConflictError);
     expect(sandboxExists(TID)).toBe(true); // sandbox survives refusal
   });
 
@@ -100,7 +100,7 @@ describe("forge sandbox", () => {
     writeFileSync(join(workdir, "a.txt"), "base version\n");
     git(workdir, "add", "-A");
     git(workdir, "commit", "-m", "diverge");
-    await expect(promoteSandbox(workdir, TID)).rejects.toThrow(ConflictError);
+    await expect(promoteSandbox(workdir, TID, "conflict ticket")).rejects.toThrow(ConflictError);
     expect(git(workdir, "status", "--porcelain").trim()).toBe(""); // merge aborted
     expect(sandboxExists(TID)).toBe(true);
   });
@@ -114,7 +114,7 @@ describe("forge sandbox", () => {
     git(workdir, "commit", "-m", "diverge");
 
     let err: any;
-    try { await promoteSandbox(workdir, TID); } catch (e) { err = e; }
+    try { await promoteSandbox(workdir, TID, "conflict ticket"); } catch (e) { err = e; }
     expect(err).toBeInstanceOf(ConflictError);
     expect(err.message).toContain("a.txt");
     expect(err.message).toContain("conflicts with the base");
@@ -156,7 +156,7 @@ describe("forge sandbox", () => {
     const sp2 = await ensureSandbox(workdir, TID2);
     writeFileSync(join(sp2, "c.txt"), "y\n");
     await forgeCommit(TID2, "c");
-    await promoteSandbox(workdir, TID2);
+    await promoteSandbox(workdir, TID2, "add c file");
     expect(sandboxExists(TID2)).toBe(false);
     expect(existsSync(join(workdir, "node_modules", "marker.txt"))).toBe(true);
   });
@@ -242,6 +242,40 @@ describe("forge sandbox", () => {
     const diff = await sandboxWorkingDiff(workdir, TID);
     expect(diff).toContain("b.txt");
     expect(diff).not.toContain("master-added.txt");
+  });
+
+  async function promoteAndReadMsg(tid: string, title: string): Promise<{ subject: string; body: string }> {
+    const sp = await ensureSandbox(workdir, tid);
+    writeFileSync(join(sp, `${tid}.txt`), "x\n");
+    await forgeCommit(tid, "work");
+    await promoteSandbox(workdir, tid, title);
+    const subject = git(workdir, "log", "-1", "--format=%s").trim();
+    const body = git(workdir, "log", "-1", "--format=%b").trim();
+    return { subject, body };
+  }
+
+  it("promote subject carries the ticket title, id stays findable in the body", async () => {
+    const { subject, body } = await promoteAndReadMsg(TID, "Fix the flaky auth test");
+    expect(subject).toContain("Fix the flaky auth test");
+    expect(subject).not.toBe(`forge: promote ${TID}`);
+    expect(body).toContain(TID);
+  });
+
+  it("very long title yields a sane subject with the full title in the body", async () => {
+    const long = "A".repeat(200);
+    const { subject, body } = await promoteAndReadMsg(TID, long);
+    expect(subject.length).toBeLessThanOrEqual(72);
+    expect(subject.endsWith("...")).toBe(true);
+    expect(body).toContain(long); // full, untruncated
+    expect(body).toContain(TID);
+  });
+
+  it("redacts a secret-shaped string in the promote message", async () => {
+    const secret = "sk-abcdef0123456789ABCDEF";
+    const { subject, body } = await promoteAndReadMsg(TID, `leak ${secret}`);
+    expect(subject).not.toContain(secret);
+    expect(body).not.toContain(secret);
+    expect(`${subject}\n${body}`).toContain("[redacted]");
   });
 });
 

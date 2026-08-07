@@ -295,7 +295,7 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     if (!(await hasCommitsToPromote(workdir, ticketId))) {
       return c.json({ error: "sandbox has no commits to promote" }, 409);
     }
-    await promoteSandbox(workdir, ticketId);
+    await promoteSandbox(workdir, ticketId, ticket.title);
     await addComment(c.get("actor").id, ticketId, "forge: promoted", "comment");
     const fresh = await getTicket(ticketId);
     const updated = await updateTicket(c.get("actor").id, ticketId, fresh.version, { status: "closed" });

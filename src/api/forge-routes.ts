@@ -338,6 +338,7 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
 
   app.post("/forge/tickets/:id/discard", requireAdmin, async (c) => {
     const ticketId = c.req.param("id");
+    if (await hasActiveRun(ticketId)) return c.json({ error: "run in progress for this ticket" }, 409);
     if (!sandboxExists(ticketId)) return c.json({ error: "no sandbox for ticket" }, 404);
     const ticket = await getTicket(ticketId);
     const workdir = await resolveWorkdir(ticket.projectId, forgeConfig());

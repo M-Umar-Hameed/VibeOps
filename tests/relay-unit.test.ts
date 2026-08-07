@@ -1,10 +1,11 @@
 import { readFileSync, writeFileSync, mkdtempSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "vitest";
+import { expect, test, describe, it } from "vitest";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict } from "../src/relay/prompts.js";
 import { loadRelayConfig, resolveCmd } from "../src/relay/config.js";
-import { substituteCmd, runAgent } from "../src/relay/invoke.js";
+import { substituteCmd, runAgent, killTree } from "../src/relay/invoke.js";
+import { spawn } from "node:child_process";
 
 test("parseVerdict: PASS/FAIL/missing/garbage are fail-closed", () => {
   expect(parseVerdict("some output\nVERDICT: PASS\n").pass).toBe(true);
@@ -434,3 +435,18 @@ test("runAgent leaves no prompt file behind on failure and timeout paths (net-ze
 
   expect(countTxt()).toBe(before);
 }, 10_000);
+
+describe("killTree", () => {
+  it("resolves promptly on an already-exited child, not after KILL_TIMEOUT_MS", async () => {
+    const child = spawn(process.execPath, ["-e", "0"]);
+    await new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+
+    const start = Date.now();
+    await killTree(child);
+    const elapsed = Date.now() - start;
+    // Guard returns immediately; without it, awaiting the never-firing "exit"
+    // would block the full 10s KILL_TIMEOUT_MS.
+    expect(elapsed).toBeLessThan(1000);
+  });
+});

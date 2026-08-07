@@ -65,6 +65,17 @@ test("MCP over HTTP: 401 keyless, tools listed with key, config + install endpoi
       body: JSON.stringify({ client: "nope" }),
     });
     expect(bad.status).toBe(400);
+    const badBody = await bad.json();
+    expect(badBody.error).toContain("cursor");
+    expect(badBody.error).toContain("gemini");
+
+    const codexInst = await fetch(`http://127.0.0.1:${port}/mcp/install`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ client: "codex" }),
+    });
+    expect(codexInst.status).toBe(400);
+    expect((await codexInst.json()).error).toContain("codex");
   } finally {
     child.kill();
     try { execSync(process.platform === "win32" ? `taskkill /pid ${child.pid} /T /F` : `kill -9 ${child.pid}`); } catch { /* already dead */ }

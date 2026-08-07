@@ -54,7 +54,6 @@ export async function runAgent(
   // No placeholder at all -> deliver the prompt on stdin. Windows argv tops out
   // near 32k; long prompts (review diffs) die with ENAMETOOLONG as {prompt}.
   const viaStdin = !needsFile && !agent.cmd.some((p) => p.includes("{prompt}"));
-  if (needsFile) await writeFile(promptFile, prompt, { encoding: "utf-8", mode: 0o600 });
 
   const [cmd0, ...rest] = substituteCmd(agent.cmd, { prompt, promptFile, workdir });
 
@@ -71,6 +70,9 @@ export async function runAgent(
   }
 
   try {
+    // Written inside try so the finally unlinks it on every exit path (spawn
+    // throw, agent failure, timeout/kill), never only the happy return.
+    if (needsFile) await writeFile(promptFile, prompt, { encoding: "utf-8", mode: 0o600 });
     return await new Promise((resolve) => {
       // stdin ignored unless piping the prompt: headless CLIs (codex exec)
       // otherwise block reading an open stdin.

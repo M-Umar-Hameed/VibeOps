@@ -57,6 +57,11 @@ async function must(cwd: string, ...args: string[]): Promise<string> {
   return out;
 }
 
+// True if p is a junction/symlink (readlink succeeds), false for a real dir or missing path.
+function isLink(p: string): boolean {
+  try { readlinkSync(p); return true; } catch { return false; }
+}
+
 // Link (or copy, when frontendDeps) base repo deps into the sandbox.
 // Never throws — a missing/failed link just means the work agent can't run tests, not a broken sandbox.
 export function linkDeps(workdir: string, ticketId: string, frontendDeps = false): void {
@@ -64,7 +69,19 @@ export function linkDeps(workdir: string, ticketId: string, frontendDeps = false
   for (const rel of DEPS_DIRS) {
     const src = resolve(join(workdir, rel));
     const dest = join(sbx, rel);
-    if (!existsSync(src) || existsSync(dest)) continue;
+    if (!existsSync(src)) continue;
+    if (existsSync(dest)) {
+      // Reconcile an existing dest with the current mode. Only app/node_modules
+      // converts: frontendDeps wants a real copy, but an earlier off-mode run left
+      // a junction. Drop the junction (link-safe rmdir, never a recursive delete)
+      // so the copy branch below runs. An off-mode real copy is left as-is -- a
+      // copy never leaks, and deleting it for disk isn't worth the risk here.
+      if (!(frontendDeps && rel === APP_DEPS && isLink(dest))) continue;
+      try { rmdirSync(dest); } catch (e) {
+        console.warn(`linkDeps: failed to unlink ${rel} for reconcile: ${String(e)}`);
+        continue;
+      }
+    }
     try {
       mkdirSync(dirname(dest), { recursive: true });
       if (frontendDeps && rel === APP_DEPS) {

@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, describe, it } from "vitest";
@@ -411,6 +411,30 @@ test("loadRelayConfig still requires cmd for a cli agent", () => {
     expect(() => loadRelayConfig(path)).toThrow(/must have a non-empty cmd string array/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("runAgent leaves no prompt file behind on failure and timeout paths (net-zero .txt)", async () => {
+  // Note: this covers the failure and timeout paths leaving no prompt file behind.
+  // It does not cover the narrow window of a throw between writeFile and try.
+  const countTxt = () =>
+    readdirSync(tmpdir()).filter((f) => f.startsWith("vibeops-relay-") && f.endsWith(".txt")).length;
+  const before = countTxt();
+
+  // needsFile=true (cmd contains "{promptFile}"); node ignores the extra arg and exits 1.
+  const failed = await runAgent(
+    { cmd: [process.execPath, "-e", "process.exit(1)", "{promptFile}"], roles: [] },
+    "unused", process.cwd(),
+  );
+  expect(failed.ok).toBe(false);
+
+  // needsFile=true; process hangs and is killed by the timeout (kill path).
+  const timedOut = await runAgent(
+    { cmd: [process.execPath, "-e", "setTimeout(()=>{},60000)", "{promptFile}"], roles: [], timeoutMs: 500 },
+    "unused", process.cwd(),
+  );
+  expect(timedOut.ok).toBe(false);
+
+  expect(countTxt()).toBe(before);
+}, 10_000);
 
 describe("killTree", () => {
   it("resolves promptly on an already-exited child, not after KILL_TIMEOUT_MS", async () => {

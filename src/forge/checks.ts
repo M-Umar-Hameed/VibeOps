@@ -44,7 +44,7 @@ function runOne(
     let out = "";
     let timedOut = false;
     let settled = false;
-    const timer = setTimeout(() => { timedOut = true; killTree(child); }, timeoutMs);
+    const timer = setTimeout(() => { timedOut = true; void killTree(child); }, timeoutMs);
     const cap = (d: Buffer) => { if (out.length < OUTPUT_CAP) out += d.toString("utf-8"); };
     child.stdout?.on("data", cap);
     child.stderr?.on("data", cap);

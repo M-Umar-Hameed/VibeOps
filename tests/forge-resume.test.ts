@@ -112,7 +112,7 @@ describe("forge run resume", () => {
     expect(row.status).toBe("interrupted");
     expect(row.finishedAt).not.toBeNull();
     
-    stopRun(runId);
+    await stopRun(runId);
     await awaitRun(runId);
   });
 
@@ -333,7 +333,7 @@ describe("forge run resume", () => {
     // Simulate process kill: stop the run, wait for it to settle, then UPDATE
     // the DB row to "interrupted" as if it hadn't settled cleanly (simulating
     // what markInterruptedRuns does on boot for runs with null finishedAt).
-    stopRun(runId);
+    await stopRun(runId);
     await awaitRun(runId);
 
     // Overwrite the run to look like a crash (status=interrupted) rather than clean stop

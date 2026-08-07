@@ -386,9 +386,8 @@ describe("forge run manager", () => {
     });
 
     await waitForStage(runId, "work");
-    expect(stopRun(runId)).toBe(true);
+    expect(await stopRun(runId)).toBe(true);
     await awaitRun(runId);
-
     expect(getRunOutput(runId, 0)?.status).toBe("stopped");
     expect((await getTicket(ticket.id)).status).toBe("planned");
     const summary = listRuns().find((r) => r.id === runId);
@@ -455,7 +454,7 @@ describe("forge run manager", () => {
   });
 
   it("stopRun returns false for an unknown or already-settled run", async () => {
-    expect(stopRun("no-such-run")).toBe(false);
+    expect(await stopRun("no-such-run")).toBe(false);
 
     const { actorId, ticket } = await seedTicket("Already settled path");
     setScript("plan,exit");
@@ -464,7 +463,7 @@ describe("forge run manager", () => {
     });
     await awaitRun(runId);
 
-    expect(stopRun(runId)).toBe(false);
+    expect(await stopRun(runId)).toBe(false);
   });
 
   it("explicit workModel is recorded as an agent:model composite", async () => {
@@ -865,7 +864,7 @@ it("hasActiveRun is true mid-run and false after settle", async () => {
   expect(await hasActiveRun(ticket.id)).toBe(true);
 
   await waitForStage(runId, "plan");
-  stopRun(runId);
+  await stopRun(runId);
   await awaitRun(runId);
   expect(await hasActiveRun(ticket.id)).toBe(false);
 }, 15_000);
@@ -959,7 +958,7 @@ it("exceeding configured cap rejects with ConflictError naming active runs", asy
         ticketId: t2.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
       })).rejects.toThrow(new RegExp(t1.id));
     } finally {
-      stopRun(runId);
+      await stopRun(runId);
       await awaitRun(runId);
     }
   });

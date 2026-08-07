@@ -49,6 +49,34 @@ test("composeReviewPrompt includes plan, report, diff, and the mandatory VERDICT
   expect(prompt).toContain("VERDICT: FAIL");
 });
 
+test("composeReviewPrompt with amendments marks supervisor scope as requested, keeps the out-of-scope guard", () => {
+  const prompt = composeReviewPrompt({
+    ticket: { title: "Fix the widget" },
+    plan: "1. Replace the gear",
+    report: "REPORT: done",
+    diff: "diff --git a/gear.ts b/gear.ts",
+    amendments: "CHANGE REQUEST:\nAlso add a DEPS-LEAK hint and a test for it",
+  });
+  expect(prompt).toContain("AUTHORITATIVE PLAN AMENDMENTS");
+  expect(prompt).toContain("DEPS-LEAK hint and a test for it");
+  expect(prompt).toContain('<UNTRUSTED label="plan-amendments">');
+  // Must NOT become permissive: plan is still the contract and unrequested scope still fails.
+  expect(prompt).toContain("Replace the gear");
+  expect(prompt).toContain("in NEITHER the plan NOR these amendments");
+  expect(prompt).toContain("VERDICT: PASS");
+  expect(prompt).toContain("VERDICT: FAIL");
+});
+
+test("composeReviewPrompt without amendments has no amendments section (no weakening on normal runs)", () => {
+  const prompt = composeReviewPrompt({
+    ticket: { title: "Fix the widget" },
+    plan: "1. Replace the gear",
+    report: "REPORT: done",
+    diff: "diff --git a/gear.ts b/gear.ts",
+  });
+  expect(prompt).not.toContain("AUTHORITATIVE PLAN AMENDMENTS");
+});
+
 test("loadRelayConfig throws a helpful error on a missing file", () => {
   expect(() => loadRelayConfig(join(tmpdir(), "does-not-exist-relay.json")))
     .toThrow(/relay config not found/);

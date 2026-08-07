@@ -11,6 +11,7 @@ import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkd
 import {
   sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash, sandboxActivity, sandboxWorkingDiff
 } from "../forge/sandbox.js";
+import { indexRepoDocs } from "../services/knowledge.js";
 import { pickAgents } from "../forge/router.js";
 import { runAgent } from "../relay/invoke.js";
 import { resolveCmd } from "../relay/config.js";
@@ -296,6 +297,11 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
       return c.json({ error: "sandbox has no commits to promote" }, 409);
     }
     await promoteSandbox(workdir, ticketId, ticket.title);
+    // Repo files just changed on disk (sandbox merged into the project repo); refresh the
+    // doc index so stale README/CLAUDE/AGENTS text stops feeding plan/work prompts. Only this
+    // project. Non-blocking, swallow failures — matches the first-time index at runs.ts:316.
+    indexRepoDocs(ticket.projectId)
+      .catch((e) => console.warn(`repo re-index after promote failed: ${(e as Error).message}`));
     await addComment(c.get("actor").id, ticketId, "forge: promoted", "comment");
     const fresh = await getTicket(ticketId);
     const updated = await updateTicket(c.get("actor").id, ticketId, fresh.version, { status: "closed" });

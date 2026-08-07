@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -8,6 +8,9 @@ import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
 import { createTicket } from "../src/services/tickets.js";
 import { app } from "../src/api/app.js";
+import { updateProjectRepo } from "../src/services/projects.js";
+import { indexRepoDocs, searchKnowledge, repoIndexed } from "../src/services/knowledge.js";
+import * as knowledgeSvc from "../src/services/knowledge.js";
 import { resolveSyncActor } from "../src/sync/actor.js";
 import { addComment, listComments } from "../src/services/comments.js";
 import { withSetting } from "./helpers/settings.js";
@@ -541,6 +544,102 @@ describe("forge API", () => {
 
     await app.request(`/forge/runs/${runId}/stop`, { method: "POST", headers: h });
     await pollUntilDone(h, runId);
+  });
+
+  it("re-indexes repo docs after promote so the new doc content is searchable for the project", async () => {
+    const h = await adminHeaders();
+    const repo = initRepo();
+    const { actor } = await createActor({ name: uniq("forge-api-actor"), kind: "human" });
+    const project = await createProject({ key: uniq("forge-api-proj"), name: "Forge API" });
+    await updateProjectRepo(project.id, repo);
+    const ticket = await createTicket(actor.id, { projectId: project.id, title: "Edit indexed doc" });
+
+    await indexRepoDocs(project.id);
+    const before = await searchKnowledge("base", { projectId: project.id, limit: 10 });
+    expect(before.some((r) => r.sourceRef === `${project.id}:readme.md`)).toBe(true);
+
+    process.env.FAKE_WRITE_PATH = "readme.md";
+    setScript("plan,work,review-pass");
+    const startRes = await app.request("/forge/pipeline", {
+      method: "POST", headers: h,
+      body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+    });
+    expect(startRes.status).toBe(201);
+    const { runId } = await startRes.json();
+    expect((await pollUntilDone(h, runId)).status).toBe("passed");
+
+    const promoteRes = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
+    expect(promoteRes.status).toBe(200);
+
+    const deadline = Date.now() + 10_000;
+    let hit = false;
+    while (Date.now() < deadline) {
+      const res = await searchKnowledge("edited by fake agent", { projectId: project.id, limit: 10 });
+      if (res.some((r) => r.sourceRef === `${project.id}:readme.md` && r.content.includes("edited by fake agent"))) {
+        hit = true;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    expect(hit).toBe(true);
+
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it("a failing repo re-index does not fail or block the promote", async () => {
+    const h = await adminHeaders();
+    const repo = initRepo();
+    const { actor } = await createActor({ name: uniq("forge-api-actor"), kind: "human" });
+    const project = await createProject({ key: uniq("forge-api-proj"), name: "Forge API" });
+    await updateProjectRepo(project.id, repo);
+    const ticket = await createTicket(actor.id, { projectId: project.id, title: "Reindex fails" });
+
+    setScript("plan,work,review-pass", true);
+    const startRes = await app.request("/forge/pipeline", {
+      method: "POST", headers: h,
+      body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+    });
+    const { runId } = await startRes.json();
+    expect((await pollUntilDone(h, runId)).status).toBe("passed");
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const spy = vi.spyOn(knowledgeSvc, "indexRepoDocs").mockRejectedValue(new Error("boom"));
+
+    const promoteRes = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
+    expect(promoteRes.status).toBe(200);
+    expect((await promoteRes.json()).status).toBe("closed");
+    expect(spy).toHaveBeenCalledWith(project.id);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(warn).toHaveBeenCalled();
+
+    spy.mockRestore();
+    warn.mockRestore();
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it("first pipeline start indexes a never-indexed project's repo docs", async () => {
+    const h = await adminHeaders();
+    const repo = initRepo();
+    const { actor } = await createActor({ name: uniq("forge-api-actor"), kind: "human" });
+    const project = await createProject({ key: uniq("forge-api-proj"), name: "Forge API" });
+    await updateProjectRepo(project.id, repo);
+    const ticket = await createTicket(actor.id, { projectId: project.id, title: "First index" });
+
+    expect(await repoIndexed(project.id)).toBe(false);
+
+    setScript("plan,work,review-pass", true);
+    const startRes = await app.request("/forge/pipeline", {
+      method: "POST", headers: h,
+      body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+    });
+    const { runId } = await startRes.json();
+    expect((await pollUntilDone(h, runId)).status).toBe("passed");
+
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline && !(await repoIndexed(project.id))) await new Promise((r) => setTimeout(r, 200));
+    expect(await repoIndexed(project.id)).toBe(true);
+
+    rmSync(repo, { recursive: true, force: true });
   });
 });
 

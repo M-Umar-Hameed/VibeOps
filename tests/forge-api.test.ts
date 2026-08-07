@@ -66,7 +66,7 @@ beforeEach(() => {
   writeRelayConfig();
 });
 
-afterEach(async () => {
+afterEach(() => {
   delete process.env.VIBEOPS_SANDBOX_ROOT;
   delete process.env.VIBEOPS_RELAY_CONFIG;
   delete process.env.FAKE_SCRIPT;
@@ -83,9 +83,6 @@ afterEach(async () => {
     if (resolve(wt) === resolve(workdir)) continue;
     execFileSync("git", ["worktree", "remove", "--force", wt], { cwd: workdir });
   }
-  execFileSync("git", ["worktree", "prune"], { cwd: workdir });
-  // Give Windows time to release file handles after process termination
-  if (process.platform === "win32") await new Promise((r) => setTimeout(r, 2000));
   rmSync(sandboxRoot, { recursive: true, force: true });
   rmSync(workdir, { recursive: true, force: true });
   rmSync(dirname(relayConfigPath), { recursive: true, force: true });

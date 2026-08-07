@@ -415,3 +415,80 @@ test("persona panels are labeled with the round they belong to", async () => {
   await act(async () => { vi.advanceTimersByTime(2000); });
   await waitFor(() => expect(screen.getByText(/Round 3 positions/i)).toBeInTheDocument(), { timeout: 6000 });
 });
+
+test("running session keeps the session list visible and shows New council", async () => {
+  localStorage.setItem("vibeops.activeCouncilId", "c1");
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/council") return [
+      { id: "c1", status: "running", round: 1, startedAt: "2026-08-01T00:00:00Z", promptPreview: "live idea" },
+    ];
+    if (path === "/council/c1") return { status: "running", round: 1 };
+    if (path.startsWith("/council/c1/output")) return { chunk: "", next: 0, status: "running" };
+    return {};
+  });
+  render(wrap(<CreateScreen />));
+  await waitFor(() => expect(screen.getByText("live idea")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText("Council in session...")).toBeInTheDocument());
+  expect(screen.getByText("Sessions")).toBeInTheDocument();
+  expect(screen.getByText("New council")).toBeInTheDocument();
+});
+
+test("New council returns to the Idea form and issues no cancel request", async () => {
+  localStorage.setItem("vibeops.activeCouncilId", "c1");
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/council") return [
+      { id: "c1", status: "running", round: 1, startedAt: "2026-08-01T00:00:00Z", promptPreview: "live idea" },
+    ];
+    if (path === "/council/c1") return { status: "running", round: 1 };
+    if (path.startsWith("/council/c1/output")) return { chunk: "", next: 0, status: "running" };
+    return {};
+  });
+  render(wrap(<CreateScreen />));
+  await waitFor(() => expect(screen.getByText("New council")).toBeInTheDocument());
+  fireEvent.click(screen.getByText("New council"));
+  await waitFor(() => expect(screen.getByPlaceholderText(/Describe the idea/i)).toBeInTheDocument());
+  const calledPaths = apiFetch.mock.calls.map((c: any[]) => String(c[0]));
+  expect(calledPaths.some((p) => /answers|create-ticket|cancel|stop|delete/i.test(p))).toBe(false);
+});
+
+test("session view can open a different session from the list and the first stays reachable", async () => {
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/council") return [
+      { id: "a1", status: "running", round: 1, startedAt: "2026-08-01T00:00:00Z", promptPreview: "alpha idea" },
+      { id: "b2", status: "awaiting-answers", round: 1, startedAt: "2026-08-01T00:00:00Z", promptPreview: "beta idea" },
+    ];
+    if (path === "/council/a1") return { status: "running", round: 1 };
+    if (path.startsWith("/council/a1/output")) return { chunk: "", next: 0, status: "running" };
+    if (path === "/council/b2") return { status: "awaiting-answers", round: 1, rating: 5, decision: "NEEDS-INFO", questions: ["Budget?"], spec: "s" };
+    return {};
+  });
+  render(wrap(<CreateScreen />));
+  await waitFor(() => expect(screen.getByText("alpha idea")).toBeInTheDocument());
+  fireEvent.click(screen.getByText("alpha idea"));
+  await waitFor(() => expect(screen.getByText("Council in session...")).toBeInTheDocument());
+  // switch directly to B via the always-rendered list
+  fireEvent.click(screen.getByText("beta idea"));
+  await waitFor(() => expect(screen.getByText("Budget?")).toBeInTheDocument());
+  // A still reachable from the list
+  fireEvent.click(screen.getByText("alpha idea"));
+  await waitFor(() => expect(screen.getByText("Council in session...")).toBeInTheDocument());
+});
+
+test("awaiting-answers stays distinguishable in the list while another session is open", async () => {
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/council") return [
+      { id: "a1", status: "running", round: 1, startedAt: "2026-08-01T00:00:00Z", promptPreview: "alpha idea" },
+      { id: "b2", status: "awaiting-answers", round: 2, startedAt: "2026-08-01T00:00:00Z", promptPreview: "beta idea" },
+    ];
+    if (path === "/council/a1") return { status: "running", round: 1 };
+    if (path.startsWith("/council/a1/output")) return { chunk: "", next: 0, status: "running" };
+    return {};
+  });
+  render(wrap(<CreateScreen />));
+  await waitFor(() => expect(screen.getByText("alpha idea")).toBeInTheDocument());
+  fireEvent.click(screen.getByText("alpha idea"));
+  await waitFor(() => expect(screen.getByText("Council in session...")).toBeInTheDocument());
+  expect(screen.getByText("awaiting-answers")).toBeInTheDocument();
+  expect(screen.getByText("Answer")).toBeInTheDocument();
+  expect(screen.getByText("R2")).toBeInTheDocument();
+});

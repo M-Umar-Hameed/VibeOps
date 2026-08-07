@@ -383,9 +383,18 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
 
   return (
     <div className="glass-card rounded-lg p-8 relative overflow-hidden space-y-6">
+      <CouncilList rows={rows} activeCount={activeRows.length} max={MAX_ACTIVE} onOpen={loadCouncil} />
+      {councilStatus !== "idle" && (
+        <button
+          type="button"
+          onClick={handleStartOver}
+          className="px-6 py-2 bg-surface-container-highest text-on-surface font-code-label uppercase tracking-widest rounded-sm cursor-pointer"
+        >
+          New council
+        </button>
+      )}
       {councilStatus === "idle" && (
         <div className="space-y-6">
-          <CouncilList rows={rows} activeCount={activeRows.length} max={MAX_ACTIVE} onOpen={loadCouncil} />
           <div className="space-y-4">
 
           <div className="space-y-2">

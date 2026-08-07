@@ -20,7 +20,7 @@ function mkTmp(prefix: string): string {
   return d;
 }
 afterAll(() => {
-  for (const d of tmpDirs) rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
 });
 
 function configWith(name: string, cmd0: string): RelayConfig {

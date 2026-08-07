@@ -110,8 +110,7 @@ test("relay pipeline: plan -> work -> review(fail) -> rework -> review(pass) -> 
   } finally {
     child.kill();
     try { execSync(process.platform === "win32" ? `taskkill /pid ${child.pid} /T /F` : `kill -9 ${child.pid}`); } catch { /* already dead */ }
-    // Server held home/.vibeops (DB) open; retry until the killed tree releases it on Windows.
-    rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-    rmSync(workdir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(home, { recursive: true, force: true });
+    rmSync(workdir, { recursive: true, force: true });
   }
 });

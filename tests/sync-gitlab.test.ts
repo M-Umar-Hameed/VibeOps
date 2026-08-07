@@ -178,10 +178,10 @@ test("(g) runSync-per-binding engine logic", async () => {
 
   const fetchImpl = vi.fn(async (url) => {
     if (url.includes(b1)) {
-      return { ok: true, json: async () => url.includes("/notes") ? [] : [{ iid: 10, title: "T1", state: "opened" }], headers: new Headers() };
+      return { ok: true, json: async () => url.includes("/notes") ? [] : [{ iid: 10, title: "T1", state: "opened", updated_at: "2026-01-01T00:00:00Z" }], headers: new Headers() };
     }
     if (url.includes(b2)) {
-      return { ok: true, json: async () => url.includes("/notes") ? [] : [{ iid: 20, title: "T2", state: "opened" }], headers: new Headers() };
+      return { ok: true, json: async () => url.includes("/notes") ? [] : [{ iid: 20, title: "T2", state: "opened", updated_at: "2026-01-01T00:00:00Z" }], headers: new Headers() };
     }
     return { ok: true, json: async () => [], headers: new Headers() };
   });

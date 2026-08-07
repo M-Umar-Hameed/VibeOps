@@ -40,12 +40,12 @@ export async function runSync(connector: SourceConnector, opts: { projectId: str
 
       let ticketId: string;
       if (!link) {
-        // ponytail: create and sync-link insert are still two statements (not one transaction);
-        // a crash strictly between them re-creates this ticket next run. Closing that fully needs
-        // a transaction threaded through the audited createTicket service — deferred.
-        const t = await createTicket(actor.id, { projectId: opts.projectId, title: ext.title, body: ext.body, status: ext.status });
-        await db.insert(syncLinks).values({
-          source: connector.source, externalId: ext.externalId, ticketId: t.id, externalUpdatedAt: new Date(ext.updatedAt),
+        const t = await db.transaction(async (tx) => {
+          const created = await createTicket(actor.id, { projectId: opts.projectId, title: ext.title, body: ext.body, status: ext.status }, tx);
+          await tx.insert(syncLinks).values({
+            source: connector.source, externalId: ext.externalId, ticketId: created.id, externalUpdatedAt: new Date(ext.updatedAt),
+          });
+          return created;
         });
         ticketId = t.id;
         res.created++;

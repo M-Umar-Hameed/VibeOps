@@ -52,3 +52,19 @@ test("closed external ticket imports as closed", async () => {
   const [t] = await db.select().from(tickets).where(eq(tickets.id, link.ticketId));
   expect(t.status).toBe("closed");
 });
+
+test("create + sync-link are atomic: a failing link insert leaves no ticket", async () => {
+  const projectId = await newProject();
+  const source = `src-atomic-${Date.now()}-${Math.random()}`;
+  const ext: ExternalTicket = {
+    externalId: "z#1", title: "T", body: "b", status: "open",
+    updatedAt: "not-a-valid-date", comments: [], // Invalid Date -> syncLinks insert throws on serialize
+  };
+
+  const r = await runSync(fake(source, [ext]), { projectId });
+  expect(r.created).toBe(0);
+  expect(r.failed).toBe(1);
+
+  const rows = await db.select().from(tickets).where(eq(tickets.projectId, projectId));
+  expect(rows).toHaveLength(0);
+});

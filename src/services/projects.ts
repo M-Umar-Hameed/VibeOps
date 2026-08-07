@@ -7,6 +7,8 @@ import { projects, projectSettings, type Project } from "../db/schema.js";
 import { ConflictError, NotFoundError } from "./errors.js";
 import { normalizeBinding } from "../sync/binding.js";
 
+type Executor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
+
 // Never-throw: a workspace folder can vanish (moved/deleted) after being set.
 function isGit(repoPath: string): boolean {
   try {
@@ -46,9 +48,9 @@ export async function listProjects(): Promise<(Project & { isGit: boolean })[]> 
   return rows.map((p) => ({ ...p, isGit: p.repoPath ? isGit(p.repoPath) : false }));
 }
 
-export async function createProject(input: { key: string; name: string }): Promise<Project> {
+export async function createProject(input: { key: string; name: string }, executor: Executor = db): Promise<Project> {
   try {
-    const [p] = await db.insert(projects).values({ key: input.key, name: input.name }).returning();
+    const [p] = await executor.insert(projects).values({ key: input.key, name: input.name }).returning();
     return p;
   } catch (e) {
     if (String((e as { code?: string }).code) === "23505") {
@@ -60,7 +62,7 @@ export async function createProject(input: { key: string; name: string }): Promi
 
 // Empty string clears the workspace back to null (falls back to config.workdir).
 // Non-empty must be an absolute, existing directory.
-export async function updateProjectRepo(id: string, repoPath: string): Promise<Project & { isGit: boolean }> {
+export async function updateProjectRepo(id: string, repoPath: string, executor: Executor = db): Promise<Project & { isGit: boolean }> {
   let value: string | null = repoPath.trim();
   if (value === "") {
     value = null;
@@ -70,7 +72,7 @@ export async function updateProjectRepo(id: string, repoPath: string): Promise<P
       throw new Error(`repoPath does not exist or is not a directory: ${value}`);
     }
   }
-  const [p] = await db.update(projects).set({ repoPath: value }).where(eq(projects.id, id)).returning();
+  const [p] = await executor.update(projects).set({ repoPath: value }).where(eq(projects.id, id)).returning();
   if (!p) throw new NotFoundError(`project not found: ${id}`);
   return { ...p, isGit: p.repoPath ? isGit(p.repoPath) : false };
 }
@@ -190,9 +192,7 @@ export type ImportItem = { name: string; path: string };
 
 // Reuses createProject + updateProjectRepo (validation included). Fails fast
 // on an unsafe path before creating anything, so a rejected item leaves no
-// orphan row. ponytail: no transaction around create+repoPath-set — if the
-// directory vanishes between scan and import, a project with null repoPath
-// can be left behind; wrap in db.transaction if that shows up in practice.
+// orphan row.
 export async function importProjects(items: ImportItem[]): Promise<(Project & { isGit: boolean })[]> {
   const existing = await db.select({ key: projects.key, repoPath: projects.repoPath }).from(projects);
   const existingKeys = new Set(existing.map((p) => p.key));
@@ -217,8 +217,10 @@ export async function importProjects(items: ImportItem[]): Promise<(Project & { 
     }
     existingKeys.add(key);
 
-    const project = await createProject({ key, name: item.name });
-    const withRepo = await updateProjectRepo(project.id, item.path);
+    const withRepo = await db.transaction(async (tx) => {
+      const project = await createProject({ key, name: item.name }, tx);
+      return updateProjectRepo(project.id, item.path, tx);
+    });
     boundPaths.add(normalizePath(item.path));
     created.push(withRepo);
   }

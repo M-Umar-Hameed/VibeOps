@@ -1,5 +1,5 @@
-import { expect, test } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { afterAll, expect, test } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,15 @@ const EXIT1 = join(__dirname, "fixtures", "doctor-exit1.cmd");
 function uniq(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
+const tmpDirs: string[] = [];
+function mkTmp(prefix: string): string {
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  tmpDirs.push(d);
+  return d;
+}
+afterAll(() => {
+  for (const d of tmpDirs) rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+});
 
 function configWith(name: string, cmd0: string): RelayConfig {
   return { workdir: tmpdir(), agents: { [name]: { cmd: [cmd0], roles: ["plan", "work", "review"] } } };
@@ -38,7 +47,7 @@ test("runDoctor: exit1 fixture probes as a soft failure (spawnFailed false)", as
 
 test("runDoctor: missing binary path is a hard spawn failure", async () => {
   const name = uniq("missing-agent");
-  const missingPath = join(mkdtempSync(join(tmpdir(), "doctor-missing-")), "does-not-exist.cmd");
+  const missingPath = join(mkTmp("doctor-missing-"), "does-not-exist.cmd");
   const [status] = await runDoctor(configWith(name, missingPath));
   expect(status.probe.ok).toBe(false);
   expect(status.probe.spawnFailed).toBe(true);
@@ -57,7 +66,7 @@ test("runDoctor: caches results; fresh=true bypasses the cache", async () => {
   // Rename: same agent name, different binary. Cache is keyed by name+binary,
   // so this is a MISS and probes the new (missing) binary immediately — a
   // stale probe for the old cmd must never answer for the new one.
-  const missingPath = join(mkdtempSync(join(tmpdir(), "doctor-renamed-")), "gone.cmd");
+  const missingPath = join(mkTmp("doctor-renamed-"), "gone.cmd");
   const renamed: RelayConfig = { workdir: tmpdir(), agents: { [name]: { cmd: [missingPath], roles: ["plan", "work", "review"] } } };
   const cached = await runDoctor(renamed);
   expect(cached[0].probe.ok).toBe(false);
@@ -70,7 +79,7 @@ test("runDoctor: caches results; fresh=true bypasses the cache", async () => {
 
 test("checkAuth via runDoctor: claude basename reads the real reader, booleans only", async () => {
   const name = uniq("claude-like");
-  const home = mkdtempSync(join(tmpdir(), "doctor-auth-"));
+  const home = mkTmp("doctor-auth-");
   writeFileSync(join(home, ".claude.json"), JSON.stringify({ oauthAccount: { emailAddress: "x@y.z" } }));
   const config: RelayConfig = { workdir: tmpdir(), agents: { [name]: { cmd: [join(dirname(EXIT0), "..", "..", "irrelevant-claude"), ], roles: ["plan"] } } };
   // Point cmd0 at a fixture whose basename is literally "claude" so the auth
@@ -86,7 +95,7 @@ test("pipelineStartWarnings/pipelineStartBlockingError read the cache only, neve
   const okName = uniq("ok-for-pipeline");
   const flakyName = uniq("flaky-for-pipeline");
   const missingName = uniq("missing-for-pipeline");
-  const missingPath = join(mkdtempSync(join(tmpdir(), "doctor-pipeline-missing-")), "gone.cmd");
+  const missingPath = join(mkTmp("doctor-pipeline-missing-"), "gone.cmd");
 
   const cfg = {
     workdir: tmpdir(),

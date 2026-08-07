@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { execFileSync, execSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -110,5 +110,8 @@ test("relay pipeline: plan -> work -> review(fail) -> rework -> review(pass) -> 
   } finally {
     child.kill();
     try { execSync(process.platform === "win32" ? `taskkill /pid ${child.pid} /T /F` : `kill -9 ${child.pid}`); } catch { /* already dead */ }
+    // Server held home/.vibeops (DB) open; retry until the killed tree releases it on Windows.
+    rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(workdir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

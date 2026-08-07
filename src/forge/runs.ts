@@ -428,7 +428,8 @@ async function pipeline(
   run.stage = "work";
   append(run, `\n=== FORGE work (${run.agents.work}) ===\n`);
   ticket = await updateTicket(actorId, ticket.id, ticket.version, { status: "in_progress" });
-  const sandbox = await ensureSandbox(workdir, ticket.id);
+  const frontendDeps = (await getSetting("forge.frontendDeps")) === "true";
+  const sandbox = await ensureSandbox(workdir, ticket.id, frontendDeps);
   const knowledge = await getKnowledgeSafe(ticket.title, ticket.projectId);
   // Rework passes must see why the last review failed, or the worker repeats
   // the same mistakes (live-hit on the first dogfood ticket).
@@ -461,10 +462,13 @@ async function pipeline(
   }
   const depsLeak = detectDepsLeak(depsBaseline);
   if (depsLeak.length) {
-    const report =
+    let report =
       `\n[forge: DEPS-LEAK — the work stage wrote through the shared node_modules ` +
       `link into the base repo; additions reverted, run failed]\n` +
       depsLeak.map((p) => `  - ${p}`).join("\n") + "\n";
+    if (!frontendDeps && depsLeak.some(p => p.includes("app/node_modules") || p.includes("app\\node_modules"))) {
+      report += `Hint: a frontend build needs forge.frontendDeps set to true. This costs a per-sandbox copy of app/node_modules.\n`;
+    }
     append(run, report);
     await bounce(run, actorId, "deps leak: wrote through shared node_modules link", report);
     return settle(run, "failed");

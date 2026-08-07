@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { getLessons, setLessons, composeAnalyzerPrompt, parseOps, applyOps } from "../src/forge/lessons.js";
+import { getLessons, setLessons, composeAnalyzerPrompt, parseProposal, formatProposal } from "../src/forge/lessons.js";
 import { createActor } from "../src/services/actors.js";
 
 process.env.EMBED_PROVIDER = "fake";
@@ -9,87 +9,47 @@ function uniq(prefix: string) {
 }
 
 describe("forge lessons", () => {
-  it("parseOps: valid OPS→ops (capped 3, ill-shaped dropped)", () => {
-    const output = `analysis done\nOPS:\n[
-      {"op":"add","text":"one"},
-      {"op":"delete","target":"two"},
-      {"op":"replace","target":"three","text":"four"},
-      {"op":"add","text":"five"},
-      {"op":"add"}
-    ]`;
-    const ops = parseOps(output);
-    expect(ops).toEqual([
-      { op: "add", text: "one" },
-      { op: "delete", target: "two" },
-      { op: "replace", target: "three", text: "four" }
-    ]);
+  it("parseProposal: each vocab kind parses", () => {
+    expect(parseProposal(`PROPOSAL:\n{"decision":"propose","kind":"boot-sidecar"}`)).toEqual({ decision: "propose", kind: "boot-sidecar" });
+    expect(parseProposal(`PROPOSAL:\n{"decision":"propose","kind":"npm-script","script":"typecheck"}`)).toEqual({ decision: "propose", kind: "npm-script", script: "typecheck" });
+    expect(parseProposal(`PROPOSAL:\n{"decision":"propose","kind":"grep-diff","pattern":"node_modules/.vite-temp"}`)).toEqual({ decision: "propose", kind: "grep-diff", pattern: "node_modules/.vite-temp" });
   });
 
-  it("parseOps: no anchor -> null", () => {
-    expect(parseOps("just some narration, no marker here")).toBeNull();
+  it("parseProposal: decline preserved", () => {
+    expect(parseProposal(`PROPOSAL:\n{"decision":"decline","reason":"no regression guard possible"}`)).toEqual({ decision: "decline", reason: "no regression guard possible" });
   });
 
-  it("parseOps: malformed JSON / non-array -> null", () => {
-    expect(parseOps("OPS:\n{ \"not\": \"an array\" }")).toBeNull();
-    expect(parseOps("OPS:\nnot even json")).toBeNull();
+  it("parseProposal: out-of-vocabulary propose coerced to decline (no escape hatch)", () => {
+    expect(parseProposal(`PROPOSAL:\n{"decision":"propose","kind":"run-shell","cmd":"rm -rf /"}`)).toEqual({ decision: "decline", reason: "out-of-vocabulary proposal: run-shell" });
   });
 
-  it("applyOps: add/delete/replace apply on verbatim match", () => {
-    const doc = "line1\nline2\nline3";
-    const ops: any[] = [
-      { op: "delete", target: "line2" },
-      { op: "replace", target: "line3", text: "line3_new" },
-      { op: "add", text: "line4" }
-    ];
-    const { doc: newDoc, applied, rejected } = applyOps(doc, ops);
-    expect(newDoc).toBe("line1\nline3_new\nline4");
-    expect(applied.length).toBe(3);
-    expect(rejected.length).toBe(0);
+  it("parseProposal: propose missing required params -> decline", () => {
+    expect(parseProposal(`PROPOSAL:\n{"decision":"propose","kind":"npm-script"}`)).toEqual({ decision: "decline", reason: "out-of-vocabulary proposal: npm-script" });
+    expect(parseProposal(`PROPOSAL:\n{"decision":"propose","kind":"grep-diff"}`)).toEqual({ decision: "decline", reason: "out-of-vocabulary proposal: grep-diff" });
   });
 
-  it("applyOps: unknown target rejected without mutating doc", () => {
-    const doc = "line1";
-    const ops: any[] = [
-      { op: "delete", target: "line2" },
-      { op: "replace", target: "line3", text: "line3_new" }
-    ];
-    const { doc: newDoc, applied, rejected } = applyOps(doc, ops);
-    expect(newDoc).toBe("line1");
-    expect(applied.length).toBe(0);
-    expect(rejected.length).toBe(2);
+  it("parseProposal: no marker / non-object JSON -> null", () => {
+    expect(parseProposal("just narration, no marker")).toBeNull();
+    expect(parseProposal(`PROPOSAL:\nnot json`)).toBeNull();
+    expect(parseProposal(`PROPOSAL:\n[1,2]`)).toBeNull();
   });
 
-  it("applyOps: 12-line cap enforced, redacted text", () => {
-    const doc = Array.from({ length: 12 }, (_, i) => `line${i}`).join("\n");
-    const ops: any[] = [
-      { op: "add", text: "line12" }, // should be rejected unless delete makes room
-      { op: "add", text: "leaked sk-abcdefghij0123456789" }
-    ];
-    const res1 = applyOps(doc, ops);
-    expect(res1.applied.length).toBe(0);
-    expect(res1.rejected.length).toBe(2);
-
-    const opsWithDelete: any[] = [
-      { op: "delete", target: "line0" },
-      { op: "add", text: "leaked sk-abcdefghij0123456789" }
-    ];
-    const res2 = applyOps(doc, opsWithDelete);
-    expect(res2.applied.length).toBe(2);
-    expect(res2.rejected.length).toBe(0);
-    expect(res2.doc).not.toContain("sk-abcdefghij0123456789");
-    expect(res2.doc).toContain("leaked [redacted]");
+  it("formatProposal renders each shape", () => {
+    expect(formatProposal({ decision: "propose", kind: "boot-sidecar" })).toBe("PROPOSE check: boot-sidecar");
+    expect(formatProposal({ decision: "propose", kind: "npm-script", script: "typecheck" })).toBe("PROPOSE check: npm-script typecheck");
+    expect(formatProposal({ decision: "propose", kind: "grep-diff", pattern: "x" })).toBe("PROPOSE check: grep-diff /x/");
+    expect(formatProposal({ decision: "decline", reason: "why" })).toBe("DECLINE: why");
   });
 
-  it("composeAnalyzerPrompt includes output, outcome, current, and hard-rule contract", () => {
-    const prompt = composeAnalyzerPrompt({
-      output: "OUTPUT_MARKER",
-      outcome: "status=passed stage=review",
-      current: "CURRENT_MARKER",
-    });
+  it("composeAnalyzerPrompt asks for check-or-decline from the fixed vocabulary", () => {
+    const prompt = composeAnalyzerPrompt({ output: "OUTPUT_MARKER", outcome: "status=failed stage=work" });
     expect(prompt).toContain("OUTPUT_MARKER");
-    expect(prompt).toContain("status=passed stage=review");
-    expect(prompt).toContain("CURRENT_MARKER");
-    expect(prompt).toContain("workers write files only, relative paths only, no git commits, REPORT:/VERDICT: contracts");
+    expect(prompt).toContain("status=failed stage=work");
+    expect(prompt).toContain("boot-sidecar");
+    expect(prompt).toContain("npm-script");
+    expect(prompt).toContain("grep-diff");
+    expect(prompt).toContain("DECLINE");
+    expect(prompt).toContain("PROPOSAL:");
   });
 });
 
@@ -186,11 +146,10 @@ describe("forge lessons integration", () => {
       while (Date.now() - start < 5000) {
         const rows = await listNotes({ scope: "global" });
         proposal = rows.find((n) => n.title === "prompt-lessons-proposals")?.body ?? "";
-        if (proposal.includes(SENTINEL) && proposal.includes("MARKER-LESSON-42")) break;
+        if (proposal.includes("MARKER-LESSON-42")) break;
         await new Promise((r) => setTimeout(r, 50));
       }
       expect(proposal).toContain("MARKER-LESSON-42");
-      expect(proposal).toContain(SENTINEL);
       // the automated path must NOT have touched the live prompt-lessons note
       expect(await getLessons()).toBe(SENTINEL);
     });

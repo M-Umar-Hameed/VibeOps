@@ -764,16 +764,19 @@ export function getRunOutput(id: string, after: number) {
   return { chunk: r.output.slice(from), next: r.output.length, stage: r.stage, status: r.status };
 }
 
+// Test-teardown hook: resolve once every in-flight run has fully settled. Deleting a
+// workdir while a run is still winding down (later stages, analyzer, git) EPERMs on
+// Windows. Production never needs this - stop stays prompt.
+export async function settleAll(): Promise<void> {
+  await Promise.allSettled([...runs.values()].map((r) => r.done));
+}
+
 export async function stopRun(id: string): Promise<boolean> {
   const r = runs.get(id);
   if (!r || r.status !== "running") return false;
   r.stopped = true; // checked between stages so a running stage still lands on "stopped"
   if (r.child) await killTree(r.child);
   if (r.abort) r.abort();
-  // Await run.done so caller knows the run (including analyzer) is fully settled
-  // before cleanup proceeds — prevents Windows EPERM when test teardown rmSync
-  // races a dying process still holding file handles in the workdir.
-  await r.done;
   return true;
 }
 

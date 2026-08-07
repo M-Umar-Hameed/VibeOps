@@ -13,6 +13,7 @@ import { indexRepoDocs, searchKnowledge, repoIndexed } from "../src/services/kno
 import * as knowledgeSvc from "../src/services/knowledge.js";
 import { resolveSyncActor } from "../src/sync/actor.js";
 import { addComment, listComments } from "../src/services/comments.js";
+import { settleAll } from "../src/forge/runs.js";
 import { withSetting } from "./helpers/settings.js";
 
 process.env.EMBED_PROVIDER = "fake";
@@ -69,7 +70,8 @@ beforeEach(() => {
   writeRelayConfig();
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await settleAll();
   delete process.env.VIBEOPS_SANDBOX_ROOT;
   delete process.env.VIBEOPS_RELAY_CONFIG;
   delete process.env.FAKE_SCRIPT;

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { getLessons, lessonsClause, composeAnalyzerPrompt, parseOps, applyOps, recordProposal } from "./lessons.js";
+import { getLessons, lessonsClause, composeAnalyzerPrompt, parseProposal, formatProposal, recordProposal } from "./lessons.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
@@ -607,22 +607,17 @@ async function analyzeRun(run: Run, actorId: string, config: RelayConfig): Promi
     const agent = { ...getAgent(config, pick.agent, "plan") };
     agent.cmd = resolveCmd(agent, pick.model);
 
-    const current = await getLessons();
     const prompt = composeAnalyzerPrompt({
       output: run.output.slice(0, 30_000),
       outcome: `status=${run.status} stage=${run.stage}`,
-      current,
     });
     const res = await runAgent(agent, prompt, config.workdir);
-    const ops = parseOps(res.output);
-    if (ops === null) {
-      console.warn("forge: analyzer parsed null ops");
+    const proposal = parseProposal(res.output);
+    if (proposal === null) {
+      console.warn("forge: analyzer parsed null proposal");
       return;
     }
-    const { doc, applied } = applyOps(current, ops);
-    if (applied.length) {
-      await recordProposal(actorId, doc);
-    }
+    await recordProposal(actorId, formatProposal(proposal));
   } catch (e) {
     console.warn(`forge: analyzer failed for run ${run.id}:`, (e as Error).message);
   }

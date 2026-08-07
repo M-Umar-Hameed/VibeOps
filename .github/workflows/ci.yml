@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: tickets
+          POSTGRES_PASSWORD: tickets
+          POSTGRES_DB: tickets
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U tickets"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            app/package-lock.json
+
+      - name: Install root deps
+        run: npm ci
+
+      - name: Install app deps
+        run: npm ci
+        working-directory: app
+
+      - name: Typecheck (root)
+        run: npm run typecheck
+
+      - name: Typecheck (app)
+        run: npx tsc --noEmit
+        working-directory: app
+
+      - name: Backend suite
+        run: npx vitest run --exclude "**/sidecar-payload.test.ts"
+        env:
+          DATABASE_URL: postgres://tickets:tickets@localhost:5433/tickets
+
+      - name: App suite
+        run: npx vitest run src
+        working-directory: app

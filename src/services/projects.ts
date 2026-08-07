@@ -6,7 +6,8 @@ import { db } from "../db/client.js";
 import { projects, projectSettings, tickets, comments, events, notes, syncLinks, syncCommentLinks, forgeRuns, aiUsageLogs, type Project } from "../db/schema.js";
 import { ConflictError, NotFoundError } from "./errors.js";
 import { normalizeBinding } from "../sync/binding.js";
-import { clearProjectKnowledge } from "./knowledge.js";
+// clearProjectKnowledge is dynamically imported in deleteProject to break a
+// cycle: knowledge.ts → vault-path.ts → projects.ts → knowledge.ts.
 
 type Executor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -276,6 +277,8 @@ export async function deleteProject(projectId: string): Promise<void> {
 
     // embeddings: cleared via the shared predicate, WHILE notes + tickets still
     // exist (its subquery reads them). Must precede the notes/tickets deletes.
+    // Dynamic import breaks the cycle documented at the top of this file.
+    const { clearProjectKnowledge } = await import("./knowledge.js");
     await clearProjectKnowledge(projectId, tx);
 
     if (noteIds.length) await tx.delete(notes).where(inArray(notes.id, noteIds));

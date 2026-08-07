@@ -13,6 +13,7 @@ const CLIENTS = {
   },
 } as const;
 export type InstallableClient = keyof typeof CLIENTS;
+export const INSTALLABLE_CLIENTS = Object.keys(CLIENTS) as InstallableClient[];
 
 export function buildMcpConfig(url: string, apiKey: string) {
   const path = (c: InstallableClient) => join(homedir(), ...CLIENTS[c].rel);

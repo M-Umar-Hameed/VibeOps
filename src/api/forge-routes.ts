@@ -154,7 +154,7 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
   });
 
   app.post("/forge/runs/:id/stop", requireAdmin, async (c) =>
-    c.json({ stopped: stopRun(c.req.param("id")) }));
+    c.json({ stopped: await stopRun(c.req.param("id")) }));
 
   // Non-UUID ids are rejected by assertTicketId deep in sandbox.ts; surface
   // that as 400 instead of a generic 500.

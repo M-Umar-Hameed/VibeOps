@@ -764,12 +764,16 @@ export function getRunOutput(id: string, after: number) {
   return { chunk: r.output.slice(from), next: r.output.length, stage: r.stage, status: r.status };
 }
 
-export function stopRun(id: string): boolean {
+export async function stopRun(id: string): Promise<boolean> {
   const r = runs.get(id);
   if (!r || r.status !== "running") return false;
   r.stopped = true; // checked between stages so a running stage still lands on "stopped"
-  if (r.child) killTree(r.child);
+  if (r.child) await killTree(r.child);
   if (r.abort) r.abort();
+  // Await run.done so caller knows the run (including analyzer) is fully settled
+  // before cleanup proceeds — prevents Windows EPERM when test teardown rmSync
+  // races a dying process still holding file handles in the workdir.
+  await r.done;
   return true;
 }
 

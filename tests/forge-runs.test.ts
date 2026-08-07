@@ -386,8 +386,7 @@ describe("forge run manager", () => {
     });
 
     await waitForStage(runId, "work");
-    expect(stopRun(runId)).toBe(true);
-    await awaitRun(runId);
+    expect(await stopRun(runId)).toBe(true);
 
     expect(getRunOutput(runId, 0)?.status).toBe("stopped");
     expect((await getTicket(ticket.id)).status).toBe("planned");
@@ -455,7 +454,7 @@ describe("forge run manager", () => {
   });
 
   it("stopRun returns false for an unknown or already-settled run", async () => {
-    expect(stopRun("no-such-run")).toBe(false);
+    expect(await stopRun("no-such-run")).toBe(false);
 
     const { actorId, ticket } = await seedTicket("Already settled path");
     setScript("plan,exit");
@@ -464,7 +463,7 @@ describe("forge run manager", () => {
     });
     await awaitRun(runId);
 
-    expect(stopRun(runId)).toBe(false);
+    expect(await stopRun(runId)).toBe(false);
   });
 
   it("explicit workModel is recorded as an agent:model composite", async () => {

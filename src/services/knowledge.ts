@@ -7,6 +7,8 @@ import { and, eq, isNull, inArray, like, notInArray, sql as dsql } from "drizzle
 import { db } from "../db/client.js";
 import { embeddings, notes, projects } from "../db/schema.js";
 import { ConflictError, NotFoundError } from "./errors.js";
+
+type Executor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 import { chunkMarkdown } from "../knowledge/chunker.js";
 import { getEmbedder, type Embedder } from "../knowledge/embedder.js";
 import { redactSecrets } from "../forge/redact.js";
@@ -162,7 +164,7 @@ export async function repoIndexed(projectId: string): Promise<boolean> {
 // VAULT RULE: project vault chunks carry a "<projectId>:" ref prefix (like repo)
 // and belong to that project; legacy global-vault chunks are absolute paths (no
 // uuid prefix) and stay global. Session stays global.
-function projectScopeWhere(projectId: string) {
+export function projectScopeWhere(projectId: string) {
   return dsql`(
         (source_kind = 'repo' AND source_ref LIKE ${projectId + ":%"})
         OR (source_kind = 'vault' AND source_ref LIKE ${projectId + ":%"})
@@ -230,6 +232,17 @@ export async function searchKnowledge(
     score: Number(r.score), citation: r.source_ref,
     createdAt: new Date(r.created_at).toISOString(),
   }));
+}
+
+// Removes exactly the project's indexed chunks — repo docs, project-vault files,
+// and project/ticket note chunks — as defined by the shared scoping predicate.
+// Leaves genuinely global sources (legacy shared vault, sessions) and every notes
+// row itself. Takes an executor so deleteProject can call it inside its transaction.
+export async function clearProjectKnowledge(projectId: string, executor: Executor = db): Promise<number> {
+  const rows = await executor.delete(embeddings)
+    .where(projectScopeWhere(projectId))
+    .returning({ id: embeddings.id });
+  return rows.length;
 }
 
 export async function listSessionDocs(limit = 50): Promise<{ ref: string; chunkCount: number; created_at: string; excerpt: string }[]> {

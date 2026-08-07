@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readlinkSync, rmdirSync, symlinkSync, statSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readlinkSync, rmdirSync, symlinkSync, statSync, readdirSync, rmSync, cpSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { ConflictError } from "../services/errors.js";
 import { vibeopsHome } from "../runtime/home.js";
@@ -7,6 +7,7 @@ import { vibeopsHome } from "../runtime/home.js";
 // Candidate deps dirs to link from the base repo into a sandbox, so work agents
 // (fresh worktree, no install) can run tests without a full npm install per ticket.
 const DEPS_DIRS = ["node_modules", join("app", "node_modules")];
+const APP_DEPS = join("app", "node_modules");
 
 const DIFF_CAP = 150_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -56,9 +57,9 @@ async function must(cwd: string, ...args: string[]): Promise<string> {
   return out;
 }
 
-// Link (never copy) base repo deps into the sandbox: junction on win32, symlink elsewhere.
+// Link (or copy, when frontendDeps) base repo deps into the sandbox.
 // Never throws — a missing/failed link just means the work agent can't run tests, not a broken sandbox.
-export function linkDeps(workdir: string, ticketId: string): void {
+export function linkDeps(workdir: string, ticketId: string, frontendDeps = false): void {
   const sbx = sandboxPath(ticketId);
   for (const rel of DEPS_DIRS) {
     const src = resolve(join(workdir, rel));
@@ -66,7 +67,15 @@ export function linkDeps(workdir: string, ticketId: string): void {
     if (!existsSync(src) || existsSync(dest)) continue;
     try {
       mkdirSync(dirname(dest), { recursive: true });
-      symlinkSync(src, dest, process.platform === "win32" ? "junction" : "dir");
+      if (frontendDeps && rel === APP_DEPS) {
+        // Real per-sandbox copy (deref links) so vite's config-loader ".vite-temp"
+        // and any tool cache write lands here, not through a junction into the base.
+        // ponytail: full deref copy -- disk-hungry, paid only when forge.frontendDeps
+        // is set. Upgrade path: per-package junction overlay if disk ever bites.
+        cpSync(src, dest, { recursive: true, dereference: true });
+      } else {
+        symlinkSync(src, dest, process.platform === "win32" ? "junction" : "dir");
+      }
     } catch (e) {
       console.warn(`linkDeps: failed to link ${rel}: ${String(e)}`);
     }
@@ -89,14 +98,14 @@ export function unlinkDeps(ticketId: string): void {
   }
 }
 
-export async function ensureSandbox(workdir: string, ticketId: string): Promise<string> {
+export async function ensureSandbox(workdir: string, ticketId: string, frontendDeps = false): Promise<string> {
   const path = sandboxPath(ticketId);
-  if (existsSync(path)) { linkDeps(workdir, ticketId); return path; } // rework continues in the same tree
+  if (existsSync(path)) { linkDeps(workdir, ticketId, frontendDeps); return path; } // rework continues in the same tree
   const branch = branchName(ticketId);
   // Branch may survive a removed worktree (e.g. manual cleanup): attach, else create.
   const attach = await git(workdir, "worktree", "add", path, branch);
   if (attach.code !== 0) await must(workdir, "worktree", "add", path, "-b", branch);
-  linkDeps(workdir, ticketId);
+  linkDeps(workdir, ticketId, frontendDeps);
   return path;
 }
 

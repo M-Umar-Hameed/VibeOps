@@ -1,11 +1,13 @@
 import { existsSync, statSync, readdirSync } from "node:fs";
 import { join, basename } from "node:path";
 import { spawn } from "node:child_process";
-import { eq, and } from "drizzle-orm";
+import { eq, and, or, inArray } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { projects, projectSettings, type Project } from "../db/schema.js";
+import { projects, projectSettings, tickets, comments, events, notes, syncLinks, syncCommentLinks, forgeRuns, aiUsageLogs, type Project } from "../db/schema.js";
 import { ConflictError, NotFoundError } from "./errors.js";
 import { normalizeBinding } from "../sync/binding.js";
+// clearProjectKnowledge is dynamically imported in deleteProject to break a
+// cycle: knowledge.ts → vault-path.ts → projects.ts → knowledge.ts.
 
 type Executor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -225,4 +227,63 @@ export async function importProjects(items: ImportItem[]): Promise<(Project & { 
     created.push(withRepo);
   }
   return created;
+}
+
+// Deletes the project row and every DB row that belongs to it, in ONE transaction.
+// FILESYSTEM IS NEVER TOUCHED: repoPath, the project vault dir, and any sandbox
+// under ~/.vibeops/sandbox are left exactly as they are. Refuses the default Inbox
+// project (quick-created tickets land there). The active-run guard is enforced in
+// the route before this is called.
+export async function deleteProject(projectId: string): Promise<void> {
+  const [p] = await db.select().from(projects).where(eq(projects.id, projectId));
+  if (!p) throw new NotFoundError(`project not found: ${projectId}`);
+  if (p.key === "inbox") throw new ConflictError("the Inbox project cannot be deleted");
+
+  await db.transaction(async (tx) => {
+    const ticketRows = await tx.select({ id: tickets.id }).from(tickets).where(eq(tickets.projectId, projectId));
+    const ticketIds = ticketRows.map((t) => t.id);
+
+    const noteRows = await tx.select({ id: notes.id }).from(notes).where(
+      or(
+        and(eq(notes.scope, "project"), eq(notes.refId, projectId)),
+        ticketIds.length ? and(eq(notes.scope, "ticket"), inArray(notes.refId, ticketIds)) : undefined,
+      ),
+    );
+    const noteIds = noteRows.map((n) => n.id);
+
+    if (ticketIds.length) {
+      const commentRows = await tx.select({ id: comments.id }).from(comments).where(inArray(comments.ticketId, ticketIds));
+      const commentIds = commentRows.map((c) => c.id);
+      if (commentIds.length) {
+        await tx.delete(syncCommentLinks).where(inArray(syncCommentLinks.commentId, commentIds));
+      }
+      await tx.delete(comments).where(inArray(comments.ticketId, ticketIds));
+    }
+
+    // events reference both tickets and notes; delete for either.
+    const eventFilters = [
+      ticketIds.length ? inArray(events.ticketId, ticketIds) : undefined,
+      noteIds.length ? inArray(events.noteId, noteIds) : undefined,
+    ].filter(Boolean);
+    if (eventFilters.length) {
+      await tx.delete(events).where(eventFilters.length === 1 ? eventFilters[0]! : or(...eventFilters));
+    }
+
+    if (ticketIds.length) {
+      await tx.delete(syncLinks).where(inArray(syncLinks.ticketId, ticketIds));
+      await tx.delete(forgeRuns).where(inArray(forgeRuns.ticketId, ticketIds));
+      await tx.delete(aiUsageLogs).where(inArray(aiUsageLogs.ticketId, ticketIds));
+    }
+
+    // embeddings: cleared via the shared predicate, WHILE notes + tickets still
+    // exist (its subquery reads them). Must precede the notes/tickets deletes.
+    // Dynamic import breaks the cycle documented at the top of this file.
+    const { clearProjectKnowledge } = await import("./knowledge.js");
+    await clearProjectKnowledge(projectId, tx);
+
+    if (noteIds.length) await tx.delete(notes).where(inArray(notes.id, noteIds));
+    await tx.delete(tickets).where(eq(tickets.projectId, projectId));
+    await tx.delete(projectSettings).where(eq(projectSettings.projectId, projectId));
+    await tx.delete(projects).where(eq(projects.id, projectId));
+  });
 }

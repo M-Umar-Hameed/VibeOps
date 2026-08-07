@@ -82,6 +82,7 @@ afterEach(() => {
   delete process.env.FAKE_COUNTER_FILE;
   delete process.env.FAKE_WRITE;
   delete process.env.FAKE_WRITE_PATH;
+  delete process.env.FAKE_WRITE_ABS;
   delete process.env.FAKE_WRITE_DEPS;
   rmSync(workdir, { recursive: true, force: true });
   rmSync(sandboxRoot, { recursive: true, force: true });
@@ -1014,6 +1015,66 @@ const file2 = "run2-output.txt";
     expect(output?.chunk).toContain("DEPS-LEAK");
     // The leaked file should have been reverted from the base
     expect(existsSync(join(workdir, "node_modules", "LEAK.txt"))).toBe(false);
+  });
+
+  it("deps leak in app/node_modules without frontendDeps prints the setting hint", async () => {
+    mkdirSync(join(workdir, "app", "node_modules"), { recursive: true });
+    writeFileSync(join(workdir, "app", "node_modules", "marker.txt"), "base\n");
+
+    const { actorId, ticket } = await seedTicket("Deps leak test app deps");
+    setScript("plan,work,review-pass");
+    process.env.FAKE_WRITE_DEPS = "../app/node_modules/LEAK.txt";
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.status).toBe("failed");
+    expect(output?.chunk).toContain("DEPS-LEAK");
+    expect(output?.chunk).toContain("Hint: a frontend build needs forge.frontendDeps set to true");
+  });
+
+  it("deps leak in app/node_modules WITH frontendDeps omits the setting hint", async () => {
+    mkdirSync(join(workdir, "app", "node_modules"), { recursive: true });
+    writeFileSync(join(workdir, "app", "node_modules", "marker.txt"), "base\n");
+
+    const { actorId, ticket } = await seedTicket("Deps leak test app deps enabled");
+    setScript("plan,work,review-pass");
+    process.env.FAKE_WRITE_ABS = join(workdir, "app", "node_modules", "LEAK.txt");
+
+    await withSetting("forge.frontendDeps", "true", async () => {
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+
+      const output = getRunOutput(runId, 0);
+      expect(output?.status).toBe("failed");
+      expect(output?.chunk).toContain("DEPS-LEAK");
+      expect(output?.chunk).not.toContain("Hint: a frontend build needs forge.frontendDeps set to true");
+    });
+  });
+
+  it("deps leak in ROOT node_modules without frontendDeps does NOT print the hint", async () => {
+    // ROOT leak with frontendDeps unset
+    mkdirSync(join(workdir, "node_modules"), { recursive: true });
+    writeFileSync(join(workdir, "node_modules", "marker.txt"), "base\n");
+
+    const { actorId, ticket } = await seedTicket("Deps leak test root");
+    setScript("plan,work,review-pass");
+    process.env.FAKE_WRITE_DEPS = "LEAK2.txt";
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.status).toBe("failed");
+    expect(output?.chunk).toContain("DEPS-LEAK");
+    expect(output?.chunk).not.toContain("Hint: a frontend build needs forge.frontendDeps set to true");
   });
 
   it("promote conflict end-to-end: second promote fails, names file, sandbox intact", async () => {

@@ -24,7 +24,7 @@ import { ConflictError, StaleVersionError } from "../services/errors.js";
 import { logAgentUse, startAgentSession, endAgentSession } from "../services/usage.js";
 import { desc, isNull, sum, eq, gte, and } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { forgeRuns, aiUsageLogs, type Ticket } from "../db/schema.js";
+import { forgeRuns, aiUsageLogs, tickets, type Ticket } from "../db/schema.js";
 import { verifyModel, MISMATCH_WARNING, computeVerificationStatus } from "./verify.js";
 import { resolveChecks, runChecks, formatChecks } from "./checks.js";
 
@@ -428,7 +428,8 @@ async function pipeline(
   run.stage = "work";
   append(run, `\n=== FORGE work (${run.agents.work}) ===\n`);
   ticket = await updateTicket(actorId, ticket.id, ticket.version, { status: "in_progress" });
-  const sandbox = await ensureSandbox(workdir, ticket.id);
+  const frontendDeps = (await getSetting("forge.frontendDeps")) === "true";
+  const sandbox = await ensureSandbox(workdir, ticket.id, frontendDeps);
   const knowledge = await getKnowledgeSafe(ticket.title, ticket.projectId);
   // Rework passes must see why the last review failed, or the worker repeats
   // the same mistakes (live-hit on the first dogfood ticket).
@@ -461,10 +462,13 @@ async function pipeline(
   }
   const depsLeak = detectDepsLeak(depsBaseline);
   if (depsLeak.length) {
-    const report =
+    let report =
       `\n[forge: DEPS-LEAK — the work stage wrote through the shared node_modules ` +
       `link into the base repo; additions reverted, run failed]\n` +
       depsLeak.map((p) => `  - ${p}`).join("\n") + "\n";
+    if (!frontendDeps && depsLeak.some(p => p.includes("app/node_modules") || p.includes("app\\node_modules"))) {
+      report += `Hint: a frontend build needs forge.frontendDeps set to true. This costs a per-sandbox copy of app/node_modules.\n`;
+    }
     append(run, report);
     await bounce(run, actorId, "deps leak: wrote through shared node_modules link", report);
     return settle(run, "failed");
@@ -681,6 +685,17 @@ export async function hasActiveRun(ticketId: string): Promise<boolean> {
     .where(and(eq(forgeRuns.ticketId, ticketId), isNull(forgeRuns.finishedAt)))
     .limit(1);
   return !!row;
+}
+
+// In-memory active run for any ticket in the project, if one exists. Used to
+// block project deletion (killing a project mid-run would orphan the sandbox and
+// the in-memory Run). Returns the offending run id, else null.
+export async function activeRunForProject(projectId: string): Promise<string | null> {
+  const active = activeRuns();
+  if (!active.length) return null;
+  const rows = await db.select({ id: tickets.id }).from(tickets).where(eq(tickets.projectId, projectId));
+  const ids = new Set(rows.map((r) => r.id));
+  return active.find((r) => ids.has(r.ticketId))?.id ?? null;
 }
 
 export type RunPolicy = { runId: string; paths: string[]; waived: boolean; startedAt: Date };

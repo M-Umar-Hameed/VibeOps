@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync, rmdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync, rmdirSync, readFileSync, readlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -273,5 +273,50 @@ describe("deps leak guard", () => {
     expect(leaked[0]).toContain("marker.txt");
     expect(leaked[0]).toContain("(modified)");
     expect(existsSync(markerPath)).toBe(true);
+  });
+});
+
+describe("frontend deps mode", () => {
+  it("frontendDeps: app/node_modules is a real copy, vite temp writes stay out of the base", async () => {
+    // base app/node_modules with a marker (beforeEach only builds root node_modules)
+    mkdirSync(join(workdir, "app", "node_modules"), { recursive: true });
+    writeFileSync(join(workdir, "app", "node_modules", "app-marker.txt"), "app-base\n");
+
+    const baseline = snapshotDeps(workdir);
+    const sp = await ensureSandbox(workdir, TID, true);
+
+    // copy landed and is NOT a link
+    expect(readFileSync(join(sp, "app", "node_modules", "app-marker.txt"), "utf-8")).toBe("app-base\n");
+    expect(() => readlinkSync(join(sp, "app", "node_modules"))).toThrow();
+
+    // simulate vite's config-loader .vite-temp write into the sandbox copy
+    mkdirSync(join(sp, "app", "node_modules", ".vite-temp"), { recursive: true });
+    writeFileSync(join(sp, "app", "node_modules", ".vite-temp", "cfg.mjs"), "x\n");
+
+    // base app/node_modules is untouched: no .vite-temp, guard sees no leak
+    expect(existsSync(join(workdir, "app", "node_modules", ".vite-temp"))).toBe(false);
+    expect(detectDepsLeak(baseline)).toEqual([]);
+
+    // cleanup removes the sandbox copy, base survives
+    await discardSandbox(workdir, TID);
+    expect(existsSync(join(workdir, "app", "node_modules", "app-marker.txt"))).toBe(true);
+    expect(existsSync(join(workdir, "app", "node_modules", ".vite-temp"))).toBe(false);
+  });
+
+  it("frontendDeps on: a genuine write into the linked ROOT node_modules is still detected and reverted", async () => {
+    await ensureSandbox(workdir, TID, true); // root node_modules still junctioned
+    const sp = sandboxPath(TID);
+    const baseline = snapshotDeps(workdir);
+
+    // write through the sandbox's root node_modules junction into the base
+    const evil = join(sp, "node_modules", "EVIL.txt");
+    writeFileSync(evil, "leak\n");
+    expect(existsSync(join(workdir, "node_modules", "EVIL.txt"))).toBe(true); // reached base via junction
+
+    const leaked = detectDepsLeak(baseline);
+    expect(leaked.length).toBe(1);
+    expect(leaked[0]).toContain("EVIL.txt");
+    expect(leaked[0]).toContain("added; reverted");
+    expect(existsSync(join(workdir, "node_modules", "EVIL.txt"))).toBe(false); // reverted
   });
 });

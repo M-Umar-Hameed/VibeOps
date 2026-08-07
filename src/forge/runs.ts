@@ -24,7 +24,7 @@ import { ConflictError, StaleVersionError } from "../services/errors.js";
 import { logAgentUse, startAgentSession, endAgentSession } from "../services/usage.js";
 import { desc, isNull, sum, eq, gte, and } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { forgeRuns, aiUsageLogs, type Ticket } from "../db/schema.js";
+import { forgeRuns, aiUsageLogs, tickets, type Ticket } from "../db/schema.js";
 import { verifyModel, MISMATCH_WARNING, computeVerificationStatus } from "./verify.js";
 import { resolveChecks, runChecks, formatChecks } from "./checks.js";
 
@@ -681,6 +681,17 @@ export async function hasActiveRun(ticketId: string): Promise<boolean> {
     .where(and(eq(forgeRuns.ticketId, ticketId), isNull(forgeRuns.finishedAt)))
     .limit(1);
   return !!row;
+}
+
+// In-memory active run for any ticket in the project, if one exists. Used to
+// block project deletion (killing a project mid-run would orphan the sandbox and
+// the in-memory Run). Returns the offending run id, else null.
+export async function activeRunForProject(projectId: string): Promise<string | null> {
+  const active = activeRuns();
+  if (!active.length) return null;
+  const rows = await db.select({ id: tickets.id }).from(tickets).where(eq(tickets.projectId, projectId));
+  const ids = new Set(rows.map((r) => r.id));
+  return active.find((r) => ids.has(r.ticketId))?.id ?? null;
 }
 
 export type RunPolicy = { runId: string; paths: string[]; waived: boolean; startedAt: Date };

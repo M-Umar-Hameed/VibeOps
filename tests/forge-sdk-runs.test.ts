@@ -161,7 +161,7 @@ describe("forge SDK lane (integration through runs.ts)", () => {
     // started === true guarantees stopRun will find an abort handle.
     while (!sdkState.started) await new Promise((r) => setTimeout(r, 10));
 
-    expect(stopRun(runId)).toBe(true);
+    expect(await stopRun(runId)).toBe(true);
     await awaitRun(runId);
 
     expect(sdkState.aborted).toBe(true);           // abort path fired (not killTree; sdk has no child)

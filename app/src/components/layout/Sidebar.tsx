@@ -5,6 +5,8 @@ import { projects as projectsApi } from "../../api/projects.js";
 import { api } from "../../lib/api.js";
 import { pickFolder, dialogAvailable } from "../../lib/native-dialog.js";
 import { ImportFromFolder } from "../projects/ImportFromFolder.js";
+import { ProjectContextMenu } from "./ProjectContextMenu.js";
+import type { Project } from "../../api/types.js";
 
 export function Sidebar({ setIsOpen = (_v: boolean) => {} }) {
   const location = useLocation();
@@ -23,6 +25,7 @@ export function Sidebar({ setIsOpen = (_v: boolean) => {} }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [canBrowse, setCanBrowse] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [menu, setMenu] = useState<{ project: Project; x: number; y: number } | null>(null);
 
   useEffect(() => {
     dialogAvailable().then(setCanBrowse);
@@ -203,25 +206,38 @@ export function Sidebar({ setIsOpen = (_v: boolean) => {} }) {
           </button>
           
           {projects.map(p => (
-            <button
-              key={p.id}
-              onClick={() => { setActiveProject(p.id); setIsOpen(false); }}
-              className={`w-full flex items-center gap-3 px-4 py-3 transition-all duration-200 active:scale-[0.98] ${
-                activeProjectId === p.id
-                  ? "border-l-2 border-primary-fixed-dim bg-primary-fixed-dim/5 text-primary-fixed-dim"
-                  : "text-on-surface-variant hover:bg-white/5 hover:text-on-surface"
-              }`}
-            >
-              <span className="material-symbols-outlined text-lg" style={{ fontVariationSettings: activeProjectId === p.id ? "'FILL' 1" : "" }}>folder</span>
-              <div className="flex flex-col items-start truncate">
-                <span className="font-body-md truncate">{p.name}</span>
-                {p.repoPath && (
-                  <span className="text-xs text-on-surface-variant/60 truncate">
-                    {p.repoPath.split(/[\\/]/).pop()}
-                  </span>
-                )}
-              </div>
-            </button>
+            <div key={p.id} className="relative flex items-center">
+              <button
+                onClick={() => { setActiveProject(p.id); setIsOpen(false); }}
+                onContextMenu={(e) => { e.preventDefault(); setMenu({ project: p, x: e.clientX, y: e.clientY }); }}
+                className={`flex-1 min-w-0 flex items-center gap-3 px-4 py-3 transition-all duration-200 active:scale-[0.98] ${
+                  activeProjectId === p.id
+                    ? "border-l-2 border-primary-fixed-dim bg-primary-fixed-dim/5 text-primary-fixed-dim"
+                    : "text-on-surface-variant hover:bg-white/5 hover:text-on-surface"
+                }`}
+              >
+                <span className="material-symbols-outlined text-lg" style={{ fontVariationSettings: activeProjectId === p.id ? "'FILL' 1" : "" }}>folder</span>
+                <div className="flex flex-col items-start truncate">
+                  <span className="font-body-md truncate">{p.name}</span>
+                  {p.repoPath && (
+                    <span className="text-xs text-on-surface-variant/60 truncate">
+                      {p.repoPath.split(/[\\/]/).pop()}
+                    </span>
+                  )}
+                </div>
+              </button>
+              <button
+                type="button"
+                aria-label={`Actions for ${p.name}`}
+                onClick={(e) => {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  setMenu({ project: p, x: r.right, y: r.bottom });
+                }}
+                className="shrink-0 px-2 py-3 text-on-surface-variant hover:text-on-surface transition-colors"
+              >
+                <span className="material-symbols-outlined text-lg">more_vert</span>
+              </button>
+            </div>
           ))}
 
           <div className="pt-2 px-2">
@@ -325,6 +341,14 @@ export function Sidebar({ setIsOpen = (_v: boolean) => {} }) {
           </div>
         </div>
       </div>
+      {menu && (
+        <ProjectContextMenu
+          project={menu.project}
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </aside>
   );
 }

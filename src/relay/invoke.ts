@@ -7,6 +7,7 @@ import type { RelayAgent } from "./config.js";
 
 const OUTPUT_CAP = 100_000;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
+const KILL_TIMEOUT_MS = 10_000;
 
 export type AgentResult = { ok: boolean; output: string; usage?: { tokens: number; cost: number } };
 
@@ -18,13 +19,29 @@ export function substituteCmd(cmd: string[], vars: Record<string, string>): stri
   );
 }
 
-export function killTree(child: ChildProcess): void {
-  if (!child.pid) return;
+// Resolves only once the process has actually exited, so callers can await
+// termination before deleting files the tree still holds open (Windows EPERM).
+// Bound lives HERE, in the kill path: a process that refuses to die logs and
+// releases the awaiter instead of hanging the run forever. Common case resolves
+// on the "exit" event, not the timer — the deadline is not a disguised sleep.
+export function killTree(child: ChildProcess): Promise<void> {
+  if (!child.pid) return Promise.resolve();
+  // Already dead: "exit" will never fire again, so awaiting it would hang.
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
   if (process.platform === "win32") {
     spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"]);
   } else {
     child.kill("SIGKILL");
   }
+  return new Promise((resolve) => {
+    const done = () => { clearTimeout(timer); resolve(); };
+    const timer = setTimeout(() => {
+      console.warn(`forge: killTree pid ${child.pid} did not exit within ${KILL_TIMEOUT_MS}ms`);
+      done();
+    }, KILL_TIMEOUT_MS);
+    timer.unref();
+    child.once("exit", done);
+  });
 }
 
 export async function runAgent(
@@ -67,7 +84,7 @@ export async function runAgent(
       let output = "";
       let settled = false;
 
-      const timer = setTimeout(() => killTree(child), agent.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+      const timer = setTimeout(() => { void killTree(child); }, agent.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
       const capture = (chunk: Buffer) => {
         const s = chunk.toString("utf-8");

@@ -386,9 +386,8 @@ describe("forge run manager", () => {
     });
 
     await waitForStage(runId, "work");
-    expect(stopRun(runId)).toBe(true);
+    expect(await stopRun(runId)).toBe(true);
     await awaitRun(runId);
-
     expect(getRunOutput(runId, 0)?.status).toBe("stopped");
     expect((await getTicket(ticket.id)).status).toBe("planned");
     const summary = listRuns().find((r) => r.id === runId);
@@ -455,7 +454,7 @@ describe("forge run manager", () => {
   });
 
   it("stopRun returns false for an unknown or already-settled run", async () => {
-    expect(stopRun("no-such-run")).toBe(false);
+    expect(await stopRun("no-such-run")).toBe(false);
 
     const { actorId, ticket } = await seedTicket("Already settled path");
     setScript("plan,exit");
@@ -464,7 +463,7 @@ describe("forge run manager", () => {
     });
     await awaitRun(runId);
 
-    expect(stopRun(runId)).toBe(false);
+    expect(await stopRun(runId)).toBe(false);
   });
 
   it("explicit workModel is recorded as an agent:model composite", async () => {
@@ -645,7 +644,7 @@ describe("forge run manager", () => {
 
     const resolved = await resolveWorkdir(project.id, relayConfig());
     expect(resolved).toBe(projectRepo);
-    await promoteSandbox(resolved, ticket.id);
+    await promoteSandbox(resolved, ticket.id, ticket.title);
     expect(existsSync(join(projectRepo, "forge-made.txt"))).toBe(true);
     expect(sandboxExists(ticket.id)).toBe(false);
 
@@ -865,7 +864,7 @@ it("hasActiveRun is true mid-run and false after settle", async () => {
   expect(await hasActiveRun(ticket.id)).toBe(true);
 
   await waitForStage(runId, "plan");
-  stopRun(runId);
+  await stopRun(runId);
   await awaitRun(runId);
   expect(await hasActiveRun(ticket.id)).toBe(false);
 }, 15_000);
@@ -959,7 +958,7 @@ it("exceeding configured cap rejects with ConflictError naming active runs", asy
         ticketId: t2.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
       })).rejects.toThrow(new RegExp(t1.id));
     } finally {
-      stopRun(runId);
+      await stopRun(runId);
       await awaitRun(runId);
     }
   });
@@ -1155,12 +1154,12 @@ const file2 = "run2-output.txt";
     g2("commit", "-m", "conflict B");
 
     // First promote succeeds
-    await promoteSandbox(workdir, t1.id);
+    await promoteSandbox(workdir, t1.id, t1.title);
     expect(sandboxExists(t1.id)).toBe(false);
 
     // Second promote conflicts
     let err: any;
-    try { await promoteSandbox(workdir, t2.id); } catch (e) { err = e; }
+    try { await promoteSandbox(workdir, t2.id, t2.title); } catch (e) { err = e; }
     expect(err).toBeInstanceOf(ConflictError);
     expect(err.message).toContain("readme.md");
     expect(err.message).toContain("conflicts with the base");

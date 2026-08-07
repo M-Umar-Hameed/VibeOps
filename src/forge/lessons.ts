@@ -5,10 +5,6 @@ import { StaleVersionError } from "../services/errors.js";
 const LESSONS_TITLE = "prompt-lessons";
 const PROPOSALS_TITLE = "prompt-lessons-proposals";
 const LESSONS_CAP = 1500;
-const LESSON_LINES_CAP = 12;
-const MAX_OPS = 3;
-
-export type Op = { op: "add" | "delete" | "replace"; target?: string; text?: string };
 
 async function findNote(title: string) {
   const rows = await listNotes({ scope: "global" });
@@ -63,74 +59,102 @@ export function lessonsClause(lessons: string): string {
   return `\n\nPrompting lessons learned (follow these):\n${lessons}`;
 }
 
-export function parseOps(output: string): Op[] | null {
-  const matches = [...output.matchAll(/^\s*OPS:\s*$/gim)];
-  const last = matches.at(-1);
-  if (!last || last.index === undefined) return null;
-  const rest = output.slice(last.index + last[0].length).trim();
-  
+// Fixed vocabulary of mechanically-executable checks the analyzer may propose.
+// A proposal outside this set is a code-execution hole (checks eventually run as
+// shell), so parseProposal coerces any unknown kind to a decline - it never returns
+// an unrecognised kind. Phase 1 executes nothing; proposals are stored as text only.
+export type Proposal =
+  | { decision: "propose"; kind: "boot-sidecar" }
+  | { decision: "propose"; kind: "npm-script"; script: string }
+  | { decision: "propose"; kind: "grep-diff"; pattern: string }
+  | { decision: "decline"; reason: string };
+
+export function parseProposal(output: string): Proposal | null {
+  const marker = "PROPOSAL:";
+  const markerIdx = output.lastIndexOf(marker);
+  if (markerIdx === -1) return null;
+
+  const rest = output.slice(markerIdx + marker.length);
+  const startIdx = rest.indexOf("{");
+  if (startIdx === -1) return null;
+
+  let endIdx = -1;
+  let braceCount = 0;
+  let inString = false;
+  let escapeNext = false;
+
+  for (let i = startIdx; i < rest.length; i++) {
+    const char = rest[i];
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+    if (char === '\\') {
+      escapeNext = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (!inString) {
+      if (char === '{') {
+        braceCount++;
+      } else if (char === '}') {
+        braceCount--;
+        if (braceCount === 0) {
+          endIdx = i;
+          break;
+        }
+      }
+    }
+  }
+
+  if (endIdx === -1) return null;
+  const jsonStr = rest.slice(startIdx, endIdx + 1);
+
   let parsed: any;
   try {
-    parsed = JSON.parse(rest);
+    parsed = JSON.parse(jsonStr);
   } catch {
     return null;
   }
-  
-  if (!Array.isArray(parsed)) return null;
-  
-  const valid = parsed.filter(item => {
-    if (!item || typeof item !== "object") return false;
-    if (item.op === "add" && typeof item.text === "string" && item.text.length > 0) return true;
-    if (item.op === "delete" && typeof item.target === "string" && item.target.length > 0) return true;
-    if (item.op === "replace" && typeof item.target === "string" && item.target.length > 0 && typeof item.text === "string" && item.text.length > 0) return true;
-    return false;
-  }) as Op[];
-  
-  return valid.slice(0, MAX_OPS);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+
+  if (parsed.decision === "decline") {
+    const reason = typeof parsed.reason === "string" && parsed.reason.length > 0 ? parsed.reason : "no reason given";
+    return { decision: "decline", reason };
+  }
+  if (parsed.decision === "propose") {
+    if (parsed.kind === "boot-sidecar") return { decision: "propose", kind: "boot-sidecar" };
+    if (parsed.kind === "npm-script" && typeof parsed.script === "string" && parsed.script.length > 0)
+      return { decision: "propose", kind: "npm-script", script: parsed.script };
+    if (parsed.kind === "grep-diff" && typeof parsed.pattern === "string" && parsed.pattern.length > 0)
+      return { decision: "propose", kind: "grep-diff", pattern: parsed.pattern };
+    // out-of-vocabulary or missing params -> forced decline, never an escape hatch.
+    return { decision: "decline", reason: `out-of-vocabulary proposal: ${String(parsed.kind)}` };
+  }
+  return null;
 }
 
-export function applyOps(doc: string, ops: Op[]): { doc: string; applied: Op[]; rejected: Op[] } {
-  const lines = doc.split("\n").filter(l => l.trim() !== "");
-  const applied: Op[] = [];
-  const rejected: Op[] = [];
-  
-  const deleteReplace = ops.filter(o => o.op === "delete" || o.op === "replace");
-  const adds = ops.filter(o => o.op === "add");
-  
-  for (const op of deleteReplace) {
-    const idx = lines.indexOf(op.target!);
-    if (idx < 0) {
-      rejected.push(op);
-    } else {
-      if (op.op === "delete") {
-        lines.splice(idx, 1);
-      } else {
-        lines[idx] = redactSecrets(op.text!);
-      }
-      applied.push(op);
-    }
-  }
-  
-  for (const op of adds) {
-    if (lines.length >= LESSON_LINES_CAP) {
-      rejected.push(op);
-    } else {
-      lines.push(redactSecrets(op.text!));
-      applied.push(op);
-    }
-  }
-  
-  return { doc: lines.join("\n"), applied, rejected };
+export function formatProposal(p: Proposal): string {
+  if (p.decision === "decline") return `DECLINE: ${p.reason}`;
+  if (p.kind === "boot-sidecar") return `PROPOSE check: boot-sidecar`;
+  if (p.kind === "npm-script") return `PROPOSE check: npm-script ${p.script}`;
+  return `PROPOSE check: grep-diff /${p.pattern}/`;
 }
 
-export function composeAnalyzerPrompt(input: { output: string; outcome: string; current: string }): string {
+export function composeAnalyzerPrompt(input: { output: string; outcome: string }): string {
   return [
-    `You maintain the prompt-lessons document for an AI dev pipeline. Study this run's narrated output and outcome. If the worker or planner misunderstood an instruction, identify the wording that failed and the wording that would have worked.`,
-    `Max 12 lessons, each one line, imperative, concrete. Return at most 3 edit operations as a JSON array; state the op schema ({op:"add"|"delete"|"replace", target?, text?}); target must be an exact existing line.`,
-    `Never contradict these hard rules: workers write files only, relative paths only, no git commits, REPORT:/VERDICT: contracts.`,
+    `You review a finished AI dev-pipeline run and decide whether its failure can be caught mechanically by a future automated check. Characterise what went wrong from the narrated output and outcome.`,
+    `You may ONLY propose a check from this fixed vocabulary (never free-form shell):`,
+    `- boot-sidecar: build the esbuild sidecar payload and boot it (catches bundle-only breakage that dev mode hides).`,
+    `- npm-script: run one npm script that already exists in the sandbox package.json. Params: {"script":"<name>"}.`,
+    `- grep-diff: grep the run's diff for a regex. Params: {"pattern":"<regex>"}.`,
+    `If the failure is not mechanically detectable by one of those, or would need anything outside this vocabulary, DECLINE with a one-line reason. Declining is the correct answer for non-mechanisable failures (a missing regression guard, a mis-named test); do not force a check.`,
+    `Propose at most one check.`,
     `Run output:\n${input.output}`,
     `Outcome: ${input.outcome}`,
-    `Current lessons document:\n${input.current || "(empty)"}`,
-    `Respond with a line "OPS:" followed by a JSON array of operations.`,
+    `Respond with a line "PROPOSAL:" followed by a single JSON object: {"decision":"propose","kind":"boot-sidecar"} or {"decision":"propose","kind":"npm-script","script":"..."} or {"decision":"propose","kind":"grep-diff","pattern":"..."} or {"decision":"decline","reason":"..."}.`,
   ].join("\n\n");
 }

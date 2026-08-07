@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { getLessons, lessonsClause, composeAnalyzerPrompt, parseOps, applyOps, recordProposal } from "./lessons.js";
+import { getLessons, lessonsClause, composeAnalyzerPrompt, parseProposal, formatProposal, recordProposal } from "./lessons.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
@@ -607,22 +607,17 @@ async function analyzeRun(run: Run, actorId: string, config: RelayConfig): Promi
     const agent = { ...getAgent(config, pick.agent, "plan") };
     agent.cmd = resolveCmd(agent, pick.model);
 
-    const current = await getLessons();
     const prompt = composeAnalyzerPrompt({
       output: run.output.slice(0, 30_000),
       outcome: `status=${run.status} stage=${run.stage}`,
-      current,
     });
     const res = await runAgent(agent, prompt, config.workdir);
-    const ops = parseOps(res.output);
-    if (ops === null) {
-      console.warn("forge: analyzer parsed null ops");
+    const proposal = parseProposal(res.output);
+    if (proposal === null) {
+      console.warn("forge: analyzer parsed null proposal");
       return;
     }
-    const { doc, applied } = applyOps(current, ops);
-    if (applied.length) {
-      await recordProposal(actorId, doc);
-    }
+    await recordProposal(actorId, formatProposal(proposal));
   } catch (e) {
     console.warn(`forge: analyzer failed for run ${run.id}:`, (e as Error).message);
   }
@@ -769,11 +764,18 @@ export function getRunOutput(id: string, after: number) {
   return { chunk: r.output.slice(from), next: r.output.length, stage: r.stage, status: r.status };
 }
 
-export function stopRun(id: string): boolean {
+// Test-teardown hook: resolve once every in-flight run has fully settled. Deleting a
+// workdir while a run is still winding down (later stages, analyzer, git) EPERMs on
+// Windows. Production never needs this - stop stays prompt.
+export async function settleAll(): Promise<void> {
+  await Promise.allSettled([...runs.values()].map((r) => r.done));
+}
+
+export async function stopRun(id: string): Promise<boolean> {
   const r = runs.get(id);
   if (!r || r.status !== "running") return false;
   r.stopped = true; // checked between stages so a running stage still lands on "stopped"
-  if (r.child) killTree(r.child);
+  if (r.child) await killTree(r.child);
   if (r.abort) r.abort();
   return true;
 }

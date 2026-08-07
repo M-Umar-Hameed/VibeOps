@@ -20,3 +20,12 @@ export async function pickFolder(): Promise<string | null> {
     return null;
   }
 }
+
+export async function openRepoFolder(path: string): Promise<void> {
+  try {
+    const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+    await revealItemInDir(path);
+  } catch {
+    // Non-tauri context (browser/test) or plugin missing — no-op.
+  }
+}

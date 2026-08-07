@@ -411,7 +411,9 @@ test("loadRelayConfig still requires cmd for a cli agent", () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("runAgent unlinks the {promptFile} on failure and on timeout/kill (net-zero .txt)", async () => {
+test("runAgent leaves no prompt file behind on failure and timeout paths (net-zero .txt)", async () => {
+  // Note: this covers the failure and timeout paths leaving no prompt file behind.
+  // It does not cover the narrow window of a throw between writeFile and try.
   const countTxt = () =>
     readdirSync(tmpdir()).filter((f) => f.startsWith("vibeops-relay-") && f.endsWith(".txt")).length;
   const before = countTxt();

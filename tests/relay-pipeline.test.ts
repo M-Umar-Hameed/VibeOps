@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runPlan, runWork, runReview } from "../src/relay/runner.js";
 import type { RelayConfig } from "../src/relay/config.js";
+import { killTree } from "../src/relay/invoke.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FAKE_AGENT = join(__dirname, "fixtures", "fake-agent.mjs");
@@ -108,8 +109,9 @@ test("relay pipeline: plan -> work -> review(fail) -> rework -> review(pass) -> 
     expect((await getTicket(raceTicket.id)).status).toBe("review");
     expect((await getComments(raceTicket.id)).filter((c) => c.kind === "report")).toHaveLength(1);
   } finally {
-    child.kill();
-    try { execSync(process.platform === "win32" ? `taskkill /pid ${child.pid} /T /F` : `kill -9 ${child.pid}`); } catch { /* already dead */ }
+    // Reuse the awaitable kill: resolves only once the tree has actually exited, so the
+    // rmSync below cannot race a process still holding the PGlite DB open. No retries needed.
+    await killTree(child);
     rmSync(home, { recursive: true, force: true });
     rmSync(workdir, { recursive: true, force: true });
   }

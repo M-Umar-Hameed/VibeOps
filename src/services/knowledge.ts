@@ -115,11 +115,7 @@ export async function indexRepoDocs(projectId: string): Promise<{ indexed: numbe
   if (!p.repoPath) throw new ConflictError("project has no repoPath set");
   const root = p.repoPath;
   const embedder = getEmbedder();
-  let files = walkRepoDocs(root);
-  if (files.length > 50) {
-    console.warn(`Dropped ${files.length - 50} repo docs (cap 50) for project ${projectId}`);
-    files = files.slice(0, 50);
-  }
+  const files = walkRepoDocs(root);
   let indexed = 0;
   let skipped = 0;
   const kept: string[] = [];

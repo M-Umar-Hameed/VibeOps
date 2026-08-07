@@ -1,5 +1,7 @@
 # VibeOps
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) ![Platform: Windows | macOS](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue)
+
 **Your agents, supervised.**
 
 VibeOps is a self-hosted agent ops console — the board is a work-order queue for supervised agents. It orchestrates a continuous loop of planning, sandboxed work, adversarial review, and human promotion, reachable over REST and MCP. A human in the desktop app and every AI coding agent you run (Claude Code, Codex, Gemini, Antigravity, Cursor) share the same queue, the same searchable memory, and the same append-only audit trail.
@@ -9,6 +11,19 @@ Vibecoding with multiple agents has a coordination problem: each agent starts co
 **New here?** If you are a non-developer looking to automate work, read the [End-User Guide](docs/USER_GUIDE.md). VibeOps never asks for your AI provider API keys; you bring your own CLI and keep your usage on your existing subscriptions.
 
 ## What it does
+
+```mermaid
+flowchart LR
+  T["Ticket"] --> P["Plan<br/>(your chosen model)"]
+  P --> W["Work<br/>isolated git worktree"]
+  W --> C["Checks<br/>typecheck + tests"]
+  C --> G{"Protected-path<br/>policy"}
+  G -- "touched harness/config" --> B["Promote blocked<br/>until waived"]
+  G -- "clean" --> R["Review<br/>(your chosen model)"]
+  R -- "VERDICT: FAIL" --> P
+  R -- "VERDICT: PASS" --> H["Human promote"]
+  H --> M["Merged into your repo"]
+```
 
 **The forge loop.** A coordinated pipeline of plan -> sandboxed work -> adversarial review -> human promote. The expensive reasoning model touches a task only twice (writing the plan, reviewing the diff), while a cheap or local model grinds through the implementation.
 
@@ -152,6 +167,18 @@ Any CLI that takes a prompt via argv or stdin and prints its answer to stdout ca
 `relay.json` — including the exact command each agent runs — lives in a local file, never the settings table. An admin API key can already read and write ticket data; if command templates lived in the DB too, that same key would amount to arbitrary command execution on whatever machine runs the relay. Keeping it filesystem-only means compromising the API can't compromise the shell.
 
 ## Architecture
+
+```mermaid
+flowchart TB
+  UI["Tauri desktop shell<br/>React UI"] <--> API["Node sidecar<br/>Hono API on :8787"]
+  API --> DB[("PGlite + pgvector<br/>~/.vibeops/data")]
+  API --> KN["Knowledge<br/>vault - notes - sessions - repo docs"]
+  API --> RELAY["Relay"]
+  RELAY --> C1["claude"]
+  RELAY --> C2["agy"]
+  RELAY --> C3["codex / kimi"]
+  KN --> DB
+```
 
 ```text
 Desktop app (Tauri)  ──┐

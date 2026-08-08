@@ -23,12 +23,19 @@ test("limit honored: returns exactly 5 when more exist", async () => {
   expect(await res.json()).toHaveLength(5);
 });
 
-test("bogus limit falls back to the cap, not the whole table", async () => {
+test("GET /tickets with no limit returns ALL matching tickets", async () => {
+  const { proj, h } = await setup(201);
+  const res = await app.request(`/tickets?projectId=${proj.id}`, { headers: h });
+  expect(res.status).toBe(200);
+  expect(await res.json()).toHaveLength(201);
+});
+
+test("bogus limit behaves as if no limit was passed", async () => {
   const { proj, h } = await setup(201);
   for (const q of ["abc", "-1", "0"]) {
     const res = await app.request(`/tickets?projectId=${proj.id}&limit=${q}`, { headers: h });
     expect(res.status).toBe(200);
-    expect(await res.json()).toHaveLength(200);
+    expect(await res.json()).toHaveLength(201);
   }
 });
 

@@ -86,7 +86,7 @@ app.get("/tickets/:id", async (c) => {
 const TICKET_LIST_MAX = 200;
 app.get("/tickets", async (c) => {
   const n = Number(c.req.query("limit"));
-  const limit = Number.isFinite(n) && n > 0 ? Math.min(n, TICKET_LIST_MAX) : TICKET_LIST_MAX;
+  const limit = Number.isFinite(n) && n > 0 ? Math.min(n, TICKET_LIST_MAX) : undefined;
   return c.json(await listTickets({ projectId: c.req.query("projectId"), status: c.req.query("status"), limit }));
 });
 app.get("/search", async (c) => c.json(await searchTickets(c.req.query("q") ?? "")));

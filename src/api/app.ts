@@ -3,6 +3,7 @@ import { auth } from "./auth.js";
 import { createTicket, updateTicket } from "../services/tickets.js";
 import { addComment, listComments } from "../services/comments.js";
 import { getTicket, getTicketHistory, listTickets, searchTickets } from "../services/history.js";
+import { assertTicketId } from "../forge/sandbox.js";
 import { saveNote, updateNote, deleteNote, listNotes, getNote } from "../services/notes.js";
 import { searchKnowledge, getKnowledgeSource, upsertSourceDoc, listSessionDocs, knowledgeGraph, indexRepoDocs } from "../services/knowledge.js";
 import { AuthError, ConflictError, ForbiddenError, NotFoundError, StaleVersionError } from "../services/errors.js";
@@ -74,9 +75,20 @@ app.post("/tickets/:id/verify", requireAdmin, async (c) => {
   await addComment(c.get("actor").id, c.req.param("id"), body, "verification");
   return c.json({ verified: true });
 });
-app.get("/tickets/:id", async (c) => c.json(await getTicket(c.req.param("id"))));
-app.get("/tickets", async (c) =>
-  c.json(await listTickets({ projectId: c.req.query("projectId"), status: c.req.query("status") })));
+app.get("/tickets/:id", async (c) => {
+  try {
+    assertTicketId(c.req.param("id"));
+  } catch {
+    return c.json({ error: "invalid ticket id" }, 400);
+  }
+  return c.json(await getTicket(c.req.param("id")));
+});
+const TICKET_LIST_MAX = 200;
+app.get("/tickets", async (c) => {
+  const n = Number(c.req.query("limit"));
+  const limit = Number.isFinite(n) && n > 0 ? Math.min(n, TICKET_LIST_MAX) : undefined;
+  return c.json(await listTickets({ projectId: c.req.query("projectId"), status: c.req.query("status"), limit }));
+});
 app.get("/search", async (c) => c.json(await searchTickets(c.req.query("q") ?? "")));
 
 app.get("/projects", async (c) => c.json(await listProjects()));

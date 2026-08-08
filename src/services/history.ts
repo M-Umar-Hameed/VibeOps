@@ -14,14 +14,15 @@ export async function getTicketHistory(ticketId: string): Promise<Event[]> {
 }
 
 export async function listTickets(
-  filter: { projectId?: string; status?: string } = {},
+  filter: { projectId?: string; status?: string; limit?: number } = {},
 ): Promise<Ticket[]> {
+  let q = db.select().from(tickets).$dynamic();
   const conds = [];
   if (filter.projectId) conds.push(eq(tickets.projectId, filter.projectId));
   if (filter.status) conds.push(sql`${tickets.status} = ${filter.status}`);
-  return conds.length
-    ? db.select().from(tickets).where(and(...conds))
-    : db.select().from(tickets);
+  if (conds.length) q = q.where(and(...conds));
+  if (filter.limit) q = q.limit(filter.limit);
+  return q;
 }
 
 export async function searchTickets(term: string): Promise<Ticket[]> {

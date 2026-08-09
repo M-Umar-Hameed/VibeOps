@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { tickets, events, comments, actors, type Ticket } from "../db/schema.js";
+import { tickets, events, comments, actors, projects, type Ticket } from "../db/schema.js";
 import { NotFoundError, StaleVersionError, ConflictError } from "./errors.js";
 import { parseVerification } from "../relay/prompts.js";
 
@@ -16,6 +16,9 @@ export async function createTicket(
   executor: Executor = db,
 ): Promise<Ticket> {
   return executor.transaction(async (tx) => {
+    const [proj] = await tx.select({ id: projects.id }).from(projects)
+      .where(eq(projects.id, input.projectId)).limit(1);
+    if (!proj) throw new NotFoundError(`project not found: ${input.projectId}`);
     const [ticket] = await tx.insert(tickets).values({
       projectId: input.projectId, title: input.title, body: input.body ?? "",
       priority: input.priority ?? "normal", assigneeId: input.assigneeId, status: input.status,

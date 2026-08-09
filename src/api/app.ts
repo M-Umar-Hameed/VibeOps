@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { cors } from "hono/cors";
 import { auth } from "./auth.js";
 import { createTicket, updateTicket } from "../services/tickets.js";
 import { addComment, listComments } from "../services/comments.js";
@@ -48,6 +49,26 @@ async function jsonBody(c: Context): Promise<unknown> {
     return BAD_JSON;
   }
 }
+
+// CORS: opt-in exact-origin allowlist from the `cors.origins` setting
+// (comma-separated). Empty/unset => no Access-Control-Allow-Origin is emitted,
+// so a fresh install behaves exactly as before and any non-allowlisted origin
+// is refused by the browser. Exact match only; never `*`, never blind Origin
+// reflection. Registered before `auth` so the credential-less OPTIONS preflight
+// is answered here (204) instead of being 401'd by auth.
+// ponytail: reads the setting per request; cache in-memory + refresh on
+// setSetting("cors.origins") if this ever fronts non-loopback traffic.
+app.use("*", cors({
+  origin: async (origin) => {
+    if (!origin) return null;
+    const raw = await getSetting("cors.origins");
+    if (!raw) return null;
+    const allowed = raw.split(",").map((o) => o.trim()).filter(Boolean);
+    return allowed.includes(origin) ? origin : null;
+  },
+  allowHeaders: ["Authorization", "Content-Type"],
+  allowMethods: ["GET", "POST", "PATCH", "PUT", "DELETE"],
+}));
 
 app.use("*", auth);
 

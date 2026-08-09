@@ -480,7 +480,20 @@ async function pipeline(
   }
   if (run.stopped) { await bounce(run, actorId, "run stopped", ""); return settle(run, "stopped"); }
   applyVerification(workRes, run.agents.work, run, config);
-  if (!workRes.ok) { await bounce(run, actorId, "worker failed", workRes.output); return settle(run, "failed"); }
+  if (!workRes.ok) {
+    // Work stage failed after the agent may have written a complete tree (agy's
+    // own request timeout self-exits non-zero; the child is already dead here).
+    // Commit whatever exists under a WIP marker so hasCommitsToPromote() is true
+    // and the operator can promote or discard after review, instead of the run
+    // silently throwing away finished-but-uncommitted work. Never auto-promoted;
+    // the ticket still bounces to `planned`. forgeCommit no-ops on a clean tree.
+    const saved = await forgeCommit(ticket.id, `WIP (worker failed) ${ticket.title}`);
+    const note = saved
+      ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]"
+      : "";
+    await bounce(run, actorId, "worker failed", workRes.output + note);
+    return settle(run, "failed");
+  }
   await forgeCommit(ticket.id, ticket.title);
   await addComment(actorId, ticket.id, redactSecrets(workRes.output), "report");
   ticket = await updateTicket(actorId, ticket.id, ticket.version, { status: "review" });

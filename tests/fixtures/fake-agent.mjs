@@ -70,6 +70,12 @@ if (mode === "exit") {
   console.error("boom");
   process.exit(1);
 }
+if (mode === "write-then-exit") {
+  // Write a file (complete work) then exit non-zero to simulate agent timeout
+  writeFileSync(join(process.cwd(), "forge-made.txt"), "made by fake agent\n");
+  console.error("Error: timeout waiting for response");
+  process.exit(1);
+}
 if (mode === "slow") {
   await new Promise((r) => setTimeout(r, 2000));
   console.log(OUTPUTS.plan);

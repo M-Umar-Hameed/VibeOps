@@ -9,13 +9,17 @@ import { fstatSync } from "node:fs";
 // close error -> log, exit 1 anyway. Clean -> exit 0.
 const CLOSE_DEADLINE_MS = 5000;
 
-export function makeShutdown(server: ServerType, closeDb: () => Promise<void>) {
+export function makeShutdown(server: ServerType, closeDb: () => Promise<void>, onBeforeClose?: () => Promise<void>) {
   let closing = false;
   return async function shutdown(reason: string): Promise<void> {
     if (closing) return;
     closing = true;
     console.log(`shutting down (${reason}); checkpointing embedded database`);
     await new Promise<void>((r) => server.close(() => r()));
+    if (onBeforeClose) {
+      try { await onBeforeClose(); }
+      catch (e) { console.warn(`pre-close backup failed: ${(e as Error).message}`); }
+    }
     let code = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<"timeout">((r) => {
@@ -53,9 +57,9 @@ function stdinIsPipe(): boolean {
 // everywhere). Only attach the stdin path in embedded mode AND when stdin is a
 // real pipe (not /dev/null from stdio: "ignore").
 export function installShutdown(
-  server: ServerType, closeDb: () => Promise<void>, embedded: boolean,
+  server: ServerType, closeDb: () => Promise<void>, embedded: boolean, onBeforeClose?: () => Promise<void>,
 ): void {
-  const shutdown = makeShutdown(server, closeDb);
+  const shutdown = makeShutdown(server, closeDb, onBeforeClose);
   process.once("SIGINT", () => void shutdown("SIGINT"));
   process.once("SIGTERM", () => void shutdown("SIGTERM"));
   if (embedded && stdinIsPipe()) {

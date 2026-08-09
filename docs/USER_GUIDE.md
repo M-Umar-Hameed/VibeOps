@@ -50,14 +50,17 @@ checkpoint and is exactly what corrupts the write-ahead log.
 
 If the app starts in recovery mode (every request returns 503 "embedded_db_open_failed"),
 the embedded database's write-ahead log was corrupted by an unclean shutdown (hard kill,
-crash, or power loss). Your data files are intact. A timestamped backup copy of the data
-directory was made automatically (see `backupPath` in the error, e.g. `~/.vibeops/data.broken-<timestamp>`).
+crash, or power loss). Your data files are intact. A rolling known-good snapshot is taken
+automatically on successful open (e.g. `~/.vibeops/data.good-<ts>`, last 3 kept). On failure,
+the error's `backupPath` points at the latest snapshot. A small logical JSON export also runs
+on a schedule and on clean shutdown under `~/.vibeops/backups/` (last 30). You can run
+`npm run backup` and `npm run restore <file>` for logical export/restore.
 
-PGlite cannot reset the WAL in-process. To recover:
+PGlite cannot reset the WAL in-process. To recover, **never recover in place — copy the data dir first and run `pg_resetwal` against the copy**:
 
 1. Copy `~/.vibeops/data` into a Postgres 16 container:
    `pgvector/pgvector:pg16` matches PGlite's embedded major version.
-2. Run `pg_resetwal -f /path/to/data` inside the container.
+2. Run `pg_resetwal -f /path/to/data` inside the container against the copy.
 3. Copy the repaired directory back to `~/.vibeops/data`.
 4. Restart the app.
 

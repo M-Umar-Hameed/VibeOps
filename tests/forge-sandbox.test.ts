@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync, rmdirSync, readFileSync, readlinkSync, readdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync, rmdirSync, readFileSync, readlinkSync, readdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -158,6 +158,31 @@ describe("forge sandbox", () => {
     await forgeCommit(TID2, "c");
     await promoteSandbox(workdir, TID2, "add c file");
     expect(sandboxExists(TID2)).toBe(false);
+    expect(existsSync(join(workdir, "node_modules", "marker.txt"))).toBe(true);
+  });
+
+  it("SAFETY: cleanup throws if a junction survives unlinkDeps, base node_modules intact", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    writeFileSync(join(sp, "b.txt"), "x\n");
+    await forgeCommit(TID, "b");
+
+    // Break the worktree so `git worktree remove` fails and leaves the directory,
+    // which is required to trigger the `existsSync(path)` guard in cleanup.
+    rmSync(join(sp, ".git"), { recursive: true, force: true });
+
+    // Start discardSandbox. It synchronously calls unlinkDeps, which removes the junction,
+    // then it yields the event loop at `await git(...)`.
+    const promise = discardSandbox(workdir, TID);
+
+    // While discardSandbox is awaiting git, recreate the junction.
+    // This simulates unlinkDeps failing or missing the junction.
+    symlinkSync(join(workdir, "node_modules"), join(sp, "node_modules"), process.platform === "win32" ? "junction" : "dir");
+
+    // discardSandbox resumes, checks existsSync(path) (true, since git failed),
+    // finds the junction, and throws.
+    await expect(promise).rejects.toThrow(/refusing recursive cleanup/);
+
+    // Most importantly, the base node_modules must survive.
     expect(existsSync(join(workdir, "node_modules", "marker.txt"))).toBe(true);
   });
 

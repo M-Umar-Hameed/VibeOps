@@ -44,6 +44,10 @@ The original shared vault at `~/.vibeops/vault` still works and is indexed as a 
 
 ## Database recovery
 
+Always stop the app with a normal quit or Ctrl+C; never force-kill the sidecar
+(kill -9, taskkill /F, End Task in Task Manager). A hard kill skips the shutdown
+checkpoint and is exactly what corrupts the write-ahead log.
+
 If the app starts in recovery mode (every request returns 503 "embedded_db_open_failed"),
 the embedded database's write-ahead log was corrupted by an unclean shutdown (hard kill,
 crash, or power loss). Your data files are intact. A timestamped backup copy of the data

@@ -2,15 +2,24 @@ import { existsSync, readFileSync, writeFileSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { vibeopsHome } from "../runtime/home.js";
 
 export type Snapshot = { path: string; hash: string; bytes: Buffer };
 
-// Default: the installed VibeOps server payload — the exact file the live
-// incident overwrote. Only meaningful on the machine that has an install; dev
-// and CI have none, so snapshotSensitive() skips it when absent.
+// Command-execution config that a later run's argv is read from. Cross-platform,
+// under ~/.vibeops (VIBEOPS_HOME-overridable for tests). snapshotSensitive()
+// skips any that don't exist, so always-including is harmless on dev/CI.
+// server.mjs is the installed win32 payload from the original incident and stays
+// win32-only. All are best-effort snapshots, never a hard requirement.
 function defaultSensitivePaths(): string[] {
-  if (process.platform !== "win32") return [];
-  return [join(homedir(), "AppData", "Local", "VibeOps", "resources", "server", "server.mjs")];
+  const paths = [
+    join(vibeopsHome(), ".vibeops", "relay.json"),
+    join(vibeopsHome(), ".vibeops", "credentials.json"),
+  ];
+  if (process.platform === "win32") {
+    paths.push(join(homedir(), "AppData", "Local", "VibeOps", "resources", "server", "server.mjs"));
+  }
+  return paths;
 }
 
 // forge.sensitivePaths (JSON string array of absolute paths) wins, incl. [] to

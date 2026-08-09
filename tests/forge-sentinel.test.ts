@@ -16,6 +16,23 @@ describe("sentinel resolveSensitivePaths", () => {
   });
 });
 
+describe("sentinel default sensitive paths", () => {
+  it("includes relay.json and credentials.json under a VIBEOPS_HOME override", () => {
+    const prev = process.env.VIBEOPS_HOME;
+    const home = mkdtempSync(join(tmpdir(), "sentinel-home-"));
+    process.env.VIBEOPS_HOME = home;
+    try {
+      const defaults = resolveSensitivePaths(null);
+      expect(defaults).toContain(join(home, ".vibeops", "relay.json"));
+      expect(defaults).toContain(join(home, ".vibeops", "credentials.json"));
+    } finally {
+      if (prev === undefined) delete process.env.VIBEOPS_HOME;
+      else process.env.VIBEOPS_HOME = prev;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("sentinel snapshot / detectAndRestore", () => {
   it("skips missing paths and detects+restores a tampered file", () => {
     const dir = mkdtempSync(join(tmpdir(), "sentinel-"));

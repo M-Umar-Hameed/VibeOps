@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync, rmdirSync, readFileSync, readlinkSync, readdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync, rmdirSync, readFileSync, readlinkSync, readdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -7,7 +7,7 @@ import {
   assertTicketId, sandboxPath, sandboxExists, ensureSandbox, branchName,
   forgeCommit, sandboxDiff, sandboxDiffSummary, promoteSandbox, discardSandbox,
   unlinkDeps, hasCommitsToPromote, sandboxActivity, sandboxWorkingDiff,
-  snapshotDeps, detectDepsLeak,
+  snapshotDeps, detectDepsLeak, listSandboxTicketIds, sandboxSizeBytes
 } from "../src/forge/sandbox.js";
 import { ConflictError } from "../src/services/errors.js";
 
@@ -161,6 +161,31 @@ describe("forge sandbox", () => {
     expect(existsSync(join(workdir, "node_modules", "marker.txt"))).toBe(true);
   });
 
+  it("SAFETY: cleanup throws if a junction survives unlinkDeps, base node_modules intact", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    writeFileSync(join(sp, "b.txt"), "x\n");
+    await forgeCommit(TID, "b");
+
+    // Break the worktree so `git worktree remove` fails and leaves the directory,
+    // which is required to trigger the `existsSync(path)` guard in cleanup.
+    rmSync(join(sp, ".git"), { recursive: true, force: true });
+
+    // Start discardSandbox. It synchronously calls unlinkDeps, which removes the junction,
+    // then it yields the event loop at `await git(...)`.
+    const promise = discardSandbox(workdir, TID);
+
+    // While discardSandbox is awaiting git, recreate the junction.
+    // This simulates unlinkDeps failing or missing the junction.
+    symlinkSync(join(workdir, "node_modules"), join(sp, "node_modules"), process.platform === "win32" ? "junction" : "dir");
+
+    // discardSandbox resumes, checks existsSync(path) (true, since git failed),
+    // finds the junction, and throws.
+    await expect(promise).rejects.toThrow(/refusing recursive cleanup/);
+
+    // Most importantly, the base node_modules must survive.
+    expect(existsSync(join(workdir, "node_modules", "marker.txt"))).toBe(true);
+  });
+
   it("forgeCommit does not stage the linked node_modules (gitignored)", async () => {
     const sp = await ensureSandbox(workdir, TID);
     writeFileSync(join(sp, "b.txt"), "x\n");
@@ -276,6 +301,46 @@ describe("forge sandbox", () => {
     expect(subject).not.toContain(secret);
     expect(body).not.toContain(secret);
     expect(`${subject}\n${body}`).toContain("[redacted]");
+  });
+
+  it("promote with discardAfter=false merges but KEEPS the sandbox and branch", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    writeFileSync(join(sp, "b.txt"), "new file\n");
+    await forgeCommit(TID, "add b");
+    await promoteSandbox(workdir, TID, "add b file", false);
+    expect(existsSync(join(workdir, "b.txt"))).toBe(true);      // merge still landed
+    expect(sandboxExists(TID)).toBe(true);                       // sandbox kept
+    expect(git(workdir, "rev-parse", `forge/${TID}`).trim()).toBeTruthy(); // branch kept
+  });
+
+  it("cleanup deletes a real (non-link) app/node_modules copy, base app/node_modules survives", async () => {
+    mkdirSync(join(workdir, "app", "node_modules"), { recursive: true });
+    writeFileSync(join(workdir, "app", "node_modules", "app-marker.txt"), "app-base\n");
+    const sp = await ensureSandbox(workdir, TID, true); // frontendDeps: real copy
+    expect(() => readlinkSync(join(sp, "app", "node_modules"))).toThrow(); // real dir, not link
+    writeFileSync(join(sp, "b.txt"), "x\n");
+    await forgeCommit(TID, "b");
+    await discardSandbox(workdir, TID);
+    expect(sandboxExists(TID)).toBe(false);                                    // real copy gone
+    expect(existsSync(join(workdir, "app", "node_modules", "app-marker.txt"))).toBe(true); // base intact
+    expect(existsSync(join(workdir, "node_modules", "marker.txt"))).toBe(true);            // base root intact
+  });
+
+  it("listSandboxTicketIds returns created sandboxes and ignores non-uuid dirs", async () => {
+    await ensureSandbox(workdir, TID);
+    mkdirSync(join(sandboxRoot, "not-a-uuid"));
+    const ids = listSandboxTicketIds();
+    expect(ids).toContain(TID);
+    expect(ids).not.toContain("not-a-uuid");
+  });
+
+  it("sandboxSizeBytes counts sandbox files but not the base node_modules junction", async () => {
+    const sp = await ensureSandbox(workdir, TID);            // node_modules is a junction here
+    writeFileSync(join(sp, "big.txt"), "y".repeat(5000));
+    const size = sandboxSizeBytes(TID);
+    expect(size).toBeGreaterThanOrEqual(5000);
+    // base node_modules marker (via junction) must NOT be counted
+    expect(size).toBeLessThan(50_000);
   });
 });
 

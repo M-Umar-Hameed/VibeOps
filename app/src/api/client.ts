@@ -1,9 +1,12 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { getSettings, type Settings } from "../settings.js";
 import { ApiError, AuthError, NotFoundError, StaleVersionError } from "./errors.js";
+import { hasTauri } from "../lib/tauri.js";
 
 type FetchImpl = typeof tauriFetch;
-let fetchImpl: FetchImpl = tauriFetch;
+let fetchImpl: FetchImpl = hasTauri()
+  ? tauriFetch
+  : (globalThis.fetch.bind(globalThis) as unknown as FetchImpl);
 let settingsImpl: () => Promise<Settings> = getSettings;
 export function setFetchImpl(f: FetchImpl) { fetchImpl = f; }
 export function setSettingsImpl(f: () => Promise<Settings>) { settingsImpl = f; }

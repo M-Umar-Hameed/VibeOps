@@ -31,6 +31,27 @@ async function bootNormally() {
   void rescanProjectVaults().catch((e) => console.warn(`project vault watchers failed to start: ${(e as Error).message}`));
   void reapStaleTickets().then(n => { if (n) console.log(`reaper: bounced ${n} stale ticket(s)`); }).catch(() => {});
 
+  const runLogicalExport = isEmbedded
+    ? async () => {
+        try {
+          const { writeBackup } = await import("../services/backup.js");
+          const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+          const { path, counts } = await writeBackup(stamp);
+          console.log(`logical export -> ${path} ${JSON.stringify(counts)}`);
+        } catch (e) {
+          console.warn(`logical export failed: ${(e as Error).message}`);
+        }
+      }
+    : undefined;
+  if (isEmbedded) {
+    const { snapshotKnownGood } = await import("../db/client.js");
+    void snapshotKnownGood()
+      .then((p) => { if (p) console.log(`known-good snapshot -> ${p}`); })
+      .catch((e) => console.warn(`known-good snapshot failed: ${(e as Error).message}`));
+    void runLogicalExport!();
+    setInterval(() => void runLogicalExport!(), 6 * 60 * 60_000).unref();
+  }
+
   // Mark interrupted runs but do NOT auto-resume: resume is a human action.
   async function handleInterruptedRuns() {
     const ticketIds = await markInterruptedRuns();
@@ -69,6 +90,6 @@ async function bootNormally() {
   // local embedder can never download its model inside the server).
   const server = serve({ fetch: app.fetch, port, hostname: isEmbedded ? "127.0.0.1" : "0.0.0.0", overrideGlobalObjects: false });
   const { installShutdown } = await import("./shutdown.js");
-  installShutdown(server, closeDb, isEmbedded);
+  installShutdown(server, closeDb, isEmbedded, runLogicalExport);
   console.log(`api on :${port}${isEmbedded ? " (embedded db)" : ""}`);
 }

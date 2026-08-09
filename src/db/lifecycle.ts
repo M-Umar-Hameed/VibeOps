@@ -1,5 +1,6 @@
-import { cpSync, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import type { PGlite } from "@electric-sql/pglite";
+import { latestGoodSnapshot } from "./snapshots.js";
 
 // Thrown when the embedded cluster cannot be opened (typically a corrupt WAL
 // after an unclean shutdown). Carries the data dir and the pre-recovery backup
@@ -14,20 +15,14 @@ export class EmbeddedDbOpenError extends Error {
       `Embedded database at ${dataDir} could not be opened: ` +
       `${(reason as Error)?.message ?? String(reason)}. ` +
       (backupPath
-        ? `A backup copy was saved to ${backupPath}.`
-        : `No backup copy could be made.`),
+        ? `The most recent known-good snapshot is at ${backupPath}.`
+        : `No known-good snapshot is available.`),
     );
     this.name = "EmbeddedDbOpenError";
   }
 }
 
-// Timestamped sibling copy taken BEFORE any recovery attempt. Never moves or
-// deletes the original. `ts` is injected so tests stay deterministic.
-export function backupDataDir(dataDir: string, ts: string): string {
-  const backupPath = `${dataDir}.broken-${ts}`;
-  cpSync(dataDir, backupPath, { recursive: true });
-  return backupPath;
-}
+
 
 export type OpenDeps = {
   makeClient: (dir: string) => PGlite; // () => new PGlite(dir, { extensions: { vector } })
@@ -47,10 +42,9 @@ export async function openEmbedded(
     client = deps.makeClient(dataDir);
     await client.exec("CREATE EXTENSION IF NOT EXISTS vector");
   } catch (reason) {
-    let backupPath: string | null = null;
-    try {
-      if (existsSync(dataDir)) backupPath = backupDataDir(dataDir, deps.now());
-    } catch { /* backup best-effort; still surface the open failure */ }
+    // No copy on failure (retired: it grew unbounded). Point the caller at the
+    // latest rolling known-good snapshot instead, if one exists.
+    const backupPath = existsSync(dataDir) ? latestGoodSnapshot(dataDir) : null;
     throw new EmbeddedDbOpenError(dataDir, backupPath, reason);
   }
   return { client };

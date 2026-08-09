@@ -17,6 +17,8 @@ export const sql = postgres(url ?? "postgres://tickets:tickets@localhost:5433/ti
 
 export let db!: ReturnType<typeof drizzlePg<typeof schema>>;
 export let embeddedDbError: import("./lifecycle.js").EmbeddedDbOpenError | null = null;
+let embeddedClient: import("@electric-sql/pglite").PGlite | null = null;
+let embeddedDataDir: string | null = null;
 
 // Default close = end the postgres-js pool (non-embedded / test lanes).
 let closeImpl: () => Promise<void> = async () => { await sql.end({ timeout: 5 }); };
@@ -45,6 +47,8 @@ async function makeDb(): Promise<void> {
     if (e instanceof EmbeddedDbOpenError) { embeddedDbError = e; return; }
     throw e;
   }
+  embeddedClient = client;
+  embeddedDataDir = dataDir;
   closeImpl = () => client.close();
   const d = drizzlePglite(client as never, { schema });
   // The import.meta fallback only resolves in the source tree; the bundled payload
@@ -53,6 +57,17 @@ async function makeDb(): Promise<void> {
     ?? fileURLToPath(new URL("../../drizzle", import.meta.url));
   await migrate(d as never, { migrationsFolder: migrationsDir });
   db = d as never;
+}
+
+// Rolling known-good snapshot of the embedded data dir. Called by the server at
+// boot only (NOT from makeDb, or every CLI import would copy ~450MB). Checkpoints
+// first so the on-disk copy is consistent while the cluster is still quiescent.
+// Note: snapshot fires every embedded boot, keep 3; upgrade to daily/dirty-check if boot frequency makes 450MB copies costly.
+export async function snapshotKnownGood(): Promise<string | null> {
+  if (!embeddedClient || !embeddedDataDir) return null;
+  const { snapshotGood } = await import("./snapshots.js");
+  await embeddedClient.exec("CHECKPOINT");
+  return snapshotGood(embeddedDataDir, new Date().toISOString().replace(/[:.]/g, "-"));
 }
 
 await makeDb();

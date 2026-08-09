@@ -39,6 +39,38 @@ export function sandboxExists(ticketId: string): boolean {
   return existsSync(sandboxPath(ticketId));
 }
 
+// On-disk sandbox ticket ids (UUID-named dirs under the sandbox root). Used by the
+// manual backlog-cleanup pass. Missing root => [].
+export function listSandboxTicketIds(): string[] {
+  try {
+    return readdirSync(sandboxRoot(), { withFileTypes: true })
+      .filter((e) => e.isDirectory() && UUID.test(e.name))
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+}
+
+// Real bytes a discard would reclaim: sum of file sizes under the sandbox, NEVER
+// descending a junction/symlink (readlink succeeds). Skipping links excludes the
+// shared root node_modules junction (counted once in the base, not reclaimed) and
+// still counts a real frontendDeps app/node_modules copy (genuinely reclaimed).
+export function sandboxSizeBytes(ticketId: string): number {
+  let total = 0;
+  const walk = (dir: string): void => {
+    let entries: import("node:fs").Dirent[];
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const full = join(dir, e.name);
+      if (isLink(full)) continue;
+      if (e.isDirectory()) walk(full);
+      else { try { total += statSync(full).size; } catch { /* vanished mid-walk */ } }
+    }
+  };
+  walk(sandboxPath(ticketId));
+  return total;
+}
+
 // Arg-vector git, never shell. Returns code+combined output; callers decide what's fatal.
 function git(cwd: string, ...args: string[]): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
@@ -267,7 +299,7 @@ function promoteMessages(ticketId: string, title: string): { subject: string; bo
   return { subject, body };
 }
 
-export async function promoteSandbox(workdir: string, ticketId: string, title: string): Promise<void> {
+export async function promoteSandbox(workdir: string, ticketId: string, title: string, discardAfter = true): Promise<void> {
   const dirty = await git(workdir, "status", "--porcelain");
   if (dirty.out.trim()) {
     throw new ConflictError("workdir has uncommitted changes; commit or stash before promoting");
@@ -285,7 +317,7 @@ export async function promoteSandbox(workdir: string, ticketId: string, title: s
       `The sandbox and branch are left intact; rework the ticket and re-run, or resolve the conflict before promoting again.`,
     );
   }
-  await cleanup(workdir, ticketId);
+  if (discardAfter) await cleanup(workdir, ticketId);
 }
 
 export async function discardSandbox(workdir: string, ticketId: string): Promise<void> {
@@ -297,7 +329,19 @@ async function cleanup(workdir: string, ticketId: string): Promise<void> {
   // and `worktree remove --force` (or any recursive delete) traverses into it, it
   // destroys the BASE repo's real node_modules. Unlinking first makes that impossible.
   unlinkDeps(ticketId);
-  await git(workdir, "worktree", "remove", "--force", sandboxPath(ticketId));
+  const path = sandboxPath(ticketId);
+  await git(workdir, "worktree", "remove", "--force", path);
+  // `git worktree remove` swallows its own failure and, with forge.frontendDeps, must
+  // delete a real (gitignored) app/node_modules copy — on Windows that delete often
+  // fails, leaving the whole worktree (and blocking branch -D). unlinkDeps already
+  // removed every deps junction; re-verify none survived, then a recursive delete here
+  // is safe because there is no reparse point left to traverse into the base repo.
+  if (existsSync(path)) {
+    for (const rel of DEPS_DIRS) {
+      if (isLink(join(path, rel))) throw new Error(`refusing recursive cleanup of ${ticketId}: ${rel} is still a junction`);
+    }
+    rmSync(path, { recursive: true, force: true });
+  }
   await git(workdir, "branch", "-D", branchName(ticketId));
   await git(workdir, "worktree", "prune");
 }

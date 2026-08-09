@@ -19,7 +19,7 @@ import {
   latestRunPolicy,
   resolveMaxActive
 } from "../src/forge/runs.js";
-import { sandboxExists, branchName, promoteSandbox, sandboxDiff } from "../src/forge/sandbox.js";
+import { sandboxExists, branchName, promoteSandbox, sandboxDiff, hasCommitsToPromote } from "../src/forge/sandbox.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject, updateProjectRepo } from "../src/services/projects.js";
 import { createTicket, updateTicket } from "../src/services/tickets.js";
@@ -307,6 +307,49 @@ describe("forge run manager", () => {
     const persisted = await waitForPersistedRun(runId);
     expect(persisted.status).toBe("failed");
     expect(persisted.finishedAt).toBeTruthy();
+  });
+
+  it("worker failure with uncommitted work: saves as WIP commit, note in report", async () => {
+    const { actorId, ticket } = await seedTicket("Save WIP path");
+    setScript("plan,write-then-exit");
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    // Run failed, ticket bounced to planned (unchanged invariant)
+    expect(getRunOutput(runId, 0)?.status).toBe("failed");
+    expect((await getTicket(ticket.id)).status).toBe("planned");
+
+    // WIP commit was created — hasCommitsToPromote returns true
+    expect(await hasCommitsToPromote(workdir, ticket.id)).toBe(true);
+
+    // Report comment contains both "worker failed" and the saved-work note
+    const report = [...(await listComments(ticket.id))].reverse().find((c) => c.kind === "report");
+    expect(report?.body).toContain("worker failed");
+    expect(report?.body).toContain("uncommitted work was saved to the sandbox branch as a WIP commit");
+  });
+
+  it("worker failure with NO work written: no WIP commit, no note", async () => {
+    const { actorId, ticket } = await seedTicket("No WIP path");
+    setScript("plan,exit"); // exits without writing anything
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    expect(getRunOutput(runId, 0)?.status).toBe("failed");
+    expect((await getTicket(ticket.id)).status).toBe("planned");
+
+    // No WIP commit — forgeCommit returned false (clean tree)
+    expect(await hasCommitsToPromote(workdir, ticket.id)).toBe(false);
+
+    // Report has "worker failed" but NOT the saved-work note
+    const report = [...(await listComments(ticket.id))].reverse().find((c) => c.kind === "report");
+    expect(report?.body).toContain("worker failed");
+    expect(report?.body).not.toContain("uncommitted work was saved");
   });
 
   it("second pipeline on the same ticket rejects with ConflictError", async () => {

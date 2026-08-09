@@ -691,6 +691,41 @@ describe("forge API", () => {
 
     rmSync(repo, { recursive: true, force: true });
   });
+  it("promote with forge.discardOnPromote=false keeps the sandbox", async () => {
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+    setScript("plan,work,review-pass", true);
+
+    await withSetting("forge.discardOnPromote", "false", async () => {
+      const startRes = await app.request("/forge/pipeline", {
+        method: "POST", headers: h,
+        body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+      });
+      const { runId } = await startRes.json();
+      await pollUntilDone(h, runId);
+
+      const promoteRes = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
+      expect(promoteRes.status).toBe(200);
+
+      const afterPromote = await app.request(`/forge/tickets/${ticket.id}/sandbox`, { headers: h });
+      expect((await afterPromote.json()).exists).toBe(true);
+    });
+  });
+
+  it("cleanup route enforces authz and returns the correct shape", async () => {
+    const { apiKey: memberKey } = await createActor({ name: uniq("forge-api-member"), kind: "agent" });
+    const memberH = { Authorization: `Bearer ${memberKey}`, "Content-Type": "application/json" };
+    
+    const memberRes = await app.request("/forge/sandboxes/cleanup", { method: "POST", headers: memberH });
+    expect(memberRes.status).toBe(403);
+
+    const h = await adminHeaders();
+    const adminRes = await app.request("/forge/sandboxes/cleanup", { method: "POST", headers: h });
+    expect(adminRes.status).toBe(200);
+    const body = await adminRes.json();
+    expect(body.discarded).toBeInstanceOf(Array);
+    expect(typeof body.reclaimedBytes).toBe("number");
+  });
 });
 
 it("GET /forge/doctor returns per-agent probe/auth status for the configured relay agents", async () => {

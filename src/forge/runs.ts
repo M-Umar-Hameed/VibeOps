@@ -10,7 +10,7 @@ import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict
 import { killTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { redactSecrets } from "./redact.js";
-import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak } from "./sandbox.js";
+import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
 import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths } from "./policy.js";
 import { pickAgents, escalate, pairsForRole, type Pick, type RoutingStrategy } from "./router.js";
@@ -207,6 +207,31 @@ export async function resolveWorkdir(ticketProjectId: string, config: RelayConfi
     throw new ConflictError("workspace is not a git repository; initialize git first");
   }
   return repo;
+}
+
+export type SandboxCleanupResult = { discarded: string[]; reclaimedBytes: number };
+
+// Manual backlog sweep: discard every on-disk sandbox whose ticket is CLOSED and
+// whose forge branch has no commits beyond the project workdir HEAD (already merged
+// / pure dead weight). Skips active-run tickets, non-closed tickets, orphan sandboxes
+// with no ticket, and any branch still carrying unmerged commits. Removal goes through
+// discardSandbox so the deps-unlink-before-delete SAFETY ordering is preserved.
+export async function cleanupMergedSandboxes(config: RelayConfig): Promise<SandboxCleanupResult> {
+  const discarded: string[] = [];
+  let reclaimedBytes = 0;
+  for (const ticketId of listSandboxTicketIds()) {
+    if (await hasActiveRun(ticketId)) continue;
+    let ticket;
+    try { ticket = await getTicket(ticketId); } catch { continue; } // orphan sandbox, no ticket
+    if (ticket.status !== "closed") continue;
+    const workdir = await resolveWorkdir(ticket.projectId, config);
+    if (await hasCommitsToPromote(workdir, ticketId)) continue; // unmerged work -> keep
+    const bytes = sandboxSizeBytes(ticketId);
+    await discardSandbox(workdir, ticketId);
+    discarded.push(ticketId);
+    reclaimedBytes += bytes;
+  }
+  return { discarded, reclaimedBytes };
 }
 
 export async function startPipeline(
@@ -480,7 +505,20 @@ async function pipeline(
   }
   if (run.stopped) { await bounce(run, actorId, "run stopped", ""); return settle(run, "stopped"); }
   applyVerification(workRes, run.agents.work, run, config);
-  if (!workRes.ok) { await bounce(run, actorId, "worker failed", workRes.output); return settle(run, "failed"); }
+  if (!workRes.ok) {
+    // Work stage failed after the agent may have written a complete tree (agy's
+    // own request timeout self-exits non-zero; the child is already dead here).
+    // Commit whatever exists under a WIP marker so hasCommitsToPromote() is true
+    // and the operator can promote or discard after review, instead of the run
+    // silently throwing away finished-but-uncommitted work. Never auto-promoted;
+    // the ticket still bounces to `planned`. forgeCommit no-ops on a clean tree.
+    const saved = await forgeCommit(ticket.id, `WIP (worker failed) ${ticket.title}`);
+    const note = saved
+      ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]"
+      : "";
+    await bounce(run, actorId, "worker failed", workRes.output + note);
+    return settle(run, "failed");
+  }
   await forgeCommit(ticket.id, ticket.title);
   await addComment(actorId, ticket.id, redactSecrets(workRes.output), "report");
   ticket = await updateTicket(actorId, ticket.id, ticket.version, { status: "review" });

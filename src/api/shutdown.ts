@@ -4,6 +4,11 @@ import { fstatSync } from "node:fs";
 // Single idempotent shutdown: stop accepting connections, checkpoint the DB by
 // closing it, then exit 0. Exposed as a factory so it can be unit-tested without
 // real signals.
+// A hung closeDb must never trap the process. Bound it: 5s (matches the
+// sql.end timeout; a clean PGlite checkpoint is sub-second). Hit deadline or
+// close error -> log, exit 1 anyway. Clean -> exit 0.
+const CLOSE_DEADLINE_MS = 5000;
+
 export function makeShutdown(server: ServerType, closeDb: () => Promise<void>) {
   let closing = false;
   return async function shutdown(reason: string): Promise<void> {
@@ -11,8 +16,24 @@ export function makeShutdown(server: ServerType, closeDb: () => Promise<void>) {
     closing = true;
     console.log(`shutting down (${reason}); checkpointing embedded database`);
     await new Promise<void>((r) => server.close(() => r()));
-    try { await closeDb(); } catch (e) { console.error(`db close failed: ${(e as Error).message}`); }
-    process.exit(0);
+    let code = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<"timeout">((r) => {
+      timer = setTimeout(() => r("timeout"), CLOSE_DEADLINE_MS);
+    });
+    try {
+      const result = await Promise.race([closeDb().then(() => "closed" as const), deadline]);
+      if (result === "timeout") {
+        console.error(`db close exceeded ${CLOSE_DEADLINE_MS}ms deadline; exiting anyway`);
+        code = 1;
+      }
+    } catch (e) {
+      console.error(`db close failed: ${(e as Error).message}`);
+      code = 1;
+    } finally {
+      clearTimeout(timer);
+    }
+    process.exit(code);
   };
 }
 

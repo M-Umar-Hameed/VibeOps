@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { makeShutdown } from "../src/api/shutdown.js";
+import { makeShutdown, installShutdown } from "../src/api/shutdown.js";
 
 test("makeShutdown closes server then db, exits 0, and is idempotent", async () => {
   const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
@@ -19,6 +19,37 @@ test("makeShutdown closes server then db, exits 0, and is idempotent", async () 
   expect(closeDb).toHaveBeenCalledTimes(1);
   expect(exit).toHaveBeenCalledWith(0);
   exit.mockRestore();
+});
+
+test("makeShutdown bounds a hung db close by the deadline and exits anyway", async () => {
+  vi.useFakeTimers();
+  const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  const serverClose = vi.fn((cb: () => void) => cb());
+  const closeDb = vi.fn(() => new Promise<void>(() => {})); // never resolves
+  const shutdown = makeShutdown({ close: serverClose } as never, closeDb);
+
+  const p = shutdown("SIGTERM");
+  await vi.advanceTimersByTimeAsync(5000);
+  await p;
+
+  expect(closeDb).toHaveBeenCalledTimes(1);
+  expect(exit).toHaveBeenCalledWith(1);
+  expect(err).toHaveBeenCalledWith(expect.stringContaining("deadline"));
+
+  vi.useRealTimers();
+  exit.mockRestore();
+  err.mockRestore();
+});
+
+test("installShutdown registers SIGINT and SIGTERM handlers", () => {
+  const once = vi.spyOn(process, "once");
+  const serverClose = vi.fn((cb: () => void) => cb());
+  installShutdown({ close: serverClose } as never, async () => {}, false); // embedded=false: no stdin path
+  const signals = once.mock.calls.map((c) => c[0]);
+  expect(signals).toContain("SIGINT");
+  expect(signals).toContain("SIGTERM");
+  once.mockRestore();
 });
 
 function waitReady(child: ChildProcess): Promise<void> {

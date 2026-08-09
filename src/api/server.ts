@@ -22,7 +22,7 @@ async function bootNormally() {
   if (isEmbedded) {
     await ensureIndex();
     const { bootstrapped } = await runBootstrap(port);
-    if (bootstrapped) console.log("first run: created Inbox project + owner key -> ~/.vibeops/credentials.json");
+    if (bootstrapped) console.log("first run: created owner key -> ~/.vibeops/credentials.json");
   }
   await applyEnvSettings();
   await restoreCouncilSessions();

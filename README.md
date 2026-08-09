@@ -74,7 +74,7 @@ npm run build:sidecar          # bundles the server + portable Node (sha256-veri
 cd app && npm run tauri:build  # requires Rust
 ```
 
-First launch self-creates everything: an embedded Postgres-compatible database (PGlite with pgvector), the Inbox project, an owner API key at `~/.vibeops/credentials.json`, and your vault. The app spawns its own bundled server on `127.0.0.1:8787` — or attaches if one is already running. Quitting the app stops it. `~/.vibeops` is never touched by install or uninstall.
+First launch self-creates everything: an embedded Postgres-compatible database (PGlite with pgvector), an owner API key at `~/.vibeops/credentials.json`, and your vault. The app spawns its own bundled server on `127.0.0.1:8787` — or attaches if one is already running. Quitting the app stops it. `~/.vibeops` is never touched by install or uninstall.
 
 ## Quick start (from source)
 

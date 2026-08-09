@@ -374,12 +374,11 @@ app.get("/system/agents", requireAdmin, async (c) => {
 
 app.get("/system/first-run", async (c) => {
   const projs = await listProjects();
-  const nonInboxCount = projs.filter(p => p.key !== "inbox").length;
   const { existsSync } = await import("node:fs");
   const { homedir } = await import("node:os");
   const { join } = await import("node:path");
   const relayPath = process.env.VIBEOPS_RELAY_CONFIG ?? join(homedir(), ".vibeops", "relay.json");
-  return c.json({ firstRun: nonInboxCount === 0 && !existsSync(relayPath) });
+  return c.json({ firstRun: projs.length === 0 && !existsSync(relayPath) });
 });
 
 app.post("/relay/bootstrap", requireAdmin, async (c) => {

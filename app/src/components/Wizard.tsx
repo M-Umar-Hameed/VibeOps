@@ -68,7 +68,7 @@ export function Wizard({ onComplete }: { onComplete: () => void }) {
     setIsSubmitting(true);
     try {
       const projs = await projects.list();
-      const project = projs.find(p => p.key !== "inbox") || projs[0];
+      const project = projs[0];
       await tickets.create({ projectId: project.id, title, body, priority: "high" });
       onComplete();
       navigate({ to: "/forge" });

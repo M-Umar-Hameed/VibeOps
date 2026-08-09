@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runBootstrap } from "../src/bootstrap.js";
 import { eq, inArray, like } from "drizzle-orm";
 
 import { db } from "../src/db/client.js";
@@ -220,20 +221,42 @@ describe("delete project", () => {
     rmSync(vaultDir, { recursive: true, force: true });
   });
 
-  it("409 for Inbox project", async () => {
+  it("existing Inbox survives upgrade and is deletable like any other project", async () => {
     const h = await adminHeaders();
-    // Ensure inbox exists (may not be bootstrapped in test DB)
-    let [inbox] = await db.select().from(projects).where(eq(projects.key, "inbox"));
-    if (!inbox) {
-      inbox = await createProject({ key: "inbox", name: "Inbox" });
+    const { actor: a } = await createActor({ name: uniq("inbox-a"), kind: "human", role: "admin" });
+
+    // Clean up any existing inbox to avoid unique constraint failures
+    const existing = await db.select().from(projects).where(eq(projects.key, "inbox"));
+    for (const p of existing) {
+      // Direct DB deletes to bypass any application-level guards
+      const tix = await db.select({ id: tickets.id }).from(tickets).where(eq(tickets.projectId, p.id));
+      if (tix.length) {
+        const ticketIds = tix.map((t) => t.id);
+        await db.delete(comments).where(inArray(comments.ticketId, ticketIds));
+        await db.delete(events).where(inArray(events.ticketId, ticketIds));
+        await db.delete(syncLinks).where(inArray(syncLinks.ticketId, ticketIds));
+        await db.delete(forgeRuns).where(inArray(forgeRuns.ticketId, ticketIds));
+        await db.delete(aiUsageLogs).where(inArray(aiUsageLogs.ticketId, ticketIds));
+        await db.delete(tickets).where(eq(tickets.projectId, p.id));
+      }
+      await db.delete(projectSettings).where(eq(projectSettings.projectId, p.id));
+      await db.delete(projects).where(eq(projects.id, p.id));
     }
-    expect(inbox).toBeDefined();
 
+    const inbox = await createProject({ key: "inbox", name: "Inbox" });
+    const ticket = await createTicket(a.id, { projectId: inbox.id, title: "inbox ticket" });
+
+    // Upgrade is a re-boot; runBootstrap early-returns when actors exist, so it
+    // never deletes anything.
+    await runBootstrap(8787, mkdtempSync(join(tmpdir(), "pd-boot-")));
+    expect((await db.select().from(projects).where(eq(projects.id, inbox.id))).length).toBe(1);
+
+    // No special-case guard: owner can delete it.
     const res = await app.request(`/projects/${inbox.id}`, { method: "DELETE", headers: h });
-    expect(res.status).toBe(409);
-
-    // Still exists
-    expect((await db.select().from(projects).where(eq(projects.key, "inbox"))).length).toBe(1);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect((await db.select().from(projects).where(eq(projects.id, inbox.id))).length).toBe(0);
+    expect((await db.select().from(tickets).where(eq(tickets.id, ticket.id))).length).toBe(0);
   });
 
   it("filesystem untouched after delete", async () => {

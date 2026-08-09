@@ -231,13 +231,11 @@ export async function importProjects(items: ImportItem[]): Promise<(Project & { 
 
 // Deletes the project row and every DB row that belongs to it, in ONE transaction.
 // FILESYSTEM IS NEVER TOUCHED: repoPath, the project vault dir, and any sandbox
-// under ~/.vibeops/sandbox are left exactly as they are. Refuses the default Inbox
-// project (quick-created tickets land there). The active-run guard is enforced in
-// the route before this is called.
+// under ~/.vibeops/sandbox are left exactly as they are. The active-run guard is
+// enforced in the route before this is called.
 export async function deleteProject(projectId: string): Promise<void> {
   const [p] = await db.select().from(projects).where(eq(projects.id, projectId));
   if (!p) throw new NotFoundError(`project not found: ${projectId}`);
-  if (p.key === "inbox") throw new ConflictError("the Inbox project cannot be deleted");
 
   await db.transaction(async (tx) => {
     const ticketRows = await tx.select({ id: tickets.id }).from(tickets).where(eq(tickets.projectId, projectId));

@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { db } from "./db/client.js";
 import { actors } from "./db/schema.js";
 import { createActor } from "./services/actors.js";
-import { createProject } from "./services/projects.js";
 import { deleteSetting } from "./services/settings.js";
 
 // First-run self-setup for the embedded database. Idempotent: any existing
@@ -42,7 +41,6 @@ export async function runBootstrap(
   const [existing] = await db.select({ id: actors.id }).from(actors).limit(1);
   if (existing) return { bootstrapped: false };
 
-  await createProject({ key: "inbox", name: "Inbox" });
   const { apiKey } = await createActor({ name: "owner", kind: "human", role: "admin" });
   const creds = { baseUrl: `http://localhost:${port}`, apiKey };
   try {

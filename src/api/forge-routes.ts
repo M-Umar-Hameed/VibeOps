@@ -7,7 +7,7 @@ import type { Actor } from "../db/schema.js";
 import { loadRelayConfig } from "../relay/config.js";
 import { runDoctor } from "../relay/doctor.js";
 import { parseVerdict } from "../relay/prompts.js";
-import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns } from "../forge/runs.js";
+import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes } from "../forge/runs.js";
 import {
   sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash, sandboxActivity, sandboxWorkingDiff
 } from "../forge/sandbox.js";
@@ -20,6 +20,7 @@ import { getTicket } from "../services/history.js";
 import { addComment, listComments } from "../services/comments.js";
 import { listActors } from "../services/actors.js";
 import { ConflictError, NotFoundError } from "../services/errors.js";
+import { getSetting } from "../services/settings.js";
 import { requireAdmin } from "./auth.js";
 
 const ATTACH_MAX_BYTES = 10 * 1024 * 1024;
@@ -296,7 +297,11 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     if (!(await hasCommitsToPromote(workdir, ticketId))) {
       return c.json({ error: "sandbox has no commits to promote" }, 409);
     }
-    await promoteSandbox(workdir, ticketId, ticket.title);
+    // Default: discard the sandbox once the merge lands (reclaims the worktree +
+    // any frontendDeps node_modules copy). Set forge.discardOnPromote=false to keep
+    // the tree for debugging a promote.
+    const discardAfter = (await getSetting("forge.discardOnPromote")) !== "false";
+    await promoteSandbox(workdir, ticketId, ticket.title, discardAfter);
     // Repo files just changed on disk (sandbox merged into the project repo); refresh the
     // doc index so stale README/CLAUDE/AGENTS text stops feeding plan/work prompts. Only this
     // project. Non-blocking, swallow failures — matches the first-time index at runs.ts:316.
@@ -349,6 +354,11 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
       updated = await updateTicket(c.get("actor").id, ticketId, updated.version, { status: "planned" });
     }
     return c.json(updated);
+  });
+
+  app.post("/forge/sandboxes/cleanup", requireAdmin, async (c) => {
+    const result = await cleanupMergedSandboxes(forgeConfig());
+    return c.json(result);
   });
 
   app.patch("/relay/agents/:name", requireAdmin, async (c) => {

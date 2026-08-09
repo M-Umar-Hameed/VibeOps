@@ -104,4 +104,27 @@ describe("forge sandbox-escape sentinel (integration through runs.ts)", () => {
     });
     expect(readFileSync(installed, "utf-8")).toBe("GOOD SERVER PAYLOAD\n");
   }, 20_000);
+
+  it("a work stage overwriting relay.json is reverted, surfaced, and fails the run", async () => {
+    const { actorId, ticket } = await seedTicket("sentinel relay.json");
+    // Stand in for ~/.vibeops/relay.json (the argv source for later runs).
+    const relay = join(sensitiveDir, "relay.json");
+    writeFileSync(relay, "GOOD RELAY CONFIG\n");
+    process.env.FAKE_SCRIPT = "plan,work,review-pass";
+    process.env.FAKE_COUNTER_FILE = join(sensitiveDir, "ctr.txt");
+    process.env.FAKE_WRITE_ABS = relay; // work agent escapes and rewrites relay.json
+
+    await withSetting("forge.sensitivePaths", JSON.stringify([relay]), async () => {
+      const { runId } = await startPipeline(actorId, config(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+      const out = getRunOutput(runId, 0);
+      expect(out?.status).toBe("failed");
+      expect(out?.chunk).toContain("SANDBOX-ESCAPE");
+      expect(out?.chunk).toContain(relay);
+    });
+
+    expect(readFileSync(relay, "utf-8")).toBe("GOOD RELAY CONFIG\n"); // reverted
+  }, 20_000);
 });

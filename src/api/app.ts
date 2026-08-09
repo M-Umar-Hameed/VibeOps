@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { auth } from "./auth.js";
 import { createTicket, updateTicket } from "../services/tickets.js";
 import { addComment, listComments } from "../services/comments.js";
@@ -38,11 +38,30 @@ app.onError((err, c) => {
   return c.json({ error: "internal error" }, 500);
 });
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const BAD_JSON = Symbol("bad json");
+async function jsonBody(c: Context): Promise<unknown> {
+  try {
+    return await c.req.json();
+  } catch {
+    return BAD_JSON;
+  }
+}
+
 app.use("*", auth);
 
 app.post("/tickets", async (c) => {
-  const body = await c.req.json();
-  return c.json(await createTicket(c.get("actor").id, body), 201);
+  const body = await jsonBody(c);
+  if (body === BAD_JSON) return c.json({ error: "invalid JSON body" }, 400);
+  const { projectId, title } = (body ?? {}) as { projectId?: unknown; title?: unknown };
+  if (typeof projectId !== "string" || !UUID.test(projectId)) {
+    return c.json({ error: "projectId must be a uuid" }, 400);
+  }
+  if (typeof title !== "string" || !title.trim()) {
+    return c.json({ error: "title required" }, 400);
+  }
+  return c.json(await createTicket(c.get("actor").id, body as { projectId: string; title: string }), 201);
 });
 
 app.patch("/tickets/:id", async (c) => {
@@ -54,7 +73,11 @@ app.patch("/tickets/:id", async (c) => {
 const COMMENT_KINDS = ["comment", "plan", "report", "review", "verification"] as const;
 
 app.post("/tickets/:id/comments", async (c) => {
-  const { body, kind } = await c.req.json();
+  const id = c.req.param("id");
+  try { assertTicketId(id); } catch { return c.json({ error: "invalid ticket id" }, 400); }
+  const parsed = await jsonBody(c);
+  if (parsed === BAD_JSON) return c.json({ error: "invalid JSON body" }, 400);
+  const { body, kind } = (parsed ?? {}) as { body?: any; kind?: any };
   if (kind !== undefined && !COMMENT_KINDS.includes(kind)) {
     return c.json({ error: "kind must be comment|plan|report|review" }, 400);
   }
@@ -66,8 +89,18 @@ app.post("/tickets/:id/comments", async (c) => {
   return c.json(await addComment(c.get("actor").id, c.req.param("id"), body, kind), 201);
 });
 
-app.get("/tickets/:id/history", async (c) => c.json(await getTicketHistory(c.req.param("id"))));
-app.get("/tickets/:id/comments", async (c) => c.json(await listComments(c.req.param("id"))));
+app.get("/tickets/:id/history", async (c) => {
+  const id = c.req.param("id");
+  try { assertTicketId(id); } catch { return c.json({ error: "invalid ticket id" }, 400); }
+  await getTicket(id);
+  return c.json(await getTicketHistory(id));
+});
+app.get("/tickets/:id/comments", async (c) => {
+  const id = c.req.param("id");
+  try { assertTicketId(id); } catch { return c.json({ error: "invalid ticket id" }, 400); }
+  await getTicket(id);
+  return c.json(await listComments(id));
+});
 
 app.post("/tickets/:id/verify", requireAdmin, async (c) => {
   const { note } = await c.req.json().catch(() => ({}));
@@ -93,7 +126,11 @@ app.get("/search", async (c) => c.json(await searchTickets(c.req.query("q") ?? "
 
 app.get("/projects", async (c) => c.json(await listProjects()));
 app.post("/projects", async (c) => {
-  const { key, name } = await c.req.json();
+  const parsed = await jsonBody(c);
+  if (parsed === BAD_JSON) return c.json({ error: "invalid JSON body" }, 400);
+  const { key, name } = (parsed ?? {}) as { key?: unknown; name?: unknown };
+  if (typeof key !== "string" || !key.trim()) return c.json({ error: "key required" }, 400);
+  if (typeof name !== "string" || !name.trim()) return c.json({ error: "name required" }, 400);
   const p = await createProject({ key, name });
   void rescanProjectVaults();
   return c.json(p, 201);
@@ -120,6 +157,7 @@ app.delete("/projects/:id/knowledge", requireAdmin, async (c) => {
 
 app.delete("/projects/:id", requireAdmin, async (c) => {
   const id = c.req.param("id");
+  if (!UUID.test(id)) return c.json({ error: "invalid project id" }, 400);
   const runId = await activeRunForProject(id);
   if (runId) return c.json({ error: `project has an active forge run: ${runId}`, runId }, 409);
   await deleteProject(id);
@@ -196,7 +234,9 @@ app.post("/actors", requireAdmin, async (c) => {
 app.post("/actors/:id/revoke", requireAdmin, async (c) => c.json(await revokeActor(c.req.param("id"))));
 
 app.post("/notes", async (c) => {
-  const { body, scope, refId, title } = await c.req.json();
+  const parsed = await jsonBody(c);
+  if (parsed === BAD_JSON) return c.json({ error: "invalid JSON body" }, 400);
+  const { body, scope, refId, title } = (parsed ?? {}) as { body?: any; scope?: any; refId?: any; title?: any };
   return c.json(await saveNote(c.get("actor").id, { body, scope, refId, title }), 201);
 });
 app.get("/notes", async (c) => {

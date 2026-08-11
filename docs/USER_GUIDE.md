@@ -44,34 +44,35 @@ The original shared vault at `~/.vibeops/vault` still works and is indexed as a 
 
 ## Database recovery
 
-Always stop the app with a normal quit or Ctrl+C; never force-kill the sidecar
-(kill -9, taskkill /F, End Task in Task Manager). A hard kill skips the shutdown
-checkpoint and is exactly what corrupts the write-ahead log.
+**Normal operation:** Hard kills (kill -9, taskkill /F, power loss) are survivable. PGlite
+0.2.17+ replays the write-ahead log on restart, recovering all committed transactions. A clean
+shutdown is preferred (quit or Ctrl+C) but not required for data safety.
 
-Periodic checkpoints now run every 2 minutes by default (tunable via `VIBEOPS_CHECKPOINT_MS`
-env var). This bounds startup time after an unclean exit by limiting how much WAL must be
-replayed. WAL replay on PGlite 0.2.17+ typically succeeds even after a hard kill; checkpoints
-reduce replay cost rather than preventing data loss.
+**The real danger is concurrent access.** PGlite is a single-process embedded database. If two
+processes open the same data directory simultaneously (e.g. running `npm run backup` while the
+server is live), the WAL becomes corrupted and recovery fails with `Aborted()`. The backup CLI
+now refuses to run if the server is live; never open `~/.vibeops/data` from another tool while
+the app is running.
 
-If the app starts in recovery mode (every request returns 503 "embedded_db_open_failed"),
-the embedded database's write-ahead log was corrupted by an unclean shutdown (hard kill,
-crash, or power loss). Your data files are intact. A rolling known-good snapshot is taken
-automatically on successful open (e.g. `~/.vibeops/data.good-<ts>`, last 3 kept). On failure,
-the error's `backupPath` points at the latest snapshot. A small logical JSON export also runs
-on a schedule and on clean shutdown under `~/.vibeops/backups/` (last 30). You can run
-`npm run backup` and `npm run restore <file>` for logical export/restore.
+Periodic checkpoints run every 2 minutes by default (tunable via `VIBEOPS_CHECKPOINT_MS`).
+These reduce WAL replay time on startup, not data loss (WAL replay already recovers all
+committed transactions).
 
-PGlite cannot reset the WAL in-process. To recover, **never recover in place — copy the data dir first and run `pg_resetwal` against the copy**:
+A rolling known-good snapshot is taken automatically on successful open (e.g.
+`~/.vibeops/data.good-<ts>`, last 3 kept). A logical JSON export runs every 6 hours and on
+clean shutdown under `~/.vibeops/backups/` (last 30). Use `npm run backup` and
+`npm run restore <file>` for logical export/restore (only when the server is stopped).
 
-1. Copy `~/.vibeops/data` into a Postgres 16 container:
-   `pgvector/pgvector:pg16` matches PGlite's embedded major version.
-2. Run `pg_resetwal -f /path/to/data` inside the container against the copy.
-3. Copy the repaired directory back to `~/.vibeops/data`.
-4. Restart the app.
+If the app starts in recovery mode (503 "embedded_db_open_failed"), the database was
+corrupted by concurrent access or an older PGlite version. To recover using `pg_resetwal`:
 
-Transactions after the last checkpoint are lost; everything before it is recovered.
-After a manual `pg_resetwal` + restart, the server logs a `recovery:` line quantifying discarded
-rows vs the newest logical export. This count is a lower bound (in-place updates like status
-changes are not counted); reconcile against the export JSON if in doubt.
+1. Stop the app.
+2. Copy `~/.vibeops/data` into a Postgres 16 container (`pgvector/pgvector:pg16`).
+3. Run `pg_resetwal -f /path/to/data` inside the container against the copy.
+4. Copy the repaired directory back to `~/.vibeops/data`.
+5. Restart the app.
+
+After a manual `pg_resetwal` + restart, the server logs a `recovery:` line quantifying
+discarded rows vs the newest logical export.
 
 The app never deletes or reinitialises your data directory on its own.

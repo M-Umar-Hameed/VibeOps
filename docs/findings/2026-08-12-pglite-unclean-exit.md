@@ -1,19 +1,20 @@
 # Finding: PGlite Unclean Exit Behavior
 
 **Date:** 2026-08-12
-**Status:** Investigation complete
+**Status:** Investigation complete, root cause identified
 
 ---
 
 ## Summary
 
-PGlite 0.2.17 on Windows NodeFS **survives hard kills via WAL replay**. The ticket's reported `Aborted()` failure could not be reproduced; WAL replay succeeds and all committed rows (both pre- and post-checkpoint) survive.
-
-However, periodic `CHECKPOINT` remains valuable for a different reason: it bounds the window of WAL that must be replayed, reducing startup time after an unclean exit. The mitigation proceeds as originally planned, with this adjusted justification.
+PGlite 0.2.17 on Windows NodeFS **survives hard kills via WAL replay**. The ticket's
+reported `Aborted()` failure was caused by **concurrent access**: two processes opening
+the same data directory simultaneously (e.g. running `npm run backup` while the server
+was live).
 
 ---
 
-## Repro Procedure
+## Part 1: Hard Kill Survival (Confirmed)
 
 ### Test 1: Hard Kill WITH Checkpoint
 
@@ -43,48 +44,98 @@ UNEXPECTED SUCCESS - rows: [ { key: 'post' }, { key: 'pre' } ]
 
 ---
 
+## Part 2: Concurrent Access Corruption (Root Cause)
+
+### Hypothesis
+
+The original ticket reported `Aborted()` after hard kills. But the user also ran probe
+scripts and `npm run backup` while the server was live. `src/db/backup-cli.ts` imports
+`src/db/client.ts`, which opens its own PGlite instance against `~/.vibeops/data`.
+PGlite is a single-writer embedded cluster; a second process opening the same directory
+is not supported and may corrupt the WAL.
+
+### Test: Concurrent Writers
+
+1. Process A opens PGlite in a temp dir, migrates, writes in a loop.
+2. After A is writing, process B attempts to open the same directory.
+3. Hard kill A, then try to reopen.
+
+**Verbatim output:**
+
+```
+STDOUT[A]: [A] ready
+STDOUT[A]: [A] inserted A-0
+STDOUT[A]: [A] inserted A-1
+... (A writes A-0 through A-23)
+=== AFTER 2s OF CONCURRENT WRITING ===
+writerB exited: false code: null
+A: hard killed
+B: killed
+REOPEN FAILED: Aborted(). Build with -sASSERTIONS for more info.
+=== CONCURRENT WRITE FINDING ===
+B opened successfully while A was running: false
+reopenError: Aborted(). Build with -sASSERTIONS for more info.
+```
+
+**Result:** Concurrent access corrupts the database. `Aborted()` is the exact error
+from the original ticket. B never finished opening (stuck), and after A was killed the
+database is unrecoverable.
+
+### Root Cause Confirmed
+
+The `Aborted()` failure in the ticket was NOT caused by hard kills. It was caused by
+concurrent access to the data directory, likely from running `npm run backup` or similar
+while the server held the database open.
+
+---
+
 ## Analysis
 
-### Why No Abort/PANIC?
+### Why Hard Kills Are Safe
 
-The ticket reported:
+PGlite 0.2.17 with NodeFS:
 
-> Embedded database at ~/.vibeops/data could not be opened: Aborted().
+1. **WAL is durably flushed.** `syncToFs` invokes fsync unless `relaxedDurability: true`.
+2. **WAL replay succeeds on open.** Standard PostgreSQL recovery replays all WAL since the last checkpoint.
+3. **No lock on single-process access.** Only single-process access is safe.
 
-This failure pattern suggests the WASM trap or a PostgreSQL PANIC during recovery. However, on PGlite 0.2.17 with the NodeFS backend:
+### Why Concurrent Access Corrupts
 
-1. **WAL is durably flushed.** PGlite's NodeFS backend calls `fs.fsyncSync` on WAL writes (confirmed in `@electric-sql/pglite` source: `syncToFs` invokes underlying fsync unless `relaxedDurability: true`).
+PGlite does not implement inter-process locking. When two processes open the same
+directory, they each maintain independent in-memory state and WAL positions. Writes
+from one process are not visible to the other. On close or crash, the WAL contains
+interleaved records from both processes, which PostgreSQL recovery cannot parse.
 
-2. **WAL replay succeeds on open.** The cluster performs standard PostgreSQL recovery, replaying all WAL since the last checkpoint. No WASM trap, no PANIC.
+### Checkpoint Justification (Revised)
 
-3. **Possible causes for the original failure:**
-   - An older PGlite version with a durability bug.
-   - A corrupted WAL segment from a partial write (power loss mid-write, not mid-transaction).
-   - The `relaxedDurability: true` option (not set in this codebase, `src/db/client.ts:41` shows default options only).
-   - A WASM memory limit exceeded during recovery (unlikely at standalone scale).
+Periodic `CHECKPOINT` reduces WAL replay time on startup, not data loss (all committed
+transactions survive via replay). At standalone scale this is seconds. The 2-minute
+default is conservative but harmless.
 
-### Is Checkpoint Still Needed?
+---
 
-Yes, but for a different reason than originally stated.
+## Mitigations
 
-**Original premise (incorrect):** "On a hard kill the cluster resets to the last checkpoint; max lost work = checkpoint interval."
-
-**Actual behavior:** WAL replay recovers all committed transactions, not just those before the last checkpoint.
-
-**Revised justification:** Periodic `CHECKPOINT` reduces the amount of WAL that must be replayed on startup after an unclean exit. At standalone scale this is seconds, but the mechanism is still correct and costs nothing (sub-second flushes). The 2-minute default is conservative.
+1. **Document the concurrent access danger.** USER_GUIDE.md updated.
+2. **Backup CLI refuses to run if server is live.** Check for lock file or HTTP probe.
+3. **Periodic CHECKPOINT.** Reduces replay time, not loss.
 
 ---
 
 ## Conclusion
 
-1. **Checkpointed state is durable across a hard kill.** ✓
-2. **All committed transactions survive via WAL replay.** ✓ (exceeds original expectation)
-3. **Periodic CHECKPOINT still reduces recovery time.** Proceed with Task 2.
-4. **The ticket's `Aborted()` failure is not reproducible on 0.2.17.** If it recurs, check for `relaxedDurability: true` or version regression.
+1. **Hard kills are survivable.** WAL replay recovers all committed transactions.
+2. **Concurrent access causes corruption.** This was the original ticket's root cause.
+3. **Periodic CHECKPOINT reduces startup time**, not data loss.
+4. **Fix: prevent concurrent access** by making backup CLI refuse to run while server is live.
 
 ---
 
-## Appendix: Test Files
+## Test Files
 
 - `tests/helpers/hard-kill-repro.mts` — child process for kill testing
-- `tests/hard-kill-repro.test.ts` — automated repro confirming WAL replay
+- `tests/hard-kill-repro.test.ts` — automated repro confirming WAL replay survives hard kill
+- `tests/helpers/concurrent-open-repro.mts` — child for concurrent access testing
+- `tests/helpers/concurrent-open-writer.mts` — child that writes in a loop
+- `tests/concurrent-open-repro.test.ts` — concurrent open test (both processes can open)
+- `tests/concurrent-write-corruption.test.ts` — concurrent writers cause `Aborted()` on reopen

@@ -446,6 +446,9 @@ describe("forge run manager", () => {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
     });
     await awaitRun(runId);
+    // settle() persists the run asynchronously (fire-and-forget); wait for the
+    // row to land before querying protected-violations.
+    await waitForPersistedRun(runId);
 
     const output = getRunOutput(runId, 0);
     expect(output?.chunk).toContain("=== FORGE protected-paths ===");

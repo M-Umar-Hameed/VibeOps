@@ -1,6 +1,6 @@
 import { serve } from "@hono/node-server";
 import { app } from "./app.js";
-import { isEmbedded, closeDb, embeddedDbError } from "../db/client.js";
+import { isEmbedded, closeDb, embeddedDbError, db } from "../db/client.js";
 import { runBootstrap } from "../bootstrap.js";
 import { ensureIndex } from "../db/vector-setup.js";
 import { applyEnvSettings } from "../services/settings.js";
@@ -23,6 +23,8 @@ async function bootNormally() {
     await ensureIndex();
     const { bootstrapped } = await runBootstrap(port);
     if (bootstrapped) console.log("first run: created owner key -> ~/.vibeops/credentials.json");
+    const { reportAndClearRecovery } = await import("../db/recovery.js");
+    await reportAndClearRecovery(db).catch((e) => console.warn(`recovery report failed: ${(e as Error).message}`));
   }
   await applyEnvSettings();
   await restoreCouncilSessions();
@@ -44,12 +46,18 @@ async function bootNormally() {
       }
     : undefined;
   if (isEmbedded) {
-    const { snapshotKnownGood } = await import("../db/client.js");
+    const { snapshotKnownGood, checkpointEmbedded } = await import("../db/client.js");
     void snapshotKnownGood()
       .then((p) => { if (p) console.log(`known-good snapshot -> ${p}`); })
       .catch((e) => console.warn(`known-good snapshot failed: ${(e as Error).message}`));
     void runLogicalExport!();
     setInterval(() => void runLogicalExport!(), 6 * 60 * 60_000).unref();
+    // Periodic CHECKPOINT reduces WAL replay time after unclean exit; 2-min default, env-tunable.
+    const checkpointMs = Number(process.env.VIBEOPS_CHECKPOINT_MS ?? 120_000);
+    setInterval(
+      () => void checkpointEmbedded().catch((e) => console.warn(`periodic checkpoint failed: ${(e as Error).message}`)),
+      checkpointMs,
+    ).unref();
   }
 
   // Mark interrupted runs but do NOT auto-resume: resume is a human action.

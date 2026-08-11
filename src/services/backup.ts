@@ -9,7 +9,7 @@ import { projects, actors, tickets, notes, comments, events, settings } from "..
 
 // Cross-driver handle: app db is PostgresJs, embedded/tests are PGlite; both
 // extend PgDatabase. Any-typed so either assigns without `as never` at callsites.
-type Db = PgDatabase<any, typeof schema, any>;
+export type Db = PgDatabase<any, typeof schema, any>;
 
 // Durable tables only. Embeddings are EXCLUDED on purpose: derived, rebuildable
 // by re-indexing, and ~99% of the bytes. The other non-listed tables (sync_*,

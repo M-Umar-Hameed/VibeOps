@@ -48,6 +48,11 @@ Always stop the app with a normal quit or Ctrl+C; never force-kill the sidecar
 (kill -9, taskkill /F, End Task in Task Manager). A hard kill skips the shutdown
 checkpoint and is exactly what corrupts the write-ahead log.
 
+Periodic checkpoints now run every 2 minutes by default (tunable via `VIBEOPS_CHECKPOINT_MS`
+env var). This bounds startup time after an unclean exit by limiting how much WAL must be
+replayed. WAL replay on PGlite 0.2.17+ typically succeeds even after a hard kill; checkpoints
+reduce replay cost rather than preventing data loss.
+
 If the app starts in recovery mode (every request returns 503 "embedded_db_open_failed"),
 the embedded database's write-ahead log was corrupted by an unclean shutdown (hard kill,
 crash, or power loss). Your data files are intact. A rolling known-good snapshot is taken
@@ -65,4 +70,8 @@ PGlite cannot reset the WAL in-process. To recover, **never recover in place —
 4. Restart the app.
 
 Transactions after the last checkpoint are lost; everything before it is recovered.
+After a manual `pg_resetwal` + restart, the server logs a `recovery:` line quantifying discarded
+rows vs the newest logical export. This count is a lower bound (in-place updates like status
+changes are not counted); reconcile against the export JSON if in doubt.
+
 The app never deletes or reinitialises your data directory on its own.

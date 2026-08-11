@@ -53,6 +53,9 @@ jobs:
         env:
           DATABASE_URL: postgres://tickets:tickets@localhost:5433/tickets
 
+      - name: Sidecar boot check
+        run: npx vitest run tests/sidecar-payload.test.ts
+
       - name: App suite
         run: npx vitest run src
         working-directory: app

@@ -1,5 +1,7 @@
 # VibeOps
 
+![VibeOps — your agents, supervised](docs/banner.webp)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) ![Platform: Windows | macOS](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue)
 
 **Your agents, supervised.**
@@ -26,6 +28,28 @@ flowchart LR
 ```
 
 **The forge loop.** A coordinated pipeline of plan -> sandboxed work -> adversarial review -> human promote. The expensive reasoning model touches a task only twice (writing the plan, reviewing the diff), while a cheap or local model grinds through the implementation.
+
+Every run passes the gates below in order; a failed safety gate reverts and fails the run, and promotion is always a human step.
+
+```mermaid
+flowchart TB
+  T["Ticket (open)"] --> PLAN["Plan stage<br/>composePlanPrompt + PLAN_ONLY<br/>posts plan comment, status=planned"]
+  PLAN --> WORK["Work stage (status=in_progress)<br/>ensureSandbox: git worktree add<br/>agent runs in sandbox, no git commit"]
+  WORK --> SENT{"Sandbox-escape sentinel<br/>detectAndRestore()"}
+  SENT -- "wrote outside worktree" --> FAIL["Run failed<br/>bytes restored, bounce to planned"]
+  SENT -- "clean" --> DEPS{"Deps-leak guard<br/>detectDepsLeak()"}
+  DEPS -- "wrote through shared node_modules" --> FAIL
+  DEPS -- "clean" --> COMMIT["forgeCommit<br/>supervisor commits to forge/&lt;id&gt;<br/>posts report, status=review"]
+  COMMIT --> CHECKS["Checks<br/>runChecks in sandbox: typecheck + tests"]
+  CHECKS --> POL{"Protected-path policy<br/>evaluateProtectedPaths(diff)"}
+  POL -- "touched harness/config/audit<br/>no ALLOW-PROTECTED" --> VIOL["Automatic Critical<br/>promotion blocked until waived"]
+  POL -- "clean" --> REV["Review stage<br/>composeReviewPrompt on git diff HEAD...forge/&lt;id&gt;"]
+  VIOL --> REV
+  REV -- "VERDICT: FAIL" --> PLAN
+  REV -- "VERDICT: PASS" --> HUMAN["Human promote<br/>promoteSandbox: git merge --no-ff"]
+  VIOL -. "blocks" .-> HUMAN
+  HUMAN --> MERGED["Merged into base repo"]
+```
 
 **Cross-model economics & budget caps.** Optimize costs by combining multiple models across the forge loop. Run work against open-weights models locally while relying on frontier models for review. Apply budget caps to ensure runs never spiral out of control.
 
@@ -189,6 +213,28 @@ Codex / Gemini ────────┘    (bearer keys,      (transactions, 
                                                                            projection: vault, notes,
 Vault watcher ──────────── markdown / PDF ────────────────────────────────  session transcripts)
 Session ingestion ──────── Claude Code / claude-mem / Codex / Antigravity ┘
+```
+
+```mermaid
+flowchart TB
+  subgraph HOME["~/.vibeops (single backup unit)"]
+    DATA[("data/<br/>PGlite + pgvector")]
+    VAULT["vault/<br/>markdown + PDF"]
+    SBX["sandbox/&lt;ticketId&gt;/<br/>git worktree on branch forge/&lt;ticketId&gt;<br/>node_modules linked from base repo"]
+    CRED["credentials.json + relay.json<br/>(sentinel-protected)"]
+  end
+  subgraph DBGRP["PGlite embedded (or external Postgres via DATABASE_URL)"]
+    TRUTH[("Truth tables<br/>tickets, notes, events,<br/>settings, actors, forge_runs")]
+    VEC[("pgvector index<br/>rebuildable projection")]
+  end
+  DATA --- DBGRP
+  VAULT --> VEC
+  NOTES["Notes workspace"] --> VEC
+  SESS["Session transcripts<br/>Claude Code / claude-mem / Codex / Antigravity"] --> VEC
+  REPO["Repo docs"] --> VEC
+  TRUTH -. "rebuild" .-> VEC
+  BASE["Base repo (project workdir)"] -- "git worktree add" --> SBX
+  SBX -- "promote: git merge --no-ff" --> BASE
 ```
 
 - **Truth vs. retrieval:** authoritative records live in Postgres tables; pgvector holds embeddings — a projection you can always rebuild, never the sole record.

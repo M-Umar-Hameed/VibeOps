@@ -39,6 +39,15 @@ export function sandboxExists(ticketId: string): boolean {
   return existsSync(sandboxPath(ticketId));
 }
 
+// True if the on-disk sandbox is a live git worktree (has a `.git` file linking
+// it to the base repo). An orphan left by a failed removal (partial tree missing
+// .git) or an interrupted run (empty dir) has none. Cheap discriminator so the
+// backlog sweep can skip a directory git has no record of instead of running
+// worktree commands against it and aborting.
+export function isLiveWorktree(ticketId: string): boolean {
+  return existsSync(join(sandboxPath(ticketId), ".git"));
+}
+
 // On-disk sandbox ticket ids (UUID-named dirs under the sandbox root). Used by the
 // manual backlog-cleanup pass. Missing root => [].
 export function listSandboxTicketIds(): string[] {

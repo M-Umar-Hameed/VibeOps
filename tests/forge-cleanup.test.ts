@@ -116,4 +116,50 @@ describe("forge cleanup", () => {
     expect(res.discarded).not.toContain(ticket.id);
     expect(sandboxExists(ticket.id)).toBe(true);
   });
+
+  it("orphan directories do not abort the sweep; eligible sandbox still discarded in the same run", async () => {
+    const { actor } = await createActor({ name: uniq("a"), kind: "human", role: "admin" });
+    const project = await createProject({ key: uniq("p"), name: "Forge" });
+
+    // base repo node_modules must survive the sweep (AC5)
+    mkdirSync(join(workdir, "node_modules"), { recursive: true });
+    writeFileSync(join(workdir, "node_modules", "marker.txt"), "base\n");
+    writeFileSync(join(workdir, ".gitignore"), "node_modules/\n");
+    execFileSync("git", ["add", "-A"], { cwd: workdir });
+    execFileSync("git", ["commit", "-m", "gi"], { cwd: workdir });
+
+    // eligible: closed ticket, branch merged, sandbox kept on disk
+    const ticket = await createTicket(actor.id, { projectId: project.id, title: "Merged work" });
+    const sp = await ensureSandbox(workdir, ticket.id);
+    writeFileSync(join(sp, "big.txt"), "z".repeat(4000));
+    await forgeCommit(ticket.id, "work");
+    await promoteSandbox(workdir, ticket.id, ticket.title, false);
+    await updateTicket(actor.id, ticket.id, (await getTicket(ticket.id)).version, { status: "closed" });
+
+    // orphan 1: empty directory (interrupted run) with a closed ticket
+    const emptyTicket = await createTicket(actor.id, { projectId: project.id, title: "Empty orphan" });
+    await updateTicket(actor.id, emptyTicket.id, (await getTicket(emptyTicket.id)).version, { status: "closed" });
+    const emptyOrphan = emptyTicket.id;
+    mkdirSync(join(sandboxRoot, emptyOrphan));
+    
+    // orphan 2: partial tree with no .git (failed worktree removal) with a closed ticket
+    const partialTicket = await createTicket(actor.id, { projectId: project.id, title: "Partial orphan" });
+    await updateTicket(actor.id, partialTicket.id, (await getTicket(partialTicket.id)).version, { status: "closed" });
+    const partialOrphan = partialTicket.id;
+    mkdirSync(join(sandboxRoot, partialOrphan));
+    writeFileSync(join(sandboxRoot, partialOrphan, "leftover.txt"), "x\n");
+
+    const res = await cleanupMergedSandboxes(relayConfig());
+
+    // regression: the orphan did not stop the eligible sandbox being reclaimed
+    expect(res.discarded).toContain(ticket.id);
+    expect(sandboxExists(ticket.id)).toBe(false);
+    // orphans reported separately, and left on disk (sweep did not touch them)
+    expect(res.orphans).toContain(emptyOrphan);
+    expect(res.orphans).toContain(partialOrphan);
+    expect(existsSync(join(sandboxRoot, emptyOrphan))).toBe(true);
+    expect(existsSync(join(sandboxRoot, partialOrphan))).toBe(true);
+    // base node_modules intact (AC5)
+    expect(existsSync(join(workdir, "node_modules", "marker.txt"))).toBe(true);
+  });
 });

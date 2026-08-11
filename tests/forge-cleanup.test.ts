@@ -136,11 +136,16 @@ describe("forge cleanup", () => {
     await promoteSandbox(workdir, ticket.id, ticket.title, false);
     await updateTicket(actor.id, ticket.id, (await getTicket(ticket.id)).version, { status: "closed" });
 
-    // orphan 1: empty directory (interrupted run)
-    const emptyOrphan = randomUUID();
+    // orphan 1: empty directory (interrupted run) with a closed ticket
+    const emptyTicket = await createTicket(actor.id, { projectId: project.id, title: "Empty orphan" });
+    await updateTicket(actor.id, emptyTicket.id, (await getTicket(emptyTicket.id)).version, { status: "closed" });
+    const emptyOrphan = emptyTicket.id;
     mkdirSync(join(sandboxRoot, emptyOrphan));
-    // orphan 2: partial tree with no .git (failed worktree removal)
-    const partialOrphan = randomUUID();
+    
+    // orphan 2: partial tree with no .git (failed worktree removal) with a closed ticket
+    const partialTicket = await createTicket(actor.id, { projectId: project.id, title: "Partial orphan" });
+    await updateTicket(actor.id, partialTicket.id, (await getTicket(partialTicket.id)).version, { status: "closed" });
+    const partialOrphan = partialTicket.id;
     mkdirSync(join(sandboxRoot, partialOrphan));
     writeFileSync(join(sandboxRoot, partialOrphan, "leftover.txt"), "x\n");
 

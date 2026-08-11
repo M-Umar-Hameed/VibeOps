@@ -51,6 +51,22 @@ flowchart TB
   HUMAN --> MERGED["Merged into base repo"]
 ```
 
+```mermaid
+pie title Ticket Status
+    "Closed" : 196
+    "Open" : 5
+    "Planned" : 2
+```
+
+```mermaid
+pie title Forge Run Outcomes
+    "Rejected" : 6
+    "Passed" : 5
+    "Stopped" : 1
+```
+
+*Data provenance: Real counts from the running API and git history of this repository, measured August 2026.*
+
 **Cross-model economics & budget caps.** Optimize costs by combining multiple models across the forge loop. Run work against open-weights models locally while relying on frontier models for review. Apply budget caps to ensure runs never spiral out of control.
 
 **Append-only audit trail & verification.** Every mutation is attributed to the actor that made it. The audit trail answers exactly "which agent did this," providing full visibility and doctor/verification capabilities.

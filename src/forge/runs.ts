@@ -615,7 +615,7 @@ async function reviewStage(
 
   const diff = await sandboxDiff(workdir, ticket.id);
   const stat = await sandboxDiffSummary(workdir, ticket.id);
-  const reviewPrompt = composeReviewPrompt({ ticket, plan, report: reportOutput, diff: reviewDiffPayload(diff, stat), operatorNotes: run.operatorNotes, checks: checksText, protectedViolation: protectedFinding, amendments, gate: gate.report || undefined }) + roleStyle("review", styleSetting);
+  const reviewPrompt = composeReviewPrompt({ ticket, plan, report: reportOutput, diff: reviewDiffPayload(diff, stat), operatorNotes: run.operatorNotes, checks: checksText, protectedViolation: protectedFinding, amendments, gate: gate.report || undefined, citations: gate.citations || undefined }) + roleStyle("review", styleSetting);
   const reviewRes = await track(actorId, ticket.id, "review", run.agents.review, reviewPrompt.length, () => runAgent(
     reviewAgent,
     reviewPrompt,

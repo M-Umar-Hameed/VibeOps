@@ -46,9 +46,9 @@ export function composeWorkPrompt(
 }
 
 export function composeReviewPrompt(
-  { ticket, plan, report, diff, operatorNotes, checks, protectedViolation, amendments, gate }: {
+  { ticket, plan, report, diff, operatorNotes, checks, protectedViolation, amendments, gate, citations }: {
     ticket: TicketLike; plan: string; report: string; diff: string;
-    operatorNotes?: string; checks?: string; protectedViolation?: string; amendments?: string; gate?: string;
+    operatorNotes?: string; checks?: string; protectedViolation?: string; amendments?: string; gate?: string; citations?: string;
   },
 ): string {
   return [
@@ -74,6 +74,15 @@ export function composeReviewPrompt(
       ? `\nMECHANICAL GATE (deterministic, run by the pipeline before you):\n${fenceUntrusted("gate", gate)}\n` +
         `Findings marked AUTOMATIC BLOCK have already blocked promotion; treat them as established fact. ` +
         `Warnings are advisory — weigh them in your judgement.`
+      : "",
+    citations
+      ? `\nDOC CITATION OBLIGATION: this diff is documentation that cites source with file:line references. ` +
+        `The pipeline resolved each in-range citation and quoted the actual text below. For EVERY citation you MUST ` +
+        `compare the doc's claim about it against the quoted text, and separately open any bare path or directory the ` +
+        `doc uses as evidence (e.g. "src/relay/dispatch.ts — a WebSocket; reuse") to confirm the claimed thing is ` +
+        `actually there. A citation whose quoted text does not support — or contradicts — the doc's claim is a Critical ` +
+        `finding. You may NOT return VERDICT: PASS while any citation's claim is unverified or contradicted.\n` +
+        `${fenceUntrusted("citations", citations)}`
       : "",
     `\nReview whether the diff satisfies the plan's acceptance criteria.`,
     // Reviewers run in the base repo, NOT the worker's isolated sandbox; a

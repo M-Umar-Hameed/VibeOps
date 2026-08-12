@@ -12,6 +12,11 @@ export default async function setup() {
   try {
     await sql`truncate table embeddings`;
     await sql`update notes set indexed = true where indexed = false`; // stop sweeps re-embedding stale bodies
+    // withSetting restores on the happy path but cannot on a killed run, and a
+    // leaked budget cap then rejects pipelines in every later suite with a 409.
+    // Live case: a stranded ai.budget.perTicketTokens=1000 failed forge-api's
+    // BUG1 test on master once token accounting started counting the prompt.
+    await sql`delete from settings where key like 'ai.budget%'`;
   } catch {
     // Schema may not exist yet on a fresh DB; tests that need it will create it.
   } finally {

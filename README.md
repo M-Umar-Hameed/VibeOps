@@ -110,7 +110,13 @@ on a plan stage carries the ticket, the retrieved knowledge and the repo context
 dominates the total. The same figure fed the per-ticket and per-day budget caps, so those
 caps were enforcing against a number that did not mean anything. The estimate now counts
 the prompt, and the SDK lane's token count now includes cache reads it was previously
-dropping. Genuine per-call token and dollar figures still exist only on the lane whose
+dropping.
+
+**If you had already set `ai.budget.perTicketTokens` or `ai.budget.perDayTokens`, raise
+them.** Those caps are enforced against the number described above, which used to be far
+too small — often by more than an order of magnitude. A limit that never fired before may
+now stop a run part-way through a ticket, which surfaces as a 409 refusing to start the
+next stage. The caps did not get stricter; they started being real. Genuine per-call token and dollar figures still exist only on the lane whose
 API reports them, so a with/without comparison is not published here yet rather than
 guessed at.
 

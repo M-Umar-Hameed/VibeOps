@@ -52,4 +52,12 @@ try {
   rmSync(linuxPrefix, { recursive: true, force: true });
 }
 
+// npm writes node_modules/.bin as SYMLINKS on POSIX (real .cmd shims on Windows).
+// Copying them out of the temp prefix leaves the links pointing at paths that no
+// longer resolve, and tauri.conf.json globs resources/server/**/* — so the bundler
+// walks a dangling link and fails with "resource path ... doesn't exist". First
+// seen on the macOS build (semver). The sidecar require()s packages and never
+// execs these bins, so the whole directory is dead weight in the payload.
+rmSync(join(outDir, "node_modules", ".bin"), { recursive: true, force: true });
+
 console.log(`payload ready: ${outDir}`);

@@ -519,7 +519,19 @@ async function pipeline(
     await bounce(run, actorId, "deps leak: wrote through shared node_modules link", report);
     return settle(run, "failed");
   }
-  if (run.stopped) { await bounce(run, actorId, "run stopped", ""); return settle(run, "stopped"); }
+  if (run.stopped) {
+    // Same preservation as the worker-failure path below: a stop can land after
+    // the worker wrote a complete tree (killTree made runAgent return here). WIP-
+    // commit whatever exists so a later sandbox discard can't silently destroy
+    // it (live incident: five modified files left uncommitted after a stop).
+    // forgeCommit no-ops on a clean tree.
+    const saved = await forgeCommit(ticket.id, `WIP (stopped) ${ticket.title}`);
+    const note = saved
+      ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]"
+      : "";
+    await bounce(run, actorId, "run stopped", note);
+    return settle(run, "stopped");
+  }
   applyVerification(workRes, run.agents.work, run, config);
   if (!workRes.ok) {
     // Work stage failed after the agent may have written a complete tree (agy's

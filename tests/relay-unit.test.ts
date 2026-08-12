@@ -474,3 +474,64 @@ describe("killTree", () => {
     expect(elapsed).toBeLessThan(1000);
   });
 });
+
+// EXIT_DRAIN_MS = 2000 in invoke.ts. The test asserts timing against this window.
+const EXIT_DRAIN_MS = 2000;
+
+test("runAgent settles via exit-drain when a grandchild holds the stdout pipe open", async () => {
+  // Repro of the live hang: a CLI agent (agy exec) exited but a lingering
+  // subprocess inherited its stdout pipe, so "close" never fired and the run sat
+  // "running" past its timeout. The parent below spawns a grandchild that
+  // inherits stdout and ACTIVELY WRITES to it on an interval to keep the handle
+  // demonstrably open. The parent exits immediately; runAgent must still settle
+  // via the exit-drain path within EXIT_DRAIN_MS, not the 60s timeout.
+  //
+  // Without the exit handler fix, this test times out because "close" never fires
+  // while the grandchild is writing. With the fix, runAgent settles in ~2s.
+  const script =
+    "const{spawn}=require('node:child_process');" +
+    // Grandchild writes to stdout every 100ms for 60s — keeps the pipe handle open.
+    "const gc=spawn(process.execPath,['-e','" +
+      "setInterval(()=>process.stdout.write(String.fromCharCode(0)),100);" +
+      "setTimeout(()=>process.exit(0),60000);" +
+    "'],{stdio:['ignore','inherit','inherit'],detached:true});" +
+    "gc.unref();" +
+    "console.log('GCPID:'+gc.pid);" +
+    "console.log('parent-done');" +
+    "process.exit(0);";
+  const start = Date.now();
+  const result = await runAgent(
+    { cmd: [process.execPath, "-e", script], roles: [], timeoutMs: 60_000 },
+    "unused", process.cwd(),
+  );
+  const elapsed = Date.now() - start;
+  try {
+    expect(result.output).toContain("parent-done");
+    expect(result.ok).toBe(true);
+    // Settled via exit-drain (~EXIT_DRAIN_MS), not instantly (would be <500ms if
+    // close fired normally) and not at the 60s timeout (would exceed 10s).
+    // If the fix is removed, this test times out or takes 60s.
+    expect(elapsed).toBeGreaterThanOrEqual(EXIT_DRAIN_MS - 500);
+    expect(elapsed).toBeLessThan(EXIT_DRAIN_MS + 3000);
+  } finally {
+    const m = result.output.match(/GCPID:(\d+)/);
+    if (m) { try { process.kill(Number(m[1])); } catch { /* already gone */ } }
+  }
+}, 15_000);
+
+test("runAgent settles immediately via close in the normal case, not waiting for exit-drain", async () => {
+  // Companion to the above: when close fires normally (no pipe held open), runAgent
+  // settles immediately — it does NOT wait the full EXIT_DRAIN_MS. This proves the
+  // fix doesn't regress the common case.
+  const start = Date.now();
+  const result = await runAgent(
+    { cmd: [process.execPath, "-e", "console.log('fast');process.exit(0)"], roles: [] },
+    "unused", process.cwd(),
+  );
+  const elapsed = Date.now() - start;
+
+  expect(result.output).toContain("fast");
+  expect(result.ok).toBe(true);
+  // Normal case: close fires immediately, well under EXIT_DRAIN_MS.
+  expect(elapsed).toBeLessThan(EXIT_DRAIN_MS - 500);
+}, 5_000);

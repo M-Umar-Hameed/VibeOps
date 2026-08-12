@@ -49,3 +49,14 @@ export async function openEmbedded(
   }
   return { client };
 }
+
+// PGlite writes postmaster.pid on open and leaves it behind on close, so a cleanly
+// stopped cluster still looks like a live holder on disk. Everything that closes an
+// embedded cluster goes through here so the "clean close clears the pid, a hard kill
+// leaves it" contract is true in one place rather than assumed in several.
+export async function closeEmbedded(client: PGlite, dataDir: string): Promise<void> {
+  await client.close();
+  const { rmSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  try { rmSync(join(dataDir, "postmaster.pid"), { force: true }); } catch { /* best effort */ }
+}

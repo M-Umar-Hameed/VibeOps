@@ -65,8 +65,13 @@ test("search results carry provenance and recency-decayed score", async () => {
   const stale = `${project.id}:stale-${uniq}.md`;
   await upsertVaultFile(fresh, content, emb);
   await upsertVaultFile(stale, content, emb);
+  // 30 days, not 300. Decay is 1/(1 + age_days/90), so 300 days scores 0.23x and
+  // the stale row gets re-ranked out of the final top-20 by any fresher rows other
+  // test files write mid-run — that is what made this fail intermittently, on a
+  // fresh CI database too. 30 days gives 0.75x: comfortably inside the window and
+  // still strictly below the fresh copy, which is what the test is actually about.
   await db.update(embeddings)
-    .set({ createdAt: new Date(Date.now() - 300 * 86400_000) })
+    .set({ createdAt: new Date(Date.now() - 30 * 86400_000) })
     .where(eq(embeddings.sourceRef, stale));
 
   const hits = await searchKnowledge(content, { limit: 20, projectId: project.id }, emb);

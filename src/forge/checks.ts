@@ -9,6 +9,7 @@ export const CHECK_TIMEOUT_MS = 5 * 60_000;
 const TAIL_LINES = 100;
 const MAX_CHECKS = 10;
 const OUTPUT_CAP = 200_000;
+const EXIT_DRAIN_MS = 2_000;
 
 // forge.checks setting (JSON array of shell commands) wins; unset or invalid
 // falls back to detection: package.json with a typecheck script in the sandbox
@@ -44,6 +45,7 @@ function runOne(
     let out = "";
     let timedOut = false;
     let settled = false;
+    let exitTimer: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => { timedOut = true; void killTree(child); }, timeoutMs);
     const cap = (d: Buffer) => { if (out.length < OUTPUT_CAP) out += d.toString("utf-8"); };
     child.stdout?.on("data", cap);
@@ -52,11 +54,21 @@ function runOne(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (exitTimer) clearTimeout(exitTimer);
       if (timedOut) out += `\n[forge: check timed out after ${timeoutMs / 1000}s]`;
       resolve({ command, code, tail: tailLines(out) });
     };
     child.on("close", (code) => finish(code ?? 1));
     child.on("error", (e) => { out += String(e); finish(1); });
+    // shell:true means the real command is a GRANDCHILD that inherits these pipes.
+    // "close" waits for stdio EOF, so if it outlives the shell — which is exactly
+    // what a killed hanging check looks like on POSIX — close never fires and this
+    // promise never settles. Same defect, same fix as relay/invoke.ts: settle a
+    // short drain after the process itself exits; close still wins the normal race.
+    child.on("exit", (code) => {
+      exitTimer = setTimeout(() => finish(code ?? 1), EXIT_DRAIN_MS);
+      exitTimer.unref();
+    });
   });
 }
 

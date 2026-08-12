@@ -2,7 +2,7 @@
 // installs the stdin-EOF + SIGTERM shutdown handlers, prints "ready". Parent
 // closes stdin (or sends SIGTERM) to trigger a clean close; a clean close removes
 // postmaster.pid, a hard kill leaves it.
-import { openEmbedded } from "../../src/db/lifecycle.js";
+import { openEmbedded, closeEmbedded } from "../../src/db/lifecycle.js";
 
 const dir = process.argv[2];
 const { PGlite } = await import("@electric-sql/pglite");
@@ -16,7 +16,7 @@ let closing = false;
 async function shutdown() {
   if (closing) return;
   closing = true;
-  await client.close();
+  await closeEmbedded(client, dir);
   process.exit(0);
 }
 process.once("SIGTERM", () => void shutdown());

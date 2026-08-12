@@ -30,7 +30,7 @@ async function makeDb(): Promise<void> {
   const { vector } = await import("@electric-sql/pglite/vector");
   const { drizzle: drizzlePglite } = await import("drizzle-orm/pglite");
   const { migrate } = await import("drizzle-orm/pglite/migrator");
-  const { openEmbedded, EmbeddedDbOpenError } = await import("./lifecycle.js");
+  const { openEmbedded, EmbeddedDbOpenError, closeEmbedded } = await import("./lifecycle.js");
   // PGlite's mkdir is not recursive; create the data dir (and ~/.vibeops) first.
   const dataDir = join(vibeopsHome(), ".vibeops", "data");
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
@@ -54,7 +54,7 @@ async function makeDb(): Promise<void> {
   }
   embeddedClient = client;
   embeddedDataDir = dataDir;
-  closeImpl = () => client.close();
+  closeImpl = () => closeEmbedded(client, dataDir);
   const d = drizzlePglite(client as never, { schema });
   // The import.meta fallback only resolves in the source tree; the bundled payload
   // (server.mjs in resources/) MUST set VIBEOPS_MIGRATIONS_DIR (the launcher does).

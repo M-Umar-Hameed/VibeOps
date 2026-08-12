@@ -104,6 +104,19 @@ async function waitForStage(runId: string, stage: string, timeoutMs = 5000): Pro
 
 // Persistence is fire-and-forget (settle() doesn't await the insert), so the
 // row can land a tick or two after awaitRun resolves. Poll instead of racing.
+// Same race, one step earlier: the INSERT itself is fire-and-forget, so a fixed
+// sleep before markInterruptedRuns is a coin flip on a loaded runner — it read an
+// empty table on Linux CI and returned somebody else's row.
+async function waitForPersistedRow(runId: string, timeoutMs = 5000) {
+  const start = Date.now();
+  for (;;) {
+    const [row] = await db.select().from(forgeRuns).where(eq(forgeRuns.id, runId));
+    if (row) return row;
+    if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for run row ${runId}`);
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
 async function waitForPersistedStatus(runId: string, timeoutMs = 5000) {
   const start = Date.now();
   for (;;) {
@@ -124,8 +137,7 @@ describe("forge run resume", () => {
       ticketId: ticket.id, planAgent: "auto", workAgent: "auto", reviewAgent: "auto"
     });
     
-    // give persistRun a moment to complete
-    await new Promise(r => setTimeout(r, 100));
+    await waitForPersistedRow(runId);
 
     const marked = await markInterruptedRuns();
     expect(marked).toContain(ticket.id);

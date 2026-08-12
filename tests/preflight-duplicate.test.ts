@@ -97,3 +97,21 @@ test("recordDecision writes a decision comment and a searchable ticket note", as
   const comments = await listComments(ctx.ticketId);
   expect(comments.some((c) => c.kind === "decision" && c.body.includes("extend"))).toBe(true);
 });
+
+// This test can ONLY pass through pass 1 (exact-match). It injects search returning
+// empty array, so semantic fallback finds nothing. If pass 1 is disabled, this fails.
+test("preflight fires objection via exact-match pass when semantic search returns nothing", async () => {
+  const ctx = await seed();
+  await recordDecision(ZAP, "new", ctx, { emb });
+  // Inject search that always returns empty — semantic path finds nothing
+  const emptySearch: typeof searchKnowledge = async () => [];
+  const res = await preflightDuplicateCheck(ZAP, ctx, { search: emptySearch });
+  expect(res.objection).not.toBeNull();
+  if (res.objection) {
+    expect(res.objection.candidateId).toBe("12345");
+    expect(res.objection.body).toContain("12345");
+    expect(res.objection.body).toContain("airtable.record_created");
+  }
+  const comments = await listComments(ctx.ticketId);
+  expect(comments.some((c) => c.kind === "evidence" && c.body.includes("12345"))).toBe(true);
+});

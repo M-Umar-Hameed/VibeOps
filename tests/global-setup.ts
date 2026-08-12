@@ -42,6 +42,11 @@ export default async function setup() {
     // Live case: a stranded ai.budget.perTicketTokens=1000 failed forge-api's
     // BUG1 test on master once token accounting started counting the prompt.
     await sql`delete from settings where key like 'ai.budget%'`;
+    // ai_usage_logs only ever grows, and checkBudget's per-day query sums the whole
+    // day across every ticket. Once token accounting started counting the prompt,
+    // one day of suite runs reached 14.5M tokens over 22k rows and overran the
+    // per-day test's deliberately-generous 10M ceiling, failing it 10 runs out of 10.
+    await sql`truncate table ai_usage_logs`;
   } catch {
     // Schema may not exist yet on a fresh DB; tests that need it will create it.
   } finally {

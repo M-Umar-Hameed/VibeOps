@@ -194,3 +194,79 @@ describe("resolveMutationCmd", () => {
     expect(cmd("foo.test.ts")).toBeNull();
   });
 });
+
+describe("citation check", () => {
+  it("doc cites real in-range source line -> no citation finding; gate.citations contains quoted text", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    mkdirSync(join(sp, "docs"), { recursive: true });
+    // doc cites src/x.ts:1 which exists in the sandbox
+    writeFileSync(join(sp, "docs", "spec.md"), "# Spec\nSee src/x.ts:1 for details.\n");
+    await forgeCommit(TID, "add doc");
+
+    const gate = await runGate({
+      workdir, ticketId: TID,
+      planText: "add docs/spec.md",
+      ticketBody: "",
+      maxSourceFiles: 3,
+      mutationCmd: () => null,
+    });
+    expect(gate.findings.some(f => f.check === "citation")).toBe(false);
+    expect(gate.citations).toContain("src/x.ts:1");
+    expect(gate.citations).toContain("export const x = 1;");
+  });
+
+  it("doc cites missing file -> citation block finding with AUTOMATIC BLOCK", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    mkdirSync(join(sp, "docs"), { recursive: true });
+    writeFileSync(join(sp, "docs", "spec.md"), "# Spec\nSee nope/missing.ts:3 for details.\n");
+    await forgeCommit(TID, "add doc");
+
+    const gate = await runGate({
+      workdir, ticketId: TID,
+      planText: "add docs/spec.md",
+      ticketBody: "",
+      maxSourceFiles: 3,
+      mutationCmd: () => null,
+    });
+    const finding = gate.findings.find(f => f.check === "citation" && f.severity === "block");
+    expect(finding).toBeDefined();
+    expect(finding!.detail).toContain("file not found");
+    expect(gate.report).toContain("AUTOMATIC BLOCK");
+  });
+
+  it("doc cites out-of-range line -> citation block finding with line count", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    mkdirSync(join(sp, "docs"), { recursive: true });
+    // src/x.ts has 1 line; citing line 9999 is out of range
+    writeFileSync(join(sp, "docs", "spec.md"), "# Spec\nSee src/x.ts:9999 for details.\n");
+    await forgeCommit(TID, "add doc");
+
+    const gate = await runGate({
+      workdir, ticketId: TID,
+      planText: "add docs/spec.md",
+      ticketBody: "",
+      maxSourceFiles: 3,
+      mutationCmd: () => null,
+    });
+    const finding = gate.findings.find(f => f.check === "citation" && f.severity === "block");
+    expect(finding).toBeDefined();
+    expect(finding!.detail).toContain("has 2 lines");
+    expect(gate.report).toContain("AUTOMATIC BLOCK");
+  });
+
+  it("non-doc file (.ts) with file:line token -> no citation finding", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    // put a file:line reference in a .ts file, not a doc
+    writeFileSync(join(sp, "src", "x.ts"), "// see src/x.ts:1\nexport const x = 2;\n");
+    await forgeCommit(TID, "edit ts");
+
+    const gate = await runGate({
+      workdir, ticketId: TID,
+      planText: "edit src/x.ts",
+      ticketBody: "",
+      maxSourceFiles: 3,
+      mutationCmd: () => null,
+    });
+    expect(gate.findings.some(f => f.check === "citation")).toBe(false);
+  });
+});

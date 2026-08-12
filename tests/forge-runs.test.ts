@@ -437,6 +437,28 @@ describe("forge run manager", () => {
     expect(summary?.finishedAt).toBeTruthy();
   }, 15_000);
 
+  it("stop preserves uncommitted work as a WIP commit, note in report", async () => {
+    const { actorId, ticket } = await seedTicket("Stop saves WIP path");
+    setScript("plan,work-hang"); // work stage writes partial.txt then hangs until killed
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+
+    await waitForStage(runId, "work");
+    expect(await stopRun(runId)).toBe(true);
+    await awaitRun(runId);
+
+    expect(getRunOutput(runId, 0)?.status).toBe("stopped");
+    expect((await getTicket(ticket.id)).status).toBe("planned");
+
+    // The WIP commit exists — uncommitted work survived the stop.
+    expect(await hasCommitsToPromote(workdir, ticket.id)).toBe(true);
+
+    const report = [...(await listComments(ticket.id))].reverse().find((c) => c.kind === "report");
+    expect(report?.body).toContain("uncommitted work was saved to the sandbox branch as a WIP commit");
+  }, 15_000);
+
   it("work stage editing a protected path records a durable violation without forcing the verdict", async () => {
     const { actorId, ticket } = await seedTicket("Protected path violation");
     process.env.FAKE_WRITE_PATH = "vitest.config.ts";

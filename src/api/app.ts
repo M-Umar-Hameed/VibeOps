@@ -14,7 +14,7 @@ import { activeRunForProject } from "../forge/runs.js";
 import { syncProject } from "../sync/run.js";
 import { listActors, createActor, revokeActor } from "../services/actors.js";
 import { requireAdmin } from "./auth.js";
-import { getSystemMetrics, getSystemLogs, getSystemTopology, getAiUsage, getSystemStatus } from "../services/system.js";
+import { getSystemMetrics, getSystemLogs, getSystemTopology, getAiUsage, getSystemStatus, getKnowledgeUsage } from "../services/system.js";
 import { getSetting, setSetting } from "../services/settings.js";
 import { getVaultStatus, startWatcher, stopWatcher, rescanProjectVaults, getProjectVaultStatus } from "../ingest/watch.js";
 import { fetchDocs } from "../knowledge/docs.js";
@@ -290,7 +290,7 @@ app.get("/knowledge", async (c) => {
   const n = Number(c.req.query("limit"));
   const limit = Number.isFinite(n) && n > 0 ? n : undefined;
   const projectId = c.req.query("project") || undefined;
-  return c.json(await searchKnowledge(q, { limit, projectId }));
+  return c.json(await searchKnowledge(q, { limit, projectId, caller: "route:knowledge" }));
 });
 
 app.get("/knowledge/sessions", async (c) => {
@@ -339,7 +339,7 @@ app.get("/prime", async (c) => {
   const n = Number(c.req.query("limit"));
   const limit = Math.min(Number.isFinite(n) && n > 0 ? n : 5, 10);
   const projectId = c.req.query("project") || undefined;
-  const hits = await searchKnowledge(q, { limit, projectId });
+  const hits = await searchKnowledge(q, { limit, projectId, caller: "route:prime" });
   if (!hits.length) return c.text(`VibeOps primer: no relevant knowledge for "${q}".`);
   const lines = [`VibeOps primer for "${q}" (${hits.length} hits):`];
   for (const h of hits) {
@@ -387,6 +387,7 @@ app.get("/system/status", requireAdmin, async (c) => c.json(await getSystemStatu
 app.get("/system/logs", requireAdmin, async (c) => c.json(await getSystemLogs()));
 app.get("/system/topology", async (c) => c.json(await getSystemTopology()));
 app.get("/system/ai-usage", async (c) => c.json(await getAiUsage()));
+app.get("/system/knowledge-usage", async (c) => c.json(await getKnowledgeUsage()));
 app.get("/system/agents", requireAdmin, async (c) => {
   const { getAgents } = await import("../system/agents.js");
   const n = Number(c.req.query("sinceDays"));

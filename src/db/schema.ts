@@ -162,6 +162,19 @@ export const agentSessions = pgTable('agent_sessions', {
 export type AiUsageLog = typeof aiUsageLogs.$inferSelect;
 export type AgentSession = typeof agentSessions.$inferSelect;
 
+export const knowledgeQueryLogs = pgTable('knowledge_query_logs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  caller: text('caller').notNull(),
+  projectId: uuid('project_id'),
+  hitCount: integer('hit_count').notNull(),
+  hitKinds: jsonb('hit_kinds').$type<string[]>().notNull(),
+  topScore: integer('top_score'), // cosine-recency score ×1e6; null when no hits
+  queryText: text('query_text'),  // null unless knowledge.logQueryText='true'; redacted when set
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type KnowledgeQueryLog = typeof knowledgeQueryLogs.$inferSelect;
+
 // Run-level history only; full output stays console/comments (comments are
 // the durable record already) — no output column here on purpose.
 export const forgeRuns = pgTable('forge_runs', {

@@ -684,7 +684,7 @@ async function bounce(run: Run, actorId: string, why: string, output: string): P
 }
 
 async function getKnowledgeSafe(q: string, projectId?: string): Promise<{ content: string; citation: string }[]> {
-  try { return await searchKnowledge(q, { limit: 5, projectId }); } catch { return []; }
+  try { return await searchKnowledge(q, { limit: 5, projectId, caller: "forge:run" }); } catch { return []; }
 }
 
 function trim(): void {

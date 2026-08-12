@@ -1,6 +1,8 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { aiUsageLogs, agentSessions } from "../db/schema.js";
+import { aiUsageLogs, agentSessions, knowledgeQueryLogs } from "../db/schema.js";
+import { getSetting } from "./settings.js";
+import { redactSecrets } from "../forge/redact.js";
 
 // We keep the fuller entry shape for call-site clarity. Headless CLIs don't report
 // real usage, so tokens are estimated. ok is tracked separately via agent_sessions.status.
@@ -63,5 +65,27 @@ export async function endAgentSession(id: string | undefined, ok: boolean): Prom
       .where(eq(agentSessions.id, id));
   } catch (e) {
     console.warn("endAgentSession failed:", (e as Error).message);
+  }
+}
+
+export async function logKnowledgeQuery(entry: {
+  caller: string;
+  projectId?: string;
+  hitKinds: string[];
+  topScore?: number;
+  queryText: string;
+}): Promise<void> {
+  try {
+    const storeText = (await getSetting("knowledge.logQueryText")) === "true";
+    await db.insert(knowledgeQueryLogs).values({
+      caller: entry.caller,
+      projectId: entry.projectId,
+      hitCount: entry.hitKinds.length,
+      hitKinds: entry.hitKinds,
+      topScore: entry.topScore === undefined ? null : Math.round(entry.topScore * 1e6),
+      queryText: storeText ? redactSecrets(entry.queryText) : null,
+    });
+  } catch (e) {
+    console.warn("logKnowledgeQuery failed:", (e as Error).message);
   }
 }

@@ -59,7 +59,7 @@ export async function buildServer(apiKey: string) {
   server.registerTool("search_knowledge",
     { inputSchema: { query: z.string(), limit: z.number().optional(), project: z.string().optional() } },
     async ({ query, limit, project }) => ({
-      content: [{ type: "text", text: JSON.stringify(await searchKnowledge(query, { limit, projectId: project })) }],
+      content: [{ type: "text", text: JSON.stringify(await searchKnowledge(query, { limit, projectId: project, caller: "mcp:search_knowledge" })) }],
     }));
 
   server.registerTool("fetch_docs",

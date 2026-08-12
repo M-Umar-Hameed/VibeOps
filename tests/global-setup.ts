@@ -41,7 +41,11 @@ export default async function setup() {
     // leaked budget cap then rejects pipelines in every later suite with a 409.
     // Live case: a stranded ai.budget.perTicketTokens=1000 failed forge-api's
     // BUG1 test on master once token accounting started counting the prompt.
-    await sql`delete from settings where key like 'ai.budget%'`;
+    // Any setting a test flips can strand here when its run is killed mid-way,
+    // and the next suite then fails on state nobody wrote deliberately. Seen
+    // twice: ai.budget.perTicketTokens=1000 rejecting pipelines with a 409, and
+    // prompts.selfImprove=true making "selfImprove unset" fail its precondition.
+    await sql`delete from settings where key like 'ai.budget%' or key = 'prompts.selfImprove'`;
     // ai_usage_logs only ever grows, and checkBudget's per-day query sums the whole
     // day across every ticket. Once token accounting started counting the prompt,
     // one day of suite runs reached 14.5M tokens over 22k rows and overran the

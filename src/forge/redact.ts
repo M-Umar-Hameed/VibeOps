@@ -10,3 +10,13 @@ export function redactSecrets(chunk: string): string {
   for (const p of PATTERNS) out = out.replace(p, "[redacted]");
   return out.replace(KEY_FIELD, "$1[redacted]$2");
 }
+
+// Redacted previews of every secret-pattern hit in `text`. Empty => clean.
+// Used by the branch secret scan; redactSecrets() only masks, it can't report.
+function preview(s: string): string { return s.slice(0, 8) + "…"; }
+export function findSecrets(text: string): string[] {
+  const hits: string[] = [];
+  for (const p of PATTERNS) for (const m of text.matchAll(p)) hits.push(preview(m[0]));
+  for (const m of text.matchAll(KEY_FIELD)) hits.push(preview(m[0]));
+  return hits;
+}

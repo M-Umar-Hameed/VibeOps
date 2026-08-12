@@ -403,3 +403,34 @@ export function detectDepsLeak(baseline: DepsBaseline): string[] {
   }
   return leaked;
 }
+
+// --- Range helpers for the mechanical gate ---
+
+export async function sandboxBaseCommit(workdir: string, ticketId: string): Promise<string> {
+  return (await must(workdir, "merge-base", "HEAD", branchName(ticketId))).trim();
+}
+
+// Full per-commit patch for base..branch (every commit, additions included) — a
+// secret added in one commit and redacted in a later one still appears here.
+// ponytail: DIFF_CAP may truncate a large range; if truncation ever hides a
+// late-commit secret, raise the cap or stream per-commit.
+export async function sandboxRangePatch(workdir: string, ticketId: string): Promise<string> {
+  const { out } = await git(workdir, "log", "-p", "--no-color", "--no-renames",
+    `${await sandboxBaseCommit(workdir, ticketId)}..${branchName(ticketId)}`);
+  return out;
+}
+
+export async function sandboxDiffNameStatus(workdir: string, ticketId: string): Promise<{ status: "A" | "M" | "D"; path: string }[]> {
+  const { out } = await git(workdir, "diff", "--no-renames", "--name-status", `HEAD...${branchName(ticketId)}`);
+  return out.split("\n").map(stripCR).map(l => l.match(/^([AMD])\t(.+)$/)).filter(Boolean)
+    .map(m => ({ status: m![1] as "A" | "M" | "D", path: m![2] }));
+}
+
+// Inside-sandbox checkout for the mutation probe. ref="<base>" reverts; ref="HEAD" restores.
+export async function sandboxCheckout(ticketId: string, ref: string, paths: string[]): Promise<void> {
+  if (paths.length) await git(sandboxPath(ticketId), "checkout", ref, "--", ...paths);
+}
+
+export async function sandboxDeletePaths(ticketId: string, paths: string[]): Promise<void> {
+  for (const p of paths) rmSync(join(sandboxPath(ticketId), p), { force: true });
+}

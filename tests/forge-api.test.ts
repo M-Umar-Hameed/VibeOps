@@ -78,6 +78,7 @@ afterEach(async () => {
   delete process.env.FAKE_COUNTER_FILE;
   delete process.env.FAKE_WRITE;
   delete process.env.FAKE_WRITE_PATH;
+  delete process.env.FAKE_WRITE_STRAY;
   // Deregister any worktree a stopped/undiscarded run left behind BEFORE removing the
   // base repo. On Windows, rmSync of the base while a worktree is still registered in
   // its .git EPERMs. git worktree remove also deletes the sandbox working dir.
@@ -715,7 +716,7 @@ describe("forge API", () => {
   it("cleanup route enforces authz and returns the correct shape", async () => {
     const { apiKey: memberKey } = await createActor({ name: uniq("forge-api-member"), kind: "agent" });
     const memberH = { Authorization: `Bearer ${memberKey}`, "Content-Type": "application/json" };
-    
+
     const memberRes = await app.request("/forge/sandboxes/cleanup", { method: "POST", headers: memberH });
     expect(memberRes.status).toBe(403);
 
@@ -725,6 +726,53 @@ describe("forge API", () => {
     const body = await adminRes.json();
     expect(body.discarded).toBeInstanceOf(Array);
     expect(typeof body.reclaimedBytes).toBe("number");
+  });
+
+  it("gate block forces promote 409", async () => {
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+
+    // Run with a stray file not in the plan → file-set gate block
+    process.env.FAKE_WRITE_STRAY = "1";
+    setScript("plan,work,review-pass", true);
+    const blockedStart = await app.request("/forge/pipeline", {
+      method: "POST", headers: h,
+      body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+    });
+    const { runId: blockedRunId } = await blockedStart.json();
+    await pollUntilDone(h, blockedRunId);
+
+    // Verify the review was forced to FAIL by the gate
+    const sandboxBlocked = await app.request(`/forge/tickets/${ticket.id}/sandbox`, { headers: h });
+    expect((await sandboxBlocked.json()).lastVerdict).toBe("fail");
+
+    // T7 AC: promote returns 409 due to gate block
+    const promoteBlocked = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
+    expect(promoteBlocked.status).toBe(409);
+  });
+
+  it("clean gate run promotes successfully", async () => {
+    // Counterpart to the gate-block test: a run with no gate blocks promotes
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+
+    // Run without stray files → no gate block, review passes
+    setScript("plan,work,review-pass", true);
+    const cleanStart = await app.request("/forge/pipeline", {
+      method: "POST", headers: h,
+      body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+    });
+    const { runId: cleanRunId } = await cleanStart.json();
+    await pollUntilDone(h, cleanRunId);
+
+    // Verify clean run passed review
+    const sandboxClean = await app.request(`/forge/tickets/${ticket.id}/sandbox`, { headers: h });
+    expect((await sandboxClean.json()).lastVerdict).toBe("pass");
+
+    // Clean run: promote succeeds
+    const promoteClean = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
+    expect(promoteClean.status).toBe(200);
+    expect((await promoteClean.json()).status).toBe("closed");
   });
 });
 

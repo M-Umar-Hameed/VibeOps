@@ -27,6 +27,7 @@ import { db } from "../db/client.js";
 import { forgeRuns, aiUsageLogs, tickets, type Ticket } from "../db/schema.js";
 import { verifyModel, MISMATCH_WARNING, computeVerificationStatus } from "./verify.js";
 import { resolveChecks, runChecks, formatChecks } from "./checks.js";
+import { runGate, resolveMutationCmd } from "./gate.js";
 
 const OUTPUT_CAP = 400_000;
 const KEEP_FINISHED = 20;
@@ -600,9 +601,21 @@ async function reviewStage(
     if (lines.length) append(run, `\n=== FORGE protected-paths ===\n${lines.join("\n")}\n`);
   }
 
+  // Mechanical gate: secret scan, file-set, mutation probe, AC-map. Runs BEFORE the review model.
+  const gate = await runGate({
+    workdir,
+    ticketId: ticket.id,
+    planText: plan,
+    ticketBody: ticket.body ?? "",
+    maxSourceFiles: parseInt((await getSetting("forge.mutationProbe.maxSourceFiles")) ?? "", 10) || 3,
+    mutationCmd: resolveMutationCmd(await getSetting("forge.mutationProbe.command"), sandbox),
+  });
+  const gateBlocked = gate.findings.some(f => f.severity === "block");
+  if (gate.report) append(run, `\n=== FORGE gate ===\n${gate.report}\n`);
+
   const diff = await sandboxDiff(workdir, ticket.id);
   const stat = await sandboxDiffSummary(workdir, ticket.id);
-  const reviewPrompt = composeReviewPrompt({ ticket, plan, report: reportOutput, diff: reviewDiffPayload(diff, stat), operatorNotes: run.operatorNotes, checks: checksText, protectedViolation: protectedFinding, amendments }) + roleStyle("review", styleSetting);
+  const reviewPrompt = composeReviewPrompt({ ticket, plan, report: reportOutput, diff: reviewDiffPayload(diff, stat), operatorNotes: run.operatorNotes, checks: checksText, protectedViolation: protectedFinding, amendments, gate: gate.report || undefined }) + roleStyle("review", styleSetting);
   const reviewRes = await track(actorId, ticket.id, "review", run.agents.review, reviewPrompt.length, () => runAgent(
     reviewAgent,
     reviewPrompt,
@@ -613,8 +626,15 @@ async function reviewStage(
   if (run.stopped) return settle(run, "stopped");
   applyVerification(reviewRes, run.agents.review, run, config);
   const verdict = parseVerdict(reviewRes.output);
-  await addComment(actorId, ticket.id, redactSecrets(verdict.raw), "review");
-  if (!verdict.pass) {
+
+  // Gate block forces FAIL regardless of the model's verdict
+  const pass = verdict.pass && !gateBlocked;
+  const reviewBody = gateBlocked
+    ? `${verdict.raw}\n\n[forge: mechanical gate BLOCK — verdict forced to FAIL]\n${gate.report}\nVERDICT: FAIL`
+    : verdict.raw;
+  await addComment(actorId, ticket.id, redactSecrets(reviewBody), "review");
+
+  if (!pass) {
     // FAIL: back to planned; sandbox kept for the rework pass. The run settles
     // "rejected" (not "passed") so the quality signal reflects the verdict, not
     // pipeline completion.

@@ -46,9 +46,9 @@ export function composeWorkPrompt(
 }
 
 export function composeReviewPrompt(
-  { ticket, plan, report, diff, operatorNotes, checks, protectedViolation, amendments }: {
+  { ticket, plan, report, diff, operatorNotes, checks, protectedViolation, amendments, gate }: {
     ticket: TicketLike; plan: string; report: string; diff: string;
-    operatorNotes?: string; checks?: string; protectedViolation?: string; amendments?: string;
+    operatorNotes?: string; checks?: string; protectedViolation?: string; amendments?: string; gate?: string;
   },
 ): string {
   return [
@@ -69,6 +69,11 @@ export function composeReviewPrompt(
         `${fenceUntrusted("protected-paths", protectedViolation)}\n` +
         `This is an automatic Critical finding recorded as fact. The run's promotion is already ` +
         `blocked regardless of your verdict.`
+      : "",
+    gate
+      ? `\nMECHANICAL GATE (deterministic, run by the pipeline before you):\n${fenceUntrusted("gate", gate)}\n` +
+        `Findings marked AUTOMATIC BLOCK have already blocked promotion; treat them as established fact. ` +
+        `Warnings are advisory — weigh them in your judgement.`
       : "",
     `\nReview whether the diff satisfies the plan's acceptance criteria.`,
     // Reviewers run in the base repo, NOT the worker's isolated sandbox; a

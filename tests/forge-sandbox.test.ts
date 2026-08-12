@@ -462,3 +462,62 @@ describe("frontend deps mode", () => {
     expect(readlinkSync(join(sp, "node_modules"))).toBeTruthy(); // ON: still link
   });
 });
+
+describe("range helpers", () => {
+  it("sandboxRangePatch shows a secret added then redacted in a later commit", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    const secret = "Bearer " + "a".repeat(30);
+    // commit1: add secret
+    writeFileSync(join(sp, "config.txt"), secret + "\n");
+    await forgeCommit(TID, "add secret");
+    // commit2: redact it
+    writeFileSync(join(sp, "config.txt"), "[redacted]\n");
+    await forgeCommit(TID, "redact secret");
+
+    const { sandboxRangePatch } = await import("../src/forge/sandbox.js");
+    const patch = await sandboxRangePatch(workdir, TID);
+    expect(patch).toContain("+" + secret); // added line visible in the patch
+  });
+
+  it("sandboxDiffNameStatus returns correct A/M/D entries", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    writeFileSync(join(sp, "b.txt"), "new\n"); // A
+    writeFileSync(join(sp, "a.txt"), "modified\n"); // M
+    await forgeCommit(TID, "changes");
+
+    const { sandboxDiffNameStatus } = await import("../src/forge/sandbox.js");
+    const ns = await sandboxDiffNameStatus(workdir, TID);
+    expect(ns.find(e => e.path === "b.txt")?.status).toBe("A");
+    expect(ns.find(e => e.path === "a.txt")?.status).toBe("M");
+  });
+
+  it("sandboxCheckout reverts and restores MODIFIED files", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    // Modify existing file (not add new one)
+    writeFileSync(join(sp, "a.txt"), "modified content\n");
+    await forgeCommit(TID, "modify a");
+
+    const { sandboxBaseCommit, sandboxCheckout } = await import("../src/forge/sandbox.js");
+    const base = await sandboxBaseCommit(workdir, TID);
+    // revert to base
+    await sandboxCheckout(TID, base, ["a.txt"]);
+    expect(readFileSync(join(sp, "a.txt"), "utf-8").trim()).toBe("hello"); // original content
+    // restore HEAD
+    await sandboxCheckout(TID, "HEAD", ["a.txt"]);
+    expect(readFileSync(join(sp, "a.txt"), "utf-8").trim()).toBe("modified content");
+  });
+
+  it("sandboxDeletePaths removes added files for mutation probe", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    writeFileSync(join(sp, "new.txt"), "new content\n");
+    await forgeCommit(TID, "add new");
+
+    const { sandboxDeletePaths, sandboxCheckout } = await import("../src/forge/sandbox.js");
+    // delete added file
+    await sandboxDeletePaths(TID, ["new.txt"]);
+    expect(existsSync(join(sp, "new.txt"))).toBe(false);
+    // restore from HEAD
+    await sandboxCheckout(TID, "HEAD", ["new.txt"]);
+    expect(readFileSync(join(sp, "new.txt"), "utf-8").trim()).toBe("new content");
+  });
+});

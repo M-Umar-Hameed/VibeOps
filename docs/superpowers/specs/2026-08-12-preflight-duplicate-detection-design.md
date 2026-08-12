@@ -2,12 +2,16 @@
 
 ## The Pre-Flight Flow
 The duplicate detection flow executes in the following sequence:
-1. **Search**: `preflightDuplicateCheck` invokes retrieval against previous automated decisions.
-2. **Nomination**: Cosine similarity surfaces previous `decision` notes.
-3. **Confirmation Gate**: The `confirmObjection` gate strictly filters out near-matches, verifying exact property intersections.
-4. **Evidence Comment**: If a duplicate is confirmed, an `evidence` comment is written citing the artifact.
-5. **Human Decides**: The user reviews the evidence and makes the final decision. Preflight never blocks.
-6. **Decision Recorder**: A `decision` comment is written and concurrently mirrored to a ticket-scoped note (`recordDecision`), closing the reuse loop for future preflights.
+1. **Two-pass retrieval**: `preflightDuplicateCheck` runs retrieval in two passes:
+   - **Pass 1 (exact-match)**: `findByTrigger` queries embeddings for notes containing the literal trigger string (e.g. `%"trigger": "airtable.record_created"%`). This guarantees retrieval when present — semantic ranking cannot push the duplicate out of top-k.
+   - **Pass 2 (semantic fallback)**: `searchKnowledge` with cosine similarity surfaces candidates that may be indexed differently.
+2. **Confirmation Gate**: The `confirmObjection` gate strictly filters out near-matches, verifying exact property intersections.
+3. **Evidence Comment**: If a duplicate is confirmed, an `evidence` comment is written citing the artifact.
+4. **Human Decides**: The user reviews the evidence and makes the final decision. Preflight never blocks.
+5. **Decision Recorder**: A `decision` comment is written and concurrently mirrored to a ticket-scoped note (`recordDecision`), closing the reuse loop for future preflights.
+
+## Reliable Retrieval (not hopeful retrieval)
+The `confirmObjection` gate already requires an exact trigger match to fire at all. This observation led to Pass 1: if the gate will discard candidates whose trigger differs, we can use SQL LIKE on the JSON-encoded trigger to find candidates reliably. This avoids the fragility of relying on semantic ranking to surface the duplicate in top-k when thousands of indexed artifacts exist. The semantic pass remains as fallback for edge cases (e.g., trigger stored in a different JSON shape).
 
 ## Resolved Contradictions
 
@@ -40,8 +44,9 @@ Preflight **never refuses/blocks**. It solely evaluates evidence and surfaces it
 - No UI. Preflight returns evidence as data; caller renders it.
 
 ## Code Citations
-- `src/services/preflight.ts` - core preflight definitions.
-- `src/services/knowledge.ts:196` (`searchKnowledge`) - entry point.
+- `src/services/preflight.ts` - core preflight definitions: `ArtifactBlock`, `parseArtifactBlock`, `confirmObjection`, `findByTrigger`, `preflightDuplicateCheck`, `recordDecision`.
+- `src/services/preflight.ts:69-85` (`findByTrigger`) - exact-match SQL lookup for reliable retrieval.
+- `src/services/knowledge.ts:194` (`searchKnowledge`) - semantic retrieval entry point.
 - `src/services/knowledge.ts:168-181` (`projectScopeWhere`) - why ticket notes surface.
 - `src/services/notes.ts:8` (`saveNote`) - saving decisions.
-- `src/services/comments.ts:12` - widened comment kinds union.
+- `src/services/comments.ts:12` - widened comment kinds union with `evidence | decision`.

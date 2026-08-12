@@ -4,6 +4,8 @@ import { projects } from "../src/db/schema.js";
 import { createActor } from "../src/services/actors.js";
 import { createTicket } from "../src/services/tickets.js";
 import { listComments } from "../src/services/comments.js";
+import { searchKnowledge } from "../src/services/knowledge.js";
+import { FakeEmbedder } from "../src/knowledge/embedder.js";
 import {
   parseArtifactBlock,
   formatArtifactBlock,
@@ -13,7 +15,10 @@ import {
   type ArtifactBlock,
 } from "../src/services/preflight.js";
 
-process.env.EMBED_PROVIDER = "fake";
+const emb = new FakeEmbedder(1024);
+
+// Bind searchKnowledge to the fake embedder for test injection
+const boundSearch: typeof searchKnowledge = (query, opts) => searchKnowledge(query, opts, emb);
 
 const ZAP: ArtifactBlock = {
   artifact: "zap",
@@ -62,8 +67,8 @@ test("confirmObjection: request missing trigger -> null", () => {
 
 test("preflight fires objection after a matching decision is recorded, writes evidence comment", async () => {
   const ctx = await seed();
-  await recordDecision(ZAP, "new", ctx);
-  const res = await preflightDuplicateCheck(ZAP, ctx);
+  await recordDecision(ZAP, "new", ctx, { emb });
+  const res = await preflightDuplicateCheck(ZAP, ctx, { search: boundSearch });
   expect(res.objection).not.toBeNull();
   if (res.objection) {
     expect(res.objection.candidateId).toBe("12345");
@@ -76,9 +81,9 @@ test("preflight fires objection after a matching decision is recorded, writes ev
 
 test("preflight stays silent on near-match (table differs), no evidence comment", async () => {
   const ctx = await seed();
-  await recordDecision(ZAP, "new", ctx);
+  await recordDecision(ZAP, "new", ctx, { emb });
   const req: ArtifactBlock = { ...ZAP, id: "req", table: "Contacts", target: undefined, channel: undefined };
-  const res = await preflightDuplicateCheck(req, ctx);
+  const res = await preflightDuplicateCheck(req, ctx, { search: boundSearch });
   expect(res.objection).toBeNull();
   const comments = await listComments(ctx.ticketId);
   expect(comments.some((c) => c.kind === "evidence")).toBe(false);
@@ -86,7 +91,7 @@ test("preflight stays silent on near-match (table differs), no evidence comment"
 
 test("recordDecision writes a decision comment and a searchable ticket note", async () => {
   const ctx = await seed();
-  const { commentId, noteId } = await recordDecision(ZAP, "extend", ctx);
+  const { commentId, noteId } = await recordDecision(ZAP, "extend", ctx, { emb });
   expect(commentId).toBeTruthy();
   expect(noteId).toBeTruthy();
   const comments = await listComments(ctx.ticketId);

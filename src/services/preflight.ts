@@ -1,6 +1,10 @@
+import { and, eq, like, isNull, sql as dsql } from "drizzle-orm";
+import { db } from "../db/client.js";
+import { embeddings, notes, tickets } from "../db/schema.js";
 import { addComment } from "./comments.js";
 import { saveNote } from "./notes.js";
 import { searchKnowledge } from "./knowledge.js";
+import type { Embedder } from "../knowledge/embedder.js";
 
 export type ArtifactBlock = {
   artifact: string;
@@ -58,6 +62,28 @@ function queryFor(request: ArtifactBlock): string {
     .join(" ");
 }
 
+// Exact-match lookup: find note embeddings containing the literal trigger string,
+// scoped to the project. Returns content chunks. This guarantees retrieval of
+// duplicates when the semantic search may rank them below top-k. (Reviewer concern:
+// reliable retrieval, not hopeful retrieval.)
+async function findByTrigger(trigger: string, projectId: string): Promise<{ content: string }[]> {
+  // Join embeddings -> notes -> tickets to scope to project's ticket notes
+  const rows = await db
+    .select({ content: embeddings.content })
+    .from(embeddings)
+    .innerJoin(notes, and(eq(embeddings.sourceKind, "note"), eq(embeddings.sourceRef, dsql`${notes.id}::text`)))
+    .innerJoin(tickets, and(eq(notes.scope, "ticket"), eq(notes.refId, tickets.id)))
+    .where(
+      and(
+        eq(tickets.projectId, projectId),
+        isNull(notes.deletedAt),
+        like(embeddings.content, `%"trigger": "${trigger}"%`),
+      ),
+    )
+    .limit(10);
+  return rows;
+}
+
 function evidenceBody(request: ArtifactBlock, candidate: ArtifactBlock, matched: string[]): string {
   const resources = matched
     .filter((f) => f !== "trigger")
@@ -73,16 +99,35 @@ export type PreflightResult =
 
 // Runs BEFORE any mutation. Never blocks. If a duplicate is confirmed, writes an
 // `evidence` comment citing the artifact and returns it; caller shows it, human decides.
+// Two-pass retrieval: exact-match on trigger (reliable), then semantic (fallback).
 export async function preflightDuplicateCheck(
   request: ArtifactBlock,
   ctx: { ticketId: string; projectId: string; actorId: string },
   deps: {
     search?: typeof searchKnowledge;
     add?: typeof addComment;
+    findTrigger?: typeof findByTrigger;
   } = {},
 ): Promise<PreflightResult> {
   const search = deps.search ?? searchKnowledge;
   const add = deps.add ?? addComment;
+  const find = deps.findTrigger ?? findByTrigger;
+
+  // Pass 1: exact-match on trigger — guarantees retrieval when present
+  if (request.trigger) {
+    const exact = await find(request.trigger, ctx.projectId);
+    for (const hit of exact) {
+      const candidate = parseArtifactBlock(hit.content);
+      if (!candidate) continue;
+      const matched = confirmObjection(request, candidate);
+      if (!matched) continue;
+      const body = evidenceBody(request, candidate, matched);
+      const comment = await add(ctx.actorId, ctx.ticketId, body, "evidence");
+      return { objection: { candidateId: candidate.id, matched, body, commentId: comment.id } };
+    }
+  }
+
+  // Pass 2: semantic search — may find duplicates indexed differently
   const hits = await search(queryFor(request), { projectId: ctx.projectId, caller: "preflight", limit: 5 });
   for (const hit of hits) {
     const candidate = parseArtifactBlock(hit.content);
@@ -102,7 +147,7 @@ export async function recordDecision(
   block: ArtifactBlock,
   choice: string,
   ctx: { ticketId: string; projectId: string; actorId: string; evidenceCommentId?: string },
-  deps: { add?: typeof addComment; save?: typeof saveNote } = {},
+  deps: { add?: typeof addComment; save?: typeof saveNote; emb?: Embedder } = {},
 ): Promise<{ commentId: string; noteId: string }> {
   const add = deps.add ?? addComment;
   const save = deps.save ?? saveNote;
@@ -110,6 +155,6 @@ export async function recordDecision(
   const sawLine = ctx.evidenceCommentId ? `\nEvidence seen: comment ${ctx.evidenceCommentId}.` : "";
   const body = `Chose: ${choice} ${block.artifact} ${block.id}.${sawLine}\n\n${formatArtifactBlock(decided)}`;
   const comment = await add(ctx.actorId, ctx.ticketId, body, "decision");
-  const note = await save(ctx.actorId, { body, scope: "ticket", refId: ctx.ticketId, title: `decision ${block.artifact} ${block.id}` });
+  const note = await save(ctx.actorId, { body, scope: "ticket", refId: ctx.ticketId, title: `decision ${block.artifact} ${block.id}` }, deps.emb);
   return { commentId: comment.id, noteId: note.id };
 }

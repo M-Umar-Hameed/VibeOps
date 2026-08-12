@@ -70,7 +70,7 @@ Recipe {
 }
 ```
 
-Storage: a note with `kind:"recipe"` (free-text kind — same no-migration trick as Epic A `evidence`/`decision`, `src/db/schema.ts:47`, widen union at `src/services/comments.ts:12`). Body carries the fenced `Recipe` JSON. Discoverable via `searchKnowledge` (Epic A reuse path, `src/services/knowledge.ts:193`). `run_recipe(name, params)` loads the note, resolves each selector, executes as a batch — **no model call** when all selectors resolve.
+Storage: a **note** with title convention `[recipe] <name>` (e.g., `[recipe] jira.file_bug`). Notes already have `title` and `scope` columns (`src/db/schema.ts:68-79`) — no migration required. Body carries the fenced `Recipe` JSON. Discoverable via `searchKnowledge` (Epic A reuse path, `src/services/knowledge.ts:194`). `run_recipe(name, params)` loads the note by title prefix match, resolves each selector, executes as a batch — **no model call** when all selectors resolve.
 
 ### 1.4 Stale-recipe detection + fail-closed fallback (required deliverable detail)
 
@@ -91,7 +91,7 @@ IF matches.length  > 1  -> UNRESOLVED (ambiguous; never pick first)
 
 On **any** UNRESOLVED step:
 1. Abort the recipe immediately. Because execution is stop-on-first-failure and resolution happens per-step before its write, **no partial writes occur past the stale point**.
-2. Mark the recipe note `status:"suspect"` (advisory, mirrors Epic B stale-manifest "suspect" — never auto-delete, never auto-rewrite).
+2. Mark the recipe `status:"suspect"` in the note body (advisory, mirrors Epic B stale-manifest "suspect" — never auto-delete, never auto-rewrite).
 3. Fall back to the **open-ended path** (snapshot → reason → act via batched actions). That path, on success, writes a **new** recipe at `version + 1`, `status:"active"`, superseding the suspect one by version. Old one retained for audit.
 
 Identity mismatch mid-recipe (§1.6) is a different failure: **hard stop, not suspect** — the recipe is fine, the wrong account is loaded.
@@ -154,13 +154,13 @@ Multiple Chromium installs, profiles, and connected extension instances coexist.
 ```
 ConnectedInstance { instanceId, browserChannel, profileId, profileLabel, connectedAt }
 ```
-Each extension instance registers on connect (transport mirrors the agent relay, `src/relay/dispatch.ts`, `src/relay/runner.ts` — a WebSocket per instance; reuse, don't invent). A session selects a target `instanceId`; every `ActionBatch`/`run_recipe` carries it. Profile selection sets **which tenant's logged-in session** is used; §1.6 verifies the page actually shows that tenant.
+Each extension instance registers on connect. **Extension transport is new** — the relay (`src/relay/dispatch.ts`, `src/relay/runner.ts`) spawns CLI child processes and reads stdout; it has no WebSocket. The relay's per-instance dispatch and registration **shape** is the precedent (one runner per agent, explicit selection), but the actual socket transport for browser extension connections is implemented fresh in Epic D. A session selects a target `instanceId`; every `ActionBatch`/`run_recipe` carries it. Profile selection sets **which tenant's logged-in session** is used; §1.6 verifies the page actually shows that tenant.
 
 ### 1.9 Reuse / new summary (state in doc)
 
-| Reused | `notes`+`embeddings`+`saveNote`+`searchKnowledge` (recipes, `src/services/knowledge.ts:193`), `comments.kind` free-text (`src/db/schema.ts:47`), global settings (`src/services/settings.ts`), relay transport (`src/relay/dispatch.ts`), Epic B `path`/`pathReason` artifact fields |
-| New (no migration) | comment/note kind literal `"recipe"`; settings key `browserGrants`; checked-in identity-probe manifest; two `pathReason` literals `recipe_stale_fell_back`, `identity_mismatch` |
-| Deferred to Epic D | actual content-script executor, chrome AX extraction impl, relay wiring code, management UI |
+| Reused | `notes` table with `title`/`scope` columns (`src/db/schema.ts:68-79`), `embeddings`+`searchKnowledge` (`src/services/knowledge.ts:194`), global settings (`src/services/settings.ts`), relay dispatch shape (`src/relay/dispatch.ts`), Epic B `path`/`pathReason` artifact fields |
+| New (no migration) | notes title convention `[recipe]` for recipe discovery; settings key `browserGrants`; checked-in identity-probe manifest; two `pathReason` literals `recipe_stale_fell_back`, `identity_mismatch`; extension WebSocket transport (new, not reused) |
+| Deferred to Epic D | actual content-script executor, chrome AX extraction impl, WebSocket transport implementation, management UI |
 
 Writes into Epic A/B foundation.
 References:

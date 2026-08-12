@@ -17,9 +17,19 @@ export default async function setup() {
     // and ensureTemplate below migrates the SLICE TEMPLATE, not this one. On a
     // developer machine the database was migrated long ago so it never showed;
     // on a fresh CI database every test using the shared db import failed with
-    // relation "actors" does not exist. Idempotent — drizzle tracks what it ran.
-    await sql`CREATE EXTENSION IF NOT EXISTS vector`;
-    await migrate(drizzle(sql), { migrationsFolder: "drizzle" });
+    // relation "actors" does not exist.
+    //
+    // Only provision an EMPTY database. Existing developer databases were set up
+    // before drizzle kept its __drizzle_migrations bookkeeping here, so drizzle
+    // considers nothing applied and replays 0000, which dies on CREATE TYPE
+    // actor_kind (42710, already exists) and takes the whole suite down with it.
+    // Nothing migrated those databases before this either, so skipping matches
+    // the behaviour they already had.
+    const [provisioned] = await sql`SELECT to_regclass('public.actors') IS NOT NULL AS ok`;
+    if (!provisioned?.ok) {
+      await sql`CREATE EXTENSION IF NOT EXISTS vector`;
+      await migrate(drizzle(sql), { migrationsFolder: "drizzle" });
+    }
   } catch (e) {
     console.error("global-setup: migrating the test database failed:", (e as Error).message);
     throw e;

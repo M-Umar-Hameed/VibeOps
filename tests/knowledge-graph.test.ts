@@ -122,24 +122,39 @@ test("knowledgeGraph edges only reference returned nodes", async () => {
 
 test("knowledgeGraph() no-project fair-shares budget across all four kinds", async () => {
   const stamp = Date.now();
-  for (let i = 0; i < 300; i++) {
-    await upsertSourceDoc("session", `fs-sess-${i}-${stamp}`, `session content ${i}`, emb);
+  const refs: string[] = [];
+  // 40 session refs (the high-volume kind) vs 10 each of vault/note/repo. Scoped
+  // to exactly these 70 refs so the result is immune to rows other files write
+  // into the shared table mid-run — the source of the old "fails only under load".
+  for (let i = 0; i < 40; i++) {
+    const r = `fs-sess-${i}-${stamp}`;
+    await upsertSourceDoc("session", r, `session content ${i}`, emb);
+    refs.push(r);
   }
   for (let i = 0; i < 10; i++) {
-    await upsertSourceDoc("vault", `fs-vault-${i}-${stamp}.md`, `vault content ${i}`, emb);
-    await upsertSourceDoc("note", `fs-note-${i}-${stamp}`, `note content ${i}`, emb);
-    await upsertSourceDoc("repo", `fs-repo-${i}-${stamp}.md`, `repo content ${i}`, emb);
+    const rv = `fs-vault-${i}-${stamp}.md`;
+    const rn = `fs-note-${i}-${stamp}`;
+    const rr = `fs-repo-${i}-${stamp}.md`;
+    await upsertSourceDoc("vault", rv, `vault content ${i}`, emb);
+    await upsertSourceDoc("note", rn, `note content ${i}`, emb);
+    await upsertSourceDoc("repo", rr, `repo content ${i}`, emb);
+    refs.push(rv, rn, rr);
   }
-  const res = await knowledgeGraph(60);
-  const kinds = new Set(res.nodes.map((n) => n.kind));
-  expect(kinds.has("session")).toBe(true);
-  expect(kinds.has("vault")).toBe(true);
-  expect(kinds.has("note")).toBe(true);
-  expect(kinds.has("repo")).toBe(true);
+  const res = await knowledgeGraph(60, undefined, refs);
+  const byKind = new Map<string, number>();
+  for (const n of res.nodes) byKind.set(n.kind, (byKind.get(n.kind) ?? 0) + 1);
+  // Round-robin admits every minority kind's full seed (10/10/10) BEFORE session
+  // backfills to the 60 cap (30), leaving 10 session refs unused. The 60-node
+  // total with session capped at 30 while all four kinds survive is what proves
+  // fair-share — and it holds regardless of what the shared table accumulated.
+  expect(byKind.get("vault")).toBe(10);
+  expect(byKind.get("note")).toBe(10);
+  expect(byKind.get("repo")).toBe(10);
+  expect(byKind.get("session")).toBe(30);
   expect(res.nodes.length).toBe(60);
   const ids = new Set(res.nodes.map((n) => n.id));
   for (const e of res.edges) {
     expect(ids.has(e.a)).toBe(true);
     expect(ids.has(e.b)).toBe(true);
   }
-}, 30000);
+});

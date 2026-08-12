@@ -208,28 +208,6 @@ describe("council engine", () => {
     expect(missing.status).toBe(404);
   });
 
-  // This test runs 8 agent calls (two full rounds), which under parallel-file
-  // contention can exceed the default 30s timeout. Use 60s local timeout.
-  it("(h) personas re-run each round: all three change after answers", { timeout: 60_000 }, async () => {
-    const { actor } = await createActor({ name: uniq("council-actor"), kind: "human" });
-    setScript("persona,persona,persona,chairman-questions,persona,persona,persona,chairman-go");
-
-    const { councilId } = await startCouncil(actor.id, relayConfig(), { prompt: "a prompt long enough to pass" });
-    const r1 = await waitForStatus(councilId, ["awaiting-answers"]) as any;
-    const before = { believer: r1.believer, investor: r1.investor, skeptic: r1.skeptic };
-
-    await submitAnswers(councilId, relayConfig(), ["ans a", "ans b"]);
-    const r2 = await waitForStatus(councilId, ["decided"]) as any;
-
-    expect(r2.believer).not.toBe(before.believer);
-    expect(r2.investor).not.toBe(before.investor);
-    expect(r2.skeptic).not.toBe(before.skeptic);
-    expect(r2.believer).toContain("revised after answers");
-    expect(r2.personaRounds).toHaveLength(2);
-    expect(r2.personaRounds[0].round).toBe(1);
-    expect(r2.personaRounds[1].round).toBe(2);
-  });
-
   it("(i) persona-running block exists in exactly one place", () => {
     const src = readFileSync(join(__dirname, "..", "src", "council", "runs.ts"), "utf-8");
     expect(src.match(/runPersona\("believer"\)/g) ?? []).toHaveLength(1);

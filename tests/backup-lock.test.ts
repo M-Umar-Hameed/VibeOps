@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -49,15 +49,18 @@ test("backup CLI proceeds when postmaster.pid has stale PID", { timeout: 30_000 
   rmSync(home, { recursive: true, force: true });
 });
 
-test("backup CLI proceeds when no postmaster.pid exists", { timeout: 30_000 }, async () => {
+test("backup CLI writes a real export when no postmaster.pid exists", { timeout: 60_000 }, async () => {
   const home = mkdtempSync(join(tmpdir(), "vibeops-lock-"));
   const dataDir = join(home, ".vibeops", "data");
   mkdirSync(dataDir, { recursive: true });
-  // No postmaster.pid
-
+  // No postmaster.pid: the CLI must bootstrap a fresh embedded DB and SUCCEED.
+  // Asserting only that the lock message is absent would pass even if the guard
+  // blocked every backup, so assert the export actually lands.
   const { code, stderr } = await runBackupCli(home, ["backup"]);
-  // Will fail for other reasons (no DB), but NOT because of lock check.
   expect(stderr).not.toContain("Another process");
+  expect(code).toBe(0);
+  const written = readdirSync(join(home, ".vibeops", "backups"));
+  expect(written.some((f) => f.startsWith("export-") && f.endsWith(".json"))).toBe(true);
 
   rmSync(home, { recursive: true, force: true });
 });

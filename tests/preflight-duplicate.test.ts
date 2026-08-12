@@ -1,6 +1,7 @@
-import { expect, test } from "vitest";
+import { afterEach, expect, test } from "vitest";
+import { like, sql as dsql } from "drizzle-orm";
 import { db } from "../src/db/client.js";
-import { projects } from "../src/db/schema.js";
+import { embeddings, notes, projects } from "../src/db/schema.js";
 import { createActor } from "../src/services/actors.js";
 import { createTicket } from "../src/services/tickets.js";
 import { listComments } from "../src/services/comments.js";
@@ -16,6 +17,19 @@ import {
 } from "../src/services/preflight.js";
 
 const emb = new FakeEmbedder(1024);
+
+// recordDecision indexes a note per call, and every indexed row competes for the
+// top-k of every other file's search. Left behind, they pushed knowledge-search's
+// two seeded files out of its limit-20 window and failed it on master. Files run
+// in parallel against one database, so a file that adds rows has to remove them.
+afterEach(async () => {
+  // Drop the embeddings, not the notes: events rows reference notes by FK. Marking
+  // them indexed stops the sweeper re-embedding what we just removed.
+  const stale = db.select({ id: dsql<string>`${notes.id}::text` }).from(notes)
+    .where(like(notes.title, "decision %"));
+  await db.delete(embeddings).where(dsql`${embeddings.sourceKind} = 'note' AND ${embeddings.sourceRef} IN ${stale}`);
+  await db.update(notes).set({ indexed: true }).where(like(notes.title, "decision %"));
+});
 
 // Bind searchKnowledge to the fake embedder for test injection
 const boundSearch: typeof searchKnowledge = (query, opts) => searchKnowledge(query, opts, emb);

@@ -93,6 +93,27 @@ function setScript(script: string, write?: boolean): void {
   else delete process.env.FAKE_WRITE;
 }
 
+async function waitForStage(runId: string, stage: string, timeoutMs = 5000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (getRunOutput(runId, 0)?.stage === stage) return;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  throw new Error(`timed out waiting for stage "${stage}"`);
+}
+
+// Persistence is fire-and-forget (settle() doesn't await the insert), so the
+// row can land a tick or two after awaitRun resolves. Poll instead of racing.
+async function waitForPersistedStatus(runId: string, timeoutMs = 5000) {
+  const start = Date.now();
+  for (;;) {
+    const [row] = await db.select().from(forgeRuns).where(eq(forgeRuns.id, runId));
+    if (row && row.status !== "running") return row;
+    if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for persisted run ${runId}`);
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
 describe("forge run resume", () => {
   it("startPipeline inserts running row, markInterruptedRuns flips it", async () => {
     const { actorId, apiKey, ticket } = await seedTicket("Interrupted path via pipeline");
@@ -327,14 +348,19 @@ describe("forge run resume", () => {
       ticketId: ticket.id, planAgent: "auto", workAgent: "auto", reviewAgent: "auto"
     });
 
-    // Wait for work stage to start and write partial files
-    await new Promise(r => setTimeout(r, 1000));
+    // Wait for work stage to start and write partial files.
+    // Fixed sleeps flake under CPU contention; poll stage instead.
+    await waitForStage(runId, "work");
 
     // Simulate process kill: stop the run, wait for it to settle, then UPDATE
     // the DB row to "interrupted" as if it hadn't settled cleanly (simulating
     // what markInterruptedRuns does on boot for runs with null finishedAt).
     await stopRun(runId);
     await awaitRun(runId);
+    // settle() persists the terminal status fire-and-forget (runs.ts:543). Wait for
+    // that write to land before overwriting to "interrupted", else the late insert
+    // clobbers the update back to the settled status and listInterruptedRuns drops it.
+    await waitForPersistedStatus(runId);
 
     // Overwrite the run to look like a crash (status=interrupted) rather than clean stop
     await db.update(forgeRuns)

@@ -52,11 +52,18 @@ afterEach(() => {
   rmSync(sensitiveDir, { recursive: true, force: true });
 });
 
-function config(): RelayConfig {
+// Pass FAKE_* vars via agent.env to avoid env-var contamination from parallel
+// test files that also use fake-agent.mjs with different scripts.
+function config(opts: { script: string; counterFile: string; writeAbs?: string }): RelayConfig {
+  const env: Record<string, string> = {
+    FAKE_SCRIPT: opts.script,
+    FAKE_COUNTER_FILE: opts.counterFile,
+  };
+  if (opts.writeAbs) env.FAKE_WRITE_ABS = opts.writeAbs;
   return {
     workdir,
     agents: {
-      fake: { cmd: [process.execPath, FAKE_AGENT, "{prompt}"], roles: ["plan", "work", "review"] },
+      fake: { cmd: [process.execPath, FAKE_AGENT, "{prompt}"], roles: ["plan", "work", "review"], env },
     },
   };
 }
@@ -67,12 +74,12 @@ describe("forge sandbox-escape sentinel (integration through runs.ts)", () => {
     // Stand in for %LOCALAPPDATA%\\VibeOps\\resources\\server\\server.mjs
     const installed = join(sensitiveDir, "server.mjs");
     writeFileSync(installed, "GOOD SERVER PAYLOAD\n");
-    process.env.FAKE_SCRIPT = "plan,work,review-pass";
-    process.env.FAKE_COUNTER_FILE = join(sensitiveDir, "ctr.txt");
-    process.env.FAKE_WRITE_ABS = installed; // work agent escapes and overwrites it
+    const counterFile = join(sensitiveDir, "ctr.txt");
 
     await withSetting("forge.sensitivePaths", JSON.stringify([installed]), async () => {
-      const { runId } = await startPipeline(actorId, config(), {
+      const { runId } = await startPipeline(actorId, config({
+        script: "plan,work,review-pass", counterFile, writeAbs: installed
+      }), {
         ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
       });
       await awaitRun(runId);
@@ -89,12 +96,13 @@ describe("forge sandbox-escape sentinel (integration through runs.ts)", () => {
     const { actorId, ticket } = await seedTicket("sentinel clean");
     const installed = join(sensitiveDir, "server.mjs");
     writeFileSync(installed, "GOOD SERVER PAYLOAD\n");
-    process.env.FAKE_SCRIPT = "plan,work,review-pass";
-    process.env.FAKE_COUNTER_FILE = join(sensitiveDir, "ctr.txt");
-    // no FAKE_WRITE_ABS -> no escape
+    const counterFile = join(sensitiveDir, "ctr.txt");
+    // no writeAbs -> no escape
 
     await withSetting("forge.sensitivePaths", JSON.stringify([installed]), async () => {
-      const { runId } = await startPipeline(actorId, config(), {
+      const { runId } = await startPipeline(actorId, config({
+        script: "plan,work,review-pass", counterFile
+      }), {
         ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
       });
       await awaitRun(runId);
@@ -110,12 +118,12 @@ describe("forge sandbox-escape sentinel (integration through runs.ts)", () => {
     // Stand in for ~/.vibeops/relay.json (the argv source for later runs).
     const relay = join(sensitiveDir, "relay.json");
     writeFileSync(relay, "GOOD RELAY CONFIG\n");
-    process.env.FAKE_SCRIPT = "plan,work,review-pass";
-    process.env.FAKE_COUNTER_FILE = join(sensitiveDir, "ctr.txt");
-    process.env.FAKE_WRITE_ABS = relay; // work agent escapes and rewrites relay.json
+    const counterFile = join(sensitiveDir, "ctr.txt");
 
     await withSetting("forge.sensitivePaths", JSON.stringify([relay]), async () => {
-      const { runId } = await startPipeline(actorId, config(), {
+      const { runId } = await startPipeline(actorId, config({
+        script: "plan,work,review-pass", counterFile, writeAbs: relay
+      }), {
         ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
       });
       await awaitRun(runId);

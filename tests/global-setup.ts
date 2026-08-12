@@ -1,4 +1,6 @@
 import postgres from "postgres";
+import { drizzle } from "drizzle-orm/postgres-js";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { PG_BASE, ensureTemplate } from "../src/runtime/slice.js";
 
 // The :5433 Postgres is test-dedicated. Embedding/note rows accumulate across
@@ -9,6 +11,19 @@ import { PG_BASE, ensureTemplate } from "../src/runtime/slice.js";
 export default async function setup() {
   const url = process.env.DATABASE_URL ?? "postgres://tickets:tickets@localhost:5433/tickets";
   const sql = postgres(url, { max: 1 });
+  try {
+    // Nothing else migrates this database. src/db/client.ts migrates only the
+    // embedded PGlite lane; with DATABASE_URL set it just wraps the connection,
+    // and ensureTemplate below migrates the SLICE TEMPLATE, not this one. On a
+    // developer machine the database was migrated long ago so it never showed;
+    // on a fresh CI database every test using the shared db import failed with
+    // relation "actors" does not exist. Idempotent — drizzle tracks what it ran.
+    await sql`CREATE EXTENSION IF NOT EXISTS vector`;
+    await migrate(drizzle(sql), { migrationsFolder: "drizzle" });
+  } catch (e) {
+    console.error("global-setup: migrating the test database failed:", (e as Error).message);
+    throw e;
+  }
   try {
     await sql`truncate table embeddings`;
     await sql`update notes set indexed = true where indexed = false`; // stop sweeps re-embedding stale bodies

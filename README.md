@@ -87,6 +87,33 @@ pie title Forge Run Outcomes
 
 **Honest observability.** The Token Usage tab shows each coding agent's signed-in account and its real token usage read from local session logs — and explicitly tells you what VibeOps cannot see (provider-side quotas and reset limits). No fabricated dashboards.
 
+## What it costs, measured
+
+VibeOps is built through its own pipeline, so these are its own numbers rather than a
+demo project's.
+
+- **173 tickets** promoted through plan -> sandboxed work -> review -> human promote.
+- **5 files, +217/-23 lines** changed per promoted ticket, on average.
+- **125 tickets reached review; 50 of them (40%) did not pass the first one** and went
+  back for rework, across 74 rework rounds total.
+
+Read that 40% carefully, because it is the number most likely to be oversold. It is the
+rate at which the review gate sent work back — not a proven defect count, and not a
+controlled comparison against an unsupervised agent. A model reviewed the diff and asked
+for changes; sometimes it was wrong. What it does show is that four times in ten, the
+first thing the pipeline produced was not the thing that got merged.
+
+**Token cost is deliberately absent, and that is the honest answer.** Until 2026-08-12
+this project was not measuring it. Headless CLI agents report no token counts, so usage
+was estimated from the length of the model's *output* alone — ignoring the prompt, which
+on a plan stage carries the ticket, the retrieved knowledge and the repo context and
+dominates the total. The same figure fed the per-ticket and per-day budget caps, so those
+caps were enforcing against a number that did not mean anything. The estimate now counts
+the prompt, and the SDK lane's token count now includes cache reads it was previously
+dropping. Genuine per-call token and dollar figures still exist only on the lane whose
+API reports them, so a with/without comparison is not published here yet rather than
+guessed at.
+
 ## The desktop app, in practice
 
 What a day in the app looks like — every feature below is shipped and test-covered:

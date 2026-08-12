@@ -127,6 +127,7 @@ function activeRuns(): Run[] {
 // ai_usage_logs row (estimated tokens from output length). Never throws.
 async function track(
   actorId: string, ticketId: string, role: Stage, agentName: string,
+  promptChars: number,
   fn: () => Promise<AgentResult>,
 ): Promise<AgentResult> {
   const sessionId = await startAgentSession(`${role}:${agentName}`);
@@ -135,7 +136,7 @@ async function track(
   await endAgentSession(sessionId, res.ok);
   await logAgentUse({
     actorId, agent: agentName, role, ticketId,
-    outputChars: res.output.length, durationMs: Date.now() - startedAt, ok: res.ok,
+    promptChars, outputChars: res.output.length, durationMs: Date.now() - startedAt, ok: res.ok,
     tokens: res.usage?.tokens, cost: res.usage?.cost,
   });
   return res;
@@ -432,8 +433,9 @@ async function pipeline(
   if (planRegenerated) {
     append(run, `=== FORGE plan (${run.agents.plan}) ===\n`);
     const knowledge = await getKnowledgeSafe(ticket.title, ticket.projectId);
-    const res = await track(actorId, ticket.id, "plan", run.agents.plan, () => runAgent(
-      agents.plan, composePlanPrompt({ ticket, knowledge }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra, workdir, onData,
+    const planPrompt = composePlanPrompt({ ticket, knowledge }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra;
+    const res = await track(actorId, ticket.id, "plan", run.agents.plan, planPrompt.length, () => runAgent(
+      agents.plan, planPrompt, workdir, onData,
       (child) => { run.child = child; },
     ));
     run.child = undefined;
@@ -472,7 +474,12 @@ async function pipeline(
   const lastReview = [...(await listComments(ticket.id))].reverse().find((c) => c.kind === "review");
   const findings = lastReview ? `\n\nPrevious review findings (address ALL of these):\n${fenceUntrusted("prior-review-findings", lastReview.body)}` : "";
   const workPrompt = composeWorkPrompt({ ticket, plan, knowledge, workdir: sandbox })
-    + findings + NARRATION + "\n\nDo NOT run git commit; the supervisor commits for you." + lessons + roleStyle("work", styleSetting) + extra;
+    // No lessons clause here: A/B'd 2026-08-12 (docs/findings/2026-08-12-lessons-clause-ab.md).
+    // On work prompts the doc measured inert - identical output on a control task, same
+    // defect rate on a task its own "test isolation" line targets. Most of its lines
+    // address the supervisor ("Supervisor sweeps before planning", "REPORT:/VERDICT:"),
+    // which a worker cannot act on. Still injected at the plan stage, which was not tested.
+    + findings + NARRATION + "\n\nDo NOT run git commit; the supervisor commits for you." + roleStyle("work", styleSetting) + extra;
   // Sandbox-escape sentinel: snapshot known-sensitive files OUTSIDE the sandbox
   // before the work stage runs. Bash in a work lane is not OS-jailed, so a diff
   // gate (which only sees the worktree) cannot catch a write to the installed
@@ -480,7 +487,7 @@ async function pipeline(
   // into a reverted, visible, run-failing one. See docs/AGENT_CLIS.md.
   const depsBaseline = snapshotDeps(workdir);
   const sentinelSnaps = snapshotSensitive(resolveSensitivePaths(await getSetting("forge.sensitivePaths")));
-  const workRes = await track(actorId, ticket.id, "work", run.agents.work, () =>
+  const workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
     runAgent(agents.work, workPrompt, sandbox, onData,
       (child) => { run.child = child; }, (abort) => { run.abort = abort; },
       modelOf(run.agents.work)));
@@ -593,9 +600,10 @@ async function reviewStage(
 
   const diff = await sandboxDiff(workdir, ticket.id);
   const stat = await sandboxDiffSummary(workdir, ticket.id);
-  const reviewRes = await track(actorId, ticket.id, "review", run.agents.review, () => runAgent(
+  const reviewPrompt = composeReviewPrompt({ ticket, plan, report: reportOutput, diff: reviewDiffPayload(diff, stat), operatorNotes: run.operatorNotes, checks: checksText, protectedViolation: protectedFinding, amendments }) + roleStyle("review", styleSetting);
+  const reviewRes = await track(actorId, ticket.id, "review", run.agents.review, reviewPrompt.length, () => runAgent(
     reviewAgent,
-    composeReviewPrompt({ ticket, plan, report: reportOutput, diff: reviewDiffPayload(diff, stat), operatorNotes: run.operatorNotes, checks: checksText, protectedViolation: protectedFinding, amendments }) + roleStyle("review", styleSetting),
+    reviewPrompt,
     workdir, onData,
     (child) => { run.child = child; },
   ));

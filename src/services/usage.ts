@@ -9,6 +9,7 @@ export type UsageEntry = {
   agent: string;
   role: string;
   ticketId?: string;
+  promptChars?: number;
   outputChars: number;
   durationMs: number;
   ok: boolean;
@@ -16,12 +17,20 @@ export type UsageEntry = {
   cost?: number;   // real cost ×1e6 (micro-dollars); 0 when unknown
 };
 
+// Headless CLIs report no token counts, so this stays an estimate — but it must include
+// the prompt. Output alone missed the dominant term (a plan prompt carries the ticket,
+// knowledge and repo context), which made the figure meaningless and silently
+// under-enforced the budget caps in forge/runs.ts that read this column.
+export function estimateTokens(promptChars = 0, outputChars = 0): number {
+  return Math.round((promptChars + outputChars) / 4);
+}
+
 export async function logAgentUse(entry: UsageEntry): Promise<void> {
   try {
     await db.insert(aiUsageLogs).values({
       provider: entry.agent,
       model: entry.role,
-      tokens: entry.tokens ?? Math.round(entry.outputChars / 4), // estimated: headless CLIs report no token counts
+      tokens: entry.tokens ?? estimateTokens(entry.promptChars, entry.outputChars),
       cost: entry.cost ?? 0,
       ticketId: entry.ticketId,
       actorId: entry.actorId,

@@ -95,7 +95,8 @@ export async function runAgentSdk(
       } else if (message.type === "result") {
         ok = message.subtype === "success" && !message.is_error;
         const u = message.usage;
-        const tokens = (u?.input_tokens ?? 0) + (u?.output_tokens ?? 0);
+        const tokens = (u?.input_tokens ?? 0) + (u?.output_tokens ?? 0)
+          + (u?.cache_creation_input_tokens ?? 0) + (u?.cache_read_input_tokens ?? 0);
         usage = { tokens, cost: Math.round((message.total_cost_usd ?? 0) * 1e6) };
         if (message.subtype !== "success") append(`\n[forge: sdk result ${message.subtype}]\n`);
       }

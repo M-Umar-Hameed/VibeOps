@@ -36,7 +36,13 @@ function ensureServerStopped(): void {
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [cmd, arg] = process.argv.slice(2);
   ensureServerStopped();
-  const { db, closeDb } = await import("./client.js");
+  const { db, closeDb, embeddedDbError } = await import("./client.js");
+
+  if (embeddedDbError) {
+    console.error(embeddedDbError.message);
+    process.exit(1);
+  }
+
   const backup = await import("../services/backup.js");
 
   if (cmd === "backup") {

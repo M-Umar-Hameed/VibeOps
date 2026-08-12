@@ -1,7 +1,7 @@
 import { existsSync, writeFileSync, readFileSync, unlinkSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { vibeopsHome } from "../runtime/home.js";
-import { backupDir, countDump, countTables, type Db, type Dump } from "../services/backup.js";
+import type { Db, Dump } from "../services/backup.js";
 
 export function recoveryMarkerPath(): string {
   return join(vibeopsHome(), ".vibeops", "recovery-pending");
@@ -26,6 +26,10 @@ function newestExport(dir: string): string | null {
 export async function reportAndClearRecovery(db: Db): Promise<string | null> {
   const marker = recoveryMarkerPath();
   if (!existsSync(marker)) return null;
+  // Imported lazily: services/backup.js imports db from client.js, and client.js
+  // dynamically imports THIS module from inside makeDb() on the corrupt path. A
+  // static import there deadlocks ESM on client.js unsettled top-level await.
+  const { backupDir, countDump, countTables } = await import("../services/backup.js");
   const newest = newestExport(backupDir());
   let report: string;
   if (!newest) {

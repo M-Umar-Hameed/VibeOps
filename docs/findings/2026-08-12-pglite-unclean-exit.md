@@ -135,7 +135,4 @@ default is conservative but harmless.
 
 - `tests/helpers/hard-kill-repro.mts` — child process for kill testing
 - `tests/hard-kill-repro.test.ts` — automated repro confirming WAL replay survives hard kill
-- `tests/helpers/concurrent-open-repro.mts` — child for concurrent access testing
-- `tests/helpers/concurrent-open-writer.mts` — child that writes in a loop
-- `tests/concurrent-open-repro.test.ts` — concurrent open test (both processes can open)
-- `tests/concurrent-write-corruption.test.ts` — concurrent writers cause `Aborted()` on reopen
+- `tests/backup-lock.test.ts` — proves backup CLI refuses when server holds the data dir

@@ -78,6 +78,30 @@ test("composeReviewPrompt without amendments has no amendments section (no weake
   expect(prompt).not.toContain("AUTHORITATIVE PLAN AMENDMENTS");
 });
 
+test("composeReviewPrompt with citations includes DOC CITATION OBLIGATION and quoted evidence", () => {
+  const prompt = composeReviewPrompt({
+    ticket: { title: "Add design doc" },
+    plan: "1. Write design doc",
+    report: "REPORT: done",
+    diff: "diff --git a/docs/spec.md b/docs/spec.md",
+    citations: "src/a.ts:5:\nfoo",
+  });
+  expect(prompt).toContain("DOC CITATION OBLIGATION");
+  expect(prompt).toContain("may NOT return VERDICT: PASS");
+  expect(prompt).toContain('<UNTRUSTED label="citations">');
+  expect(prompt).toContain("src/a.ts:5:\nfoo");
+});
+
+test("composeReviewPrompt without citations has no DOC CITATION OBLIGATION section", () => {
+  const prompt = composeReviewPrompt({
+    ticket: { title: "Fix bug" },
+    plan: "1. Fix",
+    report: "REPORT: done",
+    diff: "diff --git a/fix.ts b/fix.ts",
+  });
+  expect(prompt).not.toContain("DOC CITATION OBLIGATION");
+});
+
 test("loadRelayConfig throws a helpful error on a missing file", () => {
   expect(() => loadRelayConfig(join(tmpdir(), "does-not-exist-relay.json")))
     .toThrow(/relay config not found/);

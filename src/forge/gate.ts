@@ -14,11 +14,11 @@ import {
 // --- Types ---
 
 export type GateFinding = {
-  check: "secret" | "file-set" | "mutation" | "ac-map";
+  check: "secret" | "file-set" | "mutation" | "ac-map" | "citation";
   severity: "block" | "warn";
   detail: string;
 };
-export type GateResult = { findings: GateFinding[]; report: string };
+export type GateResult = { findings: GateFinding[]; report: string; citations: string };
 
 // --- Pure helpers ---
 
@@ -72,6 +72,66 @@ export function unmatchedCriteria(criteria: string[], testTexts: string[]): stri
     const tokens = ac.toLowerCase().split(/\W+/).filter(w => w.length >= 4);
     return !tokens.some(t => joined.includes(t));
   });
+}
+
+const DOC_RE = /\.(md|mdx|markdown|txt)$/i;
+export function isDocPath(p: string): boolean {
+  return DOC_RE.test(p);
+}
+
+// Per-file added-line text from a `git log -p` range patch. Keyed by the
+// `+++ b/<path>` header; collects '+' lines (not '+++'), leading '+' stripped.
+export function addedLinesByFile(patch: string): Map<string, string> {
+  const acc = new Map<string, string[]>();
+  let cur: string | null = null;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("diff --git")) { cur = null; continue; }
+    const pp = line.match(/^\+\+\+ b\/(.+)$/);
+    if (pp) { cur = pp[1].replace(/\r$/, ""); if (!acc.has(cur)) acc.set(cur, []); continue; }
+    if (cur && line.startsWith("+") && !line.startsWith("+++")) {
+      acc.get(cur)!.push(line.slice(1).replace(/\r$/, ""));
+    }
+  }
+  const out = new Map<string, string>();
+  for (const [k, v] of acc) out.set(k, v.join("\n"));
+  return out;
+}
+
+export type CitationRef = { raw: string; path: string; start: number; end: number };
+
+// `path.ext:line` or `path.ext:line-line`. Requires a file extension so prose
+// like "step 3:12" never matches. Bare paths with no line are NOT citations
+// (handled by the reviewer obligation, not mechanically).
+export function extractCitations(text: string): CitationRef[] {
+  const out: CitationRef[] = [];
+  for (const m of text.matchAll(/(?<![\w/])([\w./-]*[\w-]\.[a-z]{1,6}):(\d+)(?:-(\d+))?/gi)) {
+    const path = m[1].replace(/^\.?\//, "");
+    const start = parseInt(m[2], 10);
+    const end = m[3] ? parseInt(m[3], 10) : start;
+    out.push({ raw: m[0], path, start, end });
+  }
+  return out;
+}
+
+export type CitationCheck =
+  | { ref: CitationRef; status: "missing" }
+  | { ref: CitationRef; status: "out-of-range"; lineCount: number }
+  | { ref: CitationRef; status: "ok"; quoted: string };
+
+// Resolve against the worktree. Path-traversal (`..`) => missing (trust boundary).
+export function resolveCitation(sandbox: string, ref: CitationRef): CitationCheck {
+  if (ref.path.split("/").includes("..")) return { ref, status: "missing" };
+  let content: string;
+  try {
+    content = readFileSync(join(sandbox, ref.path), "utf-8");
+  } catch {
+    return { ref, status: "missing" };
+  }
+  const lines = content.split(/\r?\n/);
+  if (ref.start < 1 || ref.end < ref.start || ref.end > lines.length) {
+    return { ref, status: "out-of-range", lineCount: lines.length };
+  }
+  return { ref, status: "ok", quoted: lines.slice(ref.start - 1, ref.end).join("\n") };
 }
 
 // Candidate when small guard + new test(s). null => probe N/A (not a finding).
@@ -223,6 +283,34 @@ export async function runGate(deps: {
     findings.push({ check: "ac-map", severity: "warn", detail: `AC-map check error: ${(e as Error).message}` });
   }
 
+  // 5. Doc citation check — dangling/out-of-range => block; in-range => quote
+  // the cited text for the reviewer to compare against the doc's claim.
+  const citationEvidence: string[] = [];
+  try {
+    const patch = await sandboxRangePatch(workdir, ticketId);
+    const byFile = addedLinesByFile(patch);
+    const seen = new Set<string>();
+    for (const [path, added] of byFile) {
+      if (!isDocPath(path)) continue;
+      for (const ref of extractCitations(added)) {
+        if (seen.has(ref.raw)) continue;
+        seen.add(ref.raw);
+        const c = resolveCitation(sandbox, ref);
+        if (c.status === "missing") {
+          findings.push({ check: "citation", severity: "block",
+            detail: `Dangling citation ${c.ref.raw} — file not found in the worktree` });
+        } else if (c.status === "out-of-range") {
+          findings.push({ check: "citation", severity: "block",
+            detail: `Out-of-range citation ${c.ref.raw} — ${c.ref.path} has ${c.lineCount} lines` });
+        } else {
+          citationEvidence.push(`${c.ref.raw}:\n${c.quoted}`);
+        }
+      }
+    }
+  } catch (e) {
+    findings.push({ check: "citation", severity: "warn", detail: `Citation check error: ${(e as Error).message}` });
+  }
+
   // Build report
   const blocks = findings.filter(f => f.severity === "block");
   const warns = findings.filter(f => f.severity === "warn");
@@ -235,5 +323,6 @@ export async function runGate(deps: {
   }
   report = redactSecrets(report.trim()).slice(0, REPORT_CAP);
 
-  return { findings, report };
+  const citations = redactSecrets(citationEvidence.join("\n\n")).slice(0, REPORT_CAP);
+  return { findings, report, citations };
 }

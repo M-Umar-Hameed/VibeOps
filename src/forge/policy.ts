@@ -36,6 +36,18 @@ export function parseAllowProtected(body: string): string[] {
   return globs;
 }
 
+// ALLOW-FILES: <glob>, <glob> lines in the ticket body allow extra files for the file-set check.
+export function parseAllowFiles(body: string): string[] {
+  const globs: string[] = [];
+  for (const m of body.matchAll(/^\s*ALLOW-FILES:\s*(.+)$/gim)) {
+    for (const g of m[1].split(",")) {
+      const t = g.trim();
+      if (t) globs.push(t);
+    }
+  }
+  return globs;
+}
+
 // Minimatch-style, full-path anchored. * and ? do not cross "/"; ** does.
 function globToRegExp(glob: string): RegExp {
   let re = "";
@@ -55,7 +67,7 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(`^${re}$`);
 }
 
-function matchAny(path: string, globs: string[]): boolean {
+export function matchAny(path: string, globs: string[]): boolean {
   return globs.some((g) => globToRegExp(g).test(path));
 }
 

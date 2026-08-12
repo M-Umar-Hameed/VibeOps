@@ -1212,4 +1212,60 @@ const file2 = "run2-output.txt";
     // Second sandbox is still intact
     expect(sandboxExists(t2.id)).toBe(true);
   });
+
+  it("gate BLOCK forces VERDICT: FAIL even when the model says PASS", async () => {
+    const { actorId, ticket } = await seedTicket("Gate block forces fail");
+    // Write a stray file not in plan (triggers file-set block)
+    process.env.FAKE_WRITE_PATH = "target.txt";
+    setScript("plan,work,review-pass");
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    // Run settles rejected despite the model's PASS
+    expect(output?.status).toBe("rejected");
+    expect(output?.chunk).toContain("=== FORGE gate ===");
+    expect(output?.chunk).toContain("AUTOMATIC BLOCK");
+    expect(output?.chunk).toContain("target.txt");
+
+    // The review comment ends with VERDICT: FAIL (forced by gate)
+    const comments = await listComments(ticket.id);
+    const review = comments.filter((c) => c.kind === "review").pop();
+    expect(review?.body).toContain("[forge: mechanical gate BLOCK");
+    expect(review?.body).toMatch(/VERDICT:\s*FAIL\s*$/);
+
+    // Ticket bounced to planned
+    expect((await getTicket(ticket.id)).status).toBe("planned");
+  });
+
+  it("gate clean: model PASS is respected, ticket stays in review", async () => {
+    const { actorId, ticket } = await seedTicket("Gate clean path");
+    // No stray files - plan mentions the same file the agent writes
+    await updateTicket(actorId, ticket.id, ticket.version, { body: "Write forge-made.txt" });
+    process.env.FAKE_WRITE_PATH = "forge-made.txt";
+    setScript("plan,work,review-pass");
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.status).toBe("passed");
+
+    // No AUTOMATIC BLOCK in output
+    expect(output?.chunk).not.toContain("AUTOMATIC BLOCK");
+
+    // Review comment contains PASS without forced FAIL
+    const comments = await listComments(ticket.id);
+    const review = comments.filter((c) => c.kind === "review").pop();
+    expect(review?.body).not.toContain("[forge: mechanical gate BLOCK");
+    expect(review?.body).toContain("VERDICT: PASS");
+
+    // Ticket stays in review awaiting promote
+    expect((await getTicket(ticket.id)).status).toBe("review");
+  });
 });

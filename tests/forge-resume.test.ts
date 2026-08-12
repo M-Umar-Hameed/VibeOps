@@ -133,6 +133,7 @@ describe("forge run resume", () => {
 
   it("resume route: seeded planned ticket -> 201 runId and pipeline completes; 409 on closed ticket", async () => {
     const { actorId, apiKey, ticket } = await seedTicket("Resume route path");
+    await addComment(actorId, ticket.id, "The plan: create forge-made.txt", "plan");
     await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });
     setScript("work,review-pass", true);
 
@@ -261,7 +262,7 @@ describe("forge run resume", () => {
     await forgeCommit(ticket.id, "test work");
 
     // Add plan and report comments as if work stage completed
-    await addComment(actorId, ticket.id, "The plan is to do work", "plan");
+    await addComment(actorId, ticket.id, "The plan is to do work on result.txt", "plan");
     await addComment(actorId, ticket.id, "Work completed successfully", "report");
 
     // Update ticket to review status

@@ -1,0 +1,4 @@
+# Shell fixtures are spawned directly on POSIX. CRLF would break the shebang
+# ("bad interpreter"), and this repo is developed on Windows where autocrlf
+# would otherwise rewrite them on checkout.
+*.sh text eol=lf

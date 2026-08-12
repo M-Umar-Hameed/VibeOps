@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readlinkSync, rmdirSync, symlinkSync, statSync, readdirSync, rmSync, cpSync } from "node:fs";
+import { existsSync, mkdirSync, readlinkSync, rmdirSync, unlinkSync, symlinkSync, statSync, readdirSync, rmSync, cpSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { ConflictError } from "../services/errors.js";
 import { redactSecrets } from "./redact.js";
@@ -119,7 +119,7 @@ export function linkDeps(workdir: string, ticketId: string, frontendDeps = false
       // so the copy branch below runs. An off-mode real copy is left as-is -- a
       // copy never leaks, and deleting it for disk isn't worth the risk here.
       if (!(frontendDeps && rel === APP_DEPS && isLink(dest))) continue;
-      try { rmdirSync(dest); } catch (e) {
+      try { dropLink(dest); } catch (e) {
         console.warn(`linkDeps: failed to unlink ${rel} for reconcile: ${String(e)}`);
         continue;
       }
@@ -143,18 +143,28 @@ export function linkDeps(workdir: string, ticketId: string, frontendDeps = false
 
 // Remove only the links created by linkDeps, never a real directory.
 // Detection: readlink succeeds on junctions/symlinks, throws (EINVAL/ENOENT) on real dirs or missing paths.
-// rmdirSync on a junction/symlink-to-dir removes the link itself, not its target's contents.
 export function unlinkDeps(ticketId: string): void {
   const sbx = sandboxPath(ticketId);
   for (const rel of DEPS_DIRS) {
     const dest = join(sbx, rel);
     try {
       readlinkSync(dest);
-      rmdirSync(dest);
+      dropLink(dest);
     } catch {
       // not a link (real dir, or doesn't exist) — leave it alone
     }
   }
+}
+
+// Removing the LINK, not its target, needs a different call per platform: a Windows
+// junction is a directory (rmdir), a POSIX symlink is not (unlink, and rmdir on one
+// fails ENOTDIR). The old code used rmdir everywhere, which worked on Windows and
+// left every sandbox link in place on Linux — the cause of the ENOTDIR and EEXIST
+// failures, and of base node_modules being destroyed when cleanup fell through to a
+// recursive delete.
+function dropLink(dest: string): void {
+  if (process.platform === "win32") rmdirSync(dest);
+  else unlinkSync(dest);
 }
 
 export async function ensureSandbox(workdir: string, ticketId: string, frontendDeps = false): Promise<string> {
@@ -170,8 +180,26 @@ export async function ensureSandbox(workdir: string, ticketId: string, frontendD
 
 export async function forgeCommit(ticketId: string, title: string): Promise<boolean> {
   const path = sandboxPath(ticketId);
+  // The exclude pathspec is required on BOTH commands. .gitignore says
+  // "node_modules/" — a trailing slash matches directories, so a Windows junction
+  // is ignored but a POSIX symlink (a file) is not, and `add -A` would commit the
+  // link. Excluding it only from `status` would hide it from the empty-check while
+  // still staging it, which is worse: the link lands in the tree and the
+  // nothing-changed case reports changes.
+  // Stage everything, then drop the deps from the index. An exclude pathspec on
+  // `add` looked cleaner but git fails it with "paths are ignored ... use -f" once a
+  // real app/node_modules copy exists, with or without a positive "." pathspec —
+  // reproduced on Linux both ways. Unstaging cannot hit that.
+  //
+  // Why this is needed at all: .gitignore says "node_modules/", and a trailing
+  // slash matches directories only. A Windows junction is a directory so git
+  // ignores it; a POSIX symlink is a file, so without this it gets committed.
+  const DEPS = ["node_modules", "app/node_modules"];
   await must(path, "add", "-A");
-  const { out } = await git(path, "status", "--porcelain");
+  await git(path, "rm", "-r", "--cached", "--quiet", "--ignore-unmatch", ...DEPS);
+  // The empty-check has to skip the deps too, or an unstaged link reads as a change.
+  const { out } = await git(path, "status", "--porcelain", "--", ".",
+    ...DEPS.map((d) => `:(exclude)${d}`));
   if (!out.trim()) return false;
   await must(path, "-c", "user.email=forge@vibeops.local", "-c", "user.name=VibeOps Forge",
     "commit", "-m", `forge: ${title}`);

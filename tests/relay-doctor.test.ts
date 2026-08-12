@@ -7,8 +7,14 @@ import { runDoctor, pipelineStartWarnings, pipelineStartBlockingError } from "..
 import type { RelayConfig } from "../src/relay/config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const EXIT0 = join(__dirname, "fixtures", "doctor-exit0.cmd");
-const EXIT1 = join(__dirname, "fixtures", "doctor-exit1.cmd");
+// Spawned directly as cmd[0], so the fixture has to be natively executable on the
+// host: a .cmd on Windows, a mode-755 shell script elsewhere. Pointing at the .cmd
+// on Linux gave EACCES, which the probe correctly reported as a spawn failure —
+// the fixtures were wrong, not the code. binBasename strips the extension, so
+// `binary` is "doctor-exit0" either way.
+const FIXTURE_EXT = process.platform === "win32" ? ".cmd" : ".sh";
+const EXIT0 = join(__dirname, "fixtures", `doctor-exit0${FIXTURE_EXT}`);
+const EXIT1 = join(__dirname, "fixtures", `doctor-exit1${FIXTURE_EXT}`);
 
 function uniq(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;

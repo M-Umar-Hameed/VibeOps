@@ -208,7 +208,9 @@ describe("council engine", () => {
     expect(missing.status).toBe(404);
   });
 
-  it("(h) personas re-run each round: all three change after answers", async () => {
+  // This test runs 8 agent calls (two full rounds), which under parallel-file
+  // contention can exceed the default 30s timeout. Use 60s local timeout.
+  it("(h) personas re-run each round: all three change after answers", { timeout: 60_000 }, async () => {
     const { actor } = await createActor({ name: uniq("council-actor"), kind: "human" });
     setScript("persona,persona,persona,chairman-questions,persona,persona,persona,chairman-go");
 

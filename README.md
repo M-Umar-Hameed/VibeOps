@@ -114,6 +114,26 @@ dropping. Genuine per-call token and dollar figures still exist only on the lane
 API reports them, so a with/without comparison is not published here yet rather than
 guessed at.
 
+## What is actually guaranteed
+
+Worth being precise about, because "supervised" can be read as a stronger promise than
+the one being made.
+
+- **The human promote step is the only hard gate.** Nothing reaches your branch without
+  someone approving it. Everything below is an aid to that decision, not a substitute.
+- **Checks are advisory.** Typecheck and test results are shown to the reviewer and
+  recorded; a failing check does not by itself fail a run. The reviewer weighs it.
+- **The reviewer is a model reading a diff.** It catches a great deal — 40% of tickets
+  here went back at least once — and it is also wrong sometimes, in both directions.
+- **The sandbox is a git worktree, not an OS jail.** A work agent's shell is not
+  kernel-confined. Writes outside the worktree are caught by a sentinel that snapshots
+  sensitive paths before the run and restores them after, which is detection and repair
+  rather than prevention.
+- **VibeOps never pushes code.** It commits inside sandboxes and merges into your local
+  branch on promote; `git push` stays yours. The separate, opt-in issue-tracker
+  connectors are the one thing that talks outward, and only if you bind a repo and supply
+  a token: they mirror tickets to GitHub issues over the REST API. No code leaves.
+
 ## The desktop app, in practice
 
 What a day in the app looks like — every feature below is shipped and test-covered:
@@ -153,6 +173,15 @@ npm run dev    # REST API on :8787 — embedded DB, migrations, bootstrap, vault
 ```
 
 The desktop app auto-detects credentials. `~/.vibeops` is the single backup unit: copy the folder to back up; restore it before first run on a new machine. Treat `credentials.json` like `~/.ssh`.
+
+**Stop the app before you copy or back up that folder.** The embedded database is
+single-writer and has no inter-process locking, so a second process opening
+`~/.vibeops/data` while the app is running corrupts it — not the copy, the original. This
+is not theoretical: it destroyed this project's database three times in one day, every
+time by running a backup or a probe script against a live server. Hard kills are fine
+(the write-ahead log replays on restart); a concurrent open is not. `npm run backup` now
+reads `postmaster.pid` and refuses to run while a live process holds the directory, but a
+manual `cp -r` has no such guard.
 
 Useful scripts: `npm run ingest:sessions` (index recent agent sessions), `npm run ingest:watch` (standalone vault watcher), `npm run mcp` (stdio MCP server for external-Postgres setups), `npm test`.
 

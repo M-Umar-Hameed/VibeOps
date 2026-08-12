@@ -8,6 +8,7 @@ import type { RelayAgent } from "./config.js";
 const OUTPUT_CAP = 100_000;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 const KILL_TIMEOUT_MS = 10_000;
+const EXIT_DRAIN_MS = 2_000;
 
 export type AgentResult = { ok: boolean; output: string; usage?: { tokens: number; cost: number } };
 
@@ -85,6 +86,7 @@ export async function runAgent(
       }
       let output = "";
       let settled = false;
+      let exitTimer: NodeJS.Timeout | undefined;
 
       const timer = setTimeout(() => { void killTree(child); }, agent.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
@@ -100,10 +102,22 @@ export async function runAgent(
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        if (exitTimer) clearTimeout(exitTimer);
         resolve({ ok, output: output.slice(0, OUTPUT_CAP) });
       };
       child.on("close", (code) => finish(code === 0));
       child.on("error", () => finish(false));
+      // "close" waits for stdio EOF, which never comes if a descendant inherited
+      // our stdout/stderr pipe and outlived the direct child (live incident: agy
+      // exec's subprocess held the pipe, the run sat "running" past its timeout
+      // while killTree no-oped on the already-exited child). Settle a short drain
+      // after the process itself exits so a wedged pipe can't hang the run; the
+      // drain lets any final buffered output flush first, and "close" (normal
+      // case) still wins the race and clears this timer.
+      child.on("exit", (code) => {
+        exitTimer = setTimeout(() => finish(code === 0), EXIT_DRAIN_MS);
+        exitTimer.unref();
+      });
     });
   } finally {
     if (needsFile) await unlink(promptFile).catch(() => {});

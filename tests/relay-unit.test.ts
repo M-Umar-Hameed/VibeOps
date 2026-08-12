@@ -450,3 +450,32 @@ describe("killTree", () => {
     expect(elapsed).toBeLessThan(1000);
   });
 });
+
+test("runAgent settles after the child exits even if a descendant keeps the stdout pipe open", async () => {
+  // Repro of the live hang: a CLI agent (agy exec) exited but a lingering
+  // subprocess inherited its stdout pipe, so "close" never fired and the run sat
+  // "running" past its timeout. The parent below spawns a grandchild that
+  // inherits fd 1/2 and sleeps 60s, then exits immediately. runAgent must still
+  // settle — via the exit-drain path, not the 60s timeout.
+  const script =
+    "const{spawn}=require('node:child_process');" +
+    "const gc=spawn(process.execPath,['-e','setTimeout(()=>{},60000)'],{stdio:['ignore','inherit','inherit']});" +
+    "gc.unref();" +
+    "console.log('GCPID:'+gc.pid);" +
+    "console.log('parent-done');" +
+    "process.exit(0);";
+  const start = Date.now();
+  const result = await runAgent(
+    { cmd: [process.execPath, "-e", script], roles: [], timeoutMs: 60_000 },
+    "unused", process.cwd(),
+  );
+  const elapsed = Date.now() - start;
+  try {
+    expect(result.output).toContain("parent-done");
+    // Settled via exit-drain (~EXIT_DRAIN_MS), NOT the 60s timeout.
+    expect(elapsed).toBeLessThan(10_000);
+  } finally {
+    const m = result.output.match(/GCPID:(\d+)/);
+    if (m) { try { process.kill(Number(m[1])); } catch { /* already gone */ } }
+  }
+}, 15_000);

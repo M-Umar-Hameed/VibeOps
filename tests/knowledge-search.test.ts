@@ -6,6 +6,7 @@ import { db } from "../src/db/client.js";
 import { embeddings } from "../src/db/schema.js";
 import { createActor } from "../src/services/actors.js";
 import { saveNote } from "../src/services/notes.js";
+import { createProject } from "../src/services/projects.js";
 
 const emb = new FakeEmbedder(1024);
 
@@ -50,17 +51,25 @@ test("secrets are redacted before indexing (vault and note)", async () => {
 });
 
 test("search results carry provenance and recency-decayed score", async () => {
+  // This file is serialized via vitest.workspace.ts (fileParallelism: false in the
+  // "vector" pool) because searchKnowledge queries the shared embeddings table via
+  // HNSW approximate search. Under parallel load, rows written by other files can
+  // crowd these two out of the ANN candidate pool — a structural constraint of
+  // approximate nearest-neighbor indexes, not a bug. The project-scoping below
+  // narrows the search but cannot fully isolate because searchKnowledge's projectId
+  // filter includes global rows; serialization is the primary fix.
   const uniq = `run-${Date.now()}-${Math.round(performance.now() * 1000)}`;
+  const project = await createProject({ key: `ks-${uniq}`, name: "KS" });
   const content = `# Recency ${uniq}\nidentical content for decay comparison.`;
-  const fresh = `fresh-${uniq}.md`;
-  const stale = `stale-${uniq}.md`;
+  const fresh = `${project.id}:fresh-${uniq}.md`;
+  const stale = `${project.id}:stale-${uniq}.md`;
   await upsertVaultFile(fresh, content, emb);
   await upsertVaultFile(stale, content, emb);
   await db.update(embeddings)
     .set({ createdAt: new Date(Date.now() - 300 * 86400_000) })
     .where(eq(embeddings.sourceRef, stale));
 
-  const hits = await searchKnowledge(content, { limit: 20 }, emb);
+  const hits = await searchKnowledge(content, { limit: 20, projectId: project.id }, emb);
   const freshHit = hits.find((h) => h.sourceRef === fresh);
   const staleHit = hits.find((h) => h.sourceRef === stale);
   expect(freshHit).toBeDefined();

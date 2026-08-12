@@ -75,6 +75,16 @@ export function composeReviewPrompt(
         `Findings marked AUTOMATIC BLOCK have already blocked promotion; treat them as established fact. ` +
         `Warnings are advisory — weigh them in your judgement.`
       : "",
+    // MEASURED LIMITATION (epic-C live run, 2026-08-12):
+    // This obligation caught 1 of 2 false claims. CAUGHT: the WebSocket claim — reviewer
+    // opened bare paths, found dispatch.ts is in-process dispatch and runner.ts spawns
+    // child processes, zero WebSocket matches, VERDICT: FAIL. MISSED: the notes-kind
+    // claim — reviewer wrote "schema.ts:47 kind: text('kind') ... supports the doc's
+    // free-text kind, no migration claim. OK" without noticing the doc cited a COMMENTS
+    // column to justify a NOTES field (notes has no kind column). FALSE-REASSURANCE MODE:
+    // the obligation can produce a confident OK on a citation that does not support the
+    // claim — a new failure mode, not just a smaller old one. A mechanical check cannot
+    // tell which table a doc MEANT.
     citations
       ? `\nDOC CITATION OBLIGATION: this diff is documentation that cites source with file:line references. ` +
         `The pipeline resolved each in-range citation and quoted the actual text below. For EVERY citation you MUST ` +

@@ -197,7 +197,10 @@ describe("forge sandbox", () => {
   it("unlinkDeps on a real node_modules directory leaves it untouched; cleanup still works", async () => {
     const sp = await ensureSandbox(workdir, TID);
     // simulate a sandbox where node_modules is a REAL directory, not a link
-    rmdirSync(join(sp, "node_modules")); // removes the junction/symlink node only
+    // Drop the link the same way production does. rmdir removes a Windows junction
+    // but throws ENOTDIR on a POSIX symlink, so this setup step is itself platform-
+    // dependent — the same defect the code under test had.
+    unlinkDeps(TID);
     mkdirSync(join(sp, "node_modules"));
     writeFileSync(join(sp, "node_modules", "real.txt"), "real\n");
 

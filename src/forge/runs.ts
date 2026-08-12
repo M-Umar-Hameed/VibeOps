@@ -124,7 +124,9 @@ function activeRuns(): Run[] {
 }
 
 // Wraps a stage's runAgent call with an agent_sessions row (start/end) and an
-// ai_usage_logs row (estimated tokens from output length). Never throws.
+// ai_usage_logs row. Lanes that report real usage supply it; the rest fall back to
+// an estimate over prompt+output, so promptChars has to reach logAgentUse.
+// Never throws.
 async function track(
   actorId: string, ticketId: string, role: Stage, agentName: string,
   promptChars: number,

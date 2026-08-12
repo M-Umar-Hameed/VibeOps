@@ -87,6 +87,53 @@ pie title Forge Run Outcomes
 
 **Honest observability.** The Token Usage tab shows each coding agent's signed-in account and its real token usage read from local session logs — and explicitly tells you what VibeOps cannot see (provider-side quotas and reset limits). No fabricated dashboards.
 
+## What it costs, measured
+
+VibeOps is built through its own pipeline, so these are its own numbers rather than a
+demo project's.
+
+- **173 tickets** promoted through plan -> sandboxed work -> review -> human promote.
+- **5 files, +217/-23 lines** changed per promoted ticket, on average.
+- **125 tickets reached review; 50 of them (40%) did not pass the first one** and went
+  back for rework, across 74 rework rounds total.
+
+Read that 40% carefully, because it is the number most likely to be oversold. It is the
+rate at which the review gate sent work back — not a proven defect count, and not a
+controlled comparison against an unsupervised agent. A model reviewed the diff and asked
+for changes; sometimes it was wrong. What it does show is that four times in ten, the
+first thing the pipeline produced was not the thing that got merged.
+
+**Token cost is deliberately absent, and that is the honest answer.** Until 2026-08-12
+this project was not measuring it. Headless CLI agents report no token counts, so usage
+was estimated from the length of the model's *output* alone — ignoring the prompt, which
+on a plan stage carries the ticket, the retrieved knowledge and the repo context and
+dominates the total. The same figure fed the per-ticket and per-day budget caps, so those
+caps were enforcing against a number that did not mean anything. The estimate now counts
+the prompt, and the SDK lane's token count now includes cache reads it was previously
+dropping. Genuine per-call token and dollar figures still exist only on the lane whose
+API reports them, so a with/without comparison is not published here yet rather than
+guessed at.
+
+## What is actually guaranteed
+
+Worth being precise about, because "supervised" can be read as a stronger promise than
+the one being made.
+
+- **The human promote step is the only hard gate.** Nothing reaches your branch without
+  someone approving it. Everything below is an aid to that decision, not a substitute.
+- **Checks are advisory.** Typecheck and test results are shown to the reviewer and
+  recorded; a failing check does not by itself fail a run. The reviewer weighs it.
+- **The reviewer is a model reading a diff.** It catches a great deal — 40% of tickets
+  here went back at least once — and it is also wrong sometimes, in both directions.
+- **The sandbox is a git worktree, not an OS jail.** A work agent's shell is not
+  kernel-confined. Writes outside the worktree are caught by a sentinel that snapshots
+  sensitive paths before the run and restores them after, which is detection and repair
+  rather than prevention.
+- **VibeOps never pushes code.** It commits inside sandboxes and merges into your local
+  branch on promote; `git push` stays yours. The separate, opt-in issue-tracker
+  connectors are the one thing that talks outward, and only if you bind a repo and supply
+  a token: they mirror tickets to GitHub issues over the REST API. No code leaves.
+
 ## The desktop app, in practice
 
 What a day in the app looks like — every feature below is shipped and test-covered:
@@ -126,6 +173,15 @@ npm run dev    # REST API on :8787 — embedded DB, migrations, bootstrap, vault
 ```
 
 The desktop app auto-detects credentials. `~/.vibeops` is the single backup unit: copy the folder to back up; restore it before first run on a new machine. Treat `credentials.json` like `~/.ssh`.
+
+**Stop the app before you copy or back up that folder.** The embedded database is
+single-writer and has no inter-process locking, so a second process opening
+`~/.vibeops/data` while the app is running corrupts it — not the copy, the original. This
+is not theoretical: it destroyed this project's database three times in one day, every
+time by running a backup or a probe script against a live server. Hard kills are fine
+(the write-ahead log replays on restart); a concurrent open is not. `npm run backup` now
+reads `postmaster.pid` and refuses to run while a live process holds the directory, but a
+manual `cp -r` has no such guard.
 
 Useful scripts: `npm run ingest:sessions` (index recent agent sessions), `npm run ingest:watch` (standalone vault watcher), `npm run mcp` (stdio MCP server for external-Postgres setups), `npm test`.
 

@@ -1,6 +1,8 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { aiUsageLogs, agentSessions } from "../db/schema.js";
+import { aiUsageLogs, agentSessions, knowledgeQueryLogs } from "../db/schema.js";
+import { getSetting } from "./settings.js";
+import { redactSecrets } from "../forge/redact.js";
 
 // We keep the fuller entry shape for call-site clarity. Headless CLIs don't report
 // real usage, so tokens are estimated. ok is tracked separately via agent_sessions.status.
@@ -9,6 +11,7 @@ export type UsageEntry = {
   agent: string;
   role: string;
   ticketId?: string;
+  promptChars?: number;
   outputChars: number;
   durationMs: number;
   ok: boolean;
@@ -16,12 +19,20 @@ export type UsageEntry = {
   cost?: number;   // real cost ×1e6 (micro-dollars); 0 when unknown
 };
 
+// Headless CLIs report no token counts, so this stays an estimate — but it must include
+// the prompt. Output alone missed the dominant term (a plan prompt carries the ticket,
+// knowledge and repo context), which made the figure meaningless and silently
+// under-enforced the budget caps in forge/runs.ts that read this column.
+export function estimateTokens(promptChars = 0, outputChars = 0): number {
+  return Math.round((promptChars + outputChars) / 4);
+}
+
 export async function logAgentUse(entry: UsageEntry): Promise<void> {
   try {
     await db.insert(aiUsageLogs).values({
       provider: entry.agent,
       model: entry.role,
-      tokens: entry.tokens ?? Math.round(entry.outputChars / 4), // estimated: headless CLIs report no token counts
+      tokens: entry.tokens ?? estimateTokens(entry.promptChars, entry.outputChars),
       cost: entry.cost ?? 0,
       ticketId: entry.ticketId,
       actorId: entry.actorId,
@@ -54,5 +65,27 @@ export async function endAgentSession(id: string | undefined, ok: boolean): Prom
       .where(eq(agentSessions.id, id));
   } catch (e) {
     console.warn("endAgentSession failed:", (e as Error).message);
+  }
+}
+
+export async function logKnowledgeQuery(entry: {
+  caller: string;
+  projectId?: string;
+  hitKinds: string[];
+  topScore?: number;
+  queryText: string;
+}): Promise<void> {
+  try {
+    const storeText = (await getSetting("knowledge.logQueryText")) === "true";
+    await db.insert(knowledgeQueryLogs).values({
+      caller: entry.caller,
+      projectId: entry.projectId,
+      hitCount: entry.hitKinds.length,
+      hitKinds: entry.hitKinds,
+      topScore: entry.topScore === undefined ? null : Math.round(entry.topScore * 1e6),
+      queryText: storeText ? redactSecrets(entry.queryText) : null,
+    });
+  } catch (e) {
+    console.warn("logKnowledgeQuery failed:", (e as Error).message);
   }
 }

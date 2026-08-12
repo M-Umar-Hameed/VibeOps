@@ -12,6 +12,7 @@ type Executor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 import { chunkMarkdown } from "../knowledge/chunker.js";
 import { getEmbedder, type Embedder } from "../knowledge/embedder.js";
 import { redactSecrets } from "../forge/redact.js";
+import { logKnowledgeQuery } from "./usage.js";
 
 // vault sourceRef is either a legacy absolute path (global vault) or
 // "<projectId>:<relPosix>" for a project vault; map the latter back to disk.
@@ -192,7 +193,7 @@ function globalScopeWhere() {
 
 export async function searchKnowledge(
   query: string,
-  opts: { limit?: number; projectId?: string } = {},
+  opts: { limit?: number; projectId?: string; caller?: string } = {},
   embedder: Embedder = getEmbedder(),
 ): Promise<{ content: string; sourceKind: string; sourceRef: string; score: number; citation: string; createdAt: string }[]> {
   const [qv] = await embedder.embed([query]);
@@ -227,11 +228,19 @@ export async function searchKnowledge(
     limit ${limit}`);
   });
   const rows = (Array.isArray(res) ? res : (res as { rows: unknown[] }).rows) as any[];
-  return rows.map((r: any) => ({
+  const out = rows.map((r: any) => ({
     content: r.content, sourceKind: r.source_kind, sourceRef: r.source_ref,
     score: Number(r.score), citation: r.source_ref,
     createdAt: new Date(r.created_at).toISOString(),
   }));
+  await logKnowledgeQuery({
+    caller: opts.caller ?? "unknown",
+    projectId: opts.projectId,
+    hitKinds: out.map((h) => h.sourceKind),
+    topScore: out[0]?.score,
+    queryText: query,
+  });
+  return out;
 }
 
 // Removes exactly the project's indexed chunks — repo docs, project-vault files,

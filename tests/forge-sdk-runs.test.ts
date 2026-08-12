@@ -78,6 +78,11 @@ let counterDir: string;
 let counterFile: string;
 
 beforeEach(() => {
+  // Clear FAKE_* env vars that might bleed from parallel test files using fake-agent.mjs.
+  // Even though we pass FAKE_SCRIPT via agent.env, the cleanup ensures no stale state.
+  delete process.env.FAKE_SCRIPT;
+  delete process.env.FAKE_COUNTER_FILE;
+  delete process.env.FAKE_WRITE_ABS;
   workdir = initRepo();
   sandboxRoot = mkdtempSync(join(tmpdir(), "forge-sdk-sbx-"));
   process.env.VIBEOPS_SANDBOX_ROOT = sandboxRoot;
@@ -99,7 +104,9 @@ afterEach(() => {
   rmSync(counterDir, { recursive: true, force: true });
 });
 
-function relayConfig(): RelayConfig {
+// Pass FAKE_SCRIPT via agent.env to avoid env-var contamination from parallel
+// test files that also use fake-agent.mjs with different scripts.
+function relayConfig(script: string): RelayConfig {
   return {
     workdir,
     agents: {
@@ -107,15 +114,11 @@ function relayConfig(): RelayConfig {
         cmd: [process.execPath, FAKE_AGENT, "{prompt}", "--model", "{model}"],
         roles: ["plan", "work", "review"],
         models: [{ name: "fast", tier: "free", quality: 2 }, { name: "smart", tier: "expensive", quality: 5 }],
+        env: { FAKE_SCRIPT: script, FAKE_COUNTER_FILE: counterFile },
       },
       sdkw: { type: "sdk", roles: ["work"], cmd: [] },
     },
   };
-}
-
-function setScript(script: string): void {
-  process.env.FAKE_SCRIPT = script;
-  process.env.FAKE_COUNTER_FILE = counterFile;
 }
 
 async function waitForStage(runId: string, stage: string, timeoutMs = 5000): Promise<void> {
@@ -130,9 +133,8 @@ async function waitForStage(runId: string, stage: string, timeoutMs = 5000): Pro
 describe("forge SDK lane (integration through runs.ts)", () => {
   it("persists real SDK tokens and cost for the work stage (no live call)", async () => {
     const { actorId, ticket } = await seedTicket("SDK telemetry path");
-    setScript("plan,review-pass"); // fake-agent runs plan then review; work is sdk
 
-    const { runId } = await startPipeline(actorId, relayConfig(), {
+    const { runId } = await startPipeline(actorId, relayConfig("plan,review-pass"), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "sdkw", reviewAgent: "fake",
     });
     await awaitRun(runId);
@@ -150,9 +152,8 @@ describe("forge SDK lane (integration through runs.ts)", () => {
   it("stopRun aborts the in-loop sdk work stage via its AbortController", async () => {
     const { actorId, ticket } = await seedTicket("SDK stop path");
     sdkState.mode = "hang";
-    setScript("plan"); // only plan invokes fake-agent; work hangs until aborted
 
-    const { runId } = await startPipeline(actorId, relayConfig(), {
+    const { runId } = await startPipeline(actorId, relayConfig("plan"), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "sdkw", reviewAgent: "fake",
     });
 

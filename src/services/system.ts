@@ -1,6 +1,6 @@
 import os from "os";
 import { db } from "../db/client.js";
-import { aiUsageLogs, agentSessions, tickets } from "../db/schema.js";
+import { aiUsageLogs, agentSessions, tickets, knowledgeQueryLogs } from "../db/schema.js";
 import { sql, eq, isNotNull, desc } from "drizzle-orm";
 
 import { getEmbedder } from "../knowledge/embedder.js";
@@ -152,4 +152,21 @@ export async function getSystemStatus() {
     activeRuns,
     uptimeMs
   };
+}
+
+export async function getKnowledgeUsage() {
+  const scope = sql<string>`case when ${knowledgeQueryLogs.projectId} is null then 'global' else 'project' end`;
+  const byCaller = await db.select({
+    caller: knowledgeQueryLogs.caller,
+    scope,
+    queries: sql<number>`cast(count(*) as integer)`,
+    hits: sql<number>`cast(coalesce(sum(${knowledgeQueryLogs.hitCount}), 0) as integer)`,
+  }).from(knowledgeQueryLogs).groupBy(knowledgeQueryLogs.caller, scope);
+
+  const kindRes = await db.execute(sql`
+    select kind, cast(count(*) as integer) as hits
+    from knowledge_query_logs, jsonb_array_elements_text(hit_kinds) as kind
+    group by kind order by hits desc`);
+  const kindRows = (Array.isArray(kindRes) ? kindRes : (kindRes as { rows: unknown[] }).rows) as any[];
+  return { byCaller, byKind: kindRows.map((r: any) => ({ kind: r.kind, hits: Number(r.hits) })) };
 }

@@ -44,7 +44,12 @@ async function makeDb(): Promise<void> {
   } catch (e) {
     // Corrupt cluster: do NOT crash the sidecar. Record it; server.ts serves a
     // degraded diagnostic so the failure reaches the user, not just stderr.
-    if (e instanceof EmbeddedDbOpenError) { embeddedDbError = e; return; }
+    if (e instanceof EmbeddedDbOpenError) {
+      embeddedDbError = e;
+      const { markRecoveryPending } = await import("./recovery.js");
+      markRecoveryPending(e.message, new Date().toISOString().replace(/[:.]/g, "-"));
+      return;
+    }
     throw e;
   }
   embeddedClient = client;
@@ -68,6 +73,15 @@ export async function snapshotKnownGood(): Promise<string | null> {
   const { snapshotGood } = await import("./snapshots.js");
   await embeddedClient.exec("CHECKPOINT");
   return snapshotGood(embeddedDataDir, new Date().toISOString().replace(/[:.]/g, "-"));
+}
+
+// Periodic CHECKPOINT reduces WAL replay time after an unclean exit. PGlite
+// 0.2.17 NodeFS does replay correctly (all committed txns survive), but replay
+// cost grows with WAL size. A tight interval keeps startup fast. Sub-second at
+// standalone scale; no-op unless embedded (embeddedClient is null elsewhere).
+export async function checkpointEmbedded(): Promise<void> {
+  if (!embeddedClient) return;
+  await embeddedClient.exec("CHECKPOINT");
 }
 
 await makeDb();

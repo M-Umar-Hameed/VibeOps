@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { getLessons, lessonsClause, composeAnalyzerPrompt, parseProposal, formatProposal, recordProposal } from "./lessons.js";
+import { getLessons, lessonsClause } from "./lessons.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
@@ -87,11 +87,12 @@ type Run = {
   abort?: () => void;   // in-loop sdk lane's AbortController.abort, if any
   stopped: boolean;
   done: Promise<void>;
+  persisted?: Promise<void>; // settle()'s history write; run.done awaits it
 };
 
 const runs = new Map<string, Run>();
 
-export type RunSummary = Omit<Run, "output" | "child" | "abort" | "stopped" | "done">;
+export type RunSummary = Omit<Run, "output" | "child" | "abort" | "stopped" | "done" | "persisted">;
 
 function summarize(r: Run): RunSummary {
   const { output, child, abort, stopped, done, ...rest } = r;
@@ -371,10 +372,7 @@ export async function startPipeline(
     // (forgeCommit/addComment failures land here, after the claim).
     await bounce(run, actorId, "pipeline error", (e as Error).message);
     settle(run, "failed");
-  // Analyzer runs AFTER any settle path and INSIDE run.done: the run is already
-  // settled for pollers, and awaitRun covers the analyzer (a detached spawn
-  // held test workdirs as its cwd during cleanup — Windows EPERM).
-  }).then(() => analyzeRun(run, actorId, config)).catch(() => {});
+  }).then(() => run.persisted).catch(() => {});
   return { runId: run.id, doctorWarnings };
 }
 
@@ -562,7 +560,11 @@ async function pipeline(
 function settle(run: Run, status: Status): void {
   run.status = status;
   run.finishedAt = new Date().toISOString();
-  void persistRun(run); // fire-and-forget: history must never break a pipeline
+  // Still never allowed to break a pipeline, but the promise is kept so run.done
+  // can await it. hasActiveRun consults the DB after the in-memory map goes quiet,
+  // so until this row lands a settled run still reads as active. That gap used to
+  // be covered by the analyzer's extra await; deleting the analyzer exposed it.
+  run.persisted = persistRun(run).catch(() => {});
 }
 
 // Extracted for resume-to-review: runs the review stage against an existing sandbox.
@@ -680,32 +682,6 @@ async function persistRun(run: Run): Promise<void> {
     });
   } catch (e) {
     console.warn(`forge: failed to persist run ${run.id}:`, (e as Error).message);
-  }
-}
-
-// Studies the settled run's narrated output and records a PROPOSED prompt-lessons
-// document in the separate prompt-lessons-proposals note. Advisory-only: it never
-// writes the live prompt-lessons note. Opt-in, fire-and-forget, never blocks a pipeline.
-async function analyzeRun(run: Run, actorId: string, config: RelayConfig): Promise<void> {
-  try {
-    if ((await getSetting("prompts.selfImprove")) !== "true") return;
-    const pick = pickAgents(config, "cheapest-first").plan;
-    const agent = { ...getAgent(config, pick.agent, "plan") };
-    agent.cmd = resolveCmd(agent, pick.model);
-
-    const prompt = composeAnalyzerPrompt({
-      output: run.output.slice(0, 30_000),
-      outcome: `status=${run.status} stage=${run.stage}`,
-    });
-    const res = await runAgent(agent, prompt, config.workdir);
-    const proposal = parseProposal(res.output);
-    if (proposal === null) {
-      console.warn("forge: analyzer parsed null proposal");
-      return;
-    }
-    await recordProposal(actorId, formatProposal(proposal));
-  } catch (e) {
-    console.warn(`forge: analyzer failed for run ${run.id}:`, (e as Error).message);
   }
 }
 

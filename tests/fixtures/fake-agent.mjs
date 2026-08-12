@@ -124,6 +124,10 @@ if ((mode === "believer" || mode === "investor" || mode === "skeptic") && prompt
 if (process.env.FAKE_WRITE && mode === "work") {
   writeFileSync(join(process.cwd(), "forge-made.txt"), "made by fake agent\n");
 }
+// Write a file NOT in the plan's declared set — triggers file-set gate block.
+if (process.env.FAKE_WRITE_STRAY && mode === "work") {
+  writeFileSync(join(process.cwd(), "stray-file.txt"), "unexpected file\n");
+}
 if (process.env.FAKE_WRITE_PATH && mode === "work") {
   const p = join(process.cwd(), process.env.FAKE_WRITE_PATH);
   mkdirSync(dirname(p), { recursive: true });

@@ -3,14 +3,13 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { findSecrets } from "./redact.js";
+import { findSecrets, redactSecrets } from "./redact.js";
 import { matchAny, parseAllowFiles } from "./policy.js";
 import { runChecks } from "./checks.js";
 import {
   sandboxPath, sandboxRangePatch, sandboxDiffNameStatus, sandboxBaseCommit,
   sandboxCheckout, sandboxDeletePaths, sandboxDiffNames,
 } from "./sandbox.js";
-import { redactSecrets } from "./redact.js";
 
 // --- Types ---
 
@@ -29,6 +28,10 @@ export function isTestPath(p: string): boolean {
 }
 
 // Declared set = full paths + basenames appearing as tokens in the plan text.
+// ponytail: This regex is intentionally loose — it matches any word.ext token (e.g. "e.g"
+// registers as a path). This makes the file-set check more permissive than it appears,
+// which is the safe direction for a check that can force FAIL. Do not mistake this for
+// a strict allowlist; expect some false negatives (unexpected files passing through).
 export function extractDeclaredPaths(planText: string): Set<string> {
   const set = new Set<string>();
   for (const m of planText.matchAll(/[\w./-]*[\w-]\.[a-z]{1,5}\b/gi)) {
@@ -182,7 +185,15 @@ export async function runGate(deps: {
         }
       } finally {
         // Restore: checkout HEAD for all modified/added paths
-        await sandboxCheckout(ticketId, "HEAD", srcPaths);
+        try {
+          await sandboxCheckout(ticketId, "HEAD", srcPaths);
+        } catch (restoreErr) {
+          findings.push({
+            check: "mutation",
+            severity: "warn",
+            detail: `Mutation restore failed: ${(restoreErr as Error).message}. Sandbox working tree may be dirty; the committed state and promote are unaffected.`,
+          });
+        }
       }
     }
   } catch (e) {

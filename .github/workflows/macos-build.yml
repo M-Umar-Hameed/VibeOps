@@ -24,6 +24,11 @@ jobs:
         run: npm run build:sidecar:server
       - name: Copy dist-server
         run: mkdir -p app/src-tauri/resources && cp -R dist-server app/src-tauri/resources/server
+      # Without this, resources/node is empty and the bundler fails with
+      # "glob pattern resources/node/**/* path not found". release-build.yml has
+      # always had this step; the macOS job never did, and had never been run.
+      - name: Fetch node sidecar binary
+        run: node scripts/fetch-node.mjs --target darwin-arm64 --out app/src-tauri/resources/node
       - name: Build Tauri app
         run: cd app && npx tauri build --debug
         # env:

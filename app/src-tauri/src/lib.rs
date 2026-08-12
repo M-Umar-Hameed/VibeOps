@@ -27,8 +27,14 @@ pub fn run() {
                 return Ok(()); // dev server / other instance already serving
             }
             let resources = app.path().resolve("resources", BaseDirectory::Resource)?;
+            // macOS fell into the linux-x64 branch, so a mac bundle looked for a Linux
+            // binary and always took the "sidecar resources missing" path. Runners are
+            // Apple Silicon; an Intel bundle would need darwin-x64 fetched and matched
+            // here too.
             let node = if cfg!(windows) {
                 resources.join("node").join("win-x64").join("node.exe")
+            } else if cfg!(target_os = "macos") {
+                resources.join("node").join("darwin-arm64").join("node")
             } else {
                 resources.join("node").join("linux-x64").join("node")
             };

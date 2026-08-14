@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { eq } from "drizzle-orm";
 import { markInterruptedRuns, awaitRun, getRunOutput, stopRun, startPipeline, hasActiveRun, listRuns, listInterruptedRuns } from "../src/forge/runs.js";
-import { ensureSandbox, forgeCommit } from "../src/forge/sandbox.js";
+import { ensureSandbox, forgeCommit, hasCommitsToPromote } from "../src/forge/sandbox.js";
 import { addComment } from "../src/services/comments.js";
 import { loadRelayConfig } from "../src/relay/config.js";
 import { clearSetting } from "./helpers/settings.js";
@@ -424,6 +424,34 @@ describe("forge run resume", () => {
     expect(item!.resumable).toBe(true);
     expect(item!.resumeMode).toBe("work");
     expect(item!.sandboxExists).toBe(true);
+  });
+
+  it("failed run at work stage WITH a commit resumes to review, not work", async () => {
+    const { actorId, ticket } = await seedTicket("Failed work stage committed");
+    const config = loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG!);
+
+    // Sandbox with a committed work diff (a sentinel/timeout WIP-committed it)
+    await ensureSandbox(workdir, ticket.id);
+    writeFileSync(join(sandboxRoot, ticket.id, "result.txt"), "work done");
+    await forgeCommit(ticket.id, "WIP (deps leak) committed work");
+
+    await addComment(actorId, ticket.id, "The plan", "plan");
+    const t2 = await getTicket(ticket.id);
+    await updateTicket(actorId, ticket.id, t2.version, { status: "planned" });
+
+    await db.insert(forgeRuns).values({
+      id: randomUUID(), ticketId: ticket.id, status: "failed", stage: "work",
+      planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+      startedAt: new Date(), finishedAt: new Date(),
+    });
+
+    const items = await listInterruptedRuns(config);
+    const item = items.find(i => i.ticketId === ticket.id);
+    expect(item).toBeDefined();
+    expect(item!.resumable).toBe(true);
+    expect(item!.hasCommits).toBe(true);
+    expect(item!.resumeMode).toBe("review");
+    expect(item!.reason).toContain("Retry"); // tradeoff surfaced to operator
   });
 
   it("AC2: failed run with no sandbox is refused with reason", async () => {

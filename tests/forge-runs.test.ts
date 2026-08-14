@@ -1,6 +1,6 @@
 import { runDoctor, type ProbeStatus } from "../src/relay/doctor.js";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1182,6 +1182,48 @@ const file2 = "run2-output.txt";
     expect(output?.chunk).toContain("DEPS-LEAK");
     expect(output?.chunk).not.toContain("Hint: a frontend build needs forge.frontendDeps set to true");
   });
+
+  it("sandbox escape WIP-commits the sandbox edits before failing", async () => {
+    const { actorId, ticket } = await seedTicket("Escape WIP commit");
+    const sensitive = join(counterDir, "server.mjs");
+    writeFileSync(sensitive, "GOOD\n");
+    setScript("plan,work,review-pass", true); // FAKE_WRITE=1 -> forge-made.txt in sandbox
+    process.env.FAKE_WRITE_ABS = sensitive;     // escape -> sentinel fires
+
+    await withSetting("forge.sensitivePaths", JSON.stringify([sensitive]), async () => {
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+      const output = getRunOutput(runId, 0);
+      expect(output?.status).toBe("failed");
+      expect(output?.chunk).toContain("SANDBOX-ESCAPE");
+      // the escaped write was reverted
+      expect(readFileSync(sensitive, "utf-8")).toBe("GOOD\n");
+    });
+    // the work-stage edits survive as a commit on the sandbox branch
+    expect(await hasCommitsToPromote(workdir, ticket.id)).toBe(true);
+  }, 20_000);
+
+  it("deps leak WIP-commits the sandbox edits before failing", async () => {
+    mkdirSync(join(workdir, "node_modules"), { recursive: true });
+    writeFileSync(join(workdir, "node_modules", "marker.txt"), "base\n");
+
+    const { actorId, ticket } = await seedTicket("Deps leak WIP commit");
+    setScript("plan,work,review-pass", true); // FAKE_WRITE=1 -> forge-made.txt in sandbox
+    process.env.FAKE_WRITE_DEPS = "LEAK.txt";  // leak -> sentinel fires
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+    const output = getRunOutput(runId, 0);
+    expect(output?.status).toBe("failed");
+    expect(output?.chunk).toContain("DEPS-LEAK");
+    expect(existsSync(join(workdir, "node_modules", "LEAK.txt"))).toBe(false); // reverted
+    // the work-stage edits survive as a commit on the sandbox branch
+    expect(await hasCommitsToPromote(workdir, ticket.id)).toBe(true);
+  }, 20_000);
 
   it("promote conflict end-to-end: second promote fails, names file, sandbox intact", async () => {
     const { actorId: a1, ticket: t1 } = await seedTicket("Promote conflict 1");

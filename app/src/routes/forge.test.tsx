@@ -806,7 +806,7 @@ test("protected-path violation shows the waive action, hides Approve, and posts 
   expect(screen.queryByRole("button", { name: /Approve override/i })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: /Promote/i })).toBeDisabled();
 
-  fireEvent.click(screen.getByRole("button", { name: /Waive policy for these files/i }));
+  fireEvent.click(screen.getByRole("button", { name: /Allow for this run only/i }));
   await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/forge/tickets/t2/waive-policy", {
     method: "POST",
     body: { paths: ["vitest.config.ts"] },

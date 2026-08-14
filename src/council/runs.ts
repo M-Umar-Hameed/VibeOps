@@ -202,6 +202,38 @@ export async function submitAnswers(councilId: string, config: RelayConfig, answ
     });
 }
 
+// A failed session's persona/chairman work already lives in the row; re-run only
+// the stage that died instead of restarting and re-paying for completed rounds.
+// A personaRounds entry for the current round means personas finished and the
+// chairman failed; its absence means personas (this round) never completed.
+export async function resumeCouncil(councilId: string, config: RelayConfig): Promise<void> {
+  const session = sessions.get(councilId);
+  if (!session) throw new NotFoundError("council not found");
+  if (session.status !== "failed") {
+    throw new ConflictError(
+      `council session is ${session.status}; only a failed session can be resumed`,
+    );
+  }
+  if (activeCount() >= MAX_ACTIVE) {
+    throw new ConflictError("too many active council sessions");
+  }
+
+  const personasDone = (session.personaRounds ?? []).some((r) => r.round === session.round);
+  session.status = "running";
+  session.finishedAt = undefined;
+  persist();
+
+  const resume = personasDone
+    ? runChairman(session, config)
+    : runPersonas(session, config).then(() => runChairman(session, config));
+  resume.catch((e) => {
+    append(session, `\ncouncil error: ${(e as Error).message}\n`);
+    session.status = "failed";
+    session.finishedAt = new Date().toISOString();
+    persist();
+  });
+}
+
 export async function createTicketFromCouncil(
   actorId: string,
   councilId: string,

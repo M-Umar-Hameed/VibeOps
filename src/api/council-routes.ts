@@ -1,7 +1,7 @@
 import type { Hono } from "hono";
 import { loadRelayConfig } from "../relay/config.js";
 import { requireAdmin } from "./auth.js";
-import { startCouncil, submitAnswers, createTicketFromCouncil, getCouncil, getCouncilOutput, listCouncils } from "../council/runs.js";
+import { startCouncil, submitAnswers, resumeCouncil, createTicketFromCouncil, getCouncil, getCouncilOutput, listCouncils } from "../council/runs.js";
 import { ConflictError, NotFoundError } from "../services/errors.js";
 import type { Actor } from "../db/schema.js";
 
@@ -48,6 +48,16 @@ export function registerCouncilRoutes(app: Hono<AppEnv>): void {
     if (!Array.isArray(answers)) return c.json({ error: "answers array required" }, 400);
     try {
       await submitAnswers(c.req.param("id"), config(), answers);
+      return c.json({ ok: true });
+    } catch (e: any) {
+      if (e instanceof ConflictError || e instanceof NotFoundError) throw e;
+      return c.json({ error: e.message }, 400);
+    }
+  });
+
+  app.post("/council/:id/resume", requireAdmin, async (c) => {
+    try {
+      await resumeCouncil(c.req.param("id"), config());
       return c.json({ ok: true });
     } catch (e: any) {
       if (e instanceof ConflictError || e instanceof NotFoundError) throw e;

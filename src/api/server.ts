@@ -8,6 +8,7 @@ import { startWatcher, rescanProjectVaults } from "../ingest/watch.js";
 import { reapStaleTickets } from "../services/reaper.js";
 import { markInterruptedRuns } from "../forge/runs.js";
 import { restoreCouncilSessions } from "../council/runs.js";
+import { configureExport } from "../services/export-debounce.js";
 
 const port = Number(process.env.PORT ?? 8787);
 
@@ -52,6 +53,7 @@ async function bootNormally() {
       .catch((e) => console.warn(`known-good snapshot failed: ${(e as Error).message}`));
     void runLogicalExport!();
     setInterval(() => void runLogicalExport!(), 6 * 60 * 60_000).unref();
+    configureExport(runLogicalExport!);
     // Periodic CHECKPOINT reduces WAL replay time after unclean exit; 2-min default, env-tunable.
     const checkpointMs = Number(process.env.VIBEOPS_CHECKPOINT_MS ?? 120_000);
     setInterval(

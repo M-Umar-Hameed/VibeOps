@@ -27,6 +27,7 @@ import { registerForgeRoutes } from "./forge-routes.js";
 import { registerSkillsRoutes } from "./skills-routes.js";
 import { registerCouncilRoutes } from "./council-routes.js";
 import { registerExportRoutes } from "./export-routes.js";
+import { armExport } from "../services/export-debounce.js";
 
 export const app = new Hono<{ Variables: { actor: Actor } }>();
 
@@ -71,6 +72,19 @@ app.use("*", cors({
 }));
 
 app.use("*", auth);
+
+// Arm a debounced logical export after any successful durable mutation. The
+// boot / 6h / clean-shutdown exports miss writes made in the hours before an
+// UNCLEAN exit; this shrinks that loss window from ~6h to minutes. No-op in
+// non-embedded mode (no export fn configured). Read-only and failed (>=400)
+// requests never arm.
+app.use("*", async (c, next) => {
+  await next();
+  const m = c.req.method;
+  if ((m === "POST" || m === "PATCH" || m === "PUT" || m === "DELETE") && c.res.status < 400) {
+    armExport();
+  }
+});
 
 app.post("/tickets", async (c) => {
   const body = await jsonBody(c);

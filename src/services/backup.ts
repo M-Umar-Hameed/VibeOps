@@ -129,7 +129,13 @@ export async function restoreDurable(target: Db, dump: Dump): Promise<Counts> {
   return countTables(target);
 }
 
-export const KEEP_EXPORTS = 30;
+// Newest N logical exports retained. Bumped from 30 for the write-triggered
+// cadence: at the 5-min export floor that's ~12/hr worst case, so 90 covers
+// ~7.5h of continuous churn (days under normal bursty use) — enough that the
+// 6-hourly milestone exports aren't evicted within a day.
+// ponytail: flat count; if churn ever evicts milestones, switch to tiered
+// retention (keep newest N write-exports + all 6-hourly) instead of raising N.
+export const KEEP_EXPORTS = 90;
 
 export function backupDir(): string {
   return join(vibeopsHome(), ".vibeops", "backups");

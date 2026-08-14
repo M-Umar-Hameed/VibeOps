@@ -100,11 +100,25 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           cd app
+          # -v makes tauri surface the bundler subprocess output it otherwise
+          # swallows: the entire error so far has been "failed to run linuxdeploy"
+          # with no stderr, which is why the first fix attempt was a guess. tee so
+          # the log survives the step failing.
+          set -o pipefail
           if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            npx tauri build --bundles appimage
+            npx tauri build -v --bundles appimage 2>&1 | tee ../appimage-build.log
           else
-            npx tauri build --bundles appimage --config '{"bundle":{"createUpdaterArtifacts":false}}'
+            npx tauri build -v --bundles appimage --config '{"bundle":{"createUpdaterArtifacts":false}}' 2>&1 | tee ../appimage-build.log
           fi
+
+      # Uploaded even when the bundle step fails - the whole point is reading it.
+      - name: Upload AppImage build log
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage-build-log
+          path: appimage-build.log
+          if-no-files-found: warn
       # macOS updater downloads the .app.tar.gz, not the .app or .dmg; without it
       # latest.json points at a URL that 404s. deb/AppImage cover the Linux bundles.
       - name: Upload build artifacts

@@ -866,6 +866,12 @@ export type RecoveryItem = {
   reason: string; startedAt: string;
 };
 
+// Terminal run states whose on-disk work (sandbox, WIP commit, branch) is still
+// recoverable. `interrupted` is boot crash-recovery; `failed`/`stopped` are the
+// common case (agent rate-limit, self-exit, operator stop). `passed`/`rejected`
+// are excluded: passed succeeded, rejected already bounced the ticket to planned.
+const RESUMABLE_STATUSES = new Set<Status>(["interrupted", "failed", "stopped"]);
+
 // Interrupted runs still worth recovering: latest run per ticket, only if that
 // latest run is itself interrupted (a newer run supersedes it). Read-only —
 // computes disk truth (sandbox, branch commits) but never starts anything.
@@ -875,7 +881,7 @@ export async function listInterruptedRuns(config: RelayConfig): Promise<Recovery
   for (const r of rows) if (!latestByTicket.has(r.ticketId)) latestByTicket.set(r.ticketId, r);
   const items: RecoveryItem[] = [];
   for (const r of latestByTicket.values()) {
-    if (r.status !== "interrupted") continue;
+    if (!RESUMABLE_STATUSES.has(r.status as Status)) continue;
     let ticket; try { ticket = await getTicket(r.ticketId); } catch { continue; }
     if (ticket.status === "closed") continue;
     const workdir = await resolveWorkdir(ticket.projectId, config).catch(() => config.workdir);

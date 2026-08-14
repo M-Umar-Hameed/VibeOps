@@ -350,6 +350,107 @@ describe("forge run resume", () => {
     expect(runs.find(r => r.ticketId === ticket.id)).toBeUndefined();
   });
 
+  it("AC1: failed run with sandbox is resumable and resumes straight to review", async () => {
+    const { actorId, apiKey, ticket } = await seedTicket("Failed run resume");
+    const config = loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG!);
+
+    // Create sandbox with committed work
+    await ensureSandbox(workdir, ticket.id);
+    writeFileSync(join(sandboxRoot, ticket.id, "result.txt"), "work done");
+    await forgeCommit(ticket.id, "test work");
+
+    // Add plan and report comments as if work stage completed
+    await addComment(actorId, ticket.id, "The plan is to do work on result.txt", "plan");
+    await addComment(actorId, ticket.id, "Work completed successfully", "report");
+
+    // Update ticket to review status
+    const t2 = await getTicket(ticket.id);
+    await updateTicket(actorId, ticket.id, t2.version, { status: "review" });
+
+    // Insert a FAILED run in review stage (not interrupted)
+    await db.insert(forgeRuns).values({
+      id: randomUUID(), ticketId: ticket.id, status: "failed", stage: "review",
+      planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+      startedAt: new Date(), finishedAt: new Date(),
+    });
+
+    // listInterruptedRuns should include the failed run
+    const items = await listInterruptedRuns(config);
+    const item = items.find(i => i.ticketId === ticket.id);
+    expect(item).toBeDefined();
+    expect(item!.resumable).toBe(true);
+    expect(item!.resumeMode).toBe("review");
+
+    // Resume via HTTP should work
+    setScript("review-pass", false);
+    const h = { Authorization: `Bearer ${apiKey}` };
+    const res = await app.request(`/forge/tickets/${ticket.id}/resume`, { method: "POST", headers: h });
+    expect(res.status).toBe(201);
+    const { runId } = await res.json();
+
+    await awaitRun(runId);
+    const output = getRunOutput(runId, 0);
+    expect(output?.status).toBe("passed");
+    expect(output?.chunk).toContain("=== FORGE resume: straight to review");
+    expect(output?.chunk).not.toContain("=== FORGE work");
+  });
+
+  it("AC1: failed run at work stage resumes to work (not review)", async () => {
+    const { actorId, apiKey, ticket } = await seedTicket("Failed work stage");
+    const config = loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG!);
+
+    // Create sandbox but no commits (work died before committing)
+    await ensureSandbox(workdir, ticket.id);
+    writeFileSync(join(sandboxRoot, ticket.id, "dirty.txt"), "partial");
+
+    // Add plan comment
+    await addComment(actorId, ticket.id, "The plan", "plan");
+
+    // Update ticket to planned (work stage starts from planned)
+    const t2 = await getTicket(ticket.id);
+    await updateTicket(actorId, ticket.id, t2.version, { status: "planned" });
+
+    // Insert a FAILED run in work stage
+    await db.insert(forgeRuns).values({
+      id: randomUUID(), ticketId: ticket.id, status: "failed", stage: "work",
+      planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+      startedAt: new Date(), finishedAt: new Date(),
+    });
+
+    // listInterruptedRuns should include it with resumeMode=work
+    const items = await listInterruptedRuns(config);
+    const item = items.find(i => i.ticketId === ticket.id);
+    expect(item).toBeDefined();
+    expect(item!.resumable).toBe(true);
+    expect(item!.resumeMode).toBe("work");
+    expect(item!.sandboxExists).toBe(true);
+  });
+
+  it("AC2: failed run with no sandbox is refused with reason", async () => {
+    const { actorId, apiKey, ticket } = await seedTicket("Failed no sandbox");
+
+    // Set ticket to review status
+    const t2 = await getTicket(ticket.id);
+    await updateTicket(actorId, ticket.id, t2.version, { status: "review" });
+
+    // Insert a FAILED run in review stage — but no sandbox/commits exist
+    await db.insert(forgeRuns).values({
+      id: randomUUID(), ticketId: ticket.id, status: "failed", stage: "review",
+      planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+      startedAt: new Date(), finishedAt: new Date(),
+    });
+
+    const h = { Authorization: `Bearer ${apiKey}` };
+    const res = await app.request(`/forge/tickets/${ticket.id}/resume`, { method: "POST", headers: h });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toContain("sandbox");
+
+    // Verify no run was created
+    const runs = listRuns();
+    expect(runs.find(r => r.ticketId === ticket.id)).toBeUndefined();
+  });
+
   it("killed mid-work reports the stage it died in and that its sandbox survives", async () => {
     const { actorId, ticket } = await seedTicket("Kill mid-work");
     const config = loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG!);

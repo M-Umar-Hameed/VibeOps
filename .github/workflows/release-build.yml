@@ -134,6 +134,7 @@ jobs:
             app/src-tauri/target/release/bundle/macos/*.app.tar.gz
             app/src-tauri/target/release/bundle/deb/*.deb
             app/src-tauri/target/release/bundle/appimage/*.AppImage
+            app/src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz
             app/src-tauri/target/release/bundle/**/*.sig
 
       - name: Publish to GitHub Release
@@ -148,6 +149,7 @@ jobs:
             app/src-tauri/target/release/bundle/macos/*.app.tar.gz
             app/src-tauri/target/release/bundle/deb/*.deb
             app/src-tauri/target/release/bundle/appimage/*.AppImage
+            app/src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz
             app/src-tauri/target/release/bundle/**/*.sig
 
   # tauri.conf.json points the updater at releases/latest/download/latest.json,

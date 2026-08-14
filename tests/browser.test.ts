@@ -89,6 +89,14 @@ test("unknown verb is rejected 400 and nothing is enqueued", async () => {
     body: JSON.stringify({ instanceId: id, tenant: "acme", steps: [{ verb: "evaluate", ref: "r1" }] }),
   });
   expect(bad.status).toBe(400);
+  // Bare unknown verb: no extra field for the shape check to trip on, so this is
+  // the only probe that pins the closed verb SET itself.
+  const bare = await app.request("/browser/batches", {
+    method: "POST",
+    headers: h,
+    body: JSON.stringify({ instanceId: id, tenant: "acme", steps: [{ verb: "evaluate" }] }),
+  });
+  expect(bare.status).toBe(400);
   // Extra field on an otherwise-valid verb is also rejected (injection-defense anchor).
   const extra = await app.request("/browser/batches", {
     method: "POST",

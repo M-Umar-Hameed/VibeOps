@@ -130,3 +130,20 @@ test("Viewport clamp: clamps menu position inside screen bounds", () => {
   expect(top).toBeLessThanOrEqual(window.innerHeight - 220);
   expect(top).toBeGreaterThanOrEqual(0);
 });
+
+// A backdrop-filter ancestor (.glass-card) becomes the containing block for
+// fixed-position descendants, so an in-tree menu resolves viewport coordinates
+// against the card and lands off-page, scrolling the whole layout sideways.
+test("menu escapes a backdrop-filter ancestor by portalling to body", () => {
+  const items: MenuItemSpec[] = [{ key: "item1", label: "Item 1", onSelect: vi.fn() }];
+
+  const { container } = render(
+    <div className="glass-card" style={{ backdropFilter: "blur(20px)" }}>
+      <RunContextMenu items={items} x={100} y={100} label="Test Menu" onClose={vi.fn()} />
+    </div>,
+  );
+
+  const menu = screen.getByRole("menu", { name: "Test Menu" });
+  expect(container.querySelector(".glass-card")?.contains(menu)).toBe(false);
+  expect(document.body.contains(menu)).toBe(true);
+});

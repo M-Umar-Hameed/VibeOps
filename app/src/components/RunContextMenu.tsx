@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export type MenuItemSpec = {
   key: string;
@@ -60,7 +61,10 @@ export function RunContextMenu({ items, x, y, label, onClose }: {
 
   const confirming = items.find((it) => it.key === confirmKey);
 
-  return (
+  // Portalled to body: .glass-card sets backdrop-filter, which makes it the
+  // containing block for fixed-position descendants, so viewport coordinates
+  // resolved against the card and pushed the menu off-page.
+  return createPortal(
     <>
       <div className="fixed inset-0 z-[60]" onClick={onClose} data-testid="run-menu-backdrop" />
       <div
@@ -106,6 +110,7 @@ export function RunContextMenu({ items, x, y, label, onClose }: {
           </>
         )}
       </div>
-    </>
+    </>,
+    document.body,
   );
 }

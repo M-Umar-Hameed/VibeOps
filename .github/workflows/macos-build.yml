@@ -29,12 +29,23 @@ jobs:
       # always had this step; the macOS job never did, and had never been run.
       - name: Fetch node sidecar binary
         run: node scripts/fetch-node.mjs --target darwin-arm64 --out app/src-tauri/resources/node
+      # TAURI_SIGNING_PRIVATE_KEY signs the UPDATER artifact (minisign) and the
+      # repo secrets exist — this env block being commented out was the only
+      # reason the build died after producing all three bundles. Same
+      # unsigned-fallback shape as release-build.yml so a fork without secrets
+      # still builds. APPLE_* (OS code signing / notarization) stays out: that
+      # is the genuinely Apple-account-gated half.
       - name: Build Tauri app
-        run: cd app && npx tauri build --debug
-        # env:
-        #   APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-        #   APPLE_ID: ${{ secrets.APPLE_ID }}
-        #   TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          cd app
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            npx tauri build --debug
+          else
+            npx tauri build --debug --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          fi
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

@@ -113,3 +113,33 @@ But the wide join surface makes this a **real migration, not a simple split**. A
 Before any follow-up build ticket: accept sweep-based eventual consistency on the 4 durable-write paths (enables true second-instance isolation), or accept same-cluster fate-sharing (separate schema, atomicity kept)?
 
 The finding recommends the former; the answer scopes the next ticket.
+
+---
+
+## Resolution: DEFERRED (owner decision, 2026-08-12; ticket closed 2026-08-14)
+
+The split was NOT built. The open question above is answered "neither, for now."
+
+Every observed database failure — four incidents by 2026-08-14 — traced to
+CONCURRENT OPEN of the data directory, never to embeddings corrupting durable
+data. A second cluster does not defend against a second opener; it doubles what
+a second opener can destroy. Meanwhile the cheaper protections landed and are
+proven in practice: embeddings are excluded from logical exports, exports are
+write-triggered and debounced (loss window minutes, not hours), the backup CLI
+refuses a live data directory, and a restore has been executed twice for real.
+
+### Revisit if ANY of these fires
+
+1. The embedded database fails to open after a CLEAN shutdown. (Checked
+   2026-08-12 and 2026-08-14: every failure followed a concurrent open or an
+   unclean stop; a clean close has never failed to reopen.)
+2. An embeddings index scan fails while the durable tables read and write
+   normally — derived-data rot in isolation, exactly what the split prevents.
+3. Embeddings growth makes snapshots/backups expensive. Measured 2026-08-14:
+   logical exports ~4MB (embeddings excluded), known-good snapshot ~166MB
+   against a 382MB live dir. Re-check when the live dir passes ~1GB.
+
+This section replaces board ticket add0ef49, closed so the board only carries
+actionable work. This doc is indexed into knowledge search, so any future
+incident investigation that touches embeddings or the embedded cluster will
+surface it.

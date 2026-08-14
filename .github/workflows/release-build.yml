@@ -20,6 +20,14 @@ jobs:
           - os: macos-latest
             node-target: darwin-arm64
             bundles: app,dmg
+          # Linux was configured everywhere but never built: deb/appimage are in
+          # bundle.targets, fetch-node supports linux-x64, build-server installs
+          # the linux transformers binaries into the payload, and lib.rs resolves
+          # resources/node/linux-x64 — only the release matrix was missing it, so
+          # a tagged release shipped nothing for Linux users.
+          - os: ubuntu-22.04
+            node-target: linux-x64
+            bundles: deb,appimage
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -35,6 +43,15 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             app/package-lock.json
+
+      # Tauri's Linux build links against webkit2gtk and friends; the runner does
+      # not ship them. Without this the new linux matrix entry fails at cargo build.
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -68,6 +85,8 @@ jobs:
             npx tauri build --bundles ${{ matrix.bundles }} --config '{"bundle":{"createUpdaterArtifacts":false}}'
           fi
 
+      # macOS updater downloads the .app.tar.gz, not the .app or .dmg; without it
+      # latest.json points at a URL that 404s. deb/AppImage cover the Linux bundles.
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -78,9 +97,9 @@ jobs:
             app/src-tauri/target/release/bundle/msi/*.msi
             app/src-tauri/target/release/bundle/dmg/*.dmg
             app/src-tauri/target/release/bundle/macos/*.app
-            # The macOS updater downloads the .app.tar.gz, not the .app or .dmg.
-            # Without it latest.json would point at a URL that 404s.
             app/src-tauri/target/release/bundle/macos/*.app.tar.gz
+            app/src-tauri/target/release/bundle/deb/*.deb
+            app/src-tauri/target/release/bundle/appimage/*.AppImage
             app/src-tauri/target/release/bundle/**/*.sig
 
       - name: Publish to GitHub Release
@@ -93,6 +112,8 @@ jobs:
             app/src-tauri/target/release/bundle/msi/*.msi
             app/src-tauri/target/release/bundle/dmg/*.dmg
             app/src-tauri/target/release/bundle/macos/*.app.tar.gz
+            app/src-tauri/target/release/bundle/deb/*.deb
+            app/src-tauri/target/release/bundle/appimage/*.AppImage
             app/src-tauri/target/release/bundle/**/*.sig
 
   # tauri.conf.json points the updater at releases/latest/download/latest.json,

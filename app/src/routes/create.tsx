@@ -10,6 +10,7 @@ import { useProject } from "../context/project.js";
 import { WorkOrderComposer, modelOptionsForRole } from "../components/WorkOrderComposer.js";
 import { Markdown } from "../components/Markdown.js";
 import { exportBrief, sendBriefToNotebookLM } from "../lib/notebooklm.js";
+import { RunContextMenu, type MenuItemSpec } from "../components/RunContextMenu.js";
 
 const COUNCIL_KEY = "vibeops.activeCouncilId";
 
@@ -141,7 +142,7 @@ export function CreateScreen() {
 type Project = { id: string; name: string };
 type CouncilStatus = "idle" | "running" | "awaiting-answers" | "decided" | "consumed" | "failed";
 type Decision = "GO" | "NO-GO" | "NEEDS-INFO";
-type CouncilRow = { id: string; status: CouncilStatus; round: number; startedAt: string; promptPreview: string };
+type CouncilRow = { id: string; status: CouncilStatus; round: number; startedAt: string; promptPreview: string; resumable?: boolean; resumeReason?: string };
 type CouncilDetail = {
   status: CouncilStatus; round?: number; rating?: number; decision?: Decision;
   questions?: string[]; title?: string; spec?: string;
@@ -157,6 +158,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
   }, [activeProjectId]);
   const [councilId, setCouncilId] = useState<string | null>(null);
   const [councilStatus, setCouncilStatus] = useState<CouncilStatus>("idle");
+  const [rowMenu, setRowMenu] = useState<{ items: MenuItemSpec[]; x: number; y: number; label: string } | null>(null);
   const [councilOutput, setCouncilOutput] = useState("");
   const [councilRating, setCouncilRating] = useState<number | undefined>(undefined);
   const [councilDecision, setCouncilDecision] = useState<Decision | undefined>(undefined);
@@ -381,9 +383,45 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
 
   const allPersonasHaveText = !!(personaTexts.believer && personaTexts.investor && personaTexts.skeptic);
 
+  const handleResumeCouncil = async (id: string) => {
+    await api.post(`/council/${id}/resume`);
+    await loadCouncil(id);
+    setCouncilStatus("running");
+    localStorage.setItem(COUNCIL_KEY, id);
+    councilListQ.refetch();
+  };
+
+  const buildCouncilItems = (row: CouncilRow): MenuItemSpec[] => {
+    const inFlight = row.status === "running" || row.status === "awaiting-answers";
+    const slot1: MenuItemSpec = inFlight
+      ? { key: "stop", label: "Stop session", danger: true, disabled: true,
+          disabledReason: "Council has no stop control" }
+      : row.status === "failed"
+        ? { key: "resume", label: "Resume session",
+            disabled: row.resumable === false,
+            disabledReason: row.resumeReason || "session is not resumable",
+            onSelect: () => handleResumeCouncil(row.id) }
+        : { key: "resume", label: "Resume session", disabled: true,
+            disabledReason: "nothing to resume for this session" };
+    const retry: MenuItemSpec = {
+      key: "retry", label: "Retry (new session)",
+      disabled: inFlight, disabledReason: "session in flight",
+      confirm: {
+        title: "Start a new session?",
+        message: "Clears this view and starts fresh from round 1. Existing session records are kept.",
+        confirmLabel: "New session",
+      },
+      onSelect: () => { handleStartOver(); },
+    };
+    return [slot1, retry];
+  };
+
+  const openCouncilMenu = (row: CouncilRow, x: number, y: number) =>
+    setRowMenu({ items: buildCouncilItems(row), x, y, label: `Actions for session ${row.id.substring(0, 8)}` });
+
   return (
     <div className="glass-card rounded-lg p-8 relative overflow-hidden space-y-6">
-      <CouncilList rows={rows} activeCount={activeRows.length} max={MAX_ACTIVE} onOpen={loadCouncil} />
+      <CouncilList rows={rows} activeCount={activeRows.length} max={MAX_ACTIVE} onOpen={loadCouncil} onRowMenu={openCouncilMenu} />
       {councilStatus !== "idle" && (
         <button
           type="button"
@@ -523,6 +561,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
           onClose={() => setExpanded(null)}
         />
       )}
+      {rowMenu && <RunContextMenu {...rowMenu} onClose={() => setRowMenu(null)} />}
     </div>
   );
 }
@@ -547,8 +586,9 @@ function SpecBlock({ spec, onExpand }: { spec: string; onExpand: () => void }) {
   );
 }
 
-function CouncilList({ rows, activeCount, max, onOpen }: {
+function CouncilList({ rows, activeCount, max, onOpen, onRowMenu }: {
   rows: CouncilRow[]; activeCount: number; max: number; onOpen: (id: string) => void;
+  onRowMenu: (row: CouncilRow, x: number, y: number) => void;
 }) {
   if (rows.length === 0) return null;
   return (
@@ -561,16 +601,25 @@ function CouncilList({ rows, activeCount, max, onOpen }: {
         {rows.map((r) => {
           const awaiting = r.status === "awaiting-answers";
           return (
-            <li key={r.id}>
+            <li key={r.id} className="relative">
               <button
                 type="button"
                 onClick={() => onOpen(r.id)}
-                className={`w-full text-left flex items-center gap-3 px-3 py-2 rounded-sm border cursor-pointer ${awaiting ? "border-amber-500/40 bg-amber-500/10" : "border-white/10 bg-surface-container-lowest"}`}
+                onContextMenu={(e) => { e.preventDefault(); onRowMenu(r, e.clientX, e.clientY); }}
+                className={`w-full text-left flex items-center gap-3 px-3 py-2 pr-9 rounded-sm border cursor-pointer ${awaiting ? "border-amber-500/40 bg-amber-500/10" : "border-white/10 bg-surface-container-lowest"}`}
               >
                 <span className={`px-2 py-0.5 rounded-sm text-[10px] uppercase tracking-wider ${awaiting ? "bg-amber-500/20 text-amber-400" : "bg-surface-container-highest text-on-surface-variant"}`}>{r.status}</span>
                 <span className="text-xs text-on-surface-variant">R{r.round}</span>
                 <span className="flex-1 truncate text-sm text-on-surface">{r.promptPreview}</span>
                 {awaiting && <span className="text-[10px] uppercase tracking-wider text-amber-400">Answer</span>}
+              </button>
+              <button
+                type="button"
+                aria-label={`Actions for session ${r.id.substring(0, 8)}`}
+                onClick={(e) => { const b = e.currentTarget.getBoundingClientRect(); onRowMenu(r, b.right, b.bottom); }}
+                className="absolute top-1/2 -translate-y-1/2 right-1 px-1 text-on-surface-variant hover:text-on-surface"
+              >
+                <span className="material-symbols-outlined text-lg">more_vert</span>
               </button>
             </li>
           );

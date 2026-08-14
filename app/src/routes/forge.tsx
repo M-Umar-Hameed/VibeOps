@@ -8,6 +8,7 @@ import { stageLabel, parseChecks, elapsedLabel, failureLine } from "../lib/run-s
 import { SpecEditor } from "../components/SpecEditor.js";
 import { CommentList } from "../components/CommentList.js";
 import { WorkOrderComposer, modelOptionsForRole } from "../components/WorkOrderComposer.js";
+import { RunContextMenu, type MenuItemSpec } from "../components/RunContextMenu.js";
 
 const parseSel = (s: string) => { const [agent, model] = s.split("::"); return { agent, model }; };
 const SELECTED_TICKET_KEY = "vibeops.forgeSelectedTicketId";
@@ -138,6 +139,19 @@ export function ForgeScreen() {
       .filter((r: any) => r.ticketId === selectedTicket?.id)
       .sort((a: any, b: any) => b.startedAt.localeCompare(a.startedAt));
   }, [runsQ.data, selectedTicket?.id]);
+
+  const recoveryQ = useQuery({
+    queryKey: ["forge", "recovery"],
+    queryFn: () => api.get("/forge/recovery") as Promise<{ interrupted: { ticketId: string; resumable: boolean; reason: string }[] }>,
+    refetchInterval: 5000,
+  });
+  const recoveryByTicket = useMemo(() => {
+    const m = new Map<string, { resumable: boolean; reason: string }>();
+    for (const it of recoveryQ.data?.interrupted ?? []) m.set(it.ticketId, it);
+    return m;
+  }, [recoveryQ.data]);
+
+  const [runMenu, setRunMenu] = useState<{ items: MenuItemSpec[]; x: number; y: number; label: string } | null>(null);
 
   useEffect(() => {
     if (sandboxQ.data && !sandboxQ.data.exists) {
@@ -581,6 +595,53 @@ export function ForgeScreen() {
 
   const filteredSkills = skills.filter(s => s.name.toLowerCase().includes(autocompleteFilter));
   const runActiveForTicket = runStatus === "running" || ticketRunActive;
+
+  const buildRunItems = (run: any): MenuItemSpec[] => {
+    const running = run.status === "running";
+    const rec = recoveryByTicket.get(run.ticketId);
+    const slot1: MenuItemSpec = running
+      ? {
+          key: "stop", label: "Stop run", danger: true,
+          confirm: {
+            title: "Stop this run?",
+            message: "Halts the run now. The sandbox and any committed work are kept — this is not Discard. Work in progress is committed before the run stops.",
+            confirmLabel: "Stop run",
+          },
+          onSelect: async () => {
+            await api.post(`/forge/runs/${run.id}/stop`);
+            queryClient.invalidateQueries({ queryKey: ["forge", "runs", run.ticketId] });
+          },
+        }
+      : {
+          key: "resume", label: "Resume run",
+          disabled: !rec?.resumable,
+          disabledReason: rec?.reason || "no resumable state for this run",
+          onSelect: async () => {
+            const res = await api.post(`/forge/tickets/${run.ticketId}/resume`) as { runId: string };
+            queryClient.invalidateQueries({ queryKey: ["forge", "runs", run.ticketId] });
+            queryClient.invalidateQueries({ queryKey: ["forge", "recovery"] });
+            if (run.ticketId === selectedTicket?.id) setActiveRunId(res.runId);
+          },
+        };
+    const retry: MenuItemSpec = {
+      key: "retry", label: "Retry from plan",
+      disabled: running, disabledReason: "run in flight",
+      confirm: {
+        title: "Retry from the beginning?",
+        message: "Starts a fresh run from the plan stage. The existing sandbox is not deleted.",
+        confirmLabel: "Retry run",
+      },
+      onSelect: async () => {
+        await api.post("/forge/pipeline", { ticketId: run.ticketId, planAgent: "auto", workAgent: "auto", reviewAgent: "auto", force: false });
+        queryClient.invalidateQueries({ queryKey: ["forge", "runs", run.ticketId] });
+        queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] });
+      },
+    };
+    return [slot1, retry];
+  };
+
+  const openRunMenu = (run: any, x: number, y: number) =>
+    setRunMenu({ items: buildRunItems(run), x, y, label: `Actions for run ${run.id.substring(0, 8)}` });
 
   return (
     // -m cancels the outlet padding so this screen owns its own scrolling —
@@ -1158,7 +1219,19 @@ export function ForgeScreen() {
                 <h3 className="font-headline-sm text-on-surface font-bold border-b border-white/5 pb-2">Run History</h3>
                 <div className="space-y-2">
                   {ticketRuns.map(run => (
-                    <div key={run.id} className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border border-white/5 bg-surface-container-lowest rounded-lg p-3">
+                    <div
+                      key={run.id}
+                      onContextMenu={(e) => { e.preventDefault(); openRunMenu(run, e.clientX, e.clientY); }}
+                      className="relative flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border border-white/5 bg-surface-container-lowest rounded-lg p-3"
+                    >
+                      <button
+                        type="button"
+                        aria-label={`Actions for run ${run.id.substring(0, 8)}`}
+                        onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); openRunMenu(run, r.right, r.bottom); }}
+                        className="absolute top-1 right-1 px-1 text-on-surface-variant hover:text-on-surface"
+                      >
+                        <span className="material-symbols-outlined text-lg">more_vert</span>
+                      </button>
                       <div className="flex flex-col gap-1">
                         <div className="flex items-center gap-2">
                           <span className="font-code-sm text-sm text-on-surface">Run {run.id.substring(0, 8)}</span>
@@ -1207,6 +1280,7 @@ export function ForgeScreen() {
           <div className="flex-1 flex items-center justify-center text-on-surface-variant/50">Select a work order to enter the Forge</div>
         )}
       </div>
+      {runMenu && <RunContextMenu {...runMenu} onClose={() => setRunMenu(null)} />}
     </div>
   );
 }

@@ -27,7 +27,7 @@ jobs:
           # a tagged release shipped nothing for Linux users.
           - os: ubuntu-22.04
             node-target: linux-x64
-            bundles: deb,appimage
+            bundles: deb
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -85,6 +85,26 @@ jobs:
             npx tauri build --bundles ${{ matrix.bundles }} --config '{"bundle":{"createUpdaterArtifacts":false}}'
           fi
 
+      # AppImage is built separately and is allowed to fail. linuxdeploy is itself
+      # an AppImage and needs FUSE2, which the ubuntu-22.04 runner does not provide;
+      # APPIMAGE_EXTRACT_AND_RUN makes the AppImage tools self-extract instead of
+      # FUSE-mounting. Keeping it out of the main build step means a broken AppImage
+      # toolchain can no longer sink the .deb — the first tag lost a perfectly good
+      # deb because the two were bundled in one command.
+      - name: Bundle AppImage (best effort)
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          cd app
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            npx tauri build --bundles appimage
+          else
+            npx tauri build --bundles appimage --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          fi
       # macOS updater downloads the .app.tar.gz, not the .app or .dmg; without it
       # latest.json points at a URL that 404s. deb/AppImage cover the Linux bundles.
       - name: Upload build artifacts

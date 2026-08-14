@@ -1,9 +1,11 @@
 name: macOS build
+
+# Manual only. release-build.yml already builds macOS on a v* tag via its matrix,
+# and publishes it; this workflow makes an unpublished --debug bundle, so firing
+# it on tags duplicated ~6 minutes of work for an artifact nobody ships. Kept for
+# checking a macOS build without cutting a release.
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - 'v*'
 jobs:
   build:
     runs-on: macos-latest

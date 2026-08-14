@@ -1,7 +1,12 @@
 name: CI
 
 on:
+  # Branches only. A bare `push:` also fires on tag pushes, so tagging a commit
+  # already tested on its branch ran the whole suite a second time against the
+  # identical tree — v0.1.0 did exactly that.
   push:
+    branches:
+      - '**'
   pull_request:
 
 jobs:

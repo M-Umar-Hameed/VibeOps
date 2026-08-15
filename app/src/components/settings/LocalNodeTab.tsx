@@ -8,6 +8,7 @@ export function LocalNodeTab({ rejected }: { rejected: boolean }) {
   const [apiKey, setApiKey] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
+  const [keyCopied, setKeyCopied] = useState(false);
 
   useEffect(() => {
     getSettings().then((s) => {
@@ -160,6 +161,26 @@ export function LocalNodeTab({ rejected }: { rejected: boolean }) {
               </span>
             </div>
           </div>
+        </div>
+
+        <div className="glass-card p-6 md:p-8 rounded-2xl border border-white/5">
+          <h4 className="text-sm font-bold text-on-surface mb-2 flex items-center gap-2">
+            <span className="material-symbols-outlined text-sm text-primary">extension</span>
+            Browser extension
+          </h4>
+          <p className="text-xs text-on-surface-variant leading-relaxed mb-4">
+            The browser agent extension links to this node with the same key configured above.
+            Load it in Chrome (chrome://extensions, Developer mode, Load unpacked), click its
+            toolbar button, and paste the key.
+          </p>
+          <button
+            className="py-2 px-4 rounded-lg border border-white/10 font-medium text-sm text-on-surface hover:bg-surface-container-highest hover:border-white/20 transition-all flex items-center gap-2 disabled:opacity-50"
+            disabled={!apiKey}
+            onClick={() => { navigator.clipboard.writeText(apiKey); setKeyCopied(true); setTimeout(() => setKeyCopied(false), 2000); }}
+          >
+            <span className="material-symbols-outlined text-[16px]">{keyCopied ? "check" : "content_copy"}</span>
+            {keyCopied ? "Copied" : "Copy key for the extension"}
+          </button>
         </div>
 
         <ActorsCard />

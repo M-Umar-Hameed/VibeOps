@@ -137,6 +137,14 @@ jobs:
             app/src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz
             app/src-tauri/target/release/bundle/**/*.sig
 
+      # Browser extension ships as a plain zip for chrome's Load unpacked. Built
+      # on one leg only so the release carries a single copy.
+      - name: Package browser extension
+        if: runner.os == 'Linux'
+        run: |
+          cd extension
+          zip -r ../vibeops-browser-extension.zip .
+
       - name: Publish to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
@@ -151,6 +159,7 @@ jobs:
             app/src-tauri/target/release/bundle/appimage/*.AppImage
             app/src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz
             app/src-tauri/target/release/bundle/**/*.sig
+            vibeops-browser-extension.zip
 
   # tauri.conf.json points the updater at releases/latest/download/latest.json,
   # and until now nothing produced that file — the endpoint 404'd, so no installed

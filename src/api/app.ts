@@ -28,6 +28,7 @@ import { registerSkillsRoutes } from "./skills-routes.js";
 import { registerCouncilRoutes } from "./council-routes.js";
 import { registerExportRoutes } from "./export-routes.js";
 import { registerBrowserRoutes } from "./browser-routes.js";
+import { registerChatRoutes } from "./chat-routes.js";
 import { armExport } from "../services/export-debounce.js";
 
 export const app = new Hono<{ Variables: { actor: Actor } }>();
@@ -460,3 +461,4 @@ registerSkillsRoutes(app);
 registerCouncilRoutes(app);
 registerExportRoutes(app);
 registerBrowserRoutes(app);
+registerChatRoutes(app);

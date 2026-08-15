@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -120,7 +121,10 @@ export function ProjectContextMenu({ project, x, y, onClose }: {
     onClose();
   });
 
-  return (
+  // Portalled to body: the sidebar sets backdrop-filter, which makes it the
+  // containing block for fixed descendants - the inset-0 backdrop only covered
+  // the sidebar, so clicks in the main content never closed the menu.
+  return createPortal(
     <>
       <div className="fixed inset-0 z-[60]" onClick={onClose} data-testid="context-menu-backdrop" />
       <div
@@ -151,6 +155,7 @@ export function ProjectContextMenu({ project, x, y, onClose }: {
           />
         )}
       </div>
-    </>
+    </>,
+    document.body,
   );
 }

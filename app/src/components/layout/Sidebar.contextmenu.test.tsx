@@ -117,3 +117,16 @@ test("the overflow button opens the menu without a right-click (keyboard-reachab
   fireEvent.click(screen.getByLabelText("Actions for Project A"));
   expect(screen.getByRole("menu")).toBeInTheDocument();
 });
+
+// The sidebar's backdrop-blur makes it the containing block for fixed
+// descendants; an in-tree menu's inset-0 backdrop then only covers the sidebar,
+// so clicks in the main content never close the menu.
+test("project menu renders outside the sidebar so the backdrop covers the viewport", async () => {
+  renderSidebar();
+  const row = await screen.findByText("Project A");
+  fireEvent.contextMenu(row);
+  const menu = await screen.findByRole("menu", { name: /Actions for Project A/ });
+  const aside = document.querySelector("aside");
+  expect(aside?.contains(menu)).toBe(false);
+  expect(document.body.contains(menu)).toBe(true);
+});

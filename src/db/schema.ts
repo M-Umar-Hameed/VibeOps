@@ -194,3 +194,23 @@ export const forgeRuns = pgTable('forge_runs', {
 
 export type ForgeRun = typeof forgeRuns.$inferSelect;
 
+export const chatSessions = pgTable("chat_sessions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  title: text("title").notNull().default("New chat"),
+  model: text("model").notNull().default("sonnet"),
+  sdkSessionId: text("sdk_session_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const chatMessages = pgTable("chat_messages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  sessionId: uuid("session_id").notNull().references(() => chatSessions.id),
+  role: text("role").notNull(),
+  body: text("body").notNull().default(""),
+  toolCalls: jsonb("tool_calls").$type<{ name: string; input: unknown; summary: string }[]>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({ sessionIdx: index("chat_messages_session_idx").on(t.sessionId) }));
+
+export type ChatSession = typeof chatSessions.$inferSelect;
+export type ChatMessage = typeof chatMessages.$inferSelect;
+

@@ -12,6 +12,7 @@ import { CreateScreen } from "./routes/create.js";
 import { KnowledgeScreen } from "./routes/knowledge.js";
 import { SettingsScreen } from "./routes/settings.js";
 import { ForgeScreen } from "./routes/forge.js";
+import { ChatScreen } from "./routes/chat.js";
 
 const rootRoute = createRootRoute({
   component: Root,
@@ -44,8 +45,9 @@ const createRouteDef = createRoute({ getParentRoute: () => rootRoute, path: "/cr
 const knowledgeRoute = createRoute({ getParentRoute: () => rootRoute, path: "/knowledge", component: KnowledgeScreen });
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsScreen });
 const forgeRoute = createRoute({ getParentRoute: () => rootRoute, path: "/forge", component: ForgeScreen });
+const chatRoute = createRoute({ getParentRoute: () => rootRoute, path: "/chat", component: ChatScreen });
 
-const routeTree = rootRoute.addChildren([listRoute, detailRoute, createRouteDef, knowledgeRoute, settingsRoute, forgeRoute]);
+const routeTree = rootRoute.addChildren([listRoute, detailRoute, createRouteDef, knowledgeRoute, settingsRoute, forgeRoute, chatRoute]);
 
 const router = createRouter({ routeTree });
 

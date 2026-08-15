@@ -2,6 +2,8 @@ import { runChatTurn, type ChatTurnResult } from "./agent.js";
 import { buildChatTools, type ToolCall } from "./tools.js";
 import * as store from "./store.js";
 import type { Actor } from "../db/schema.js";
+import { roleStyle } from "../relay/style.js";
+import { getSetting } from "../services/settings.js";
 
 type AgentFn = (p: Parameters<typeof runChatTurn>[0]) => Promise<ChatTurnResult>;
 
@@ -62,12 +64,14 @@ export async function runTurn(
       b.output += s;
     };
 
+    const voice = roleStyle("chat", await getSetting("agents.commProfile"));
     let res: ChatTurnResult;
     try {
       res = await agentImpl({
         userBody,
         tools,
         model: useModel,
+        systemPrompt: voice,
         resume: session.sdkSessionId ?? undefined,
         onData,
       });
@@ -77,6 +81,7 @@ export async function runTurn(
         userBody,
         tools,
         model: useModel,
+        systemPrompt: voice,
         onData,
       });
     }

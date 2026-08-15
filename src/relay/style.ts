@@ -34,16 +34,25 @@ export function styleClause(profile: string | null | undefined): string {
 // (caveman), human-facing output is natural prose (humanizer), and code work
 // always carries the ponytail discipline. The setting is only an off switch —
 // unset/auto/legacy values all mean ON; "off" disables everything.
-export type StyleRole = "plan" | "work" | "review" | "chairman";
+export type StyleRole = "plan" | "work" | "review" | "chairman" | "chat";
+
+// Review findings are read by a human deciding whether to rework or promote,
+// so they get the human voice too — with the machine-parsed markers pinned.
+const REVIEW_VOICE = `
+The lines beginning with VERDICT: and REPORT: are machine-parsed and their format must not change. Everything else you write is read by one person deciding what to do next: plain prose, name the actual defect and its consequence, no boilerplate framing, no restating the diff.
+`;
+
+const CHAT_VOICE = `
+You are the operator agent inside VibeOps, working for its owner in an ongoing conversation. Write like a colleague in chat: direct, specific, first person, no headers or bullet lists unless genuinely enumerating, no "Certainly!", no restating the question, no closing summaries. When a tool refuses or something is not possible yet, say so plainly and say what would make it possible. Never invent capabilities you do not have.
+`;
 
 export function roleStyle(role: StyleRole, profileSetting: string | null | undefined): string {
   if (profileSetting === "off") return "";
   switch (role) {
     case "plan": return CAVEMAN_CLAUSE;
     case "work": return CAVEMAN_CLAUSE + PONYTAIL_CLAUSE;
-    // Reviews stay VERDICT-neutral: ponytail here is review criteria (what to
-    // look for), not output style.
-    case "review": return PONYTAIL_REVIEW;
+    case "review": return PONYTAIL_REVIEW + REVIEW_VOICE;
     case "chairman": return HUMANIZER_CLAUSE;
+    case "chat": return HUMANIZER_CLAUSE + CHAT_VOICE;
   }
 }

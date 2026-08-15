@@ -22,6 +22,7 @@ export async function runChatTurn(params: {
   userBody: string;
   tools: SdkMcpToolDefinition<any>[];
   model: string; // "sonnet" | "opus"
+  systemPrompt?: string;
   resume?: string;
   onData?: (s: string) => void;
   onAbort?: (abort: () => void) => void;
@@ -54,6 +55,7 @@ export async function runChatTurn(params: {
         mcpServers: { chat: server },
         canUseTool: async (_n, input) => ({ behavior: "allow", updatedInput: input }),
         model: params.model,
+        ...(params.systemPrompt ? { systemPrompt: params.systemPrompt } : {}),
         ...(params.resume ? { resume: params.resume } : {}),
         abortController: controller,
       },

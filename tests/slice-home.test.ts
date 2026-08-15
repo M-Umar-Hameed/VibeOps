@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { EMBEDDED } from "./helpers/embedded.js";
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, existsSync, readFileSync, statSync, readdirSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
@@ -35,7 +36,7 @@ function sidecarSnapshot(vibeops: string): { creds: string | null; dataFiles: st
   return { creds, dataFiles };
 }
 
-test("sidecar under a slice writes only under slice.home; real ~/.vibeops untouched", { timeout: 120_000 }, async () => {
+test.skipIf(EMBEDDED)("sidecar under a slice writes only under slice.home; real ~/.vibeops untouched", { timeout: 120_000 }, async () => {
   const realVibeops = join(homedir(), ".vibeops");
   const before = sidecarSnapshot(realVibeops);
 

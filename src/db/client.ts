@@ -1,5 +1,4 @@
-import { join } from "node:path";
-import { vibeopsHome } from "../runtime/home.js";
+import { resolveEmbeddedDataDir } from "../runtime/home.js";
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
@@ -9,7 +8,7 @@ import * as schema from "./schema.js";
 // Driver seam: DATABASE_URL -> postgres-js; vitest -> postgres-js fallback (the
 // suite stays on real Postgres); otherwise embedded PGlite in ~/.vibeops/data.
 const url = process.env.DATABASE_URL;
-export const isEmbedded = !url && !process.env.VITEST;
+export const isEmbedded = !url && (!process.env.VITEST || process.env.VIBEOPS_TEST_EMBEDDED === "1");
 
 // postgres-js connects lazily, so creating it unconditionally is harmless in
 // embedded mode (no runtime code path uses `sql` there after this slice).
@@ -32,7 +31,7 @@ async function makeDb(): Promise<void> {
   const { migrate } = await import("drizzle-orm/pglite/migrator");
   const { openEmbedded, EmbeddedDbOpenError, closeEmbedded } = await import("./lifecycle.js");
   // PGlite's mkdir is not recursive; create the data dir (and ~/.vibeops) first.
-  const dataDir = join(vibeopsHome(), ".vibeops", "data");
+  const dataDir = resolveEmbeddedDataDir();
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 
   let client;

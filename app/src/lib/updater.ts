@@ -5,8 +5,13 @@ export async function checkForUpdate(): Promise<void> {
     const { check } = await import("@tauri-apps/plugin-updater");
     const update = await check();
     if (!update) return;
-    const ok = window.confirm(
-      `VibeOps ${update.version} is available (you have ${update.currentVersion}). Install now?`
+    // window.confirm is not a real prompt inside the Tauri webview - it
+    // resolves truthy without asking, which auto-launched the installer on
+    // every boot. Use the native dialog plugin, which actually asks.
+    const { ask } = await import("@tauri-apps/plugin-dialog");
+    const ok = await ask(
+      `VibeOps ${update.version} is available (you have ${update.currentVersion}). Install now?`,
+      { title: "VibeOps update", kind: "info" },
     );
     if (!ok) return;
     // On Windows the NSIS installer takes over from here — its pre-install

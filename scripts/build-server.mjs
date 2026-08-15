@@ -1,5 +1,5 @@
 import { build } from "esbuild";
-import { cpSync, mkdirSync, rmSync, readFileSync, mkdtempSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync, readFileSync, mkdtempSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
@@ -59,5 +59,21 @@ try {
 // seen on the macOS build (semver). The sidecar require()s packages and never
 // execs these bins, so the whole directory is dead weight in the payload.
 rmSync(join(outDir, "node_modules", ".bin"), { recursive: true, force: true });
+
+// onnxruntime's GPU provider libs (CUDA/TensorRT) reference libcublas.so.12,
+// which linuxdeploy tries to resolve on a runner with no CUDA - that single
+// unresolvable dependency is what killed every AppImage build. The sidecar
+// only ever uses the CPU provider (inside libonnxruntime itself), so the GPU
+// providers are dead weight on every platform.
+const onnxBin = join(outDir, "node_modules", "onnxruntime-node", "bin");
+try {
+  for (const entry of readdirSync(onnxBin, { recursive: true })) {
+    const name = String(entry);
+    if (/libonnxruntime_providers_(cuda|tensorrt)/.test(name)) {
+      rmSync(join(onnxBin, name), { force: true });
+      console.log(`stripped GPU provider: ${name}`);
+    }
+  }
+} catch { /* package layout changed; the AppImage step will say so */ }
 
 console.log(`payload ready: ${outDir}`);

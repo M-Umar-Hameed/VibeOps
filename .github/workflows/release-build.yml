@@ -35,6 +35,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The tag names the release but tauri.conf.json versions the binaries.
+      # v0.1.1 shipped 0.1.0 binaries under a 0.1.1 latest.json, so installs
+      # from that release get offered the same update forever. Fail in seconds
+      # instead of after a full build.
+      - name: Tag must match the app version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          APP=$(node -p "require('./app/src-tauri/tauri.conf.json').version")
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$APP" != "$TAG" ]; then
+            echo "tag v$TAG but tauri.conf.json says $APP - bump the version or retag" >&2
+            exit 1
+          fi
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:

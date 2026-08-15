@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { eq } from "drizzle-orm";
 import { markInterruptedRuns, awaitRun, getRunOutput, stopRun, startPipeline, hasActiveRun, listRuns, listInterruptedRuns } from "../src/forge/runs.js";
-import { ensureSandbox, forgeCommit, hasCommitsToPromote } from "../src/forge/sandbox.js";
+import { ensureSandbox, forgeCommit } from "../src/forge/sandbox.js";
 import { addComment } from "../src/services/comments.js";
 import { loadRelayConfig } from "../src/relay/config.js";
 import { clearSetting } from "./helpers/settings.js";

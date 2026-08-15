@@ -11,7 +11,8 @@ export function registerChatRoutes(app: Hono<AppEnv>): void {
     const body = await c.req.json().catch(() => ({}));
     const title = typeof body.title === "string" ? body.title : undefined;
     const model = body.model === "opus" ? "opus" : "sonnet";
-    return c.json(await store.createSession(title, model), 201);
+    const projectId = typeof body.projectId === "string" ? body.projectId : null;
+    return c.json(await store.createSession(title, model, projectId), 201);
   });
 
   app.get("/chat/sessions", requireAdmin, async (c) => {

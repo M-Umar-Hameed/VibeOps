@@ -41,7 +41,7 @@ async function browserStep(
   return text(val);
 }
 
-export function buildChatTools(actor: Actor, calls: ToolCall[]) {
+export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: string) {
   const rec = (name: string, input: unknown, summary: string) => {
     calls.push({ name, input, summary });
   };
@@ -52,7 +52,7 @@ export function buildChatTools(actor: Actor, calls: ToolCall[]) {
       "Search the knowledge/RAG index.",
       { query: z.string() },
       async ({ query }) => {
-        const hits = await searchKnowledge(query, { limit: 5, caller: `chat:${actor.id}` });
+        const hits = await searchKnowledge(query, { limit: 5, projectId, caller: `chat:${actor.id}` });
         const body = hits.length
           ? hits.map((h) => `- [${h.citation}] (${h.score.toFixed(2)}) ${h.content.slice(0, 300)}`).join("\n")
           : "no matches";

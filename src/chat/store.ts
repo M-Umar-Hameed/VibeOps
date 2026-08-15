@@ -2,10 +2,11 @@ import { eq, asc, desc } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { chatSessions, chatMessages, type ChatSession, type ChatMessage } from "../db/schema.js";
 
-export async function createSession(title?: string, model = "sonnet"): Promise<ChatSession> {
+export async function createSession(title?: string, model = "sonnet", projectId?: string | null): Promise<ChatSession> {
   const [row] = await db.insert(chatSessions).values({
     title: title ?? "New chat",
     model,
+    projectId: projectId ?? null,
   }).returning();
   return row;
 }

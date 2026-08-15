@@ -2,11 +2,13 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api.js";
 import { Markdown } from "../components/Markdown.js";
+import { useProject } from "../context/project.js";
 
 type ChatSession = {
   id: string;
   title: string;
   model: string;
+  projectId?: string | null;
   createdAt: string;
 };
 
@@ -25,6 +27,7 @@ type SessionDetail = {
 
 export function ChatScreen() {
   const queryClient = useQueryClient();
+  const { activeProjectId, projects } = useProject();
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [model, setModel] = useState<"sonnet" | "opus">("sonnet");
@@ -92,7 +95,7 @@ export function ChatScreen() {
   const handleNewChat = async () => {
     setError("");
     try {
-      const sess = (await api.post("/chat/sessions", { model })) as ChatSession;
+      const sess = (await api.post("/chat/sessions", { model, projectId: activeProjectId })) as ChatSession;
       queryClient.invalidateQueries({ queryKey: ["chat", "sessions"] });
       setSelectedSessionId(sess.id);
     } catch (e: any) {
@@ -153,6 +156,9 @@ export function ChatScreen() {
               }`}
             >
               <div className="truncate text-sm font-medium">{s.title}</div>
+              <div className="text-xs opacity-60">
+                {projects.find((p) => p.id === s.projectId)?.name ?? "All projects"}
+              </div>
               <div className="text-xs opacity-60">
                 {new Date(s.createdAt).toLocaleString()}
               </div>

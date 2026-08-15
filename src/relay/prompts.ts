@@ -123,3 +123,26 @@ export function parseVerification(output: string): { pass: boolean } {
   const last = matches.at(-1);
   return { pass: last?.[1].toUpperCase() === "PASS" };
 }
+
+function stripBullet(s: string): string {
+  return s.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim();
+}
+
+function firstSentence(s: string): string {
+  const m = s.match(/^.*?[.!?](?=\s|$)/);
+  return (m ? m[0] : s).trim();
+}
+
+// One-line human reason for a rejection. Prefer the reviewer's explicit REASON:
+// line (pinned by REVIEW_VOICE); else the first sentence of the first line that
+// names a "Critical" finding; else the first non-empty line that is not a
+// machine marker. Returns "" when nothing usable is present.
+export function parseReason(output: string): string {
+  const reason = [...output.matchAll(/^\s*REASON:\s*(.+?)\s*$/gim)].at(-1);
+  if (reason) return firstSentence(reason[1]);
+  const critical = output.split(/\r?\n/).find((l) => /\bcritical\b/i.test(l));
+  if (critical) return firstSentence(critical.replace(/^.*?\bcritical\b[:\-\s]*/i, "").trim());
+  const first = output.split(/\r?\n/).map((l) => l.trim())
+    .find((l) => l && !/^VERDICT:/i.test(l) && !/^REPORT:/i.test(l));
+  return first ? firstSentence(stripBullet(first)) : "";
+}

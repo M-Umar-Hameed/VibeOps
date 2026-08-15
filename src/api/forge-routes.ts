@@ -7,7 +7,7 @@ import type { Actor } from "../db/schema.js";
 import { loadRelayConfig } from "../relay/config.js";
 import { runDoctor } from "../relay/doctor.js";
 import { parseVerdict } from "../relay/prompts.js";
-import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes } from "../forge/runs.js";
+import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, latestRunStatus, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes } from "../forge/runs.js";
 import {
   sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash, sandboxActivity, sandboxWorkingDiff
 } from "../forge/sandbox.js";
@@ -354,6 +354,34 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
       updated = await updateTicket(c.get("actor").id, ticketId, updated.version, { status: "planned" });
     }
     return c.json(updated);
+  });
+
+  // Continue = rework: resume a REJECTED ticket in its existing sandbox. Skips
+  // plan (planned status => planRegenerated is false), reuses the sandbox and
+  // its commits, and the pipeline's resume-to-work path injects the last review
+  // verbatim as prior-review-findings. extraPrompt pins scope to the findings.
+  app.post("/forge/tickets/:id/rework", requireAdmin, async (c) => {
+    const ticketId = c.req.param("id");
+    if (await hasActiveRun(ticketId)) return c.json({ error: "run in progress for this ticket" }, 409);
+    if ((await latestRunStatus(ticketId)) !== "rejected") {
+      return c.json({ error: "no rejected run to rework: Continue is only available after a review rejection" }, 409);
+    }
+    if (!sandboxExists(ticketId)) {
+      return c.json({ error: "no sandbox to rework: the rejected run's sandbox is gone; start a new run instead" }, 409);
+    }
+    const reworkInstruction =
+      "This is a rework pass on an existing sandbox with prior commits. Address ONLY the review " +
+      "findings shown above; do not add scope, refactor unrelated code, or re-architect. Keep the diff minimal.";
+    try {
+      const { runId, doctorWarnings } = await startPipeline(c.get("actor").id, forgeConfig(), {
+        ticketId, planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+        resumeStage: "work", extraPrompt: reworkInstruction,
+      });
+      return c.json({ runId, doctorWarnings }, 201);
+    } catch (e) {
+      if (e instanceof ConflictError || e instanceof NotFoundError) throw e;
+      return c.json({ error: (e as Error).message }, 400);
+    }
   });
 
   app.post("/forge/sandboxes/cleanup", requireAdmin, async (c) => {

@@ -40,6 +40,8 @@ export type StyleRole = "plan" | "work" | "review" | "chairman" | "chat";
 // so they get the human voice too — with the machine-parsed markers pinned.
 const REVIEW_VOICE = `
 The lines beginning with VERDICT: and REPORT: are machine-parsed and their format must not change. Everything else you write is read by one person deciding what to do next: plain prose, name the actual defect and its consequence, no boilerplate framing, no restating the diff.
+
+When your verdict is FAIL, also emit one line exactly in the form REASON: <one sentence> stating the single most important reason for the rejection in plain language. This line is machine-parsed; keep it to one sentence.
 `;
 
 const CHAT_VOICE = `

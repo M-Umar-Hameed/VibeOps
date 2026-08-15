@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, mkdtempSync, rmSync, readdirSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, describe, it } from "vitest";
-import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict } from "../src/relay/prompts.js";
+import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason } from "../src/relay/prompts.js";
 import { loadRelayConfig, resolveCmd } from "../src/relay/config.js";
 import { substituteCmd, runAgent, killTree } from "../src/relay/invoke.js";
 import { spawn } from "node:child_process";
@@ -535,3 +535,21 @@ test("runAgent settles immediately via close in the normal case, not waiting for
   // Normal case: close fires immediately, well under EXIT_DRAIN_MS.
   expect(elapsed).toBeLessThan(EXIT_DRAIN_MS - 500);
 }, 5_000);
+
+describe("parseReason", () => {
+  it("extracts the explicit REASON line", () => {
+    expect(parseReason("prose\n- Critical: x\nREASON: The auth check is inverted.\nVERDICT: FAIL"))
+      .toBe("The auth check is inverted.");
+  });
+  it("falls back to the first Critical finding's first sentence when REASON absent", () => {
+    expect(parseReason("prose\n- Critical: the auth check uses < not <=. More text.\nVERDICT: FAIL"))
+      .toBe("the auth check uses < not <=.");
+  });
+  it("falls back to the first non-marker line when neither REASON nor Critical present", () => {
+    expect(parseReason("The widget crashes on empty input. Details follow.\nVERDICT: FAIL"))
+      .toBe("The widget crashes on empty input.");
+  });
+  it("returns empty string for empty output", () => {
+    expect(parseReason("")).toBe("");
+  });
+});

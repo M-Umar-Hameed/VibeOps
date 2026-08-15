@@ -1332,4 +1332,19 @@ const file2 = "run2-output.txt";
     // Ticket stays in review awaiting promote
     expect((await getTicket(ticket.id)).status).toBe("review");
   });
+
+  it("rejected run exposes a one-sentence rejectionReason in the runs API", async () => {
+    const { actorId, ticket } = await seedTicket("Rejection reason surfaces");
+    setScript("plan,work,review-fail-reason", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const runs = await listRunsWithHistory();
+    const item = runs.find((r) => r.id === runId);
+    expect(item?.status).toBe("rejected");
+    expect(item?.rejectionReason).toBe("The widget crashes on empty input.");
+  });
 });

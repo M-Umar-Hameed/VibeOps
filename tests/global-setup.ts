@@ -9,6 +9,24 @@ import { PG_BASE, ensureTemplate } from "../src/runtime/slice.js";
 // per suite run keeps the vector index deterministic; per-file cleanup can't,
 // because files run in parallel against the shared DB.
 export default async function setup() {
+  if (process.env.VIBEOPS_TEST_EMBEDDED === "1") {
+    // Serial embedded lane: no Postgres. Migrate the throwaway PGlite once and
+    // close it before workers open the same dir (serial => no concurrent open).
+    const { PGlite } = await import("@electric-sql/pglite");
+    const { vector } = await import("@electric-sql/pglite/vector");
+    const { drizzle } = await import("drizzle-orm/pglite");
+    const { migrate } = await import("drizzle-orm/pglite/migrator");
+    const { resolveEmbeddedDataDir } = await import("../src/runtime/home.js");
+    const { closeEmbedded } = await import("../src/db/lifecycle.js");
+    const { mkdirSync } = await import("node:fs");
+    const dir = resolveEmbeddedDataDir();
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const client = new PGlite(dir, { extensions: { vector } });
+    await client.exec("CREATE EXTENSION IF NOT EXISTS vector");
+    await migrate(drizzle(client as never), { migrationsFolder: "drizzle" });
+    await closeEmbedded(client, dir);
+    return;
+  }
   const url = process.env.DATABASE_URL ?? "postgres://tickets:tickets@localhost:5433/tickets";
   const sql = postgres(url, { max: 1 });
   try {

@@ -1,7 +1,8 @@
 import { expect, test } from "vitest";
 import { sql } from "../src/db/client.js";
+import { EMBEDDED } from "./helpers/embedded.js";
 
-test("all core tables exist", async () => {
+test.skipIf(EMBEDDED)("all core tables exist", async () => {
   const rows = await sql`
     select table_name from information_schema.tables
     where table_schema = 'public'`;

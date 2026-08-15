@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { allocateSlice, type Slice } from "../src/runtime/slice.js";
 import { vibeopsHome } from "../src/runtime/home.js";
+import { EMBEDDED } from "./helpers/embedded.js";
 
 const slices: Slice[] = [];
 const homes: string[] = [];
@@ -16,7 +17,7 @@ afterEach(async () => {
   for (const h of homes.splice(0)) rmSync(h, { recursive: true, force: true });
 }, 60_000);
 
-test("two slices allocated concurrently never share a port, both differ from 8787", { timeout: 60_000 }, async () => {
+test.skipIf(EMBEDDED)("two slices allocated concurrently never share a port, both differ from 8787", { timeout: 60_000 }, async () => {
   const [a, b] = await Promise.all([
     allocateSlice({ ticketId: randomUUID(), home: home() }),
     allocateSlice({ ticketId: randomUUID(), home: home() }),
@@ -27,7 +28,7 @@ test("two slices allocated concurrently never share a port, both differ from 878
   expect(b.port).not.toBe(8787);
 });
 
-test("VIBEOPS_HOME unset: data dir resolves homedir-based, exactly as today", () => {
+test.skipIf(EMBEDDED)("VIBEOPS_HOME unset: data dir resolves homedir-based, exactly as today", () => {
   const prev = process.env.VIBEOPS_HOME;
   delete process.env.VIBEOPS_HOME;
   try {
@@ -37,7 +38,7 @@ test("VIBEOPS_HOME unset: data dir resolves homedir-based, exactly as today", ()
   }
 });
 
-test("each slice gets its own writable, isolated database", { timeout: 60_000 }, async () => {
+test.skipIf(EMBEDDED)("each slice gets its own writable, isolated database", { timeout: 60_000 }, async () => {
   const a = await allocateSlice({ ticketId: randomUUID(), home: home() });
   const b = await allocateSlice({ ticketId: randomUUID(), home: home() });
   slices.push(a, b);
@@ -55,7 +56,7 @@ test("each slice gets its own writable, isolated database", { timeout: 60_000 },
   }
 });
 
-test("release frees the port and drops the database; idempotent, no leak", { timeout: 60_000 }, async () => {
+test.skipIf(EMBEDDED)("release frees the port and drops the database; idempotent, no leak", { timeout: 60_000 }, async () => {
   const h = home();
   const s = await allocateSlice({ ticketId: randomUUID(), home: h });
   const name = s.databaseUrl.split("/").pop()!;

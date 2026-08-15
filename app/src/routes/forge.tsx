@@ -153,6 +153,24 @@ export function ForgeScreen() {
 
   const [runMenu, setRunMenu] = useState<{ items: MenuItemSpec[]; x: number; y: number; label: string } | null>(null);
 
+  const [cleaningSandboxes, setCleaningSandboxes] = useState(false);
+  const [cleanupNote, setCleanupNote] = useState("");
+  const handleCleanupSandboxes = async () => {
+    setCleaningSandboxes(true);
+    setCleanupNote("");
+    try {
+      const r = await api.post("/forge/sandboxes/cleanup") as { discarded: string[]; reclaimedBytes: number; orphans: string[] };
+      const mb = (r.reclaimedBytes / 1_048_576).toFixed(1);
+      setCleanupNote(r.discarded.length
+        ? `Removed ${r.discarded.length} merged sandbox${r.discarded.length === 1 ? "" : "es"} (${mb} MB)${r.orphans.length ? `; ${r.orphans.length} orphan dir(s) need manual removal` : ""}`
+        : "Nothing to clean - no merged sandboxes on disk");
+    } catch (e: any) {
+      setCleanupNote(e.message || "Cleanup failed");
+    } finally {
+      setCleaningSandboxes(false);
+    }
+  };
+
   useEffect(() => {
     if (sandboxQ.data && !sandboxQ.data.exists) {
       setDiff(null); setDiffParsed([]); setDiffExplain(null); setViewDiff(false);
@@ -653,10 +671,25 @@ export function ForgeScreen() {
     <div className="absolute inset-0 flex overflow-hidden">
       <div className="w-80 border-r border-white/10 bg-surface-container/30 overflow-y-auto flex flex-col">
         <div className="p-4 border-b border-white/5 space-y-3">
-          <div>
-            <h2 className="font-headline-sm text-on-surface font-bold">Forge Work Orders</h2>
-            <p className="text-xs text-on-surface-variant/70 mt-1">Plan, run, and promote agent work per work order.</p>
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <h2 className="font-headline-sm text-on-surface font-bold">Forge Work Orders</h2>
+              <p className="text-xs text-on-surface-variant/70 mt-1">Plan, run, and promote agent work per work order.</p>
+            </div>
+            <button
+              type="button"
+              title="Remove sandboxes of closed work orders whose branches are fully merged"
+              aria-label="Clean up merged sandboxes"
+              disabled={cleaningSandboxes}
+              onClick={handleCleanupSandboxes}
+              className="shrink-0 p-1.5 rounded text-on-surface-variant hover:text-on-surface hover:bg-white/5 transition-colors disabled:opacity-50"
+            >
+              <span className={`material-symbols-outlined text-[18px] ${cleaningSandboxes ? "animate-spin" : ""}`}>
+                {cleaningSandboxes ? "refresh" : "cleaning_services"}
+              </span>
+            </button>
           </div>
+          {cleanupNote && <p className="text-[11px] font-code-sm text-on-surface-variant/70">{cleanupNote}</p>}
           {!activeProjectId && (
             <p className="text-xs text-on-surface-variant/70">Select a project to create a work order.</p>
           )}

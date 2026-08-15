@@ -42,9 +42,20 @@ export function extractDeclaredPaths(planText: string): Set<string> {
   return set;
 }
 
+// drizzle-kit generates the SQL, snapshot and journal as one unit whenever the
+// plan changes the schema. Plans name these in prose ("drizzle/ (generated)")
+// which the literal path extractor cannot see, and the trio has now produced
+// three identical false-positive blocks. If the plan declared the schema file,
+// the generated companions are in scope by construction.
+function isDrizzleCompanion(p: string, declared: Set<string>): boolean {
+  const declaresSchema = [...declared].some((d) => d.endsWith("schema.ts") || d.startsWith("drizzle"));
+  return declaresSchema && (/^drizzle\/meta\//.test(p) || /^drizzle\/[^/]+\.sql$/.test(p));
+}
+
 export function unexpectedFiles(changed: string[], declared: Set<string>, allowGlobs: string[]): string[] {
   return changed.filter(p =>
-    !declared.has(p) && !declared.has(p.split("/").pop()!) && !matchAny(p, allowGlobs),
+    !declared.has(p) && !declared.has(p.split("/").pop()!) && !matchAny(p, allowGlobs)
+    && !isDrizzleCompanion(p, declared),
   );
 }
 

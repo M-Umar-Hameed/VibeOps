@@ -48,9 +48,21 @@ export const DIFF_PROMPT_CAP = 40_000;
 
 // Large diffs blow the reviewer's context for little benefit; past the cap, a
 // stat summary plus a prefix is enough signal to judge the change.
+// Generated drizzle snapshots run to 1400+ lines and have repeatedly consumed
+// the whole diff budget, truncating the actual source changes out of the
+// reviewer's sight. Replace their bodies with a one-line placeholder before
+// capping so hand-written code always fits first.
+export function elideGeneratedDiffs(fullDiff: string): string {
+  return fullDiff.replace(
+    /^diff --git a\/(drizzle\/meta\/[^\s]+) b\/[^\n]+\n(?:(?!^diff --git ).*\n?)*/gm,
+    (_m, path) => `[generated file elided from review diff: ${path}]\n`,
+  );
+}
+
 export function reviewDiffPayload(fullDiff: string, stat: string, cap = DIFF_PROMPT_CAP): string {
-  if (fullDiff.length <= cap) return fullDiff;
-  return `[diff too large: showing stat + first ${cap / 1000}k chars]\n${stat}\n\n${fullDiff.slice(0, cap)}`;
+  const diff = elideGeneratedDiffs(fullDiff);
+  if (diff.length <= cap) return diff;
+  return `[diff too large: showing stat + first ${cap / 1000}k chars]\n${stat}\n\n${diff.slice(0, cap)}`;
 }
 
 const NARRATION =

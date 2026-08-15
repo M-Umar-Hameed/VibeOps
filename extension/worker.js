@@ -3,6 +3,9 @@
 
 const API_BASE = "http://127.0.0.1:8787";
 
+// No popup: the toolbar button opens settings (API key entry).
+chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
+
 let instanceId = null;
 let backoff = 1000;
 const MAX_BACKOFF = 30000;

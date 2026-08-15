@@ -501,7 +501,15 @@ async function pipeline(
       `path(s); each has been restored to its pre-run bytes and the run is failed]\n` +
       tampered.map((p) => `  - ${p}`).join("\n") + "\n";
     append(run, report);
-    await bounce(run, actorId, "sandbox escape: protected path written outside the worktree", report);
+    // Same preservation as the stop/worker-failure paths: a sentinel fires on a
+    // run that did real work, so WIP-commit whatever is in the sandbox before
+    // settling — a later discard must not silently destroy it. forgeCommit
+    // no-ops on a clean tree.
+    const saved = await forgeCommit(ticket.id, `WIP (sandbox escape) ${ticket.title}`);
+    const note = saved
+      ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]"
+      : "";
+    await bounce(run, actorId, "sandbox escape: protected path written outside the worktree", report + note);
     return settle(run, "failed");
   }
   const depsLeak = detectDepsLeak(depsBaseline);
@@ -514,7 +522,13 @@ async function pipeline(
       report += `Hint: a frontend build needs forge.frontendDeps set to true. This costs a per-sandbox copy of app/node_modules.\n`;
     }
     append(run, report);
-    await bounce(run, actorId, "deps leak: wrote through shared node_modules link", report);
+    // See the sandbox-escape path above: WIP-commit sandbox work before settling
+    // so a later discard can't destroy it. forgeCommit no-ops on a clean tree.
+    const saved = await forgeCommit(ticket.id, `WIP (deps leak) ${ticket.title}`);
+    const note = saved
+      ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]"
+      : "";
+    await bounce(run, actorId, "deps leak: wrote through shared node_modules link", report + note);
     return settle(run, "failed");
   }
   if (run.stopped) {
@@ -893,10 +907,20 @@ export async function listInterruptedRuns(config: RelayConfig): Promise<Recovery
       resumeMode = "plan"; resumable = true;
       reason = "died during planning; no sandbox exists yet — resume restarts the pipeline from planning";
     } else if (stage === "work") {
-      resumeMode = "work"; resumable = true;
-      reason = sbx
-        ? "died during work; sandbox has uncommitted partial edits and the agent context is gone — resume re-runs the work stage from the plan (not mid-stage)"
-        : "died during work; sandbox is no longer on disk — resume starts the work stage fresh";
+      if (commits) {
+        // A work commit exists on the branch — offer review against it instead of
+        // re-running the whole work stage and paying twice. The commit MAY be a
+        // partial WIP (a sentinel/timeout can fire mid-diff), so the reason names
+        // the tradeoff: review of a half-diff FAILS and tells the operator, which
+        // is cheaper than re-running work and silently discarding a good diff.
+        resumeMode = "review"; resumable = true;
+        reason = "died during work but a work commit already exists on the sandbox branch — resume goes straight to review against it, no work re-run. Note: a work commit can be a partial WIP, so review may fail on a half-diff; use Retry to re-run the full work stage from the plan instead.";
+      } else {
+        resumeMode = "work"; resumable = true;
+        reason = sbx
+          ? "died during work; sandbox has uncommitted partial edits and the agent context is gone — resume re-runs the work stage from the plan (not mid-stage)"
+          : "died during work; sandbox is no longer on disk — resume starts the work stage fresh";
+      }
     } else { // review
       if (commits) {
         resumeMode = "review"; resumable = true;

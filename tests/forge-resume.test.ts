@@ -426,6 +426,34 @@ describe("forge run resume", () => {
     expect(item!.sandboxExists).toBe(true);
   });
 
+  it("failed run at work stage WITH a commit resumes to review, not work", async () => {
+    const { actorId, ticket } = await seedTicket("Failed work stage committed");
+    const config = loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG!);
+
+    // Sandbox with a committed work diff (a sentinel/timeout WIP-committed it)
+    await ensureSandbox(workdir, ticket.id);
+    writeFileSync(join(sandboxRoot, ticket.id, "result.txt"), "work done");
+    await forgeCommit(ticket.id, "WIP (deps leak) committed work");
+
+    await addComment(actorId, ticket.id, "The plan", "plan");
+    const t2 = await getTicket(ticket.id);
+    await updateTicket(actorId, ticket.id, t2.version, { status: "planned" });
+
+    await db.insert(forgeRuns).values({
+      id: randomUUID(), ticketId: ticket.id, status: "failed", stage: "work",
+      planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+      startedAt: new Date(), finishedAt: new Date(),
+    });
+
+    const items = await listInterruptedRuns(config);
+    const item = items.find(i => i.ticketId === ticket.id);
+    expect(item).toBeDefined();
+    expect(item!.resumable).toBe(true);
+    expect(item!.hasCommits).toBe(true);
+    expect(item!.resumeMode).toBe("review");
+    expect(item!.reason).toContain("Retry"); // tradeoff surfaced to operator
+  });
+
   it("AC2: failed run with no sandbox is refused with reason", async () => {
     const { actorId, apiKey, ticket } = await seedTicket("Failed no sandbox");
 
@@ -475,6 +503,10 @@ describe("forge run resume", () => {
     // that write to land before overwriting to "interrupted", else the late insert
     // clobbers the update back to the settled status and listInterruptedRuns drops it.
     await waitForPersistedStatus(runId);
+
+    // stopRun WIP-committed the partial file; uncommit it so the sandbox is dirty
+    // without branch commits, simulating a hard crash mid-work.
+    execFileSync("git", ["reset", "HEAD~1"], { cwd: join(sandboxRoot, ticket.id) });
 
     // Overwrite the run to look like a crash (status=interrupted) rather than clean stop
     await db.update(forgeRuns)

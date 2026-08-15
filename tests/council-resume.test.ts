@@ -1,5 +1,7 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { tmpdir } from "node:os";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { RelayConfig } from "../src/relay/config.js";
 
 // Mock runAgent in memory — no child processes. Pattern copied from council-rounds.test.ts.
@@ -47,6 +49,21 @@ function relayConfig(): RelayConfig {
     },
   };
 }
+
+// The resume route builds its config from VIBEOPS_RELAY_CONFIG. Locally a
+// developer's ~/.vibeops/relay.json papers over not setting it; CI has no such
+// file and every route call 400s. Point the env at an on-disk fixture.
+const relayConfigPath = join(mkdtempSync(join(tmpdir(), "council-resume-relay-")), "relay.json");
+let prevRelayEnv: string | undefined;
+beforeAll(() => {
+  writeFileSync(relayConfigPath, JSON.stringify(relayConfig()));
+  prevRelayEnv = process.env.VIBEOPS_RELAY_CONFIG;
+  process.env.VIBEOPS_RELAY_CONFIG = relayConfigPath;
+});
+afterAll(() => {
+  if (prevRelayEnv === undefined) delete process.env.VIBEOPS_RELAY_CONFIG;
+  else process.env.VIBEOPS_RELAY_CONFIG = prevRelayEnv;
+});
 
 async function waitForStatus(id: string, statuses: string[], timeoutMs = 5_000) {
   const start = Date.now();

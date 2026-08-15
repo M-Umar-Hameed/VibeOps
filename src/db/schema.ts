@@ -63,7 +63,7 @@ export const events = pgTable("events", {
 }));
 
 export const noteScope = pgEnum("note_scope", ["global", "project", "ticket"]);
-export const sourceKind = pgEnum("source_kind", ["vault", "note", "session", "repo"]);
+export const sourceKind = pgEnum("source_kind", ["vault", "note", "session", "repo", "chat"]);
 
 export const notes = pgTable("notes", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -198,6 +198,7 @@ export const chatSessions = pgTable("chat_sessions", {
   id: uuid("id").primaryKey().defaultRandom(),
   title: text("title").notNull().default("New chat"),
   model: text("model").notNull().default("sonnet"),
+  projectId: uuid("project_id").references(() => projects.id),
   sdkSessionId: text("sdk_session_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

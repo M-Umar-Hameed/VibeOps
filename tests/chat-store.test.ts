@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, test } from "vitest";
+import { randomUUID } from "node:crypto";
 import * as store from "../src/chat/store.js";
+import { db } from "../src/db/client.js";
+import { projects } from "../src/db/schema.js";
 
 process.env.EMBED_PROVIDER = "fake";
 
@@ -44,5 +47,18 @@ describe("chat store", () => {
     const updated = await store.getSession(sess.id);
     expect(updated?.model).toBe("opus");
     expect(updated?.sdkSessionId).toBe("sdk-123");
+  });
+
+  it("persists projectId and listSessions/getSession return it", async () => {
+    const pid = randomUUID();
+    // projects FK: create a real project row so the FK holds.
+    const [proj] = await db.insert(projects).values({ key: `p-${pid.slice(0,8)}`, name: "P" }).returning();
+    const s = await store.createSession("scoped", "sonnet", proj.id);
+    expect(s.projectId).toBe(proj.id);
+    const got = await store.getSession(s.id);
+    expect(got?.projectId).toBe(proj.id);
+
+    const nullSess = await store.createSession("global", "sonnet", null);
+    expect(nullSess.projectId).toBeNull();
   });
 });

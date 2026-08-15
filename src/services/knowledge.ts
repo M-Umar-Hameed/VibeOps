@@ -35,7 +35,7 @@ function vecLiteral(v: number[]): string {
 }
 
 export async function upsertSourceDoc(
-  kind: "vault" | "note" | "session" | "repo", ref: string, text: string,
+  kind: "vault" | "note" | "session" | "repo" | "chat", ref: string, text: string,
   embedder: Embedder, contentHash?: string,
 ): Promise<number> {
   const chunks = chunkMarkdown(text);
@@ -164,11 +164,13 @@ export async function repoIndexed(projectId: string): Promise<boolean> {
 // bare parenthesized boolean SQL fragment (no WHERE keyword).
 // VAULT RULE: project vault chunks carry a "<projectId>:" ref prefix (like repo)
 // and belong to that project; legacy global-vault chunks are absolute paths (no
-// uuid prefix) and stay global. Session stays global.
+// uuid prefix) and stay global. Session stays global. Chat mirrors vault: a
+// "<projectId>:<sessionId>" ref is project-scoped, a bare "<sessionId>" is global.
 export function projectScopeWhere(projectId: string) {
   return dsql`(
         (source_kind = 'repo' AND source_ref LIKE ${projectId + ":%"})
         OR (source_kind = 'vault' AND source_ref LIKE ${projectId + ":%"})
+        OR (source_kind = 'chat' AND source_ref LIKE ${projectId + ":%"})
         OR (source_kind = 'note' AND source_ref IN (
           SELECT n.id::text FROM notes n
           LEFT JOIN tickets t ON t.id = n.ref_id
@@ -183,6 +185,7 @@ export function projectScopeWhere(projectId: string) {
 function globalScopeWhere() {
   return dsql`(
         source_kind = 'session'
+        OR (source_kind = 'chat' AND source_ref !~ '^[0-9a-fA-F-]{36}:')
         OR (source_kind = 'vault' AND source_ref !~ '^[0-9a-fA-F-]{36}:')
         OR (source_kind = 'note' AND source_ref IN (
           SELECT n.id::text FROM notes n

@@ -25,7 +25,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 import { Sidebar } from "./Sidebar.js";
 
-test("primary nav renders 5 links and Library section toggles", () => {
+test("primary nav renders 6 links and Library section toggles", () => {
   render(<Sidebar />);
 
   const navs = document.querySelectorAll("nav");
@@ -33,7 +33,7 @@ test("primary nav renders 5 links and Library section toggles", () => {
 
   const primaryNav = navs[0];
   const primaryLinks = primaryNav.querySelectorAll("a");
-  expect(primaryLinks.length).toBe(5);
+  expect(primaryLinks.length).toBe(6);
   
   expect(within(primaryNav).getByText("Board")).toBeInTheDocument();
   expect(within(primaryNav).getByText("New Work Order")).toBeInTheDocument();

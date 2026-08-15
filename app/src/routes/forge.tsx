@@ -8,7 +8,7 @@ import { stageLabel, parseChecks, elapsedLabel, failureLine } from "../lib/run-s
 import { SpecEditor } from "../components/SpecEditor.js";
 import { CommentList } from "../components/CommentList.js";
 import { WorkOrderComposer, modelOptionsForRole } from "../components/WorkOrderComposer.js";
-import { RunContextMenu, type MenuItemSpec } from "../components/RunContextMenu.js";
+import { ContextMenu, type MenuItemSpec } from "../components/ContextMenu.js";
 
 const parseSel = (s: string) => { const [agent, model] = s.split("::"); return { agent, model }; };
 const SELECTED_TICKET_KEY = "vibeops.forgeSelectedTicketId";
@@ -1317,7 +1317,7 @@ export function ForgeScreen() {
           <div className="flex-1 flex items-center justify-center text-on-surface-variant/50">Select a work order to enter the Forge</div>
         )}
       </div>
-      {runMenu && <RunContextMenu {...runMenu} onClose={() => setRunMenu(null)} />}
+      {runMenu && <ContextMenu {...runMenu} onClose={() => setRunMenu(null)} />}
     </div>
   );
 }

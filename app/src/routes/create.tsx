@@ -10,7 +10,7 @@ import { useProject } from "../context/project.js";
 import { WorkOrderComposer, modelOptionsForRole } from "../components/WorkOrderComposer.js";
 import { Markdown } from "../components/Markdown.js";
 import { exportBrief, sendBriefToNotebookLM } from "../lib/notebooklm.js";
-import { RunContextMenu, type MenuItemSpec } from "../components/RunContextMenu.js";
+import { ContextMenu, type MenuItemSpec } from "../components/ContextMenu.js";
 
 const COUNCIL_KEY = "vibeops.activeCouncilId";
 
@@ -561,7 +561,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
           onClose={() => setExpanded(null)}
         />
       )}
-      {rowMenu && <RunContextMenu {...rowMenu} onClose={() => setRowMenu(null)} />}
+      {rowMenu && <ContextMenu {...rowMenu} onClose={() => setRowMenu(null)} />}
     </div>
   );
 }

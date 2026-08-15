@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { RunContextMenu, type MenuItemSpec } from "./RunContextMenu.js";
+import { ContextMenu, type MenuItemSpec } from "./ContextMenu.js";
 
 test("renders each item label, disabled item is disabled and shows disabledReason", () => {
   const items: MenuItemSpec[] = [
@@ -8,7 +8,7 @@ test("renders each item label, disabled item is disabled and shows disabledReaso
     { key: "item2", label: "Disabled Item", disabled: true, disabledReason: "Reason for disable", onSelect: vi.fn() },
   ];
 
-  render(<RunContextMenu items={items} x={100} y={100} label="Test Menu" onClose={vi.fn()} />);
+  render(<ContextMenu items={items} x={100} y={100} label="Test Menu" onClose={vi.fn()} />);
 
   expect(screen.getByText("Enabled Item")).toBeInTheDocument();
   const disabledBtn = screen.getByText("Disabled Item").closest("button");
@@ -22,7 +22,7 @@ test("Escape key calls onClose", () => {
     { key: "item1", label: "Item 1", onSelect: vi.fn() },
   ];
 
-  render(<RunContextMenu items={items} x={100} y={100} label="Test Menu" onClose={onClose} />);
+  render(<ContextMenu items={items} x={100} y={100} label="Test Menu" onClose={onClose} />);
 
   fireEvent.keyDown(window, { key: "Escape" });
   expect(onClose).toHaveBeenCalledTimes(1);
@@ -34,7 +34,7 @@ test("Backdrop click calls onClose", () => {
     { key: "item1", label: "Item 1", onSelect: vi.fn() },
   ];
 
-  render(<RunContextMenu items={items} x={100} y={100} label="Test Menu" onClose={onClose} />);
+  render(<ContextMenu items={items} x={100} y={100} label="Test Menu" onClose={onClose} />);
 
   fireEvent.click(screen.getByTestId("run-menu-backdrop"));
   expect(onClose).toHaveBeenCalledTimes(1);
@@ -56,7 +56,7 @@ test("Confirm flow: click opens confirm dialog, Cancel aborts, Confirm executes 
     },
   ];
 
-  render(<RunContextMenu items={items} x={100} y={100} label="Test Menu" onClose={onClose} />);
+  render(<ContextMenu items={items} x={100} y={100} label="Test Menu" onClose={onClose} />);
 
   fireEvent.click(screen.getByText("Dangerous Action"));
   expect(screen.getByText("Are you sure?")).toBeInTheDocument();
@@ -84,7 +84,7 @@ test("Non-confirm item calls onSelect once and closes menu", async () => {
     { key: "simple", label: "Simple Action", onSelect },
   ];
 
-  render(<RunContextMenu items={items} x={100} y={100} label="Test Menu" onClose={onClose} />);
+  render(<ContextMenu items={items} x={100} y={100} label="Test Menu" onClose={onClose} />);
 
   fireEvent.click(screen.getByText("Simple Action"));
   await waitFor(() => expect(onSelect).toHaveBeenCalledTimes(1));
@@ -100,7 +100,7 @@ test("Keyboard navigation: focus first enabled item, ArrowDown moves focus, clic
     { key: "item2", label: "Item 2", onSelect: onSelect2 },
   ];
 
-  render(<RunContextMenu items={items} x={100} y={100} label="Test Menu" onClose={vi.fn()} />);
+  render(<ContextMenu items={items} x={100} y={100} label="Test Menu" onClose={vi.fn()} />);
 
   const item1Btn = screen.getByText("Item 1").closest("button");
   const item2Btn = screen.getByText("Item 2").closest("button");
@@ -119,7 +119,7 @@ test("Viewport clamp: clamps menu position inside screen bounds", () => {
     { key: "item1", label: "Item 1", onSelect: vi.fn() },
   ];
 
-  render(<RunContextMenu items={items} x={99999} y={99999} label="Test Menu" onClose={vi.fn()} />);
+  render(<ContextMenu items={items} x={99999} y={99999} label="Test Menu" onClose={vi.fn()} />);
 
   const menu = screen.getByRole("menu");
   const left = parseInt(menu.style.left, 10);
@@ -139,7 +139,7 @@ test("menu escapes a backdrop-filter ancestor by portalling to body", () => {
 
   const { container } = render(
     <div className="glass-card" style={{ backdropFilter: "blur(20px)" }}>
-      <RunContextMenu items={items} x={100} y={100} label="Test Menu" onClose={vi.fn()} />
+      <ContextMenu items={items} x={100} y={100} label="Test Menu" onClose={vi.fn()} />
     </div>,
   );
 

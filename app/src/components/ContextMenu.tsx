@@ -7,19 +7,20 @@ export type MenuItemSpec = {
   danger?: boolean;
   disabled?: boolean;
   disabledReason?: string;
-  onSelect?: () => void | Promise<void>;
+  onSelect?: () => void | string | Promise<void | string>;
   confirm?: { title: string; message: string; confirmLabel: string };
 };
 
 const MENU_W = 260;
 const MENU_H = 220;
 
-export function RunContextMenu({ items, x, y, label, onClose }: {
+export function ContextMenu({ items, x, y, label, onClose }: {
   items: MenuItemSpec[]; x: number; y: number; label: string; onClose: () => void;
 }) {
   const [confirmKey, setConfirmKey] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   const left = Math.max(0, Math.min(x, window.innerWidth - MENU_W));
@@ -47,8 +48,14 @@ export function RunContextMenu({ items, x, y, label, onClose }: {
   }, [onClose]);
 
   const run = async (it: MenuItemSpec) => {
-    setPending(true); setError("");
-    try { await it.onSelect?.(); onClose(); }
+    setPending(true); setError(""); setNotice("");
+    try {
+      const out = await it.onSelect?.();
+      // A string result is feedback worth reading - show it and keep the menu
+      // open (e.g. "indexed 12, skipped 3") instead of closing.
+      if (typeof out === "string") { setConfirmKey(null); setNotice(out); }
+      else onClose();
+    }
     catch (e: any) { setError(e instanceof Error ? e.message : "Action failed"); }
     finally { setPending(false); }
   };
@@ -107,6 +114,7 @@ export function RunContextMenu({ items, x, y, label, onClose }: {
               </button>
             ))}
             {error && <div className="px-3 py-1.5 text-xs text-error font-code-sm">{error}</div>}
+            {notice && <div role="status" className="px-3 py-1.5 text-xs text-on-surface-variant font-code-sm">{notice}</div>}
           </>
         )}
       </div>

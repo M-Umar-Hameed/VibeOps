@@ -194,6 +194,7 @@ function getAnchor(el, doc) {
 
     if (landmarkRole) {
       const label = current.getAttribute("aria-label");
+      // ponytail: anchor label = aria-label only; add aria-labelledby/heading resolution when a recipe needs it.
       if (label && label.trim()) {
         parts.unshift(`${landmarkRole}[${label.trim()}]`);
       } else {

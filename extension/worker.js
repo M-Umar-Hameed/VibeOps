@@ -146,6 +146,7 @@ async function executeBatch(batch) {
     // Set instanceId on snapshot
     result.snapshot.instanceId = instanceId;
 
+    // ponytail: injection is activeTab-gated and finalized when the grants slice lands; delivered as smoke-tested only.
     await submitResult(batch.batchId, result);
   } catch (err) {
     console.error("[worker] Execute error:", err);

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { stageLabel, parseChecks, elapsedLabel, failureLine } from "./run-summary.js";
+import { stageLabel, parseChecks, elapsedLabel, failureLine, formatStageDurations } from "./run-summary.js";
 
 test("stageLabel maps known stages, falls back otherwise", () => {
   expect(stageLabel("plan")).toBe("Planning the change");
@@ -37,4 +37,14 @@ test("failureLine is plain-language for terminal failures, null otherwise", () =
   expect(failureLine("error")).toBe("The run could not be started.");
   expect(failureLine("running")).toBeNull();
   expect(failureLine("passed")).toBeNull();
+});
+
+test("formatStageDurations renders a compact one-line minute breakdown in fixed order", () => {
+  expect(formatStageDurations({ plan: 420_000, work: 600_000, checks: 120_000, review: 300_000 }))
+    .toBe("plan 7m / work 10m / checks 2m / review 5m");
+});
+
+test("formatStageDurations skips absent stages and floors sub-minute durations to 1m", () => {
+  expect(formatStageDurations({ work: 5_000, review: 12_000 })).toBe("work 1m / review 1m");
+  expect(formatStageDurations({})).toBe("");
 });

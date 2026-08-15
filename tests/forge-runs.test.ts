@@ -262,9 +262,9 @@ describe("forge run manager", () => {
     expect(persisted.status).toBe("rejected");
   });
 
-  it("executes project checks and feeds failures to the review prompt without hard-failing the pipeline", async () => {
-    const { actorId, ticket } = await seedTicket("Checks path");
-    
+  it("failing check forces VERDICT: FAIL even when the reviewer passes", async () => {
+    const { actorId, ticket } = await seedTicket("Checks force fail");
+
     // Extend base repo
     const g = (...a: string[]) => execFileSync("git", a, { cwd: workdir });
     writeFileSync(join(workdir, "package.json"), JSON.stringify({ scripts: { typecheck: "node typecheck.js" } }));
@@ -272,7 +272,7 @@ describe("forge run manager", () => {
     g("add", "-A");
     g("commit", "-m", "add check");
 
-    setScript("plan,work,echo-prompt");
+    setScript("plan,work,review-pass");
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
@@ -280,15 +280,56 @@ describe("forge run manager", () => {
     await awaitRun(runId);
 
     const output = getRunOutput(runId, 0);
+    expect(output?.status).toBe("rejected");
     expect(output?.chunk).toContain("=== FORGE checks ===");
     expect(output?.chunk).toContain("exit 1");
 
     const comments = await listComments(ticket.id);
     const review = comments.filter((c) => c.kind === "review").pop();
-    expect(review?.body).toContain("CHECKS");
-    expect(review?.body).toContain("exit 1");
+    expect(review?.body).toContain("VERDICT: PASS"); // the model's own verdict, preserved verbatim
+    expect(review?.body).toContain("check(s) failed");
     expect(review?.body).toContain("TS-FAKE-9999");
+    expect(review?.body).toMatch(/VERDICT:\s*FAIL\s*$/); // forced FAIL wins, at the end
+
+    expect((await getTicket(ticket.id)).status).toBe("planned");
   });
+
+  it("checks run concurrently with review: a slow check doesn't add to wall clock when review takes longer", async () => {
+    const { actorId, ticket } = await seedTicket("Concurrent checks");
+    await withSetting("forge.checks", JSON.stringify([`node "${join(__dirname, "fixtures", "check-slow.mjs")}"`]), async () => {
+      setScript("plan,work,review-pass-slow");
+      const start = Date.now();
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+      const elapsed = Date.now() - start;
+
+      // review sleeps 4000ms, check sleeps 2000ms. Sequential floor is
+      // ~6000ms + overhead; concurrent should land near ~4000ms + overhead.
+      // 6500 leaves margin below the sequential floor while comfortably
+      // clearing a generous overhead estimate for the concurrent path --
+      // re-serializing checks before review must push this over 6500.
+      expect(elapsed).toBeLessThan(6500);
+
+      const output = getRunOutput(runId, 0);
+      expect(output?.status).toBe("passed");
+    });
+  });
+
+  it("stopping mid-review kills both the review agent and a concurrently running check", async () => {
+    const { actorId, ticket } = await seedTicket("Stop mid-review");
+    await withSetting("forge.checks", JSON.stringify([`node "${join(__dirname, "fixtures", "check-hang.mjs")}"`]), async () => {
+      setScript("plan,work,review-hang");
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await waitForStage(runId, "review");
+      expect(await stopRun(runId)).toBe(true);
+      await awaitRun(runId);
+      expect(getRunOutput(runId, 0)?.status).toBe("stopped");
+    });
+  }, 15_000);
 
   it("worker process failure bounces to planned", async () => {
     const { actorId, ticket } = await seedTicket("Exit path");
@@ -1346,5 +1387,44 @@ const file2 = "run2-output.txt";
     const item = runs.find((r) => r.id === runId);
     expect(item?.status).toBe("rejected");
     expect(item?.rejectionReason).toBe("The widget crashes on empty input.");
+  });
+
+  it("settled run exposes per-stage duration breakdown in the runs API", async () => {
+    const { actorId, ticket } = await seedTicket("Stage durations");
+    setScript("plan,work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const runs = await listRunsWithHistory();
+    const item = runs.find((r) => r.id === runId);
+    expect(item?.status).toBe("passed");
+    expect(item?.stageDurationsMs?.plan).toBeGreaterThan(0);
+    expect(item?.stageDurationsMs?.work).toBeGreaterThan(0);
+    expect(item?.stageDurationsMs?.review).toBeGreaterThan(0);
+    expect(item?.stageDurationsMs?.checks).toBeUndefined();
+  });
+
+  it("checks duration is recorded on the run and surfaced in stageDurationsMs", async () => {
+    const { actorId, ticket } = await seedTicket("Checks duration recorded");
+    const g = (...a: string[]) => execFileSync("git", a, { cwd: workdir });
+    writeFileSync(join(workdir, "package.json"), JSON.stringify({ scripts: { typecheck: "node typecheck.js" } }));
+    writeFileSync(join(workdir, "typecheck.js"), `console.log("ok"); process.exit(0);`);
+    g("add", "-A");
+    g("commit", "-m", "add check");
+
+    setScript("plan,work,review-pass", true);
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const runs = await listRunsWithHistory();
+    const item = runs.find((r) => r.id === runId);
+    expect(item?.status).toBe("passed");
+    expect(item?.checksDurationMs).toBeGreaterThanOrEqual(0);
+    expect(item?.stageDurationsMs?.checks).toBeGreaterThanOrEqual(0);
   });
 });

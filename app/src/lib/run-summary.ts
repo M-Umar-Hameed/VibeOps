@@ -49,3 +49,13 @@ export function failureLine(status: string, error?: string): string | null {
       return null;
   }
 }
+
+// Minute-granularity summary for a settled run's stage breakdown -- distinct
+// from elapsedLabel's second-precision live countup, which multi-minute AI
+// stages don't need.
+export function formatStageDurations(ms: Partial<Record<"plan" | "work" | "checks" | "review", number>>): string {
+  return (["plan", "work", "checks", "review"] as const)
+    .filter((k) => typeof ms[k] === "number" && ms[k]! > 0)
+    .map((k) => `${k} ${Math.max(1, Math.round(ms[k]! / 60_000))}m`)
+    .join(" / ");
+}

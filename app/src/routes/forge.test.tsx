@@ -670,6 +670,31 @@ test("Run History row shows effort badge when the run record has one", async () 
   expect(screen.getByTestId("run-effort-run456")).toHaveTextContent("max");
 });
 
+test("Run History row shows the per-stage duration breakdown for a settled run", async () => {
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/tickets") return [{ id: "t1", title: "My Ticket", status: "review" }];
+    if (path === "/forge/agents") return [];
+    if (path === "/forge/skills") return [];
+    if (path.includes("/sandbox")) return { exists: false };
+    if (path.includes("/comments")) return [];
+    if (path === "/forge/runs") return [
+      {
+        id: "run456", ticketId: "t1", status: "passed", stage: "review", startedAt: "2026-07-18T00:00:00Z",
+        stageDurationsMs: { plan: 420_000, work: 600_000, checks: 120_000, review: 300_000 },
+      },
+    ];
+    if (path.includes("/output")) return { chunk: "", next: 0, stage: "review", status: "passed" };
+    return {};
+  });
+  render(wrap(<ForgeScreen />));
+  await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
+  fireEvent.click(screen.getByText("My Ticket"));
+  await waitFor(() => expect(screen.getByText("Run History")).toBeInTheDocument());
+  expect(screen.getByTestId("run-stage-durations-run456")).toHaveTextContent(
+    "plan 7m / work 10m / checks 2m / review 5m"
+  );
+});
+
 test("tickets refetch every 5s, on window focus, and stop after unmount", async () => {
   apiFetch.mockImplementation(async (path) => {
     if (path === "/tickets") return [{ id: "t1", title: "My Ticket", status: "open" }];

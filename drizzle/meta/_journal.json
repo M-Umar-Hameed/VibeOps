@@ -127,6 +127,13 @@
       "when": 1786774976480,
       "tag": "0017_married_supernaut",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1786780943866,
+      "tag": "0018_fancy_starbolt",
+      "breakpoints": true
     }
   ]
 }

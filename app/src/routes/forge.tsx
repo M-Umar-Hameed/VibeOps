@@ -4,7 +4,7 @@ import { api } from "../lib/api.js";
 import { NotFoundError } from "../api/errors.js";
 import { useProject } from "../context/project.js";
 import { parseUnifiedDiff, type DiffFile } from "../lib/diff-parse.js";
-import { stageLabel, parseChecks, elapsedLabel, failureLine } from "../lib/run-summary.js";
+import { stageLabel, parseChecks, elapsedLabel, failureLine, formatStageDurations } from "../lib/run-summary.js";
 import { SpecEditor } from "../components/SpecEditor.js";
 import { CommentList } from "../components/CommentList.js";
 import { WorkOrderComposer, modelOptionsForRole } from "../components/WorkOrderComposer.js";
@@ -1318,6 +1318,11 @@ export function ForgeScreen() {
                         <span className="text-xs text-on-surface-variant/70 font-code-sm">
                           {new Date(run.startedAt).toLocaleString()}
                         </span>
+                        {run.stageDurationsMs && formatStageDurations(run.stageDurationsMs) && (
+                          <span data-testid={`run-stage-durations-${run.id}`} className="text-xs text-on-surface-variant/70 font-code-sm">
+                            {formatStageDurations(run.stageDurationsMs)}
+                          </span>
+                        )}
                       </div>
                       <div className="flex flex-wrap items-center gap-2 text-right">
                         <span className="text-xs text-on-surface-variant">

@@ -9,6 +9,11 @@ import { join, dirname } from "node:path";
 const prompt = process.argv[2] ?? "";
 void prompt;
 
+if (process.argv.includes("--version")) {
+  console.log("fake-agent 1.0.0");
+  process.exit(0);
+}
+
 const OUTPUTS = {
   // Plan output must mention files the worker writes to avoid file-set gate block.
   // vitest.config.ts is for protected-path tests; run*-output.txt for concurrency tests.
@@ -83,6 +88,9 @@ if (mode === "slow") {
   await new Promise((r) => setTimeout(r, 2000));
   console.log(OUTPUTS.plan);
   process.exit(0);
+}
+if (mode === "plan-hang") {
+  await new Promise(() => {}); // hang forever
 }
 if (mode === "work-hang") {
   // Write partial edits then hang forever (to simulate being killed mid-work)

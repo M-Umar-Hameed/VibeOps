@@ -504,6 +504,10 @@ describe("forge run resume", () => {
     // clobbers the update back to the settled status and listInterruptedRuns drops it.
     await waitForPersistedStatus(runId);
 
+    // stopRun WIP-committed the partial file; uncommit it so the sandbox is dirty
+    // without branch commits, simulating a hard crash mid-work.
+    execFileSync("git", ["reset", "HEAD~1"], { cwd: join(sandboxRoot, ticket.id) });
+
     // Overwrite the run to look like a crash (status=interrupted) rather than clean stop
     await db.update(forgeRuns)
       .set({ status: "interrupted" })

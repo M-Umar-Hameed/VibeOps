@@ -7,7 +7,9 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "types": ["node"],
-    "outDir": "dist"
+    "outDir": "dist",
+    "allowJs": true,
+    "checkJs": false
   },
   "include": ["src", "tests", "drizzle.config.ts"]
 }

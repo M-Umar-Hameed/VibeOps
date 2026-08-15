@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Tickets Browser Agent - Options</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 20px; max-width: 500px; }
+    label { display: block; margin-bottom: 5px; font-weight: bold; }
+    input { width: 100%; padding: 8px; margin-bottom: 10px; box-sizing: border-box; }
+    button { padding: 8px 16px; cursor: pointer; }
+    #status { margin-top: 15px; padding: 10px; border-radius: 4px; }
+    .success { background: #d4edda; color: #155724; }
+    .error { background: #f8d7da; color: #721c24; }
+  </style>
+</head>
+<body>
+  <h1>Tickets Browser Agent</h1>
+
+  <label for="apiKey">API Key</label>
+  <input type="password" id="apiKey" placeholder="Enter your API key">
+
+  <button id="save">Save</button>
+
+  <div id="status"></div>
+
+  <script src="options.js"></script>
+</body>
+</html>

@@ -22,6 +22,7 @@ const OUTPUTS = {
   work: "did it\nREPORT: changed x",
   "review-pass": "looks good\nVERDICT: PASS",
   "review-fail": "broken\nVERDICT: FAIL\n- fix y",
+  "review-fail-reason": "The widget is broken.\n- Critical: the widget crashes on empty input\nREASON: The widget crashes on empty input.\nVERDICT: FAIL\n- fix it",
   "persona": "persona view: fine idea",
   "believer": "believer view: fine idea",
   "investor": "investor view: fine idea",

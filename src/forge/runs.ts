@@ -6,7 +6,7 @@ import type { ChildProcess } from "node:child_process";
 import { resolveCmd, type RelayConfig, type RelayAgent } from "../relay/config.js";
 import { pipelineStartWarnings, pipelineStartBlockingError } from "../relay/doctor.js";
 import { roleStyle } from "../relay/style.js";
-import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, fenceUntrusted } from "../relay/prompts.js";
+import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted } from "../relay/prompts.js";
 import { killTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { redactSecrets } from "./redact.js";
@@ -767,6 +767,20 @@ export async function hasActiveRun(ticketId: string): Promise<boolean> {
   return !!row;
 }
 
+// Newest run status for a ticket. In-memory wins when it is at least as recent
+// as the latest persisted row (settle() persists fire-and-forget, so the DB can
+// lag a just-finished run). Used by the rework route's rejected-run guard.
+export async function latestRunStatus(ticketId: string): Promise<Status | null> {
+  const mem = [...runs.values()]
+    .filter((r) => r.ticketId === ticketId)
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+  const [row] = await db.select({ status: forgeRuns.status, startedAt: forgeRuns.startedAt })
+    .from(forgeRuns).where(eq(forgeRuns.ticketId, ticketId))
+    .orderBy(desc(forgeRuns.startedAt)).limit(1);
+  if (mem && (!row || mem.startedAt >= row.startedAt.toISOString())) return mem.status;
+  return (row?.status as Status) ?? null;
+}
+
 // In-memory active run for any ticket in the project, if one exists. Used to
 // block project deletion (killing a project mid-run would orphan the sandbox and
 // the in-memory Run). Returns the offending run id, else null.
@@ -797,7 +811,7 @@ export async function markPolicyWaived(runId: string): Promise<void> {
   await db.update(forgeRuns).set({ policyWaivedAt: new Date() }).where(eq(forgeRuns.id, runId));
 }
 
-export type RunListItem = RunSummary & { persisted?: boolean; modelVerified?: boolean | "unknown" };
+export type RunListItem = RunSummary & { persisted?: boolean; modelVerified?: boolean | "unknown"; rejectionReason?: string };
 
 const HISTORY_LIMIT = 20;
 const LIST_CAP = 40;
@@ -822,13 +836,24 @@ export async function listRunsWithHistory(): Promise<RunListItem[]> {
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
     .slice(0, LIST_CAP);
 
-  const verificationPromises = list.map(async (item) => {
+  const enrichPromises = list.map(async (item) => {
     item.modelVerified = await computeVerificationStatus(item.ticketId, {
       from: new Date(item.startedAt),
       to: item.finishedAt ? new Date(item.finishedAt) : null,
     });
+    if (item.status === "rejected") {
+      const comments = await listComments(item.ticketId);
+      const from = new Date(item.startedAt).getTime();
+      const to = item.finishedAt ? new Date(item.finishedAt).getTime() : Date.now();
+      const review = [...comments].reverse().find(
+        (c) => c.kind === "review" &&
+          new Date(c.createdAt).getTime() >= from &&
+          new Date(c.createdAt).getTime() <= to,
+      );
+      if (review) item.rejectionReason = parseReason(review.body);
+    }
   });
-  await Promise.all(verificationPromises);
+  await Promise.all(enrichPromises);
 
   return list;
 }

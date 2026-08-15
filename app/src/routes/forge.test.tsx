@@ -927,3 +927,35 @@ test("failed stage renders a plain-language failure line", async () => {
   await waitFor(() => expect(screen.getByTestId("run-failure-line")).toHaveTextContent(/returned to planned/));
   expect(screen.queryByTestId("run-elapsed")).not.toBeInTheDocument(); // no elapsed once terminal
 });
+
+test("rejected run shows the reason and Continue triggers rework", async () => {
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/tickets") return [{ id: "t1", title: "My Ticket", status: "review", version: 1, body: null }];
+    if (path === "/forge/agents") return [{ name: "MultiGPT", roles: ["plan", "work", "review"] }];
+    if (path === "/forge/skills") return [];
+    if (path === "/actors") return [];
+    if (path === "/forge/doctor") return [];
+    if (path.includes("/sandbox/activity")) return { stage: "review", files: [] };
+    if (path.includes("/sandbox")) return { exists: true, branch: "forge/t1", lastVerdict: "fail" };
+    if (path === "/forge/runs") return [{
+      id: "runR", ticketId: "t1", status: "rejected", stage: "review",
+      agents: { plan: "a", work: "b", review: "c" }, startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(), rejectionReason: "The widget crashes on empty input.",
+    }];
+    if (path.includes("/output")) return { chunk: "review output", next: 13, stage: "review", status: "rejected" };
+    if (path.includes("/comments")) return [];
+    if (path.endsWith("/rework")) return { runId: "run999" };
+    return {};
+  });
+
+  render(wrap(<ForgeScreen />));
+  await waitFor(() => expect(screen.getByText("My Ticket")).toBeInTheDocument());
+  fireEvent.click(screen.getByText("My Ticket"));
+
+  await waitFor(() => expect(screen.getByTestId("run-reason")).toHaveTextContent("The widget crashes on empty input."));
+
+  fireEvent.click(screen.getByRole("button", { name: /Continue/i }));
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith(
+    "/forge/tickets/t1/rework", expect.objectContaining({ method: "POST" }),
+  ));
+});

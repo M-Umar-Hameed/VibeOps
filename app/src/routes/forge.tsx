@@ -447,6 +447,25 @@ export function ForgeScreen() {
     }
   };
 
+  const handleRework = async () => {
+    if (!selectedTicket) return;
+    setIsSubmitting(true);
+    setRunError("");
+    try {
+      const res = await api.post(`/forge/tickets/${selectedTicket.id}/rework`) as { runId: string };
+      setActiveRunId(res.runId);
+      setRunStatus("running");
+      setRunStage("work");
+      setRunStartedAt(Date.now());
+      nextOffsetRef.current = 0;
+      runsQ.refetch?.();
+    } catch (e: any) {
+      setRunError(e.message || "Rework failed");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handlePromote = async () => {
     if (!selectedTicket) return;
     try {
@@ -989,6 +1008,11 @@ export function ForgeScreen() {
                     </div>
                   )}
 
+                  {runStatus === "rejected" && ticketRuns[0]?.rejectionReason && (
+                    <div className="text-sm text-on-surface font-medium" data-testid="run-reason">
+                      <span className="font-bold text-error">Rejected: </span>{ticketRuns[0].rejectionReason}
+                    </div>
+                  )}
                   {fail && (
                     <div className="text-sm text-error" data-testid="run-failure-line">{fail}</div>
                   )}
@@ -1100,6 +1124,16 @@ export function ForgeScreen() {
                     >
                       Discard
                     </button>
+                    {ticketRuns[0]?.status === "rejected" && (
+                      <button
+                        onClick={handleRework}
+                        disabled={runActiveForTicket || isSubmitting}
+                        title={runActiveForTicket ? "Pipeline run in progress for this work order" : "Rework the existing sandbox against the review findings"}
+                        className="px-4 py-2 rounded bg-primary/20 hover:bg-primary/40 text-primary text-sm font-bold uppercase transition-all disabled:opacity-50 cursor-pointer"
+                      >
+                        Continue
+                      </button>
+                    )}
                   </div>
                   {(sandbox.protectedViolation?.length ?? 0) > 0 && (
                     <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 space-y-3">

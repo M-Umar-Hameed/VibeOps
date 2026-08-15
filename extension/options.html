@@ -2,27 +2,166 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Tickets Browser Agent - Options</title>
+  <title>Browser Agent - VibeOps</title>
   <style>
-    body { font-family: system-ui, sans-serif; padding: 20px; max-width: 500px; }
-    label { display: block; margin-bottom: 5px; font-weight: bold; }
-    input { width: 100%; padding: 8px; margin-bottom: 10px; box-sizing: border-box; }
-    button { padding: 8px 16px; cursor: pointer; }
-    #status { margin-top: 15px; padding: 10px; border-radius: 4px; }
-    .success { background: #d4edda; color: #155724; }
-    .error { background: #f8d7da; color: #721c24; }
+    :root {
+      --bg: #0b0e12;
+      --panel: #12171d;
+      --hairline: rgba(255, 255, 255, 0.08);
+      --ink: #e7edf3;
+      --muted: #8a97a3;
+      --cyan: #35d6e8;
+      --green: #43d98a;
+      --red: #f27e7e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Cascadia Code", Consolas, ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      display: grid;
+      place-items: start center;
+      padding: 48px 20px;
+    }
+    main { width: 100%; max-width: 400px; }
+
+    .eyebrow {
+      color: var(--cyan);
+      font-size: 10px;
+      letter-spacing: 0.35em;
+      text-transform: uppercase;
+      margin: 0 0 6px;
+    }
+    h1 {
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      margin: 0 0 28px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      padding: 20px;
+    }
+
+    /* Link readout - reflects a real probe, never stored state alone */
+    .readout {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--hairline);
+      border-radius: 6px;
+      margin-bottom: 20px;
+      background: rgba(0, 0, 0, 0.25);
+    }
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 2px;           /* square-ish: a wire indicator, not a bubble */
+      background: var(--muted);
+      flex: none;
+    }
+    .readout.checking .dot { background: var(--cyan); animation: pulse 1.2s ease-in-out infinite; }
+    .readout.linked   .dot { background: var(--green); }
+    .readout.failed   .dot { background: var(--red); }
+    @keyframes pulse { 50% { opacity: 0.3; } }
+    @media (prefers-reduced-motion: reduce) { .readout.checking .dot { animation: none; } }
+
+    .readout .state {
+      font-size: 10px;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .readout.linked .state { color: var(--green); }
+    .readout.failed .state { color: var(--red); }
+    .readout.checking .state { color: var(--cyan); }
+    .readout .detail {
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 55%;
+    }
+
+    label {
+      display: block;
+      font-size: 10px;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    input {
+      width: 100%;
+      padding: 10px 12px;
+      background: var(--bg);
+      border: 1px solid var(--hairline);
+      border-radius: 6px;
+      color: var(--ink);
+      font: inherit;
+    }
+    input:focus-visible { outline: 2px solid var(--cyan); outline-offset: 1px; border-color: transparent; }
+    input::placeholder { color: #55616c; }
+
+    .hint { color: var(--muted); font-size: 11px; margin: 8px 0 20px; }
+    .hint code { color: var(--ink); font-size: 11px; }
+
+    button {
+      width: 100%;
+      padding: 10px;
+      background: var(--cyan);
+      color: #062126;
+      border: 0;
+      border-radius: 6px;
+      font: inherit;
+      font-weight: 700;
+      font-size: 11px;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+    button:hover { filter: brightness(1.1); }
+    button:disabled { opacity: 0.5; cursor: default; }
+    button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+    .error-detail {
+      color: var(--red);
+      font-size: 11px;
+      margin: 14px 0 0;
+      word-break: break-word;
+      display: none;
+    }
   </style>
 </head>
 <body>
-  <h1>Tickets Browser Agent</h1>
+  <main>
+    <p class="eyebrow">VibeOps</p>
+    <h1>Browser Agent</h1>
 
-  <label for="apiKey">VibeOps server key</label>
-  <input type="password" id="apiKey" placeholder="apiKey value from ~/.vibeops/credentials.json">
-  <p style="margin-top:0;color:#555;font-size:13px">This is the bearer token for your local VibeOps server (127.0.0.1:8787) - not an AI provider key, no billing attached.</p>
+    <div class="panel">
+      <div class="readout" id="readout">
+        <span class="dot"></span>
+        <span class="state" id="state">Not linked</span>
+        <span class="detail" id="detail"></span>
+      </div>
 
-  <button id="save">Save</button>
+      <label for="apiKey">VibeOps server key</label>
+      <input type="password" id="apiKey" placeholder="apiKey from ~/.vibeops/credentials.json" autocomplete="off">
+      <p class="hint">Bearer token for your local server at <code>127.0.0.1:8787</code> — created on the server's first run. Not an AI provider key; nothing is billed.</p>
 
-  <div id="status"></div>
+      <button id="save">Connect</button>
+      <p class="error-detail" id="errorDetail"></p>
+    </div>
+  </main>
 
   <script src="options.js"></script>
 </body>

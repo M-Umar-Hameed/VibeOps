@@ -1,0 +1,1 @@
+ALTER TABLE "forge_runs" ADD COLUMN "checks_duration_ms" integer;

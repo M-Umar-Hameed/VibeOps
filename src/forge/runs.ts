@@ -22,11 +22,11 @@ import { getSetting } from "../services/settings.js";
 import { projectWorkdir } from "../services/projects.js";
 import { ConflictError, StaleVersionError } from "../services/errors.js";
 import { logAgentUse, startAgentSession, endAgentSession } from "../services/usage.js";
-import { desc, isNull, sum, eq, gte, and } from "drizzle-orm";
+import { desc, isNull, sum, eq, gte, lte, and } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { forgeRuns, aiUsageLogs, tickets, type Ticket } from "../db/schema.js";
 import { verifyModel, MISMATCH_WARNING, computeVerificationStatus } from "./verify.js";
-import { resolveChecks, runChecks, formatChecks } from "./checks.js";
+import { resolveChecks, runChecks, formatChecks, type CheckResult } from "./checks.js";
 import { runGate, resolveMutationCmd } from "./gate.js";
 
 const OUTPUT_CAP = 400_000;
@@ -82,8 +82,10 @@ type Run = {
   operatorNotes?: string;
   effort?: Effort;
   protectedViolations?: string[];
+  checksDurationMs?: number;
   output: string; startedAt: string; finishedAt?: string;
   child?: ChildProcess; // the in-flight agent CLI for the current stage, if any
+  checksChild?: ChildProcess; // the concurrently-running checks command, if any
   abort?: () => void;   // in-loop sdk lane's AbortController.abort, if any
   stopped: boolean;
   done: Promise<void>;
@@ -92,11 +94,11 @@ type Run = {
 
 const runs = new Map<string, Run>();
 
-export type RunSummary = Omit<Run, "output" | "child" | "abort" | "stopped" | "done" | "persisted">;
+export type RunSummary = Omit<Run, "output" | "child" | "checksChild" | "abort" | "stopped" | "done" | "persisted">;
 
 function summarize(r: Run): RunSummary {
-  const { output, child, abort, stopped, done, ...rest } = r;
-  void output; void child; void abort; void stopped; void done;
+  const { output, child, checksChild, abort, stopped, done, ...rest } = r;
+  void output; void child; void checksChild; void abort; void stopped; void done;
   return rest;
 }
 
@@ -437,7 +439,7 @@ async function pipeline(
     const planPrompt = composePlanPrompt({ ticket, knowledge }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra;
     const res = await track(actorId, ticket.id, "plan", run.agents.plan, planPrompt.length, () => runAgent(
       agents.plan, planPrompt, workdir, onData,
-      (child) => { run.child = child; },
+      (child) => { run.child = child; if (run.stopped) void killTree(child); },
     ));
     run.child = undefined;
     if (run.stopped) return settle(run, "stopped");
@@ -490,7 +492,7 @@ async function pipeline(
   const sentinelSnaps = snapshotSensitive(resolveSensitivePaths(await getSetting("forge.sensitivePaths")));
   const workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
     runAgent(agents.work, workPrompt, sandbox, onData,
-      (child) => { run.child = child; }, (abort) => { run.abort = abort; },
+      (child) => { run.child = child; if (run.stopped) void killTree(child); }, (abort) => { run.abort = abort; },
       modelOf(run.agents.work)));
   run.child = undefined;
   run.abort = undefined;
@@ -591,19 +593,16 @@ async function reviewStage(
   append(run, `\n=== FORGE review (${run.agents.review}) ===\n`);
   const onData = (c: string) => append(run, c);
 
+  if (run.stopped) return settle(run, "stopped");
+
   // Checks: project static gates run in the SANDBOX (T17 shipped a tsc break —
-  // reviewer reads diffs, vitest transpiles without typechecking). A failing
-  // check never hard-fails the run; the reviewer judges it.
+  // reviewer reads diffs, vitest transpiles without typechecking). Resolved
+  // here but not RUN yet: they execute concurrently with the review agent
+  // below (once the diff is settled), so a slow check no longer serializes
+  // in front of the reviewer's read time. A failing check force-fails the
+  // run mechanically at verdict time, independent of the reviewer's own
+  // verdict — see the gate evaluation below.
   const checkCmds = resolveChecks(await getSetting("forge.checks"), sandbox);
-  let checksText: string | undefined;
-  if (checkCmds.length) {
-    append(run, `\n=== FORGE checks ===\n`);
-    const checkResults = await runChecks(checkCmds, sandbox, undefined, (child) => { run.child = child; });
-    run.child = undefined;
-    if (run.stopped) return settle(run, "stopped");
-    checksText = redactSecrets(formatChecks(checkResults));
-    append(run, checksText + "\n");
-  }
 
   // Protected-path policy: deterministic, evaluated on the diff (never the
   // worker's self-report). A touched protected path is an automatic Critical
@@ -641,25 +640,59 @@ async function reviewStage(
   const gateBlocked = gate.findings.some(f => f.severity === "block");
   if (gate.report) append(run, `\n=== FORGE gate ===\n${gate.report}\n`);
 
+  if (run.stopped) return settle(run, "stopped");
+
   const diff = await sandboxDiff(workdir, ticket.id);
   const stat = await sandboxDiffSummary(workdir, ticket.id);
-  const reviewPrompt = composeReviewPrompt({ ticket, plan, report: reportOutput, diff: reviewDiffPayload(diff, stat), operatorNotes: run.operatorNotes, checks: checksText, protectedViolation: protectedFinding, amendments, gate: gate.report || undefined, citations: gate.citations || undefined }) + roleStyle("review", styleSetting);
-  const reviewRes = await track(actorId, ticket.id, "review", run.agents.review, reviewPrompt.length, () => runAgent(
+  const reviewPrompt = composeReviewPrompt({ ticket, plan, report: reportOutput, diff: reviewDiffPayload(diff, stat), operatorNotes: run.operatorNotes, protectedViolation: protectedFinding, amendments, gate: gate.report || undefined, citations: gate.citations || undefined }) + roleStyle("review", styleSetting);
+
+  if (run.stopped) return settle(run, "stopped");
+
+  // Checks and the review agent run CONCURRENTLY: the reviewer only needs
+  // check RESULTS at verdict time, not while it's still reading the diff.
+  // Checks execute in `sandbox` (already quiesced by the gate's revert/
+  // restore above); the review agent runs in `workdir`, a different
+  // directory, so there is no filesystem race between the two.
+  const checksStartedAt = checkCmds.length ? Date.now() : undefined;
+  const checksPromise: Promise<CheckResult[]> = checkCmds.length
+    ? runChecks(checkCmds, sandbox, undefined, (child) => {
+        run.checksChild = child;
+        if (run.stopped) void killTree(child);
+      }).then((results) => { run.checksChild = undefined; return results; })
+    : Promise.resolve<CheckResult[]>([]);
+  const reviewPromise = track(actorId, ticket.id, "review", run.agents.review, reviewPrompt.length, () => runAgent(
     reviewAgent,
     reviewPrompt,
     workdir, onData,
-    (child) => { run.child = child; },
+    (child) => {
+      run.child = child;
+      if (run.stopped) void killTree(child);
+    },
   ));
+  const [checkResults, reviewRes] = await Promise.all([checksPromise, reviewPromise]);
   run.child = undefined;
+  if (checksStartedAt !== undefined) run.checksDurationMs = Date.now() - checksStartedAt;
   if (run.stopped) return settle(run, "stopped");
+
+  let checksText: string | undefined;
+  let checksFailed = false;
+  if (checkCmds.length) {
+    checksText = redactSecrets(formatChecks(checkResults));
+    checksFailed = checkResults.some((r) => r.code !== 0);
+    append(run, `\n=== FORGE checks ===\n${checksText}\n`);
+  }
+
   applyVerification(reviewRes, run.agents.review, run, config);
   const verdict = parseVerdict(reviewRes.output);
 
-  // Gate block forces FAIL regardless of the model's verdict
-  const pass = verdict.pass && !gateBlocked;
+  // Gate block or a failing check forces FAIL regardless of the model's verdict
+  const pass = verdict.pass && !gateBlocked && !checksFailed;
+  const checksBlockNote = (!gateBlocked && checksFailed)
+    ? `\n\n[forge: check(s) failed — verdict forced to FAIL]\n${checksText}\nVERDICT: FAIL`
+    : "";
   const reviewBody = gateBlocked
     ? `${verdict.raw}\n\n[forge: mechanical gate BLOCK — verdict forced to FAIL]\n${gate.report}\nVERDICT: FAIL`
-    : verdict.raw;
+    : `${verdict.raw}${checksBlockNote}`;
   await addComment(actorId, ticket.id, redactSecrets(reviewBody), "review");
 
   if (!pass) {
@@ -688,11 +721,12 @@ async function persistRun(run: Run): Promise<void> {
       reviewAgent: run.agents.review,
       effort: run.effort ?? null,
       protectedViolations: run.protectedViolations ?? null,
+      checksDurationMs: run.checksDurationMs ?? null,
       startedAt: new Date(run.startedAt),
       finishedAt,
     }).onConflictDoUpdate({
       target: forgeRuns.id,
-      set: { status: run.status, stage: run.stage, finishedAt, protectedViolations: run.protectedViolations ?? null }
+      set: { status: run.status, stage: run.stage, finishedAt, protectedViolations: run.protectedViolations ?? null, checksDurationMs: run.checksDurationMs ?? null }
     });
   } catch (e) {
     console.warn(`forge: failed to persist run ${run.id}:`, (e as Error).message);
@@ -811,7 +845,35 @@ export async function markPolicyWaived(runId: string): Promise<void> {
   await db.update(forgeRuns).set({ policyWaivedAt: new Date() }).where(eq(forgeRuns.id, runId));
 }
 
-export type RunListItem = RunSummary & { persisted?: boolean; modelVerified?: boolean | "unknown"; rejectionReason?: string };
+export type StageDurationsMs = Partial<Record<"plan" | "work" | "checks" | "review", number>>;
+
+// Per-stage wall time for a settled run. plan/work/review come from
+// ai_usage_logs (one row per track() call, durationMs already captured),
+// joined by the run's [startedAt, finishedAt] window with the same ±5s
+// clock-skew buffer computeVerificationStatus uses. Checks are not an AI
+// call, so their duration comes from the run's own checksDurationMs instead.
+async function deriveStageDurations(
+  ticketId: string, from: Date, to: Date, checksDurationMs?: number | null,
+): Promise<StageDurationsMs> {
+  const buffer = 5000;
+  const rows = await db.select({ model: aiUsageLogs.model, durationMs: aiUsageLogs.durationMs })
+    .from(aiUsageLogs)
+    .where(and(
+      eq(aiUsageLogs.ticketId, ticketId),
+      gte(aiUsageLogs.createdAt, new Date(from.getTime() - buffer)),
+      lte(aiUsageLogs.createdAt, new Date(to.getTime() + buffer)),
+    ));
+  const out: StageDurationsMs = {};
+  for (const r of rows) {
+    if (!r.durationMs) continue;
+    if (r.model !== "plan" && r.model !== "work" && r.model !== "review") continue;
+    out[r.model] = (out[r.model] ?? 0) + r.durationMs;
+  }
+  if (checksDurationMs != null) out.checks = checksDurationMs;
+  return out;
+}
+
+export type RunListItem = RunSummary & { persisted?: boolean; modelVerified?: boolean | "unknown"; rejectionReason?: string; stageDurationsMs?: StageDurationsMs };
 
 const HISTORY_LIMIT = 20;
 const LIST_CAP = 40;
@@ -828,6 +890,7 @@ export async function listRunsWithHistory(): Promise<RunListItem[]> {
       id: r.id, ticketId: r.ticketId, status: r.status as Status, stage: r.stage as Stage,
       agents: { plan: r.planAgent, work: r.workAgent, review: r.reviewAgent },
       effort: (r.effort ?? undefined) as Effort | undefined,
+      checksDurationMs: r.checksDurationMs ?? undefined,
       startedAt: r.startedAt.toISOString(),
       finishedAt: r.finishedAt ? r.finishedAt.toISOString() : undefined,
       persisted: true,
@@ -841,6 +904,11 @@ export async function listRunsWithHistory(): Promise<RunListItem[]> {
       from: new Date(item.startedAt),
       to: item.finishedAt ? new Date(item.finishedAt) : null,
     });
+    if (item.status !== "running" && item.finishedAt) {
+      item.stageDurationsMs = await deriveStageDurations(
+        item.ticketId, new Date(item.startedAt), new Date(item.finishedAt), item.checksDurationMs,
+      );
+    }
     if (item.status === "rejected") {
       const comments = await listComments(item.ticketId);
       const from = new Date(item.startedAt).getTime();
@@ -877,6 +945,7 @@ export async function stopRun(id: string): Promise<boolean> {
   if (!r || r.status !== "running") return false;
   r.stopped = true; // checked between stages so a running stage still lands on "stopped"
   if (r.child) await killTree(r.child);
+  if (r.checksChild) await killTree(r.checksChild);
   if (r.abort) r.abort();
   return true;
 }

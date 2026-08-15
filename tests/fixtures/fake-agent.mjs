@@ -90,6 +90,14 @@ if (mode === "slow") {
   console.log(OUTPUTS.plan);
   process.exit(0);
 }
+if (mode === "review-pass-slow") {
+  await new Promise((r) => setTimeout(r, 4000));
+  console.log(OUTPUTS["review-pass"]);
+  process.exit(0);
+}
+if (mode === "review-hang") {
+  await new Promise(() => {}); // hang forever
+}
 if (mode === "plan-hang") {
   await new Promise(() => {}); // hang forever
 }

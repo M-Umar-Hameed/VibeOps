@@ -229,3 +229,55 @@ test("a client-supplied grant cannot substitute for a real grant", async () => {
   });
   expect(res.status).toBe(403);
 });
+
+test("navigate batch without an act grant is refused 403 naming the origin, nothing enqueued", async () => {
+  BROWSER_TUNING.pollTimeoutMs = 80;
+  const h = await memberHeaders();
+  const id = await registerInstance(h);
+  const res = await app.request("/browser/batches", {
+    method: "POST",
+    headers: h,
+    body: JSON.stringify({ instanceId: id, tenant: "acme", targetOrigin: "https://github.com", steps: [{ verb: "navigate", url: "https://github.com/org/repo" }] }),
+  });
+  expect(res.status).toBe(403);
+  expect((await res.json()).error).toContain("https://github.com");
+  // Mutation check: remove "navigate" from MUTATING in browser-routes and the
+  // navigate batch delivers without a grant → this 403 flips to a 204-then-deliver.
+  expect((await app.request(`/browser/poll?instanceId=${id}`, { headers: h })).status).toBe(204);
+});
+
+test("navigate batch with a non-http scheme is rejected 400, nothing enqueued", async () => {
+  BROWSER_TUNING.pollTimeoutMs = 80;
+  const h = await memberHeaders();
+  const id = await registerInstance(h);
+  const res = await app.request("/browser/batches", {
+    method: "POST",
+    headers: h,
+    body: JSON.stringify({ instanceId: id, tenant: "acme", targetOrigin: "https://github.com", steps: [{ verb: "navigate", url: "javascript:alert(1)" }] }),
+  });
+  expect(res.status).toBe(400);
+  expect((await app.request(`/browser/poll?instanceId=${id}`, { headers: h })).status).toBe(204);
+});
+
+test("with an act grant the navigate batch is delivered carrying grant+targetOrigin", async () => {
+  const h = await memberHeaders();
+  const id = await registerInstance(h);
+  await setSetting("browserGrants", JSON.stringify([{ origin: "https://github.com", mode: "act" }]));
+  const canned = {
+    results: [{ ok: true }],
+    snapshot: { instanceId: id, origin: "https://github.com", identity: null, nodes: [] },
+  };
+  const [batchRes, client] = await Promise.all([
+    app.request("/browser/batches", {
+      method: "POST",
+      headers: h,
+      body: JSON.stringify({ instanceId: id, tenant: "acme", targetOrigin: "https://github.com", steps: [{ verb: "navigate", url: "https://github.com/org/repo" }] }),
+    }),
+    fakeClientCycle(h, id, canned),
+  ]);
+  expect(client.polled).toBe(200);
+  expect(client.batch.grant).toBe("act");
+  expect(client.batch.targetOrigin).toBe("https://github.com");
+  expect(client.batch.steps).toEqual([{ verb: "navigate", url: "https://github.com/org/repo" }]);
+  expect(batchRes.status).toBe(200);
+});

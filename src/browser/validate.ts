@@ -12,6 +12,7 @@ const SHAPES: Record<string, Record<string, "string">> = {
   press: { key: "string" },
   snapshot: {},
   read: { ref: "string" },
+  navigate: { url: "string" },
 };
 
 export function validateSteps(
@@ -35,6 +36,16 @@ export function validateSteps(
     }
     for (const [field, type] of Object.entries(shape)) {
       if (typeof s[field] !== type) return { ok: false, error: `${s.verb}.${field} must be a ${type}` };
+    }
+    // Injection defense for navigate: only absolute http(s) URLs. javascript:/
+    // data:/file:/chrome: (and relative URLs) are rejected before anything is
+    // enqueued or a location is ever assigned.
+    if (s.verb === "navigate") {
+      let u: URL;
+      try { u = new URL(s.url as string); } catch { return { ok: false, error: "navigate.url must be an absolute URL" }; }
+      if (u.protocol !== "http:" && u.protocol !== "https:") {
+        return { ok: false, error: `navigate.url scheme not allowed: ${u.protocol} (http/https only)` };
+      }
     }
   }
   return { ok: true, steps: steps as ActionStep[] };

@@ -34,10 +34,10 @@ export function ChatScreen() {
   const [input, setInput] = useState("");
   const [model, setModel] = useState<string>("sonnet");
   const [isSending, setIsSending] = useState(false);
-  const [liveOutput, setLiveOutput] = useState("");
+  const [liveChunks, setLiveChunks] = useState<string[]>([]);
+  const liveOutput = liveChunks.join("");
   const [error, setError] = useState("");
   const nextOffsetRef = useRef(0);
-  const outputRef = useRef<HTMLDivElement>(null);
 
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery<ChatSession[]>({
     queryKey: ["chat", "sessions"],
@@ -75,17 +75,12 @@ export function ChatScreen() {
         )) as { chunk: string; next: number; status: string };
         if (!running) return;
         if (res.chunk) {
-          setLiveOutput((prev) => prev + res.chunk);
-          setTimeout(() => {
-            if (outputRef.current) {
-              outputRef.current.scrollTop = outputRef.current.scrollHeight;
-            }
-          }, 10);
+          setLiveChunks((prev) => [...prev, res.chunk]);
         }
         nextOffsetRef.current = res.next;
         if (res.status !== "running") {
           setIsSending(false);
-          setLiveOutput("");
+          setLiveChunks([]);
           nextOffsetRef.current = 0;
           refetchDetail();
           queryClient.invalidateQueries({ queryKey: ["chat", "sessions"] });
@@ -117,7 +112,7 @@ export function ChatScreen() {
     if (!selectedSessionId || !input.trim() || isSending) return;
     setError("");
     setIsSending(true);
-    setLiveOutput("");
+    setLiveChunks([]);
     nextOffsetRef.current = 0;
     try {
       const res = (await api.post(`/chat/sessions/${selectedSessionId}/messages`, {
@@ -210,7 +205,7 @@ export function ChatScreen() {
             </div>
 
             {/* Messages */}
-            <div ref={outputRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {detail?.messages?.map((m) => (
                 <div
                   key={m.id}

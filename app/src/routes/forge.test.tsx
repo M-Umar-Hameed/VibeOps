@@ -203,8 +203,8 @@ test("console appends polled chunks (mock two successive output responses, use f
   });
 
   await waitFor(() => {
-    const pre = document.querySelector("pre");
-    expect(pre?.textContent).toBe("starting...done!");
+    const consoleEl = document.querySelector("[data-testid='virtuoso']");
+    expect(consoleEl?.textContent).toBe("starting...done!");
   });
 
   const callCountAfterSettle = pollCount;

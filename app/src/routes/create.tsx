@@ -11,6 +11,7 @@ import { WorkOrderComposer, modelOptionsForRole } from "../components/WorkOrderC
 import { Markdown } from "../components/Markdown.js";
 import { exportBrief, sendBriefToNotebookLM } from "../lib/notebooklm.js";
 import { ContextMenu, type MenuItemSpec } from "../components/ContextMenu.js";
+import { OutputPane } from "../components/OutputPane.js";
 
 const COUNCIL_KEY = "vibeops.activeCouncilId";
 
@@ -159,7 +160,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
   const [councilId, setCouncilId] = useState<string | null>(null);
   const [councilStatus, setCouncilStatus] = useState<CouncilStatus>("idle");
   const [rowMenu, setRowMenu] = useState<{ items: MenuItemSpec[]; x: number; y: number; label: string } | null>(null);
-  const [councilOutput, setCouncilOutput] = useState("");
+  const [councilChunks, setCouncilChunks] = useState<string[]>([]);
   const [councilRating, setCouncilRating] = useState<number | undefined>(undefined);
   const [councilDecision, setCouncilDecision] = useState<Decision | undefined>(undefined);
   const [councilQuestions, setCouncilQuestions] = useState<string[]>([]);
@@ -177,7 +178,6 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
   const [creatingTicket, setCreatingTicket] = useState(false);
   const [councilError, setCouncilError] = useState("");
   const nextOffsetRef = useRef(0);
-  const outputRef = useRef<HTMLPreElement>(null);
 
   const [councilRound, setCouncilRound] = useState(1);
   const MAX_ACTIVE = 3; // mirrors MAX_ACTIVE in src/council/runs.ts
@@ -197,10 +197,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
         const res = await api.get(`/council/${councilId}/output?after=${nextOffsetRef.current}`) as { chunk: string; next: number; status: string };
         if (!running) return;
         if (res.chunk) {
-          setCouncilOutput(prev => prev + res.chunk);
-          setTimeout(() => {
-            if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
-          }, 10);
+          setCouncilChunks(prev => [...prev, res.chunk]);
         }
         nextOffsetRef.current = res.next;
         if (res.status !== "running") running = false;
@@ -300,7 +297,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
       localStorage.setItem(COUNCIL_KEY, res.councilId);
       setPersonaTexts({});
       setCouncilStatus("running");
-      setCouncilOutput("");
+      setCouncilChunks([]);
       setCouncilQuestions([]);
       setAnswers([]);
       setCouncilRating(undefined);
@@ -354,7 +351,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
     setExpanded(null);
     setCouncilId(null);
     setCouncilStatus("idle");
-    setCouncilOutput("");
+    setCouncilChunks([]);
     setCouncilQuestions([]);
     setAnswers([]);
     setCouncilRating(undefined);
@@ -477,7 +474,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
           ) : (
             <div className="text-xs uppercase tracking-widest text-on-surface-variant animate-pulse">Council in session...</div>
           )}
-          <ConsoleToggle show={showConsole} onToggle={() => setShowConsole(s => !s)} output={councilOutput} outputRef={outputRef} />
+          <ConsoleToggle show={showConsole} onToggle={() => setShowConsole(s => !s)} chunks={councilChunks} />
         </div>
       )}
 
@@ -486,7 +483,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
           <VerdictCard rating={councilRating} decision={councilDecision} councilId={councilId} />
           <SpecBlock spec={councilSpec} onExpand={() => setExpanded("spec")} />
           {personaGridLabeled}
-          <ConsoleToggle show={showConsole} onToggle={() => setShowConsole(s => !s)} output={councilOutput} />
+          <ConsoleToggle show={showConsole} onToggle={() => setShowConsole(s => !s)} chunks={councilChunks} />
           {councilQuestions.map((q, i) => (
             <div key={i} className="space-y-1">
               <label className="text-sm text-on-surface-variant">{q}</label>
@@ -513,7 +510,7 @@ function CouncilPanel({ projects, activeProjectId, nav }: { projects: Project[];
           <VerdictCard rating={councilRating} decision={councilDecision} councilId={councilId} />
           {personaGridLabeled}
           <SpecBlock spec={councilSpec} onExpand={() => setExpanded("spec")} />
-          <ConsoleToggle show={showConsole} onToggle={() => setShowConsole(s => !s)} output={councilOutput} />
+          <ConsoleToggle show={showConsole} onToggle={() => setShowConsole(s => !s)} chunks={councilChunks} />
           {councilDecision !== "GO" && (
             <label className="flex items-center gap-2 text-sm text-on-surface-variant">
               <input type="checkbox" checked={forceCreate} onChange={(e) => setForceCreate(e.target.checked)} />
@@ -736,9 +733,8 @@ function ReadingOverlay({ title, text, onClose }: { title: string; text: string;
   );
 }
 
-function ConsoleToggle({ show, onToggle, output, outputRef }: {
-  show: boolean; onToggle: () => void; output: string;
-  outputRef?: React.RefObject<HTMLPreElement | null>;
+function ConsoleToggle({ show, onToggle, chunks }: {
+  show: boolean; onToggle: () => void; chunks: string[];
 }) {
   return (
     <div className="space-y-2">
@@ -749,11 +745,7 @@ function ConsoleToggle({ show, onToggle, output, outputRef }: {
       >
         {show ? "Hide console" : "Show console"}
       </button>
-      {show && (
-        <pre ref={outputRef} className="p-4 h-64 overflow-y-auto bg-background/80 text-code-sm text-on-surface font-mono whitespace-pre-wrap border border-white/10 rounded-lg">
-          {output}
-        </pre>
-      )}
+      {show && <OutputPane chunks={chunks} />}
     </div>
   );
 }

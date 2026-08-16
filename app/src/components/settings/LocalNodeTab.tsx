@@ -10,6 +10,8 @@ export function LocalNodeTab({ rejected }: { rejected: boolean }) {
   const [status, setStatus] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [keyCopied, setKeyCopied] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     getSettings().then((s) => {
@@ -36,7 +38,14 @@ export function LocalNodeTab({ rejected }: { rejected: boolean }) {
   }
   
   async function save() {
-    await saveSettings({ baseUrl, apiKey });
+    setSaving(true);
+    try {
+      await saveSettings({ baseUrl, apiKey });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function detect() {
@@ -141,11 +150,12 @@ export function LocalNodeTab({ rejected }: { rejected: boolean }) {
                     Test Link
                   </button>
                   <button 
-                    className="flex-1 py-3 rounded-lg bg-primary text-on-primary font-bold text-sm hover:brightness-110 active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(0,219,233,0.3)] hover:shadow-[0_0_25px_rgba(0,219,233,0.5)]"
+                    className="flex-1 py-3 rounded-lg bg-primary text-on-primary font-bold text-sm hover:brightness-110 active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(0,219,233,0.3)] hover:shadow-[0_0_25px_rgba(0,219,233,0.5)] disabled:opacity-50"
                     onClick={save}
+                    disabled={saving}
                   >
-                    <span className="material-symbols-outlined text-[18px]">save</span>
-                    Save Config
+                    <span className={`material-symbols-outlined text-[18px] ${saving ? "animate-spin" : ""}`}>{saving ? "refresh" : saved ? "check" : "save"}</span>
+                    {saving ? "Saving..." : saved ? "Saved" : "Save Config"}
                   </button>
                 </div>
               </div>

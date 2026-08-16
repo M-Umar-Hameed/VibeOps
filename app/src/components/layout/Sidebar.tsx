@@ -151,16 +151,15 @@ export function Sidebar({ setIsOpen = (_v: boolean) => {} }) {
             <span className="font-body-md">Chat</span>
           </Link>
           <Link
-            to="/settings"
-            search={{ tab: "ai" }}
+            to="/usage"
             onClick={() => setIsOpen(false)}
             className={`flex items-center gap-3 px-4 py-3 transition-all duration-200 active:scale-[0.98] ${
-              isActive("/settings")
+              isActive("/usage")
                 ? "border-l-2 border-primary-fixed-dim bg-primary-fixed-dim/5 text-primary-fixed-dim"
                 : "text-on-surface-variant hover:bg-white/5 hover:text-on-surface"
             }`}
           >
-            <span className="material-symbols-outlined" style={{ fontVariationSettings: isActive("/settings") ? "'FILL' 1" : "" }}>insights</span>
+            <span className="material-symbols-outlined" style={{ fontVariationSettings: isActive("/usage") ? "'FILL' 1" : "" }}>insights</span>
             <span className="font-body-md">Usage</span>
           </Link>
           <Link

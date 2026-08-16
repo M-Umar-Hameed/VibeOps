@@ -130,3 +130,14 @@ test("project menu renders outside the sidebar so the backdrop covers the viewpo
   expect(aside?.contains(menu)).toBe(false);
   expect(document.body.contains(menu)).toBe(true);
 });
+
+test("Index docs shows a spinner while indexing runs", async () => {
+  let resolve!: (v: any) => void;
+  post.mockImplementationOnce(() => new Promise((r) => { resolve = r; }));
+  renderSidebar();
+  const menu = openMenuFor("Project A");
+  fireEvent.click(within(menu).getByText("Index docs"));
+  expect(await within(menu).findByTestId("menu-item-spinner")).toBeInTheDocument();
+  resolve({ indexed: 1, skipped: 0, removed: 0 });
+  await waitFor(() => expect(within(menu).getByRole("status")).toHaveTextContent("indexed 1"));
+});

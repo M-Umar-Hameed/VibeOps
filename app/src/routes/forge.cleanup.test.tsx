@@ -45,3 +45,22 @@ test("cleanup button posts to the sweep endpoint and reports the result", async 
   ));
   await screen.findByText(/Removed 2 merged sandboxes \(3\.0 MB\)/);
 });
+
+test("cleanup broom spins while the sweep is in flight", async () => {
+  let resolve!: (v: any) => void;
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/forge/sandboxes/cleanup") return new Promise((r) => { resolve = r; });
+    if (path === "/tickets") return [];
+    if (path === "/forge/agents") return [];
+    if (path === "/forge/skills") return [];
+    if (path === "/forge/doctor") return [];
+    if (path === "/actors") return [];
+    if (path === "/forge/recovery") return { interrupted: [] };
+    if (path === "/settings/forge.defaultModel.work") return { value: "" };
+    return {};
+  });
+  render(wrap(<ForgeScreen />));
+  fireEvent.click(await screen.findByLabelText("Clean up merged sandboxes"));
+  await waitFor(() => expect(document.querySelector('[aria-label="Clean up merged sandboxes"] .animate-spin')).toBeInTheDocument());
+  resolve({ discarded: [], reclaimedBytes: 0, orphans: [] });
+});

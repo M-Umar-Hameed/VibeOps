@@ -344,6 +344,28 @@ test("runAgent without env leaves the child inheriting the parent env", async ()
   delete process.env.INHERIT_PROBE;
 });
 
+test("runAgent sets ENABLE_PROMPT_CACHING_1H only when ANTHROPIC_API_KEY is present", async () => {
+  const prevKey = process.env.ANTHROPIC_API_KEY;
+  const prevFlag = process.env.ENABLE_PROMPT_CACHING_1H;
+  delete process.env.ENABLE_PROMPT_CACHING_1H;
+  const agent = {
+    cmd: [process.execPath, "-e", "process.stdout.write(process.env.ENABLE_PROMPT_CACHING_1H ?? 'MISSING')"],
+    roles: [],
+  };
+  try {
+    process.env.ANTHROPIC_API_KEY = "sk-test";
+    const withKey = await runAgent(agent, "unused", process.cwd());
+    expect(withKey.output).toBe("1");
+
+    delete process.env.ANTHROPIC_API_KEY;
+    const noKey = await runAgent(agent, "unused", process.cwd());
+    expect(noKey.output).toBe("MISSING");
+  } finally {
+    if (prevKey === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = prevKey;
+    if (prevFlag === undefined) delete process.env.ENABLE_PROMPT_CACHING_1H; else process.env.ENABLE_PROMPT_CACHING_1H = prevFlag;
+  }
+});
+
 test("loadRelayConfig rejects a non-string env value, naming the agent", () => {
   const dir = mkdtempSync(join(tmpdir(), "relay-cfg-"));
   const path = join(dir, "relay.json");

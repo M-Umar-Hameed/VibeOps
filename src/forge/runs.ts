@@ -10,7 +10,7 @@ import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict
 import { killTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { redactSecrets } from "./redact.js";
-import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch } from "./sandbox.js";
+import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
 import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths } from "./policy.js";
 import { pickAgents, escalate, pairsForRole, type Pick, type RoutingStrategy } from "./router.js";
@@ -685,6 +685,9 @@ async function reviewStage(
   }
 
   // Mechanical gate: secret scan, file-set, mutation probe, AC-map. Runs BEFORE the review model.
+  // changedPaths (above) and rangePatch are computed once here and handed to the
+  // gate so a single review no longer re-spawns git for the same diff data.
+  const rangePatch = await sandboxRangePatch(workdir, ticket.id);
   const gate = await runGate({
     workdir,
     ticketId: ticket.id,
@@ -692,14 +695,18 @@ async function reviewStage(
     ticketBody: ticket.body ?? "",
     maxSourceFiles: parseInt((await getSetting("forge.mutationProbe.maxSourceFiles")) ?? "", 10) || 3,
     mutationCmd: resolveMutationCmd(await getSetting("forge.mutationProbe.command"), sandbox),
+    changedPaths,
+    rangePatch,
   });
   const gateBlocked = gate.findings.some(f => f.severity === "block");
   if (gate.report) append(run, `\n=== FORGE gate ===\n${gate.report}\n`);
 
   if (run.stopped) return settle(run, "stopped");
 
-  const diff = await sandboxDiff(workdir, ticket.id);
-  const stat = await sandboxDiffSummary(workdir, ticket.id);
+  const [diff, stat] = await Promise.all([
+    sandboxDiff(workdir, ticket.id),
+    sandboxDiffSummary(workdir, ticket.id),
+  ]);
   const reviewPrompt = composeReviewPrompt({ ticket, plan, report: reportOutput, diff: reviewDiffPayload(diff, stat), operatorNotes: run.operatorNotes, protectedViolation: protectedFinding, amendments, gate: gate.report || undefined, citations: gate.citations || undefined }) + roleStyle("review", styleSetting);
 
   if (run.stopped) return settle(run, "stopped");

@@ -301,15 +301,30 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     // any frontendDeps node_modules copy). Set forge.discardOnPromote=false to keep
     // the tree for debugging a promote.
     const discardAfter = (await getSetting("forge.discardOnPromote")) !== "false";
-    await promoteSandbox(workdir, ticketId, ticket.title, discardAfter);
+    // Reorder for the lost-close race: write the DB effects (promote comment + close)
+    // BEFORE the merge. The merge is the only step that rewrites workdir files, which
+    // restarts the dev file-watcher and can kill everything after it. DB writes are
+    // cheap and cannot trigger a restart, so they land first.
+    await addComment(c.get("actor").id, ticketId, "forge: promoted", "comment");
+    const beforeMerge = await getTicket(ticketId);
+    const updated = await updateTicket(c.get("actor").id, ticketId, beforeMerge.version, { status: "closed" });
+    try {
+      await promoteSandbox(workdir, ticketId, ticket.title, discardAfter);
+    } catch (e) {
+      // Merge failed after we already closed the ticket. A closed ticket whose code
+      // never landed is worse than the race, so compensate: bounce it back to review
+      // with a comment naming the failure, then surface the error (onError -> 409).
+      const closed = await getTicket(ticketId);
+      await addComment(c.get("actor").id, ticketId,
+        `forge: promote merge failed, ticket reopened to review — ${(e as Error).message}`, "comment");
+      await updateTicket(c.get("actor").id, ticketId, closed.version, { status: "review" });
+      throw e;
+    }
     // Repo files just changed on disk (sandbox merged into the project repo); refresh the
     // doc index so stale README/CLAUDE/AGENTS text stops feeding plan/work prompts. Only this
     // project. Non-blocking, swallow failures — matches the first-time index at runs.ts:316.
     indexRepoDocs(ticket.projectId)
       .catch((e) => console.warn(`repo re-index after promote failed: ${(e as Error).message}`));
-    await addComment(c.get("actor").id, ticketId, "forge: promoted", "comment");
-    const fresh = await getTicket(ticketId);
-    const updated = await updateTicket(c.get("actor").id, ticketId, fresh.version, { status: "closed" });
     return c.json(updated);
   });
 

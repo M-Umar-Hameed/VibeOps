@@ -23,6 +23,7 @@ import { projectWorkdir } from "../services/projects.js";
 import { ConflictError, StaleVersionError } from "../services/errors.js";
 import { logAgentUse, startAgentSession, endAgentSession } from "../services/usage.js";
 import { listActors } from "../services/actors.js";
+import { bump } from "../services/metrics.js";
 import { desc, isNull, sum, eq, gte, lte, and, inArray } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { forgeRuns, aiUsageLogs, tickets, type Ticket } from "../db/schema.js";
@@ -1015,6 +1016,7 @@ export async function markInterruptedRuns(): Promise<string[]> {
       .set({ status: "interrupted", finishedAt: new Date() })
       .where(isNull(forgeRuns.finishedAt))
       .returning({ ticketId: forgeRuns.ticketId });
+    bump("runs.interrupted", rows.length);
     return rows.map((r) => r.ticketId);
   } catch (e) {
     console.warn("forge: failed to mark interrupted runs:", (e as Error).message);

@@ -13,6 +13,7 @@ import { chunkMarkdown } from "../knowledge/chunker.js";
 import { getEmbedder, type Embedder } from "../knowledge/embedder.js";
 import { redactSecrets } from "../forge/redact.js";
 import { logKnowledgeQuery } from "./usage.js";
+import { bump } from "../services/metrics.js";
 
 // vault sourceRef is either a legacy absolute path (global vault) or
 // "<projectId>:<relPosix>" for a project vault; map the latter back to disk.
@@ -56,6 +57,7 @@ export async function upsertSourceDoc(
       await tx.insert(embeddings).values(rows.slice(i, i + 100));
     }
   });
+  bump("embed.chunks", vecs.length);
   return chunks.length;
 }
 

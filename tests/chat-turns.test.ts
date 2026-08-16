@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import * as store from "../src/chat/store.js";
 import { setChatAgent, runTurn, getChatOutput, isRunning, ChatBusyError } from "../src/chat/turns.js";
 import { createActor } from "../src/services/actors.js";
+
+const FAKE_AGENT = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-agent.mjs");
 
 process.env.EMBED_PROVIDER = "fake";
 
@@ -18,10 +24,9 @@ describe("chat turns", () => {
   });
 
   afterEach(() => {
-    // Reset to default by setting a simple passthrough if we modified it
-    if (originalAgent) {
-      setChatAgent(originalAgent);
-    }
+    if (originalAgent) setChatAgent(originalAgent);
+    delete process.env.VIBEOPS_RELAY_CONFIG;
+    delete process.env.FAKE_MODE;
   });
 
   it("runs a turn with a fake agent and persists messages", async () => {
@@ -148,5 +153,52 @@ describe("chat turns", () => {
     const out3 = getChatOutput(sess.id, 5);
     expect(out3.chunk).toBe("");
     expect(out3.next).toBe(5);
+  });
+
+  it("legacy 'opus' model still runs on the sdk lane", async () => {
+    const { actor } = await createActor({ name: uniq("chat-legacy"), kind: "human" });
+    const sess = await store.createSession("legacy test", "opus");
+
+    let seenModel: string | undefined;
+    setChatAgent(async (params) => {
+      seenModel = params.model;
+      return { ok: true, text: "sdk answer", sessionId: "sdk-legacy-1" };
+    });
+
+    await runTurn(actor, sess.id, "hello");
+
+    expect(seenModel).toBe("opus"); // sdk lane received the bare legacy model
+    const msgs = await store.getMessages(sess.id);
+    expect(msgs[1].body).toBe("sdk answer");
+    expect((await store.getSession(sess.id))?.sdkSessionId).toBe("sdk-legacy-1");
+  });
+
+  it("CLI-lane session folds turn 1's exchange into turn 2's prompt", async () => {
+    const cfgPath = join(mkdtempSync(join(tmpdir(), "chat-cli-cfg-")), "relay.json");
+    writeFileSync(cfgPath, JSON.stringify({
+      workdir: tmpdir(),
+      agents: {
+        fakecli: {
+          cmd: [process.execPath, FAKE_AGENT, "{prompt}", "{model}"],
+          roles: ["work"],
+          models: [{ name: "fast", tier: "cheap", quality: 3 }],
+        },
+      },
+    }));
+    process.env.VIBEOPS_RELAY_CONFIG = cfgPath;
+    process.env.FAKE_MODE = "echo-prompt"; // prints "PROMPT:<full prompt>"
+
+    const { actor } = await createActor({ name: uniq("chat-cli"), kind: "human" });
+    const sess = await store.createSession("cli test", "fakecli::fast");
+
+    await runTurn(actor, sess.id, "ALPHA");
+    await runTurn(actor, sess.id, "BRAVO");
+
+    const msgs = await store.getMessages(sess.id);
+    const turn2Assistant = msgs[3].body; // echo of turn 2's composed prompt
+    expect(msgs[3].role).toBe("assistant");
+    expect(turn2Assistant).toContain("ALPHA"); // turn 1 user message present
+    expect(turn2Assistant).toContain("BRAVO"); // turn 2 user message present
+    expect(turn2Assistant.startsWith("PROMPT:")).toBe(true);
   });
 });

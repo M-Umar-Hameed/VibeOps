@@ -6,6 +6,9 @@ import { roleStyle } from "../relay/style.js";
 import { getSetting } from "../services/settings.js";
 import { upsertSourceDoc } from "../services/knowledge.js";
 import { getEmbedder } from "../knowledge/embedder.js";
+import { runAgent } from "../relay/invoke.js";
+import { loadRelayConfig, resolveCmd } from "../relay/config.js";
+import { parseModelRef, rollTranscript } from "./roster.js";
 
 type AgentFn = (p: Parameters<typeof runChatTurn>[0]) => Promise<ChatTurnResult>;
 
@@ -59,33 +62,46 @@ export async function runTurn(
 
     await store.appendMessage({ sessionId, role: "user", body: userBody });
 
-    const calls: ToolCall[] = [];
-    const tools = buildChatTools(actor, calls, session.projectId ?? undefined);
     const onData = (s: string) => {
       const b = live.get(sessionId)!;
       b.output += s;
     };
-
     const voice = roleStyle("chat", await getSetting("agents.commProfile"));
+
+    const { agent: agentName, model: modelName } = parseModelRef(useModel);
+    const config = agentName ? loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG) : undefined;
+    const agentDef = agentName ? config!.agents[agentName] : undefined;
+
     let res: ChatTurnResult;
-    try {
-      res = await agentImpl({
-        userBody,
-        tools,
-        model: useModel,
-        systemPrompt: voice,
-        resume: session.sdkSessionId ?? undefined,
-        onData,
-      });
-    } catch (e) {
-      // C3: stale resume -> one fresh retry
-      res = await agentImpl({
-        userBody,
-        tools,
-        model: useModel,
-        systemPrompt: voice,
-        onData,
-      });
+    const calls: ToolCall[] = [];
+
+    if (!agentName || agentDef?.type === "sdk") {
+      // SDK lane: tool-capable, resumable. Legacy 'sonnet'/'opus' land here (no '::').
+      const tools = buildChatTools(actor, calls, session.projectId ?? undefined);
+      try {
+        res = await agentImpl({
+          userBody, tools, model: modelName, systemPrompt: voice,
+          resume: session.sdkSessionId ?? undefined, onData,
+        });
+      } catch (e) {
+        // C3: stale resume -> one fresh retry
+        res = await agentImpl({ userBody, tools, model: modelName, systemPrompt: voice, onData });
+      }
+      if (res.sessionId) {
+        await store.updateSessionRuntime(sessionId, { sdkSessionId: res.sessionId });
+      }
+    } else if (!agentDef) {
+      res = { ok: false, text: `[chat: unknown agent "${agentName}" in relay config]` };
+      onData(res.text);
+    } else {
+      // CLI lane: one-shot process, no MCP -> no tools. Compose voice + the full
+      // rolled transcript (capped oldest-first) into one prompt; each turn is a
+      // single invocation via the shared relay invoke path.
+      const cliAgent = { ...agentDef, cmd: resolveCmd(agentDef, modelName || undefined) };
+      const transcript = rollTranscript(await store.getMessages(sessionId));
+      const prompt = voice ? `${voice}\n\n${transcript}` : transcript;
+      const out = await runAgent(cliAgent, prompt, config!.workdir, onData);
+      res = { ok: out.ok, text: out.output };
     }
 
     await store.appendMessage({
@@ -94,10 +110,6 @@ export async function runTurn(
       body: res.text,
       toolCalls: calls.length ? calls : undefined,
     });
-
-    if (res.sessionId) {
-      await store.updateSessionRuntime(sessionId, { sdkSessionId: res.sessionId });
-    }
 
     // Fold the completed conversation into the knowledge index so later turns and
     // other sessions can retrieve it. Ref mirrors the vault rule: "<projectId>:<id>"

@@ -3,14 +3,24 @@ import type { Actor } from "../db/schema.js";
 import { requireAdmin } from "./auth.js";
 import * as store from "../chat/store.js";
 import { isRunning, runTurn, getChatOutput } from "../chat/turns.js";
+import { loadRelayConfig } from "../relay/config.js";
+import { buildRoster } from "../chat/roster.js";
 
 type AppEnv = { Variables: { actor: Actor } };
 
 export function registerChatRoutes(app: Hono<AppEnv>): void {
+  app.get("/chat/models", requireAdmin, (c) => {
+    try {
+      return c.json(buildRoster(loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG)));
+    } catch (e) {
+      return c.json({ error: (e as Error).message }, 500);
+    }
+  });
+
   app.post("/chat/sessions", requireAdmin, async (c) => {
     const body = await c.req.json().catch(() => ({}));
     const title = typeof body.title === "string" ? body.title : undefined;
-    const model = body.model === "opus" ? "opus" : "sonnet";
+    const model = typeof body.model === "string" && body.model ? body.model : "sonnet";
     const projectId = typeof body.projectId === "string" ? body.projectId : null;
     return c.json(await store.createSession(title, model, projectId), 201);
   });
@@ -34,7 +44,7 @@ export function registerChatRoutes(app: Hono<AppEnv>): void {
     if (typeof body.body !== "string" || !body.body.trim()) {
       return c.json({ error: "body required" }, 400);
     }
-    const model = body.model === "opus" || body.model === "sonnet" ? body.model : undefined;
+    const model = typeof body.model === "string" && body.model ? body.model : undefined;
     if (isRunning(id)) {
       return c.json({ error: "a turn is already running for this session" }, 409);
     }

@@ -38,7 +38,10 @@ function platformFor(sigPath) {
   const name = basename(sigPath);
   if (name.endsWith(".app.tar.gz.sig")) return "darwin-aarch64";
   if (name.endsWith("-setup.exe.sig") || name.endsWith(".nsis.zip.sig")) return "windows-x86_64";
-  if (name.endsWith(".AppImage.tar.gz.sig")) return "linux-x86_64";
+  // Tauri v2 signs the bare .AppImage; the .tar.gz form is the v1 layout kept
+  // for compatibility. v0.1.3 shipped an unmapped AppImage.sig because only the
+  // v1 pattern was matched - Linux clients saw no update entry at all.
+  if (name.endsWith(".AppImage.tar.gz.sig") || name.endsWith(".AppImage.sig")) return "linux-x86_64";
   return null;
 }
 

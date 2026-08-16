@@ -1498,3 +1498,28 @@ const file2 = "run2-output.txt";
     expect(item?.stageDurationsMs?.checks).toBeGreaterThanOrEqual(0);
   });
 });
+
+// The SSE transport test drives emitEvent directly, so removing the emit from a
+// real stage transition was invisible to it (the mutation survived). Pin the
+// wiring itself: a live pipeline must publish run.stage and run.settled on the
+// bus. Note the bus uses ONE channel ("event") carrying { type, payload }.
+describe("forge emits run lifecycle events", () => {
+  it("a pipeline publishes run.stage and run.settled on the event bus", async () => {
+    const { events } = await import("../src/api/events.js");
+    const seen: { type: string; runId?: string }[] = [];
+    const onEvent = (e: any) => seen.push({ type: e?.type, runId: e?.payload?.runId });
+    events.on("event", onEvent);
+    try {
+      const { actorId, ticket } = await seedTicket("Emits lifecycle events");
+      setScript("plan,work,review-pass", true);
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+      expect(seen.some((e) => e.type === "run.stage" && e.runId === runId)).toBe(true);
+      expect(seen.some((e) => e.type === "run.settled" && e.runId === runId)).toBe(true);
+    } finally {
+      events.off("event", onEvent);
+    }
+  }, 30_000);
+});

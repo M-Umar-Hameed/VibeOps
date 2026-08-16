@@ -9,6 +9,7 @@ import { SpecEditor } from "../components/SpecEditor.js";
 import { CommentList } from "../components/CommentList.js";
 import { WorkOrderComposer, modelOptionsForRole } from "../components/WorkOrderComposer.js";
 import { ContextMenu, type MenuItemSpec } from "../components/ContextMenu.js";
+import { OutputPane } from "../components/OutputPane.js";
 
 const parseSel = (s: string) => { const [agent, model] = s.split("::"); return { agent, model }; };
 const SELECTED_TICKET_KEY = "vibeops.forgeSelectedTicketId";
@@ -38,7 +39,8 @@ export function ForgeScreen() {
 
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [runOutput, setRunOutput] = useState("");
+  const [runChunks, setRunChunks] = useState<string[]>([]);
+  const runOutput = runChunks.join("");
   const [runStage, setRunStage] = useState("");
   const [runStatus, setRunStatus] = useState("");
   const [runError, setRunError] = useState("");
@@ -47,7 +49,6 @@ export function ForgeScreen() {
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const nextOffsetRef = useRef<number>(0);
-  const outputRef = useRef<HTMLPreElement>(null);
   const prevStageRef = useRef("");
   const lastDerivedRunTicketRef = useRef<string | null>(null);
 
@@ -206,7 +207,7 @@ export function ForgeScreen() {
       setTicketRunActive(false);
       setActiveRunId(null);
       setIsSubmitting(false);
-      setRunOutput("");
+      setRunChunks([]);
       setRunStage("");
       setRunStatus("");
       setRunError("");
@@ -223,7 +224,7 @@ export function ForgeScreen() {
     nextOffsetRef.current = 0;
 
     if (latest?.status === "running") {
-      setRunOutput("");
+      setRunChunks([]);
       setRunStage(latest.stage);
       setRunStatus("running");
       setActiveRunId(latest.id);
@@ -234,12 +235,12 @@ export function ForgeScreen() {
       setRunStage(latest.stage);
       setRunStatus(latest.status);
       api.get(`/forge/runs/${latest.id}/output?after=0`)
-        .then((res: any) => setRunOutput(res.chunk || ""))
+        .then((res: any) => setRunChunks(res.chunk ? [res.chunk] : []))
         .catch(() => setOutputUnavailable(true));
     } else {
       setActiveRunId(null);
       setIsSubmitting(false);
-      setRunOutput("");
+      setRunChunks([]);
       setRunStage("");
       setRunStatus("");
     }
@@ -328,12 +329,7 @@ export function ForgeScreen() {
         if (!running) return;
         
         if (res.chunk) {
-          setRunOutput(prev => prev + res.chunk);
-          setTimeout(() => {
-            if (outputRef.current) {
-              outputRef.current.scrollTop = outputRef.current.scrollHeight;
-            }
-          }, 10);
+          setRunChunks(prev => [...prev, res.chunk]);
         }
         nextOffsetRef.current = res.next;
         setRunStage(res.stage);
@@ -385,7 +381,7 @@ export function ForgeScreen() {
     if (!selectedTicket) return;
     setIsSubmitting(true);
     setRunError("");
-    setRunOutput("");
+    setRunChunks([]);
     setOutputUnavailable(false);
     setRunStage("");
     setRunStatus("running");
@@ -428,7 +424,7 @@ export function ForgeScreen() {
     if (!selectedTicket) return;
     setIsSubmitting(true);
     setRunError("");
-    setRunOutput("");
+    setRunChunks([]);
     setOutputUnavailable(false);
     setRunStage("");
     setRunStatus("running");
@@ -1028,9 +1024,7 @@ export function ForgeScreen() {
                     outputUnavailable ? (
                       <div className="p-4 text-on-surface-variant italic text-sm">view previous run output unavailable after restart</div>
                     ) : (
-                      <pre ref={outputRef} className="p-4 h-64 overflow-y-auto bg-background/80 text-code-sm text-on-surface font-mono whitespace-pre-wrap custom-scrollbar border border-white/10 rounded-lg">
-                        {runOutput}
-                      </pre>
+                      <OutputPane chunks={runChunks} />
                     )
                   )}
                 </div>

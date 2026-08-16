@@ -50,7 +50,7 @@ test("evaluate posts the prompt and console renders polled chunks", async () => 
     method: "POST", body: { prompt: "Build a thing", projectId: "p1" },
   }));
 
-  expect(document.querySelector("pre")).toBeNull();
+  expect(document.querySelector("[data-testid='virtuoso']")).toBeNull();
   fireEvent.click(await screen.findByText(/Show console/i));
 
   await waitFor(() => expect(screen.getByText("believer thinking...")).toBeInTheDocument());
@@ -58,8 +58,8 @@ test("evaluate posts the prompt and console renders polled chunks", async () => 
   await act(async () => { vi.advanceTimersByTime(1000); });
 
   await waitFor(() => {
-    const pre = document.querySelector("pre");
-    expect(pre?.textContent).toBe("believer thinking...investor analyzing...");
+    const consoleEl = document.querySelector("[data-testid='virtuoso']");
+    expect(consoleEl?.textContent).toBe("believer thinking...investor analyzing...");
   });
 });
 
@@ -88,7 +88,7 @@ test("awaiting-answers renders the questions and Submit posts { answers } in ord
   await act(async () => { vi.advanceTimersByTime(2000); });
   await waitFor(() => expect(screen.getByText("What is the budget?")).toBeInTheDocument(), { timeout: 6000 });
   expect(screen.getByText("Who is the audience?")).toBeInTheDocument();
-  expect(document.querySelector("pre")).toBeNull();
+  expect(document.querySelector("[data-testid='virtuoso']")).toBeNull();
   expect(screen.getByText(/Show console/i)).toBeInTheDocument();
   expect(screen.queryByLabelText("Expand spec")).toBeNull();
 

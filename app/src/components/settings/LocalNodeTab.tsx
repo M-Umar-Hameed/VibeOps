@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { getSettings, saveSettings, detectLocalNode } from "../../settings.js";
 import { projects } from "../../api/projects.js";
+import { BrowserGrantsCard } from "./BrowserGrantsCard.js";
 import { ActorsCard } from "./ActorsCard.js";
 
 export function LocalNodeTab({ rejected }: { rejected: boolean }) {
@@ -182,6 +183,8 @@ export function LocalNodeTab({ rejected }: { rejected: boolean }) {
             {keyCopied ? "Copied" : "Copy key for the extension"}
           </button>
         </div>
+
+        <BrowserGrantsCard />
 
         <ActorsCard />
       </div>

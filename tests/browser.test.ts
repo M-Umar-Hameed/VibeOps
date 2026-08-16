@@ -2,9 +2,10 @@ import { afterEach, expect, test } from "vitest";
 import { createActor } from "../src/services/actors.js";
 import { app } from "../src/api/app.js";
 import { BROWSER_TUNING } from "../src/browser/channel.js";
+import { setSetting, deleteSetting } from "../src/services/settings.js";
 
 const DEFAULTS = { ...BROWSER_TUNING };
-afterEach(() => Object.assign(BROWSER_TUNING, DEFAULTS));
+afterEach(async () => { Object.assign(BROWSER_TUNING, DEFAULTS); await deleteSetting("browserGrants"); });
 
 function uniq(p: string) {
   return `${p}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -145,4 +146,86 @@ test("every /browser route requires auth", async () => {
   for (const [path, init] of calls) {
     expect((await app.request(path, init)).status).toBe(401);
   }
+});
+
+test("mutating batch without a grant is refused 403 naming the origin, nothing enqueued", async () => {
+  BROWSER_TUNING.pollTimeoutMs = 80;
+  const h = await memberHeaders();
+  const id = await registerInstance(h);
+  const res = await app.request("/browser/batches", {
+    method: "POST",
+    headers: h,
+    body: JSON.stringify({ instanceId: id, tenant: "acme", targetOrigin: "https://github.com", steps: [{ verb: "click", ref: "ref1" }] }),
+  });
+  expect(res.status).toBe(403);
+  expect((await res.json()).error).toContain("https://github.com");
+  // Nothing enqueued: next poll times out to 204. (Mutation check: delete the
+  // hasActGrant guard in browser-routes and this expectation flips to 200.)
+  expect((await app.request(`/browser/poll?instanceId=${id}`, { headers: h })).status).toBe(204);
+});
+
+test("mutating batch is 400 when targetOrigin is missing", async () => {
+  BROWSER_TUNING.pollTimeoutMs = 80;
+  const h = await memberHeaders();
+  const id = await registerInstance(h);
+  const res = await app.request("/browser/batches", {
+    method: "POST",
+    headers: h,
+    body: JSON.stringify({ instanceId: id, tenant: "acme", steps: [{ verb: "click", ref: "ref1" }] }),
+  });
+  expect(res.status).toBe(400);
+});
+
+test("with an act grant the mutating batch is delivered carrying grant+targetOrigin; a client-supplied grant is stripped", async () => {
+  const h = await memberHeaders();
+  const id = await registerInstance(h);
+  await setSetting("browserGrants", JSON.stringify([{ origin: "https://github.com", mode: "act" }]));
+  const canned = {
+    results: [{ ok: true }],
+    snapshot: { instanceId: id, origin: "https://github.com", identity: null, nodes: [] },
+  };
+  const [batchRes, client] = await Promise.all([
+    app.request("/browser/batches", {
+      method: "POST",
+      headers: h,
+      // client tries to spoof grant + a mismatched targetOrigin nudge; server value wins.
+      body: JSON.stringify({ instanceId: id, tenant: "acme", grant: "act", targetOrigin: "https://github.com", steps: [{ verb: "click", ref: "ref1" }] }),
+    }),
+    fakeClientCycle(h, id, canned),
+  ]);
+  expect(client.polled).toBe(200);
+  expect(client.batch.grant).toBe("act");
+  expect(client.batch.targetOrigin).toBe("https://github.com");
+  expect(batchRes.status).toBe(200);
+  expect(await batchRes.json()).toEqual(canned);
+});
+
+test("read-only batch needs no grant and delivers without grant/targetOrigin", async () => {
+  const h = await memberHeaders();
+  const id = await registerInstance(h);
+  const canned = { results: [{ ok: true }], snapshot: { instanceId: id, origin: "", identity: null, nodes: [] } };
+  const [batchRes, client] = await Promise.all([
+    app.request("/browser/batches", {
+      method: "POST",
+      headers: h,
+      body: JSON.stringify({ instanceId: id, tenant: "acme", steps: [{ verb: "snapshot" }] }),
+    }),
+    fakeClientCycle(h, id, canned),
+  ]);
+  expect(batchRes.status).toBe(200);
+  expect(client.batch.grant).toBeUndefined();
+  expect(client.batch.targetOrigin).toBeUndefined();
+});
+
+test("a client-supplied grant cannot substitute for a real grant", async () => {
+  BROWSER_TUNING.pollTimeoutMs = 80;
+  const h = await memberHeaders();
+  const id = await registerInstance(h);
+  // No browserGrants set. Body carries grant:"act" — must be ignored → 403.
+  const res = await app.request("/browser/batches", {
+    method: "POST",
+    headers: h,
+    body: JSON.stringify({ instanceId: id, tenant: "acme", grant: "act", targetOrigin: "https://github.com", steps: [{ verb: "type", ref: "ref1", text: "x" }] }),
+  });
+  expect(res.status).toBe(403);
 });

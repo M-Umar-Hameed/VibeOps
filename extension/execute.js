@@ -4,7 +4,6 @@
 import { collectInteractive, buildSnapshot } from "./snapshot.js";
 
 const MUTATING_VERBS = new Set(["click", "type", "select", "press"]);
-const REFUSAL = { ok: false, error: "verb not enabled until grants land" };
 
 /**
  * Build ref→element map from interactive elements.
@@ -20,25 +19,25 @@ function buildRefMap(doc) {
   return map;
 }
 
-/**
- * Execute steps sequentially, stopping on first failure.
- * Always appends a trailing snapshot.
- * @param {Document} doc
- * @param {Array<{verb: string, ref?: string, text?: string, option?: string, key?: string}>} steps
- * @returns {{results: Array<{ok: boolean, value?: string, error?: string}>, snapshot: object}}
- */
-export function executeSteps(doc, steps) {
-  // Build ref map at entry time (valid for read-only slice)
-  // ponytail: read resolves refs against an entry-time collect; valid while DOM is unchanged between snapshot and read (read-only slice). Revisit when writes land.
+export function executeSteps(doc, steps, grant, targetOrigin) {
+  // ponytail: refs resolved once at entry; valid across a stop-on-first batch
+  // whose steps target one snapshot. Re-collect per step if a recipe mutates DOM
+  // mid-batch and needs fresh refs.
   const refMap = buildRefMap(doc);
+  const origin = doc.location?.origin ?? "";
   const results = [];
 
   for (const step of steps) {
     let result;
 
     if (MUTATING_VERBS.has(step.verb)) {
-      // Refuse mutating verbs without touching DOM
-      result = REFUSAL;
+      if (grant !== "act") {
+        result = { ok: false, error: `no act grant for ${origin}` };
+      } else if (origin !== targetOrigin) {
+        result = { ok: false, error: `origin mismatch: page ${origin} != granted ${targetOrigin}` };
+      } else {
+        result = runMutation(doc, refMap, step);
+      }
     } else if (step.verb === "snapshot") {
       result = { ok: true };
     } else if (step.verb === "read") {
@@ -50,20 +49,43 @@ export function executeSteps(doc, steps) {
         result = { ok: true, value: text };
       }
     } else {
-      // Unknown verb (shouldn't happen if server validates)
       result = { ok: false, error: `unknown verb: ${step.verb}` };
     }
 
     results.push(result);
-
-    // Stop on first failure
-    if (!result.ok) {
-      break;
-    }
+    if (!result.ok) break;
   }
 
-  // Always append trailing snapshot
   const snapshot = buildSnapshot(doc, "");
-
   return { results, snapshot };
+}
+
+// Refs come only from the snapshot map (1.5): verbs act on refs, never on
+// selectors derived from page text.
+function runMutation(doc, refMap, step) {
+  const view = doc.defaultView;
+  if (step.verb === "press") {
+    const el = doc.activeElement || doc.body;
+    el.dispatchEvent(new view.KeyboardEvent("keydown", { key: step.key, bubbles: true }));
+    el.dispatchEvent(new view.KeyboardEvent("keyup", { key: step.key, bubbles: true }));
+    return { ok: true };
+  }
+  const el = refMap.get(step.ref);
+  if (!el) return { ok: false, error: "unknown ref" };
+  if (step.verb === "click") {
+    el.click();
+    return { ok: true };
+  }
+  if (step.verb === "type") {
+    el.value = step.text;
+    el.dispatchEvent(new view.Event("input", { bubbles: true }));
+    el.dispatchEvent(new view.Event("change", { bubbles: true }));
+    return { ok: true };
+  }
+  if (step.verb === "select") {
+    el.value = step.option;
+    el.dispatchEvent(new view.Event("change", { bubbles: true }));
+    return { ok: true };
+  }
+  return { ok: false, error: `unknown verb: ${step.verb}` };
 }

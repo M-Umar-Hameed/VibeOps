@@ -139,17 +139,16 @@ async function executeBatch(batch) {
 
     const [{ result }] = await chrome.scripting.executeScript({
       target: { tabId },
-      func: async (steps) => {
+      func: async (steps, grant, targetOrigin) => {
         const { executeSteps } = await import(chrome.runtime.getURL("execute.js"));
-        return executeSteps(document, steps);
+        return executeSteps(document, steps, grant, targetOrigin);
       },
-      args: [batch.steps],
+      args: [batch.steps, batch.grant ?? null, batch.targetOrigin ?? null],
     });
 
     // Set instanceId on snapshot
     result.snapshot.instanceId = instanceId;
 
-    // ponytail: injection is activeTab-gated and finalized when the grants slice lands; delivered as smoke-tested only.
     await submitResult(batch.batchId, result);
   } catch (err) {
     console.error("[worker] Execute error:", err);

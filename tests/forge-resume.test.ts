@@ -525,6 +525,69 @@ describe("forge run resume", () => {
     expect(item!.reason).toContain("uncommitted");
   });
 
+  it("in_progress ticket whose latest run is interrupted resumes and completes", async () => {
+    const { actorId, apiKey, ticket } = await seedTicket("Interrupted in_progress resume");
+
+    // Sandbox with a committed work diff — the exact rework-mid-flight shape:
+    // listInterruptedRuns would map this to resumeMode "review", which startPipeline
+    // rejects for an in_progress ticket. The fix forces resumeStage "work" instead.
+    await ensureSandbox(workdir, ticket.id);
+    writeFileSync(join(sandboxRoot, ticket.id, "result.txt"), "prior work");
+    await forgeCommit(ticket.id, "prior work commit");
+
+    await addComment(actorId, ticket.id, "The plan: create forge-made.txt and result.txt", "plan");
+    await addComment(actorId, ticket.id, "Work in progress", "report");
+
+    // Drive the ticket to in_progress (open -> planned -> in_progress).
+    const t1 = await getTicket(ticket.id);
+    const t2 = await updateTicket(actorId, ticket.id, t1.version, { status: "planned" });
+    await updateTicket(actorId, ticket.id, t2.version, { status: "in_progress" });
+
+    // Seed the interrupted work-stage run as the latest run for this ticket.
+    await db.insert(forgeRuns).values({
+      id: randomUUID(), ticketId: ticket.id, status: "interrupted", stage: "work",
+      planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+      startedAt: new Date(), finishedAt: new Date(),
+    });
+
+    setScript("work,review-pass", true);
+    const h = { Authorization: `Bearer ${apiKey}` };
+    const res = await app.request(`/forge/tickets/${ticket.id}/resume`, { method: "POST", headers: h });
+    expect(res.status).toBe(201);
+    const { runId } = await res.json();
+    expect(runId).toBeTruthy();
+
+    await awaitRun(runId);
+    const output = getRunOutput(runId, 0);
+    expect(output?.status).toBe("passed");
+    // Planned-like: plan reused (not regenerated), work re-runs.
+    expect(output?.chunk).not.toContain("=== FORGE plan");
+    expect(output?.chunk).toContain("=== FORGE work");
+  });
+
+  it("in_progress ticket with a genuinely active run still 409s", async () => {
+    const { actorId, apiKey, ticket } = await seedTicket("Active run must not resume");
+
+    const t1 = await getTicket(ticket.id);
+    const t2 = await updateTicket(actorId, ticket.id, t1.version, { status: "planned" });
+    await updateTicket(actorId, ticket.id, t2.version, { status: "in_progress" });
+
+    await db.insert(forgeRuns).values({
+      id: randomUUID(), ticketId: ticket.id, status: "running", stage: "work",
+      planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+      startedAt: new Date(), finishedAt: null,
+    });
+
+    const h = { Authorization: `Bearer ${apiKey}` };
+    const res = await app.request(`/forge/tickets/${ticket.id}/resume`, { method: "POST", headers: h });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toContain("open or planned");
+
+    const runs = listRuns();
+    expect(runs.find((r) => r.ticketId === ticket.id)).toBeUndefined();
+  });
+
   // MUST be last test: closeDb ends the connection for subsequent tests
   it("closeDb is idempotent and does not throw", async () => {
     // Under vitest isEmbedded is false, so this exercises the sql.end branch

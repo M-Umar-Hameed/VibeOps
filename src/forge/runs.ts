@@ -10,7 +10,7 @@ import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict
 import { killTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { redactSecrets } from "./redact.js";
-import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree } from "./sandbox.js";
+import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
 import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths } from "./policy.js";
 import { pickAgents, escalate, pairsForRole, type Pick, type RoutingStrategy } from "./router.js";
@@ -229,7 +229,7 @@ export async function resolveWorkdir(ticketProjectId: string, config: RelayConfi
   return repo;
 }
 
-export type SandboxCleanupResult = { discarded: string[]; reclaimedBytes: number; orphans: string[] };
+export type SandboxCleanupResult = { discarded: string[]; reclaimedBytes: number; orphans: string[]; deletedOrphans: string[] };
 
 // Manual backlog sweep: discard every on-disk sandbox whose ticket is CLOSED and
 // whose forge branch has no commits beyond the project workdir HEAD (already merged
@@ -239,6 +239,7 @@ export type SandboxCleanupResult = { discarded: string[]; reclaimedBytes: number
 export async function cleanupMergedSandboxes(config: RelayConfig): Promise<SandboxCleanupResult> {
   const discarded: string[] = [];
   const orphans: string[] = [];
+  const deletedOrphans: string[] = [];
   let reclaimedBytes = 0;
   for (const ticketId of listSandboxTicketIds()) {
     if (await hasActiveRun(ticketId)) continue;
@@ -246,7 +247,19 @@ export async function cleanupMergedSandboxes(config: RelayConfig): Promise<Sandb
     // a partial tree left by a failed worktree removal (missing .git) -- is
     // reclaimable disk but must NOT have worktree commands run against it: that git
     // failure is what aborted the sweep mid-run. Report it as an orphan and carry on.
-    if (!isLiveWorktree(ticketId)) { orphans.push(ticketId); continue; }
+    if (!isLiveWorktree(ticketId)) {
+      // Reclaim it ourselves when the ticket is closed or gone AND no reparse point
+      // survives anywhere inside; a surviving link means a recursive delete could
+      // traverse into the base repo, so leave + report those.
+      let closedOrGone = true;
+      try { closedOrGone = (await getTicket(ticketId)).status === "closed"; } catch { /* ticket row gone */ }
+      if (closedOrGone) {
+        const bytes = deleteOrphanIfLinkFree(ticketId);
+        if (bytes !== null) { deletedOrphans.push(ticketId); reclaimedBytes += bytes; continue; }
+      }
+      orphans.push(ticketId);
+      continue;
+    }
     let ticket;
     try { ticket = await getTicket(ticketId); } catch { orphans.push(ticketId); continue; } // live worktree, ticket row lost
     if (ticket.status !== "closed") continue;
@@ -257,7 +270,7 @@ export async function cleanupMergedSandboxes(config: RelayConfig): Promise<Sandb
     discarded.push(ticketId);
     reclaimedBytes += bytes;
   }
-  return { discarded, reclaimedBytes, orphans };
+  return { discarded, reclaimedBytes, orphans, deletedOrphans };
 }
 
 export async function startPipeline(

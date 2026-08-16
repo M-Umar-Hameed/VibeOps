@@ -80,6 +80,30 @@ export function sandboxSizeBytes(ticketId: string): number {
   return total;
 }
 
+// Delete an orphan sandbox dir (no .git, git has no record) and return bytes
+// reclaimed -- ONLY if no reparse point exists anywhere inside; returns null if a
+// link is found, so the caller leaves and reports it. The recursive link scan IS the
+// guard: a forced recursive delete once followed a node_modules junction into the
+// base repo and destroyed it. lstat/readlink every entry, never descend a link.
+export function deleteOrphanIfLinkFree(ticketId: string): number | null {
+  const root = sandboxPath(ticketId);
+  let bytes = 0;
+  const scan = (dir: string): boolean => {
+    let entries: import("node:fs").Dirent[];
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return false; }
+    for (const e of entries) {
+      const full = join(dir, e.name);
+      if (isLink(full)) return true;
+      if (e.isDirectory()) { if (scan(full)) return true; }
+      else { try { bytes += statSync(full).size; } catch { /* vanished mid-walk */ } }
+    }
+    return false;
+  };
+  if (scan(root)) return null;
+  rmSync(root, { recursive: true, force: true });
+  return bytes;
+}
+
 // Arg-vector git, never shell. Returns code+combined output; callers decide what's fatal.
 function git(cwd: string, ...args: string[]): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {

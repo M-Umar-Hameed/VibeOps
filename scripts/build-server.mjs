@@ -3,6 +3,7 @@ import { cpSync, mkdirSync, rmSync, readFileSync, mkdtempSync, readdirSync } fro
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
+import { stripDeadWeight } from "./prune-platform.mjs";
 
 const outDir = process.argv.includes("--out")
   ? process.argv[process.argv.indexOf("--out") + 1]
@@ -75,5 +76,7 @@ try {
     }
   }
 } catch { /* package layout changed; the AppImage step will say so */ }
+ 
+stripDeadWeight(outDir);
 
 console.log(`payload ready: ${outDir}`);

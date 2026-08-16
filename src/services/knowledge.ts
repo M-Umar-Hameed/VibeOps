@@ -31,6 +31,21 @@ function refProjectId(ref: string): string | null {
   return m ? m[1] : null;
 }
 
+// A note's project: scope 'project' -> refId is the project; scope 'ticket' -> the
+// ticket's project; anything else is global. Mirrors drizzle/0019's backfill CASE.
+async function noteScopeProjectId(noteId: string): Promise<string | null> {
+  const [n] = await db.select({ scope: notes.scope, refId: notes.refId })
+    .from(notes).where(eq(notes.id, noteId)).limit(1);
+  if (!n || !n.refId) return null;
+  if (n.scope === "project") return n.refId;
+  if (n.scope === "ticket") {
+    const [t] = await db.select({ projectId: tickets.projectId })
+      .from(tickets).where(eq(tickets.id, n.refId)).limit(1);
+    return t?.projectId ?? null;
+  }
+  return null;
+}
+
 // One-time backfill of embeddings.project_id from the legacy source_ref convention.
 // Re-runnable: the `project_id IS NULL` guards make a second run a no-op. Exported so
 // tests can seed legacy (null-projectId) rows and assert idempotency; the migration
@@ -101,10 +116,16 @@ export async function upsertSourceDoc(
   const deadIds = existing.filter((r) => !reusedIndexes.has(r.chunkIndex)).map((r) => r.id);
 
   const vecs = newChunks.length ? await embedder.embed(newChunks.map((c) => c.content)) : [];
+  // S5 moved scope from query-time (the old predicate resolved notes via a subquery
+  // on every read, so it was right no matter who wrote the row) to WRITE time, which
+  // is only right if every writer sets it. A note ref carries no "<uuid>:" prefix, so
+  // resolve it from the notes table exactly as the backfill migration does; otherwise a
+  // note indexed through this generic path lands unscoped and survives clearProjectKnowledge.
+  const scopeId = kind === "note" ? await noteScopeProjectId(ref) : refProjectId(ref);
   const rows = newChunks.map((c, i) => ({
     sourceKind: kind, sourceRef: ref, chunkIndex: c.index,
     content: c.content, embedding: vecs[i], model: embedder.model, dim: embedder.dim,
-    contentHash: hash, projectId: refProjectId(ref),
+    contentHash: hash, projectId: scopeId,
   }));
   // One transaction so a mid-batch failure rolls everything back. Delete dead rows
   // first, then insert new ones (freed indices reuse safely); rewrite reused rows'

@@ -7,7 +7,7 @@ import { applyEnvSettings } from "../services/settings.js";
 import { startWatcher, rescanProjectVaults } from "../ingest/watch.js";
 import { startSessionAutoSync } from "../ingest/sessions/auto-sync.js";
 import { reapStaleTickets } from "../services/reaper.js";
-import { markInterruptedRuns } from "../forge/runs.js";
+import { markInterruptedRuns, reconcileMergedTickets } from "../forge/runs.js";
 import { restoreCouncilSessions } from "../council/runs.js";
 import { configureExport } from "../services/export-debounce.js";
 
@@ -67,6 +67,8 @@ async function bootNormally() {
   async function handleInterruptedRuns() {
     const ticketIds = await markInterruptedRuns();
     if (ticketIds.length) console.log(`forge: marked ${ticketIds.length} interrupted run(s) — resume is a manual action`);
+    const healed = await reconcileMergedTickets();
+    if (healed.length) console.log(`forge: reconciled ${healed.length} already-merged ticket(s) to closed`);
   }
   void handleInterruptedRuns().catch(() => {});
 

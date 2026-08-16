@@ -3,7 +3,7 @@ import { getLessons, lessonsClause } from "./lessons.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
-import { resolveCmd, type RelayConfig, type RelayAgent } from "../relay/config.js";
+import { resolveCmd, loadRelayConfig, type RelayConfig, type RelayAgent } from "../relay/config.js";
 import { pipelineStartWarnings, pipelineStartBlockingError } from "../relay/doctor.js";
 import { roleStyle } from "../relay/style.js";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted } from "../relay/prompts.js";
@@ -22,7 +22,8 @@ import { getSetting } from "../services/settings.js";
 import { projectWorkdir } from "../services/projects.js";
 import { ConflictError, StaleVersionError } from "../services/errors.js";
 import { logAgentUse, startAgentSession, endAgentSession } from "../services/usage.js";
-import { desc, isNull, sum, eq, gte, lte, and } from "drizzle-orm";
+import { listActors } from "../services/actors.js";
+import { desc, isNull, sum, eq, gte, lte, and, inArray } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { forgeRuns, aiUsageLogs, tickets, type Ticket } from "../db/schema.js";
 import { verifyModel, MISMATCH_WARNING, computeVerificationStatus } from "./verify.js";
@@ -977,6 +978,35 @@ export async function markInterruptedRuns(): Promise<string[]> {
     console.warn("forge: failed to mark interrupted runs:", (e as Error).message);
     return [];
   }
+}
+
+const RECONCILE_COMMENT = "forge: reconcile — code was already merged to the workdir and the last run passed review, but the ticket-close was lost (server restart mid-promote). Closing to match master.";
+
+// Boot-time heal for the lost-promote-close race: promote merges the sandbox, then
+// closes the ticket — a restart between the two leaves a REVIEW ticket whose code is
+// already on master. Close any review/in_progress ticket whose branch is fully merged
+// (no commits beyond workdir HEAD) and whose latest run passed. Per-ticket try/catch:
+// a missing workdir/branch, stale version, or verification-required close just skips.
+export async function reconcileMergedTickets(): Promise<string[]> {
+  const admin = (await listActors()).find((a) => a.role === "admin");
+  if (!admin) return [];
+  const config = loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG);
+  const rows = await db.select().from(tickets)
+    .where(inArray(tickets.status, ["review", "in_progress"]));
+  const closed: string[] = [];
+  for (const ticket of rows) {
+    try {
+      if ((await latestRunStatus(ticket.id)) !== "passed") continue; // no passing run -> leave it
+      const workdir = await resolveWorkdir(ticket.projectId, config);
+      if (await hasCommitsToPromote(workdir, ticket.id)) continue; // unmerged -> not promoted yet
+      await addComment(admin.id, ticket.id, RECONCILE_COMMENT, "comment");
+      await updateTicket(admin.id, ticket.id, ticket.version, { status: "closed" });
+      closed.push(ticket.id);
+    } catch {
+      // boot must never crash on one bad ticket
+    }
+  }
+  return closed;
 }
 
 export type RecoveryItem = {

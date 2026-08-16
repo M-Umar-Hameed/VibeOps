@@ -6,14 +6,15 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
-import { createTicket } from "../src/services/tickets.js";
+import { createTicket, updateTicket } from "../src/services/tickets.js";
+import { getTicket } from "../src/services/history.js";
 import { app } from "../src/api/app.js";
 import { updateProjectRepo } from "../src/services/projects.js";
 import { indexRepoDocs, searchKnowledge, repoIndexed } from "../src/services/knowledge.js";
 import * as knowledgeSvc from "../src/services/knowledge.js";
 import { resolveSyncActor } from "../src/sync/actor.js";
 import { addComment, listComments } from "../src/services/comments.js";
-import { settleAll } from "../src/forge/runs.js";
+import { settleAll, reconcileMergedTickets } from "../src/forge/runs.js";
 import { withSetting } from "./helpers/settings.js";
 
 process.env.EMBED_PROVIDER = "fake";
@@ -116,6 +117,16 @@ async function pollUntilDone(h: Record<string, string>, runId: string): Promise<
     if (Date.now() > deadline) throw new Error("run did not finish within 30s");
     await new Promise((r) => setTimeout(r, 100));
   }
+}
+
+async function runToPassed(h: Record<string, string>, ticketId: string): Promise<void> {
+  const startRes = await app.request("/forge/pipeline", {
+    method: "POST", headers: h,
+    body: JSON.stringify({ ticketId, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+  });
+  const { runId } = await startRes.json();
+  const final = await pollUntilDone(h, runId);
+  expect(final.status).toBe("passed");
 }
 
 describe("forge API", () => {
@@ -917,4 +928,76 @@ it("PATCH /relay/agents rejects prototype-polluting names", async () => {
     expect(res.status).toBe(404);
   }
   expect(({} as any).roles).toBeUndefined();
+});
+
+it("promote merge conflict compensates: ticket back to review with a comment, 409", async () => {
+  const h = await adminHeaders();
+  const ticket = await seedTicket();
+  setScript("plan,work,review-pass", true); // work writes forge-made.txt on the branch
+  await runToPassed(h, ticket.id);
+
+  // Force the merge to conflict: commit a different forge-made.txt on the base (clean workdir).
+  writeFileSync(join(workdir, "forge-made.txt"), "conflicting base content\n");
+  execFileSync("git", ["add", "-A"], { cwd: workdir });
+  execFileSync("git", ["commit", "-m", "conflict"], { cwd: workdir });
+
+  const promoteRes = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
+  expect(promoteRes.status).toBe(409);
+  expect((await promoteRes.json()).error).toContain("promote blocked");
+
+  const t = await getTicket(ticket.id);
+  expect(t.status).toBe("review"); // MUTATION: remove compensation -> stays "closed" -> this fails
+  const comments = await listComments(ticket.id);
+  expect(comments.some((c) => c.body.includes("promote merge failed"))).toBe(true);
+});
+
+it("boot reconcile closes a review ticket whose branch is merged and last run passed", async () => {
+  const h = await adminHeaders();
+  const ticket = await seedTicket();
+  setScript("plan,work,review-pass", true);
+  await runToPassed(h, ticket.id); // ticket -> review, run -> passed, branch has the work commit
+
+  // Simulate the merge landing but the close being lost (no promote call).
+  execFileSync("git", ["merge", "--no-ff", `forge/${ticket.id}`, "-m", "manual merge"], { cwd: workdir });
+
+  const healed = await reconcileMergedTickets();
+  expect(healed).toContain(ticket.id);
+  expect((await getTicket(ticket.id)).status).toBe("closed");
+  const comments = await listComments(ticket.id);
+  expect(comments.some((c) => c.body.includes("forge: reconcile"))).toBe(true);
+});
+
+it("boot reconcile does NOT touch a review ticket with unmerged commits", async () => {
+  const h = await adminHeaders();
+  const ticket = await seedTicket();
+  setScript("plan,work,review-pass", true);
+  await runToPassed(h, ticket.id); // passed, branch has commits, NOT merged
+
+  const healed = await reconcileMergedTickets();
+  expect(healed).not.toContain(ticket.id);
+  expect((await getTicket(ticket.id)).status).toBe("review");
+  const comments = await listComments(ticket.id);
+  expect(comments.some((c) => c.body.includes("forge: reconcile"))).toBe(false);
+});
+
+it("boot reconcile does NOT touch a review ticket whose last run failed", async () => {
+  const h = await adminHeaders();
+  const ticket = await seedTicket();
+  setScript("plan,work,review-fail", true); // run -> rejected, ticket -> planned, branch still has work commit
+  const startRes = await app.request("/forge/pipeline", {
+    method: "POST", headers: h,
+    body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+  });
+  const { runId } = await startRes.json();
+  expect((await pollUntilDone(h, runId)).status).toBe("rejected");
+
+  // Force the artificial combination the guard protects: review status + merged branch + failed run.
+  const { actor: admin } = await createActor({ name: uniq("recon-admin"), kind: "human", role: "admin" });
+  const planned = await getTicket(ticket.id);
+  await updateTicket(admin.id, ticket.id, planned.version, { status: "review" });
+  execFileSync("git", ["merge", "--no-ff", `forge/${ticket.id}`, "-m", "manual merge"], { cwd: workdir });
+
+  const healed = await reconcileMergedTickets();
+  expect(healed).not.toContain(ticket.id);
+  expect((await getTicket(ticket.id)).status).toBe("review");
 });

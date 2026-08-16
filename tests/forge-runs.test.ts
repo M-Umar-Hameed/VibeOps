@@ -101,6 +101,7 @@ afterEach(() => {
   delete process.env.FAKE_WRITE_PATH;
   delete process.env.FAKE_WRITE_ABS;
   delete process.env.FAKE_WRITE_DEPS;
+  delete process.env.FAKE_TOKEN_OUT;
   rmSync(workdir, { recursive: true, force: true });
   rmSync(sandboxRoot, { recursive: true, force: true });
   rmSync(counterDir, { recursive: true, force: true });
@@ -984,6 +985,68 @@ describe("forge run manager", () => {
     const output = getRunOutput(runId, 0);
     expect(output?.chunk).not.toContain("Comments since last plan:");
     expect(output?.chunk).not.toContain("REPORTONLY-MARKER");
+  });
+
+  it("persists pid, logPath and runToken while a run is live", async () => {
+    const { actorId, ticket } = await seedTicket("Identity live");
+    setScript("plan,slow"); // work stage sleeps ~2s so the row stays "running"
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    try {
+      const start = Date.now();
+      let row;
+      for (;;) {
+        [row] = await db.select().from(forgeRuns).where(eq(forgeRuns.id, runId));
+        if (row && row.pid != null) break;
+        if (Date.now() - start > 5000) throw new Error("timed out waiting for a persisted pid");
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(typeof row.pid).toBe("number");
+      expect(row.logPath).toBeTruthy();
+      expect(row.logPath).toContain(runId);           // stable, per-run
+      expect(row.runToken).toMatch(/^[0-9a-f-]{36}$/); // a uuid
+    } finally {
+      await stopRun(runId);
+      await awaitRun(runId);
+    }
+  }, 15000);
+
+  it("clears pid on settle but keeps logPath and runToken", async () => {
+    const { actorId, ticket } = await seedTicket("Identity settled");
+    setScript("plan,work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const row = await waitForPersistedRun(runId);
+    expect(row.pid).toBeNull();                     // settled row never looks live
+    expect(row.logPath).toBeTruthy();
+    expect(row.runToken).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("hands VIBEOPS_RUN_TOKEN to the spawned child, equal to the persisted runToken", async () => {
+    const { actorId, ticket } = await seedTicket("Child token env");
+    const tokenOut = join(counterDir, "token.txt");
+    process.env.FAKE_TOKEN_OUT = tokenOut;
+    setScript("plan,work,review-pass", true);
+    try {
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+
+      const row = await waitForPersistedRun(runId);
+      const seen = readFileSync(tokenOut, "utf-8");
+      // Mutation guard: omit the token from the child env and this file is "" -> fails.
+      expect(seen).toBe(row.runToken);
+      expect(seen).toMatch(/^[0-9a-f-]{36}$/);
+    } finally {
+      delete process.env.FAKE_TOKEN_OUT;
+    }
   });
 });
 

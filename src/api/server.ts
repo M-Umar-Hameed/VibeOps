@@ -57,7 +57,6 @@ async function bootNormally() {
   if (isEmbedded) {
     const { snapshotKnownGood, checkpointEmbedded } = await import("../db/client.js");
     void snapshotKnownGood()
-      .then((p) => { if (p) console.log(`known-good snapshot -> ${p}`); })
       .catch((e) => console.warn(`known-good snapshot failed: ${(e as Error).message}`));
     void runLogicalExport!();
     setInterval(() => void runLogicalExport!(), 6 * 60 * 60_000).unref();

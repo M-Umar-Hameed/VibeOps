@@ -84,6 +84,9 @@ jobs:
       - name: Build sidecar server
         run: node scripts/build-server.mjs --out app/src-tauri/resources/server
 
+      - name: Prune foreign-platform binaries
+        run: node scripts/prune-platform.mjs --dir app/src-tauri/resources/server --keep ${{ matrix.node-target }}
+
       - name: Fetch node sidecar binary
         run: node scripts/fetch-node.mjs --target ${{ matrix.node-target }} --out app/src-tauri/resources/node
 

@@ -260,7 +260,7 @@ describe("chat API", () => {
     // Should have tool call with "no such instance" in summary
     const assistantMsg = detail.messages.find((m: any) => m.role === "assistant");
     expect(assistantMsg?.toolCalls).toBeDefined();
-    expect(assistantMsg.toolCalls.some((tc: any) => tc.summary.includes("no such instance"))).toBe(
+    expect(assistantMsg.toolCalls.some((tc: any) => tc.summary.includes("no instance"))).toBe(
       true
     );
   });

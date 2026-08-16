@@ -106,7 +106,7 @@ export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: stri
     ),
     tool(
       "browser_act",
-      "Run mutating steps (click/type/select/press) on a browser instance; requires an act grant for targetOrigin.",
+      "Run mutating steps (click/type/select/press/navigate) on a browser instance; requires an act grant for targetOrigin. navigate needs an act grant for the DESTINATION origin (http/https only).",
       { instanceId: z.string().optional(), targetOrigin: z.string(), steps: z.array(z.any()) },
       async ({ instanceId: requestedId, targetOrigin, steps }) => {
         const { id: instanceId, err } = resolveInstance(requestedId);

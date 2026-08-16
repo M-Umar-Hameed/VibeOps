@@ -4,7 +4,7 @@ import { register, list, exists, nextBatch, submitResult, submitBatch, type Batc
 import { validateSteps } from "../browser/validate.js";
 import { hasActGrant, noActGrantReason } from "../browser/grants.js";
 
-const MUTATING = new Set(["click", "type", "select", "press"]);
+const MUTATING = new Set(["click", "type", "select", "press", "navigate"]);
 
 type AppEnv = { Variables: { actor: Actor } };
 

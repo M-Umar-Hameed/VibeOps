@@ -5,6 +5,10 @@ import { collectInteractive, buildSnapshot } from "./snapshot.js";
 
 const MUTATING_VERBS = new Set(["click", "type", "select", "press"]);
 
+// Bound the wait for the destination document to load after a navigate; the
+// step fails past this. Mutable so a jsdom test can shrink it if needed.
+export const NAV_TUNING = { loadTimeoutMs: 15000 };
+
 /**
  * Build ref→element map from interactive elements.
  * @param {Document} doc
@@ -19,18 +23,37 @@ function buildRefMap(doc) {
   return map;
 }
 
-export function executeSteps(doc, steps, grant, targetOrigin) {
-  // ponytail: refs resolved once at entry; valid across a stop-on-first batch
-  // whose steps target one snapshot. Re-collect per step if a recipe mutates DOM
-  // mid-batch and needs fresh refs.
-  const refMap = buildRefMap(doc);
-  const origin = doc.location?.origin ?? "";
+export async function executeSteps(doc, steps, grant, targetOrigin) {
+  // ponytail: refs resolved at entry and re-collected after a navigate; valid
+  // across a stop-on-first batch whose steps target one snapshot.
+  let refMap = buildRefMap(doc);
   const results = [];
 
   for (const step of steps) {
     let result;
 
-    if (MUTATING_VERBS.has(step.verb)) {
+    if (step.verb === "navigate") {
+      // Mutating: needs an act grant, and the grant binds to the DESTINATION
+      // origin (new URL(url).origin === targetOrigin) — not the current page
+      // origin — before location is ever touched. Server mirrors the grant
+      // demand via MUTATING in browser-routes; this is the destination guard.
+      let destOrigin = null;
+      try { destOrigin = new URL(step.url).origin; } catch { destOrigin = null; }
+      if (grant !== "act") {
+        result = { ok: false, error: `no act grant for ${targetOrigin}` };
+      } else if (destOrigin !== targetOrigin) {
+        result = { ok: false, error: `origin mismatch: navigate ${destOrigin} != granted ${targetOrigin}` };
+      } else {
+        const loaded = await navigateAndWait(doc, step.url);
+        if (!loaded) {
+          result = { ok: false, error: "navigation timed out" };
+        } else {
+          refMap = buildRefMap(doc); // re-collect refs against the destination
+          result = { ok: true };
+        }
+      }
+    } else if (MUTATING_VERBS.has(step.verb)) {
+      const origin = doc.location?.origin ?? ""; // recomputed per step: a prior navigate moved it
       if (grant !== "act") {
         result = { ok: false, error: `no act grant for ${origin}` };
       } else if (origin !== targetOrigin) {
@@ -58,6 +81,30 @@ export function executeSteps(doc, steps, grant, targetOrigin) {
 
   const snapshot = buildSnapshot(doc, "");
   return { results, snapshot };
+}
+
+// Assign the current tab's location and resolve true when the destination fires
+// load, false on timeout. jsdom drives the load via a dispatched event; in the
+// extension the injected script awaits the page's own load event.
+// ponytail: a real MV3 navigation tears down THIS injected context — surviving it
+// end-to-end needs a persistent content-script bridge (out of this slice). The
+// load-wait + ref re-collection is what the jsdom suite pins; worker.js unchanged.
+function navigateAndWait(doc, url) {
+  const view = doc.defaultView;
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      view.clearTimeout(timer);
+      view.removeEventListener("load", onLoad);
+      resolve(ok);
+    };
+    const onLoad = () => finish(true);
+    const timer = view.setTimeout(() => finish(false), NAV_TUNING.loadTimeoutMs);
+    view.addEventListener("load", onLoad);
+    doc.location.assign(url);
+  });
 }
 
 // Refs come only from the snapshot map (1.5): verbs act on refs, never on

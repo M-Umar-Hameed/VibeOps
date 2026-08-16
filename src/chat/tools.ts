@@ -3,6 +3,8 @@ import { z } from "zod";
 import { searchKnowledge } from "../services/knowledge.js";
 import { listTickets } from "../services/history.js";
 import { exists, list, submitBatch, type ActionStep } from "../browser/channel.js";
+import { validateSteps } from "../browser/validate.js";
+import { hasActGrant, noActGrantReason } from "../browser/grants.js";
 import type { Actor } from "../db/schema.js";
 
 export type ToolCall = { name: string; input: unknown; summary: string };
@@ -84,6 +86,40 @@ export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: stri
       "Read an element by ref from a browser instance (read-only).",
       { instanceId: z.string(), ref: z.string() },
       async ({ instanceId, ref }) => browserStep(instanceId, [{ verb: "read", ref }], "browser_read", rec),
+    ),
+    tool(
+      "browser_act",
+      "Run mutating steps (click/type/select/press) on a browser instance; requires an act grant for targetOrigin.",
+      { instanceId: z.string(), targetOrigin: z.string(), steps: z.array(z.any()) },
+      async ({ instanceId, targetOrigin, steps }) => {
+        if (!exists(instanceId)) {
+          const connected = list().map((i) => i.instanceId).join(", ") || "none connected";
+          rec("browser_act", { instanceId, targetOrigin }, "no such instance");
+          return text(`no browser instance "${instanceId}". Connected: ${connected}`);
+        }
+        const v = validateSteps(steps);
+        if (!v.ok) {
+          rec("browser_act", { instanceId, targetOrigin }, `invalid: ${v.error}`);
+          return text(`invalid steps: ${v.error}`);
+        }
+        if (!(await hasActGrant(targetOrigin))) {
+          const reason = noActGrantReason(targetOrigin);
+          rec("browser_act", { instanceId, targetOrigin }, `refused: ${reason}`);
+          return text(`browser refused: ${reason}`);
+        }
+        const result = await submitBatch(instanceId, instanceId, v.steps as ActionStep[], { grant: "act", targetOrigin });
+        if (!result) {
+          rec("browser_act", { instanceId, targetOrigin }, "timeout");
+          return text("browser batch timed out (no extension response in 30s)");
+        }
+        const failed = result.results.find((r) => !r.ok);
+        if (failed) {
+          rec("browser_act", { instanceId, targetOrigin }, `refused: ${failed.error ?? "unknown"}`);
+          return text(`browser refused: ${failed.error ?? "unknown error"}`);
+        }
+        rec("browser_act", { instanceId, targetOrigin }, "ok");
+        return text(JSON.stringify(result.snapshot ?? "").slice(0, 4000));
+      },
     ),
   ];
 }

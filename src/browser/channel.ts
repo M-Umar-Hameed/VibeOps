@@ -28,6 +28,8 @@ export type DeliveredBatch = {
   instanceId: string;
   tenant: string;
   steps: ActionStep[];
+  grant?: "act";
+  targetOrigin?: string;
 };
 
 // Transport: HTTP long-poll on the existing Hono server — zero new deps, same
@@ -48,6 +50,8 @@ type Pending = {
   batchId: string;
   tenant: string;
   steps: ActionStep[];
+  grant?: "act";
+  targetOrigin?: string;
   resolve: (r: BatchResult | null) => void; // null => batch timeout (route maps to 504)
   timer: ReturnType<typeof setTimeout>;
   settled: boolean;
@@ -107,7 +111,7 @@ function pump(inst: Instance): void {
   const w = inst.waiter;
   inst.waiter = null;
   clearTimeout(w.timer);
-  w.resolve({ batchId: batch.batchId, instanceId: inst.meta.instanceId, tenant: batch.tenant, steps: batch.steps });
+  w.resolve({ batchId: batch.batchId, instanceId: inst.meta.instanceId, tenant: batch.tenant, steps: batch.steps, grant: batch.grant, targetOrigin: batch.targetOrigin });
 }
 
 // GET /browser/poll: next batch for this instance, or null on ~25s timeout (204).
@@ -120,7 +124,7 @@ export function nextBatch(instanceId: string): Promise<DeliveredBatch | null> {
     if (!inst.inFlight && inst.queue.length > 0) {
       const batch = inst.queue.shift()!;
       inst.inFlight = batch;
-      resolve({ batchId: batch.batchId, instanceId, tenant: batch.tenant, steps: batch.steps });
+      resolve({ batchId: batch.batchId, instanceId, tenant: batch.tenant, steps: batch.steps, grant: batch.grant, targetOrigin: batch.targetOrigin });
       return;
     }
     // Single poller per instance (MVP): retire any prior waiter as a 204.
@@ -139,7 +143,12 @@ export function nextBatch(instanceId: string): Promise<DeliveredBatch | null> {
 
 // POST /browser/batches: enqueue and await the extension's result, or null on
 // batch timeout (route maps to 504). Timeout leaves the queue consistent.
-export function submitBatch(instanceId: string, tenant: string, steps: ActionStep[]): Promise<BatchResult | null> {
+export function submitBatch(
+  instanceId: string,
+  tenant: string,
+  steps: ActionStep[],
+  delivery?: { grant: "act"; targetOrigin: string },
+): Promise<BatchResult | null> {
   const inst = live(instances.get(instanceId), Date.now());
   if (!inst) return Promise.resolve(null); // route guarantees existence; defensive only
   return new Promise<BatchResult | null>((resolve) => {
@@ -147,6 +156,8 @@ export function submitBatch(instanceId: string, tenant: string, steps: ActionSte
       batchId: randomUUID(),
       tenant,
       steps,
+      grant: delivery?.grant,
+      targetOrigin: delivery?.targetOrigin,
       resolve,
       settled: false,
       timer: setTimeout(() => {

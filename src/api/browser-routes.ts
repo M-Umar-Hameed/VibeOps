@@ -2,6 +2,9 @@ import type { Hono } from "hono";
 import type { Actor } from "../db/schema.js";
 import { register, list, exists, nextBatch, submitResult, submitBatch, type BatchResult } from "../browser/channel.js";
 import { validateSteps } from "../browser/validate.js";
+import { hasActGrant, noActGrantReason } from "../browser/grants.js";
+
+const MUTATING = new Set(["click", "type", "select", "press"]);
 
 type AppEnv = { Variables: { actor: Actor } };
 
@@ -42,12 +45,25 @@ export function registerBrowserRoutes(app: Hono<AppEnv>): void {
 
   app.post("/browser/batches", async (c) => {
     const body = await c.req.json().catch(() => null);
-    const { instanceId, tenant, steps } = (body ?? {}) as { instanceId?: unknown; tenant?: unknown; steps?: unknown };
+    const { instanceId, tenant, steps, targetOrigin } = (body ?? {}) as { instanceId?: unknown; tenant?: unknown; steps?: unknown; targetOrigin?: unknown };
     if (typeof instanceId !== "string" || !exists(instanceId)) return c.json({ error: "unknown instance" }, 404);
     if (typeof tenant !== "string" || !tenant.trim()) return c.json({ error: "tenant required" }, 400);
     const v = validateSteps(steps);
     if (!v.ok) return c.json({ error: v.error }, 400);
-    const result = await submitBatch(instanceId, tenant, v.steps);
+    // Server is the grant authority. A client-supplied `grant` field is never read
+    // here (stripped); mutating batches require a server-verified act grant, and the
+    // delivered grant/targetOrigin are set only from that verified decision.
+    let delivery: { grant: "act"; targetOrigin: string } | undefined;
+    if (v.steps.some((s) => MUTATING.has(s.verb))) {
+      if (typeof targetOrigin !== "string" || !targetOrigin.trim()) {
+        return c.json({ error: "targetOrigin required for a mutating batch" }, 400);
+      }
+      if (!(await hasActGrant(targetOrigin))) {
+        return c.json({ error: noActGrantReason(targetOrigin) }, 403);
+      }
+      delivery = { grant: "act", targetOrigin };
+    }
+    const result = await submitBatch(instanceId, tenant, v.steps, delivery);
     if (!result) return c.json({ error: "batch timed out" }, 504);
     return c.json(result);
   });

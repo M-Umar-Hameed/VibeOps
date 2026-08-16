@@ -41,24 +41,50 @@ export async function upsertSourceDoc(
 ): Promise<number> {
   const chunks = chunkMarkdown(text);
   const hash = contentHash ?? fileHash(text);
-  const vecs = chunks.length ? await embedder.embed(chunks.map((c) => c.content)) : [];
-  const rows = chunks.map((c, i) => ({
+  // Incremental diff: reuse a stored row when an incoming chunk at the SAME index has
+  // identical redacted content — only new/changed chunks are embedded. Chat re-ingests
+  // the whole transcript every turn; append-mostly transcripts drop from O(n^2) to
+  // O(new). Key on content equality (not a hash): both strings are already in memory,
+  // so equality is exact and cheaper than sha256.
+  // ponytail: match is position+content, so a prepend/reorder re-embeds the shifted
+  // tail; append and in-place edits (the common paths) reuse. Add an LCS diff only if
+  // reorder-heavy docs ever dominate.
+  const existing = await db.select({ id: embeddings.id, chunkIndex: embeddings.chunkIndex, content: embeddings.content })
+    .from(embeddings)
+    .where(and(eq(embeddings.sourceKind, kind), eq(embeddings.sourceRef, ref)));
+  const existingByIndex = new Map(existing.map((r) => [r.chunkIndex, r]));
+
+  const incoming = chunks.map((c) => ({ index: c.index, content: redactSecrets(c.content) }));
+  const reuseIds: string[] = [];
+  const reusedIndexes = new Set<number>();
+  const newChunks: { index: number; content: string }[] = [];
+  for (const c of incoming) {
+    const prev = existingByIndex.get(c.index);
+    if (prev && prev.content === c.content) { reuseIds.push(prev.id); reusedIndexes.add(c.index); }
+    else newChunks.push(c);
+  }
+  const deadIds = existing.filter((r) => !reusedIndexes.has(r.chunkIndex)).map((r) => r.id);
+
+  const vecs = newChunks.length ? await embedder.embed(newChunks.map((c) => c.content)) : [];
+  const rows = newChunks.map((c, i) => ({
     sourceKind: kind, sourceRef: ref, chunkIndex: c.index,
-    content: redactSecrets(c.content), embedding: vecs[i], model: embedder.model, dim: embedder.dim,
+    content: c.content, embedding: vecs[i], model: embedder.model, dim: embedder.dim,
     contentHash: hash,
   }));
-  // One transaction so a mid-batch failure rolls everything back — a partial write
-  // would leave rows carrying the new hash and wedge the doc as skipped-forever.
+  // One transaction so a mid-batch failure rolls everything back. Delete dead rows
+  // first, then insert new ones (freed indices reuse safely); rewrite reused rows'
+  // contentHash to the current doc hash so every row for the ref shares one hash —
+  // reindexFile's limit(1) gate and the one-distinct-hash invariant depend on it.
   // Batched inserts: a multi-thousand-row statement overflows PGlite's WASM memory.
   await db.transaction(async (tx) => {
-    await tx.delete(embeddings)
-      .where(and(eq(embeddings.sourceKind, kind), eq(embeddings.sourceRef, ref)));
+    if (deadIds.length) await tx.delete(embeddings).where(inArray(embeddings.id, deadIds));
+    if (reuseIds.length) await tx.update(embeddings).set({ contentHash: hash }).where(inArray(embeddings.id, reuseIds));
     for (let i = 0; i < rows.length; i += 100) {
       await tx.insert(embeddings).values(rows.slice(i, i + 100));
     }
   });
   bump("embed.chunks", vecs.length);
-  return chunks.length;
+  return vecs.length;
 }
 
 export async function upsertVaultFile(path: string, text: string, embedder: Embedder, contentHash?: string): Promise<number> {
@@ -150,7 +176,8 @@ export async function indexRepoDocs(projectId: string): Promise<{ indexed: numbe
     ))
     .returning({ ref: embeddings.sourceRef });
   const removed = new Set(removedRows.map(r => r.ref)).size;
-  // ponytail: re-embeds every file; add contentHash skip (see reindexFile) if manual re-index cost matters
+  // upsertSourceDoc diffs per chunk, so re-indexing only embeds changed/new chunks;
+  // unchanged repo docs cost one content compare (no embeds). No per-file gate needed.
   return { indexed, skipped, removed };
 }
 

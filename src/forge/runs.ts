@@ -10,7 +10,7 @@ import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict
 import { killTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { redactSecrets } from "./redact.js";
-import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree } from "./sandbox.js";
+import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
 import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths } from "./policy.js";
 import { pickAgents, escalate, pairsForRole, type Pick, type RoutingStrategy } from "./router.js";
@@ -229,7 +229,7 @@ export async function resolveWorkdir(ticketProjectId: string, config: RelayConfi
   return repo;
 }
 
-export type SandboxCleanupResult = { discarded: string[]; reclaimedBytes: number; orphans: string[]; deletedOrphans: string[] };
+export type SandboxCleanupResult = { discarded: string[]; reclaimedBytes: number; orphans: string[]; deletedOrphans: string[]; prunedRegistrations: number; deletedBranches: string[]; keptBranches: string[] };
 
 // Manual backlog sweep: discard every on-disk sandbox whose ticket is CLOSED and
 // whose forge branch has no commits beyond the project workdir HEAD (already merged
@@ -240,6 +240,7 @@ export async function cleanupMergedSandboxes(config: RelayConfig): Promise<Sandb
   const discarded: string[] = [];
   const orphans: string[] = [];
   const deletedOrphans: string[] = [];
+  const workdirs = new Set<string>([config.workdir]);
   let reclaimedBytes = 0;
   for (const ticketId of listSandboxTicketIds()) {
     if (await hasActiveRun(ticketId)) continue;
@@ -264,13 +265,41 @@ export async function cleanupMergedSandboxes(config: RelayConfig): Promise<Sandb
     try { ticket = await getTicket(ticketId); } catch { orphans.push(ticketId); continue; } // live worktree, ticket row lost
     if (ticket.status !== "closed") continue;
     const workdir = await resolveWorkdir(ticket.projectId, config);
+    workdirs.add(workdir);
     if (await hasCommitsToPromote(workdir, ticketId)) continue; // unmerged work -> keep
     const bytes = sandboxSizeBytes(ticketId);
     await discardSandbox(workdir, ticketId);
     discarded.push(ticketId);
     reclaimedBytes += bytes;
   }
-  return { discarded, reclaimedBytes, orphans, deletedOrphans };
+  // Git-side residue that outlives the on-disk sandbox dirs: prunable worktree
+  // registrations (a sandbox dir deleted behind git's back) and merged forge/*
+  // branches of CLOSED tickets (promote leaves the branch every time). The loop
+  // above only visits tickets whose sandbox dir still exists, so neither is
+  // reclaimed there once the dir is gone. Delete branches ONLY via the merged-safe
+  // -d path; an unmerged branch (-d refuses) is left and reported, exactly as an
+  // unmerged sandbox is kept above. Prune before delete: a dangling registration
+  // keeps its branch checked out (so -d fails) until pruned.
+  // ponytail: sweeps config.workdir plus every workdir a live sandbox resolved to.
+  // A non-default project workdir whose sandboxes are ALL already gone is not
+  // visited -- its stray branches wait for the next sweep with a live sandbox
+  // there. Upgrade path: enumerate project workdirs if that case is ever hit.
+  let prunedRegistrations = 0;
+  const deletedBranches: string[] = [];
+  const keptBranches: string[] = [];
+  for (const wd of workdirs) {
+    prunedRegistrations += await pruneWorktreeRegistrations(wd);
+    for (const branch of await listForgeBranches(wd)) {
+      const ticketId = branch.slice("forge/".length);
+      let status: string;
+      try { status = (await getTicket(ticketId)).status; } catch { continue; } // no ticket row -> out of scope
+      if (status !== "closed") continue; // open/review/etc -> out of scope
+      if (await hasActiveRun(ticketId)) continue; // active run owns the branch
+      if (await deleteMergedBranch(wd, branch)) deletedBranches.push(branch);
+      else keptBranches.push(branch); // -d refused: unmerged or checked out -> keep + report
+    }
+  }
+  return { discarded, reclaimedBytes, orphans, deletedOrphans, prunedRegistrations, deletedBranches, keptBranches };
 }
 
 export async function startPipeline(

@@ -407,6 +407,33 @@ async function cleanup(workdir: string, ticketId: string): Promise<void> {
   await git(workdir, "worktree", "prune");
 }
 
+// --- Sweep-side git residue helpers (used by cleanupMergedSandboxes) ---
+
+// Prune worktree registrations git can no longer back (sandbox dir deleted behind
+// git's back). Counts what prune would remove (dry-run) for the sweep report, then
+// removes them. Cheap; safe to run every sweep.
+export async function pruneWorktreeRegistrations(workdir: string): Promise<number> {
+  const { out } = await git(workdir, "worktree", "prune", "-v", "-n");
+  const n = out.split("\n").filter((l) => /^Removing\b/.test(l.trim())).length;
+  await git(workdir, "worktree", "prune");
+  return n;
+}
+
+// forge/<ticketId> branch names (refs/heads/forge/*) in this workdir.
+export async function listForgeBranches(workdir: string): Promise<string[]> {
+  const { out } = await git(workdir, "for-each-ref", "--format=%(refname:short)", "refs/heads/forge/");
+  return out.split("\n").map((l) => l.replace(/\r$/, "").trim()).filter(Boolean);
+}
+
+// Delete a forge branch ONLY via the merged-safe path. `git branch -d` refuses
+// (non-zero) when the branch has unmerged commits or is checked out in a worktree;
+// either way the branch is left intact. NEVER -D here: force-deleting would drop
+// unmerged work. Returns true iff the branch was deleted.
+export async function deleteMergedBranch(workdir: string, branch: string): Promise<boolean> {
+  const { code } = await git(workdir, "branch", "-d", branch);
+  return code === 0;
+}
+
 export type DepsBaseline = { dir: string; entries: Map<string, number> }[];
 
 // Top-level name->mtime snapshot of the base repo's shared deps dirs, taken

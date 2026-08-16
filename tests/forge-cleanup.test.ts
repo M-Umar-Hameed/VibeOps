@@ -48,6 +48,10 @@ function relayConfig(): any {
   return { workdir };
 }
 
+function branchExists(dir: string, branch: string): boolean {
+  return execFileSync("git", ["branch", "--list", branch], { cwd: dir }).toString().trim().length > 0;
+}
+
 describe("forge cleanup", () => {
   it("discards a closed ticket whose branch is already merged, reports bytes, base node_modules intact", async () => {
     const { actor } = await createActor({ name: uniq("a"), kind: "human", role: "admin" });
@@ -185,5 +189,43 @@ describe("forge cleanup", () => {
     expect(res.deletedOrphans).not.toContain(orphan);
     expect(existsSync(dir)).toBe(true);                                        // left on disk by the guard
     expect(existsSync(join(workdir, "node_modules", "marker.txt"))).toBe(true); // base intact
+  });
+
+  it("deletes a merged forge branch of a closed ticket whose worktree dir was removed behind git's back, and prunes the dangling registration", async () => {
+    const { actor } = await createActor({ name: uniq("a"), kind: "human", role: "admin" });
+    const project = await createProject({ key: uniq("p"), name: "Forge" });
+    const ticket = await createTicket(actor.id, { projectId: project.id, title: "Merged, dir gone" });
+    const sp = await ensureSandbox(workdir, ticket.id);
+    writeFileSync(join(sp, "big.txt"), "z".repeat(100));
+    await forgeCommit(ticket.id, "work");
+    await promoteSandbox(workdir, ticket.id, ticket.title, false); // merged into HEAD; branch + dir kept
+    await updateTicket(actor.id, ticket.id, (await getTicket(ticket.id)).version, { status: "closed" });
+    // remove the sandbox dir behind git's back -> dangling registration, branch survives
+    rmSync(sandboxPath(ticket.id), { recursive: true, force: true });
+    expect(branchExists(workdir, `forge/${ticket.id}`)).toBe(true); // precondition
+
+    const res = await cleanupMergedSandboxes(relayConfig());
+
+    expect(res.prunedRegistrations).toBeGreaterThanOrEqual(1);
+    expect(res.deletedBranches).toContain(`forge/${ticket.id}`);
+    expect(res.keptBranches).not.toContain(`forge/${ticket.id}`);
+    expect(branchExists(workdir, `forge/${ticket.id}`)).toBe(false);
+  });
+
+  it("keeps and reports an UNMERGED forge branch of a closed ticket; branch -d only (mutation guard: -D fails this test)", async () => {
+    const { actor } = await createActor({ name: uniq("a"), kind: "human", role: "admin" });
+    const project = await createProject({ key: uniq("p"), name: "Forge" });
+    const ticket = await createTicket(actor.id, { projectId: project.id, title: "Unmerged, dir gone" });
+    const sp = await ensureSandbox(workdir, ticket.id);
+    writeFileSync(join(sp, "b.txt"), "x\n");
+    await forgeCommit(ticket.id, "work"); // committed, NOT promoted -> branch ahead of HEAD (unmerged)
+    await updateTicket(actor.id, ticket.id, (await getTicket(ticket.id)).version, { status: "closed" });
+    rmSync(sandboxPath(ticket.id), { recursive: true, force: true }); // dir gone -> branch not checked out after prune
+
+    const res = await cleanupMergedSandboxes(relayConfig());
+
+    expect(res.keptBranches).toContain(`forge/${ticket.id}`);
+    expect(res.deletedBranches).not.toContain(`forge/${ticket.id}`);
+    expect(branchExists(workdir, `forge/${ticket.id}`)).toBe(true); // -> false if -d becomes -D
   });
 });

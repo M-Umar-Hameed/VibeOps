@@ -134,6 +134,13 @@
       "when": 1786780943866,
       "tag": "0018_fancy_starbolt",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786859671082,
+      "tag": "0019_tidy_energizer",
+      "breakpoints": true
     }
   ]
 }

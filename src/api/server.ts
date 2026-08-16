@@ -10,6 +10,7 @@ import { reapStaleTickets } from "../services/reaper.js";
 import { markInterruptedRuns, reconcileMergedTickets } from "../forge/runs.js";
 import { restoreCouncilSessions } from "../council/runs.js";
 import { configureExport } from "../services/export-debounce.js";
+import { timing } from "../services/metrics.js";
 
 const port = Number(process.env.PORT ?? 8787);
 
@@ -22,11 +23,17 @@ if (embeddedDbError) {
 
 async function bootNormally() {
   if (isEmbedded) {
+    let t = Date.now();
     await ensureIndex();
+    timing("boot.ensureIndex", Date.now() - t);
+    t = Date.now();
     const { bootstrapped } = await runBootstrap(port);
+    timing("boot.bootstrap", Date.now() - t);
     if (bootstrapped) console.log("first run: created owner key -> ~/.vibeops/credentials.json");
     const { reportAndClearRecovery } = await import("../db/recovery.js");
+    t = Date.now();
     await reportAndClearRecovery(db).catch((e) => console.warn(`recovery report failed: ${(e as Error).message}`));
+    timing("boot.recovery", Date.now() - t);
   }
   await applyEnvSettings();
   await restoreCouncilSessions();

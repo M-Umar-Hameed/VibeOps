@@ -14,6 +14,7 @@ import { activeRunForProject } from "../forge/runs.js";
 import { syncProject } from "../sync/run.js";
 import { listActors, createActor, revokeActor } from "../services/actors.js";
 import { requireAdmin } from "./auth.js";
+import { bump, snapshot } from "../services/metrics.js";
 import { getSystemMetrics, getSystemLogs, getSystemTopology, getAiUsage, getSystemStatus, getKnowledgeUsage } from "../services/system.js";
 import { getSetting, setSetting } from "../services/settings.js";
 import { getVaultStatus, startWatcher, stopWatcher, rescanProjectVaults, getProjectVaultStatus } from "../ingest/watch.js";
@@ -72,6 +73,11 @@ app.use("*", cors({
   allowHeaders: ["Authorization", "Content-Type"],
   allowMethods: ["GET", "POST", "PATCH", "PUT", "DELETE"],
 }));
+
+app.use("*", async (c, next) => {
+  bump("req." + c.req.method);
+  await next();
+});
 
 app.use("*", auth);
 
@@ -405,6 +411,7 @@ app.get("/system/logs", requireAdmin, async (c) => c.json(await getSystemLogs())
 app.get("/system/topology", async (c) => c.json(await getSystemTopology()));
 app.get("/system/ai-usage", async (c) => c.json(await getAiUsage()));
 app.get("/system/knowledge-usage", async (c) => c.json(await getKnowledgeUsage()));
+app.get("/system/metrics-lite", requireAdmin, (c) => c.json(snapshot()));
 app.get("/system/agents", requireAdmin, async (c) => {
   const { getAgents } = await import("../system/agents.js");
   const n = Number(c.req.query("sinceDays"));

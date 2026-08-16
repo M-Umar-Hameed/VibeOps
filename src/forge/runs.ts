@@ -30,6 +30,7 @@ import { forgeRuns, aiUsageLogs, tickets, type Ticket } from "../db/schema.js";
 import { verifyModel, MISMATCH_WARNING, computeVerificationStatus } from "./verify.js";
 import { resolveChecks, runChecks, formatChecks, type CheckResult } from "./checks.js";
 import { runGate, resolveMutationCmd } from "./gate.js";
+import { emitEvent } from "../api/events.js";
 
 const OUTPUT_CAP = 400_000;
 const KEEP_FINISHED = 20;
@@ -135,6 +136,13 @@ async function writeSpecFromPlan(actorId: string, ticketId: string, body: string
 
 function append(run: Run, text: string): void {
   if (run.output.length < OUTPUT_CAP) run.output += redactSecrets(text);
+}
+
+// Single choke point for a stage beginning: set run.stage AND push a run.stage
+// SSE frame. Every real transition routes through here.
+function enterStage(run: Run, stage: Stage): void {
+  run.stage = stage;
+  emitEvent("run.stage", { runId: run.id, ticketId: run.ticketId, stage });
 }
 
 function activeRuns(): Run[] {
@@ -490,6 +498,7 @@ async function pipeline(
   let plan: string;
   const planRegenerated = ticket.status === "open";
   if (planRegenerated) {
+    enterStage(run, "plan");
     append(run, `=== FORGE plan (${run.agents.plan}) ===\n`);
     const knowledge = await getKnowledgeSafe(ticket.title, ticket.projectId);
     const planPrompt = composePlanPrompt({ ticket, knowledge }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra;
@@ -522,7 +531,7 @@ async function pipeline(
   }
 
   // work — claim, then run inside the sandbox
-  run.stage = "work";
+  enterStage(run, "work");
   append(run, `\n=== FORGE work (${run.agents.work}) ===\n`);
   ticket = await updateTicket(actorId, ticket.id, ticket.version, { status: "in_progress" });
   const frontendDeps = (await getSetting("forge.frontendDeps")) === "true";
@@ -632,6 +641,7 @@ async function pipeline(
 function settle(run: Run, status: Status): void {
   run.status = status;
   run.finishedAt = new Date().toISOString();
+  emitEvent("run.settled", { runId: run.id, ticketId: run.ticketId, status });
   // Still never allowed to break a pipeline, but the promise is kept so run.done
   // can await it. hasActiveRun consults the DB after the in-memory map goes quiet,
   // so until this row lands a settled run still reads as active. That gap used to
@@ -645,7 +655,7 @@ async function reviewStage(
   sandbox: string, ticket: Ticket, plan: string, reportOutput: string,
   styleSetting: string, config: RelayConfig, amendments?: string,
 ): Promise<void> {
-  run.stage = "review";
+  enterStage(run, "review");
   append(run, `\n=== FORGE review (${run.agents.review}) ===\n`);
   const onData = (c: string) => append(run, c);
 

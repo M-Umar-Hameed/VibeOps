@@ -5,7 +5,7 @@ import { join, relative, sep } from "node:path";
 import { resolveProjectVaultPath } from "../ingest/vault-path.js";
 import { and, eq, isNull, inArray, like, notInArray, sql as dsql } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { embeddings, notes, projects } from "../db/schema.js";
+import { embeddings, notes, projects, tickets } from "../db/schema.js";
 import { ConflictError, NotFoundError } from "./errors.js";
 
 type Executor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -21,6 +21,41 @@ async function resolveVaultRefPath(ref: string): Promise<string> {
   const m = /^([0-9a-fA-F-]{36}):(.+)$/.exec(ref);
   if (!m) return ref;
   return join(await resolveProjectVaultPath(m[1]), m[2]);
+}
+
+// project_id for a source_ref: repo/vault/chat carry a "<uuid>:" prefix -> that
+// uuid; session and legacy-bare (global) refs -> null. Mirrors resolveVaultRefPath's
+// prefix regex so the scope column and vault-path resolution agree on "a prefix".
+function refProjectId(ref: string): string | null {
+  const m = /^([0-9a-fA-F-]{36}):/.exec(ref);
+  return m ? m[1] : null;
+}
+
+// One-time backfill of embeddings.project_id from the legacy source_ref convention.
+// Re-runnable: the `project_id IS NULL` guards make a second run a no-op. Exported so
+// tests can seed legacy (null-projectId) rows and assert idempotency; the migration
+// runs the identical statements against production data.
+export async function backfillEmbeddingProjectIds(exec: Executor = db): Promise<void> {
+  await exec.execute(dsql`
+    UPDATE "embeddings"
+    SET "project_id" = substring("source_ref" from 1 for 36)::uuid
+    WHERE "source_kind" IN ('repo','vault','chat')
+      AND "source_ref" ~ '^[0-9a-fA-F-]{36}:'
+      AND "project_id" IS NULL`);
+  await exec.execute(dsql`
+    UPDATE "embeddings" e
+    SET "project_id" = sub.pid
+    FROM (
+      SELECT n.id::text AS ref,
+             CASE WHEN n.scope = 'project' THEN n.ref_id
+                  WHEN n.scope = 'ticket'  THEN t.project_id
+                  ELSE NULL END AS pid
+      FROM notes n
+      LEFT JOIN tickets t ON t.id = n.ref_id
+      WHERE n.deleted_at IS NULL
+    ) sub
+    WHERE e.source_kind = 'note' AND e.source_ref = sub.ref
+      AND e.project_id IS NULL`);
 }
 
 export function fileHash(text: string): string {
@@ -69,7 +104,7 @@ export async function upsertSourceDoc(
   const rows = newChunks.map((c, i) => ({
     sourceKind: kind, sourceRef: ref, chunkIndex: c.index,
     content: c.content, embedding: vecs[i], model: embedder.model, dim: embedder.dim,
-    contentHash: hash,
+    contentHash: hash, projectId: refProjectId(ref),
   }));
   // One transaction so a mid-batch failure rolls everything back. Delete dead rows
   // first, then insert new ones (freed indices reuse safely); rewrite reused rows'
@@ -105,15 +140,22 @@ export async function insertNoteEmbedding(noteId: string, body: string, embedder
   // earlier. Verify it is STILL the note's body inside the write transaction —
   // otherwise a slow sweep clobbers a fresh re-embed with a stale snapshot.
   return db.transaction(async (tx) => {
-    const [current] = await tx.select({ body: notes.body, deletedAt: notes.deletedAt })
+    const [current] = await tx.select({ body: notes.body, deletedAt: notes.deletedAt, scope: notes.scope, refId: notes.refId })
       .from(notes).where(eq(notes.id, noteId)).limit(1);
     if (!current || current.deletedAt || current.body !== body) return false; // stale writer: no-op
     await tx.delete(embeddings)
       .where(and(eq(embeddings.sourceKind, "note"), eq(embeddings.sourceRef, noteId)));
+    let noteProjectId: string | null = null;
+    if (current.scope === "project") noteProjectId = current.refId ?? null;
+    else if (current.scope === "ticket" && current.refId) {
+      const [tk] = await tx.select({ projectId: tickets.projectId })
+        .from(tickets).where(eq(tickets.id, current.refId)).limit(1);
+      noteProjectId = tk?.projectId ?? null;
+    }
     await tx.insert(embeddings).values(parts.map((c, i) => ({
       sourceKind: "note" as const, sourceRef: noteId, chunkIndex: c.index,
       content: redactSecrets(c.content), embedding: vecs[i], model: embedder.model, dim: embedder.dim,
-      contentHash: hash,
+      contentHash: hash, projectId: noteProjectId,
     })));
     return true;
   });
@@ -188,39 +230,16 @@ export async function repoIndexed(projectId: string): Promise<boolean> {
   return !!row;
 }
 
-// Single source of truth for project knowledge scoping, shared by searchKnowledge
-// (combined) and knowledgeGraph (split, to budget project-first). Each returns a
-// bare parenthesized boolean SQL fragment (no WHERE keyword).
-// VAULT RULE: project vault chunks carry a "<projectId>:" ref prefix (like repo)
-// and belong to that project; legacy global-vault chunks are absolute paths (no
-// uuid prefix) and stay global. Session stays global. Chat mirrors vault: a
-// "<projectId>:<sessionId>" ref is project-scoped, a bare "<sessionId>" is global.
+// Column-indexed scope (S5). project_id = P is project-only, so clearProjectKnowledge
+// deletes exactly this project's rows and knowledgeGraph keeps project/global disjoint.
+// searchKnowledge ORs this with globalScopeWhere so global rows stay visible in a
+// scoped search — that union lives in the caller, NOT here (see :235).
 export function projectScopeWhere(projectId: string) {
-  return dsql`(
-        (source_kind = 'repo' AND source_ref LIKE ${projectId + ":%"})
-        OR (source_kind = 'vault' AND source_ref LIKE ${projectId + ":%"})
-        OR (source_kind = 'chat' AND source_ref LIKE ${projectId + ":%"})
-        OR (source_kind = 'note' AND source_ref IN (
-          SELECT n.id::text FROM notes n
-          LEFT JOIN tickets t ON t.id = n.ref_id
-          WHERE n.deleted_at IS NULL AND (
-            (n.scope = 'project' AND n.ref_id = ${projectId}::uuid)
-            OR (n.scope = 'ticket' AND t.project_id = ${projectId}::uuid)
-          )
-        ))
-      )`;
+  return dsql`(project_id = ${projectId}::uuid)`;
 }
 
 function globalScopeWhere() {
-  return dsql`(
-        source_kind = 'session'
-        OR (source_kind = 'chat' AND source_ref !~ '^[0-9a-fA-F-]{36}:')
-        OR (source_kind = 'vault' AND source_ref !~ '^[0-9a-fA-F-]{36}:')
-        OR (source_kind = 'note' AND source_ref IN (
-          SELECT n.id::text FROM notes n
-          WHERE n.deleted_at IS NULL AND n.scope = 'global'
-        ))
-      )`;
+  return dsql`(project_id IS NULL)`;
 }
 
 export async function searchKnowledge(

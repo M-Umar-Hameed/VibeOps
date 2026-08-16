@@ -88,10 +88,12 @@ export const embeddings = pgTable("embeddings", {
   model: text("model").notNull(),
   dim: integer("dim").notNull(),
   contentHash: text("content_hash").notNull(),
+  projectId: uuid("project_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   srcIdx: index("embeddings_src_idx").on(t.sourceKind, t.sourceRef),
   uniqChunk: uniqueIndex("embeddings_uniq_chunk").on(t.sourceKind, t.sourceRef, t.chunkIndex),
+  projectIdx: index("embeddings_project_idx").on(t.projectId),
 }));
 
 export const syncLinks = pgTable("sync_links", {

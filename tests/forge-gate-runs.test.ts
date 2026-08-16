@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { ensureSandbox, forgeCommit, sandboxPath, sandboxDiffNames } from "../src/forge/sandbox.js";
+import * as sandbox from "../src/forge/sandbox.js";
 import { runGate, resolveMutationCmd } from "../src/forge/gate.js";
 
 const TID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
@@ -30,6 +31,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   delete process.env.VIBEOPS_SANDBOX_ROOT;
   rmSync(workdir, { recursive: true, force: true });
   rmSync(sandboxRoot, { recursive: true, force: true });
@@ -270,3 +272,33 @@ describe("citation check", () => {
     expect(gate.findings.some(f => f.check === "citation")).toBe(false);
   });
 });
+
+describe("gate git-call fan-in", () => {
+  it("uses caller-provided rangePatch/changedPaths — each git helper fires exactly once across the review path", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    writeFileSync(join(sp, "src", "x.ts"), "export const x = 2;\n");
+    await forgeCommit(TID, "change");
+
+    // Spies call through (no mockImplementation) so real git still runs.
+    const rpSpy = vi.spyOn(sandbox, "sandboxRangePatch");
+    const dnSpy = vi.spyOn(sandbox, "sandboxDiffNames");
+
+    // The single call site precomputes both once, then hands them to the gate.
+    const rangePatch = await sandbox.sandboxRangePatch(workdir, TID);
+    const changedPaths = await sandbox.sandboxDiffNames(workdir, TID);
+
+    await runGate({
+      workdir, ticketId: TID,
+      planText: "edit src/x.ts",
+      ticketBody: "",
+      maxSourceFiles: 3,
+      mutationCmd: () => null,
+      rangePatch,
+      changedPaths,
+    });
+
+    expect(rpSpy).toHaveBeenCalledTimes(1);
+    expect(dnSpy).toHaveBeenCalledTimes(1);
+  });
+});
+

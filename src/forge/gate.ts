@@ -185,14 +185,23 @@ export async function runGate(deps: {
   ticketBody: string;
   maxSourceFiles: number;
   mutationCmd: (file: string) => string | null;
+  rangePatch?: string;
+  changedPaths?: string[];
 }): Promise<GateResult> {
   const findings: GateFinding[] = [];
   const { workdir, ticketId, planText, ticketBody, maxSourceFiles, mutationCmd } = deps;
   const sandbox = sandboxPath(ticketId);
 
+  // The review path already computes both once and passes them in; fall back to
+  // computing lazily and memoizing so each git call fires at most once here.
+  let rangePatchCache = deps.rangePatch;
+  const getRangePatch = async () => (rangePatchCache ??= await sandboxRangePatch(workdir, ticketId));
+  let changedPathsCache = deps.changedPaths;
+  const getChangedPaths = async () => (changedPathsCache ??= await sandboxDiffNames(workdir, ticketId));
+
   // 1. Secret scan — scan '+' addition lines from the full range patch
   try {
-    const patch = await sandboxRangePatch(workdir, ticketId);
+    const patch = await getRangePatch();
     const additions = patch.split("\n")
       .filter(l => l.startsWith("+") && !l.startsWith("+++"))
       .join("\n");
@@ -210,7 +219,7 @@ export async function runGate(deps: {
 
   // 2. File-set check
   try {
-    const changed = await sandboxDiffNames(workdir, ticketId);
+    const changed = await getChangedPaths();
     const declared = extractDeclaredPaths(planText);
     const allow = parseAllowFiles(ticketBody);
     const unexpected = unexpectedFiles(changed, declared, allow);
@@ -275,7 +284,7 @@ export async function runGate(deps: {
   try {
     const criteria = extractAcceptanceCriteria(ticketBody);
     if (criteria.length) {
-      const changed = await sandboxDiffNames(workdir, ticketId);
+      const changed = await getChangedPaths();
       const testFiles = changed.filter(isTestPath);
       const testTexts: string[] = [];
       for (const tf of testFiles) {
@@ -298,7 +307,7 @@ export async function runGate(deps: {
   // the cited text for the reviewer to compare against the doc's claim.
   const citationEvidence: string[] = [];
   try {
-    const patch = await sandboxRangePatch(workdir, ticketId);
+    const patch = await getRangePatch();
     const byFile = addedLinesByFile(patch);
     const seen = new Set<string>();
     for (const [path, added] of byFile) {

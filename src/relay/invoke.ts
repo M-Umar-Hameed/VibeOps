@@ -69,6 +69,12 @@ export async function runAgent(
     childEnv = { ...process.env };
     keys.forEach((k, i) => { childEnv![k] = vals[i]; });
   }
+  // forge stages routinely idle >5 min between plan and work, so the 1h cache
+  // window is the one that matters. Only meaningful under API-key auth; a no-op
+  // noise var under subscription auth, so set it only when ANTHROPIC_API_KEY is set.
+  if (process.env.ANTHROPIC_API_KEY) {
+    childEnv = { ...(childEnv ?? process.env), ENABLE_PROMPT_CACHING_1H: "1" };
+  }
 
   try {
     // Written inside try so the finally unlinks it on every exit path (spawn

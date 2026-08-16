@@ -20,6 +20,7 @@ import {
   resolveMaxActive
 } from "../src/forge/runs.js";
 import { sandboxExists, branchName, promoteSandbox, sandboxDiff, hasCommitsToPromote } from "../src/forge/sandbox.js";
+import { app } from "../src/api/app.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject, updateProjectRepo } from "../src/services/projects.js";
 import { createTicket, updateTicket } from "../src/services/tickets.js";
@@ -52,6 +53,22 @@ function initRepo(): string {
 
 function uniq(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function parseSseFrames(buf: string): { event?: string; data?: unknown }[] {
+  const out: { event?: string; data?: unknown }[] = [];
+  for (const block of buf.split("\n\n")) {
+    if (!block.trim() || block.startsWith(":")) continue;
+    let event: string | undefined;
+    const dataLines: string[] = [];
+    for (const line of block.split("\n")) {
+      if (line.startsWith("event:")) event = line.slice(6).trim();
+      else if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^ /, ""));
+    }
+    if (!dataLines.length) continue;
+    try { out.push({ event, data: JSON.parse(dataLines.join("\n")) }); } catch { /* partial frame */ }
+  }
+  return out;
 }
 
 async function seedTicket(title: string) {
@@ -256,6 +273,46 @@ describe("forge run manager", () => {
     expect(persisted.status).toBe("passed");
     expect(persisted.finishedAt).toBeTruthy();
   });
+
+  it("SSE stream carries run.stage before run.settled for a real pipeline run", async () => {
+    const { actorId, ticket } = await seedTicket("SSE pipeline");
+    const { apiKey } = await createActor({ name: uniq("sse-pipe"), kind: "agent" });
+    setScript("plan,work,review-pass", true);
+
+    const res = await app.request("/events", { headers: { Authorization: `Bearer ${apiKey}` } });
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    const dec = new TextDecoder();
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+
+    let buf = "";
+    const deadline = Date.now() + 25_000;
+    const mine = () =>
+      parseSseFrames(buf).filter((f) => {
+        const d = f.data as { ticketId?: string; id?: string } | undefined;
+        return d?.ticketId === ticket.id || d?.id === ticket.id;
+      });
+    while (Date.now() < deadline) {
+      if (mine().some((f) => f.event === "run.settled")) break;
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+    }
+    await reader.cancel();
+    await awaitRun(runId);
+
+    const frames = mine();
+    const stageIdx = frames.findIndex((f) => f.event === "run.stage");
+    const settledIdx = frames.findIndex((f) => f.event === "run.settled");
+    expect(stageIdx).toBeGreaterThanOrEqual(0);            // at least one run.stage
+    expect(settledIdx).toBeGreaterThan(stageIdx);          // settled comes after a stage, in order
+    expect((frames[settledIdx].data as { status?: string }).status).toBe("passed");
+    // Build item 3: updateTicket emits ticket.changed on the same bus.
+    expect(frames.some((f) => f.event === "ticket.changed")).toBe(true);
+  }, 30_000);
 
   it("FAIL verdict settles rejected, bounces to planned, sandbox kept", async () => {
     const { actorId, ticket } = await seedTicket("Fail path");
@@ -1440,4 +1497,29 @@ const file2 = "run2-output.txt";
     expect(item?.checksDurationMs).toBeGreaterThanOrEqual(0);
     expect(item?.stageDurationsMs?.checks).toBeGreaterThanOrEqual(0);
   });
+});
+
+// The SSE transport test drives emitEvent directly, so removing the emit from a
+// real stage transition was invisible to it (the mutation survived). Pin the
+// wiring itself: a live pipeline must publish run.stage and run.settled on the
+// bus. Note the bus uses ONE channel ("event") carrying { type, payload }.
+describe("forge emits run lifecycle events", () => {
+  it("a pipeline publishes run.stage and run.settled on the event bus", async () => {
+    const { events } = await import("../src/api/events.js");
+    const seen: { type: string; runId?: string }[] = [];
+    const onEvent = (e: any) => seen.push({ type: e?.type, runId: e?.payload?.runId });
+    events.on("event", onEvent);
+    try {
+      const { actorId, ticket } = await seedTicket("Emits lifecycle events");
+      setScript("plan,work,review-pass", true);
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+      expect(seen.some((e) => e.type === "run.stage" && e.runId === runId)).toBe(true);
+      expect(seen.some((e) => e.type === "run.settled" && e.runId === runId)).toBe(true);
+    } finally {
+      events.off("event", onEvent);
+    }
+  }, 30_000);
 });

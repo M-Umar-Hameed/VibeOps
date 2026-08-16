@@ -3,6 +3,7 @@ import { db } from "../db/client.js";
 import { tickets, events, comments, actors, projects, type Ticket } from "../db/schema.js";
 import { NotFoundError, StaleVersionError, ConflictError } from "./errors.js";
 import { parseVerification } from "../relay/prompts.js";
+import { emitEvent } from "../api/events.js";
 
 type Executor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 export async function createTicket(
@@ -44,7 +45,7 @@ export async function updateTicket(
     requiresVerification: boolean;
   }>,
 ): Promise<Ticket> {
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const [current] = await tx.select().from(tickets).where(eq(tickets.id, id)).limit(1);
     if (!current) throw new NotFoundError(`ticket ${id}`);
     if (current.version !== expectedVersion) {
@@ -85,4 +86,6 @@ export async function updateTicket(
     });
     return updated;
   });
+  emitEvent("ticket.changed", { id: result.id, status: result.status });
+  return result;
 }

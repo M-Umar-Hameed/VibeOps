@@ -1,5 +1,7 @@
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
+import { streamSSE } from "hono/streaming";
+import { events } from "./events.js";
 import { auth } from "./auth.js";
 import { createTicket, updateTicket } from "../services/tickets.js";
 import { addComment, listComments } from "../services/comments.js";
@@ -93,6 +95,32 @@ app.use("*", async (c, next) => {
     armExport();
   }
 });
+
+// Push transport (Structural S3): one SSE stream fed by the in-process event
+// bus. Member-authed by the global `auth` middleware above (no key => 401).
+// The offset-poll endpoints stay as the reconnect/fallback path.
+app.get("/events", (c) =>
+  streamSSE(c, async (stream) => {
+    const onEvent = (e: { type: string; payload: unknown }) => {
+      // Fire-and-forget: a slow client must never block the emitter.
+      void stream.writeSSE({ event: e.type, data: JSON.stringify(e.payload) });
+    };
+    events.on("event", onEvent);
+    // Heartbeat comment: keeps proxies from idling the socket and surfaces a
+    // dead peer (write throws -> stream aborts). unref so a missed abort can't
+    // hold the process open.
+    const heartbeat = setInterval(() => { void stream.write(": keepalive\n\n"); }, 25_000);
+    heartbeat.unref?.();
+    // Hold the stream open until the client disconnects; abort removes the
+    // listener so reconnects can't leak listeners unbounded.
+    await new Promise<void>((resolve) => {
+      stream.onAbort(() => {
+        clearInterval(heartbeat);
+        events.off("event", onEvent);
+        resolve();
+      });
+    });
+  }));
 
 app.post("/tickets", async (c) => {
   const body = await jsonBody(c);

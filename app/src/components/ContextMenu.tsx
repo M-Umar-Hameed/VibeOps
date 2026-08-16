@@ -18,7 +18,8 @@ export function ContextMenu({ items, x, y, label, onClose }: {
   items: MenuItemSpec[]; x: number; y: number; label: string; onClose: () => void;
 }) {
   const [confirmKey, setConfirmKey] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
+  const [runningKey, setRunningKey] = useState<string | null>(null);
+  const pending = runningKey !== null;
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -48,7 +49,7 @@ export function ContextMenu({ items, x, y, label, onClose }: {
   }, [onClose]);
 
   const run = async (it: MenuItemSpec) => {
-    setPending(true); setError(""); setNotice("");
+    setRunningKey(it.key); setError(""); setNotice("");
     try {
       const out = await it.onSelect?.();
       // A string result is feedback worth reading - show it and keep the menu
@@ -57,7 +58,7 @@ export function ContextMenu({ items, x, y, label, onClose }: {
       else onClose();
     }
     catch (e: any) { setError(e instanceof Error ? e.message : "Action failed"); }
-    finally { setPending(false); }
+    finally { setRunningKey(null); }
   };
 
   const onItem = (it: MenuItemSpec) => {
@@ -105,16 +106,21 @@ export function ContextMenu({ items, x, y, label, onClose }: {
                 onClick={() => onItem(it)}
                 disabled={it.disabled || pending}
                 title={it.disabled ? it.disabledReason : undefined}
-                className={`w-full text-left px-3 py-2 text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${it.danger ? "text-error hover:bg-error/10" : "text-on-surface hover:bg-white/5"}`}
+                className={`w-full text-left px-3 py-2 text-sm transition-colors ${it.disabled ? "opacity-40 cursor-not-allowed" : ""} ${runningKey === it.key ? "bg-white/5" : ""} ${it.danger ? "text-error hover:bg-error/10" : "text-on-surface hover:bg-white/5"}`}
               >
-                {it.label}
+                <span className="flex items-center gap-2">
+                  {runningKey === it.key && (
+                    <span data-testid="menu-item-spinner" className="material-symbols-outlined animate-spin text-sm">sync</span>
+                  )}
+                  {it.label}
+                </span>
                 {it.disabled && it.disabledReason && (
                   <span className="block text-[10px] text-on-surface-variant/70">{it.disabledReason}</span>
                 )}
               </button>
             ))}
             {error && <div className="px-3 py-1.5 text-xs text-error font-code-sm">{error}</div>}
-            {notice && <div role="status" className="px-3 py-1.5 text-xs text-on-surface-variant font-code-sm">{notice}</div>}
+            {notice && <div role="status" className="px-3 py-1.5 text-xs text-on-surface-variant font-code-sm animate-in fade-in bg-primary/10 rounded-sm">{notice}</div>}
           </>
         )}
       </div>

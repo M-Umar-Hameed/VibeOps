@@ -194,3 +194,15 @@ test("graph renders each kind with its color and shape, and the legend matches",
   }
 });
 
+test("Sync sessions shows a spinner while the sync runs", async () => {
+  let resolve!: (v: any) => void;
+  apiFetch.mockImplementation(async (url: string) => {
+    if (url === "/ingest/sessions") return new Promise((r) => { resolve = r; });
+    return { codex: { indexed: 1, skipped: 0, failed: 0 }, "claude-code": { indexed: 38, skipped: 2, failed: 0 } };
+  });
+  render(wrap(<KnowledgeScreen />));
+  fireEvent.click(screen.getByText("Sync sessions"));
+  await waitFor(() => expect(document.querySelector(".animate-spin")).toBeInTheDocument());
+  resolve({});
+});
+

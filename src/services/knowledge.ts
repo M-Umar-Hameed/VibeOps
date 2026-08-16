@@ -34,6 +34,9 @@ function refProjectId(ref: string): string | null {
 // A note's project: scope 'project' -> refId is the project; scope 'ticket' -> the
 // ticket's project; anything else is global. Mirrors drizzle/0019's backfill CASE.
 async function noteScopeProjectId(noteId: string): Promise<string | null> {
+  // notes.id is a uuid column; a non-uuid ref (synthetic test refs, legacy rows)
+  // would make Postgres throw on the cast rather than simply not match.
+  if (!/^[0-9a-fA-F-]{36}$/.test(noteId)) return null;
   const [n] = await db.select({ scope: notes.scope, refId: notes.refId })
     .from(notes).where(eq(notes.id, noteId)).limit(1);
   if (!n || !n.refId) return null;

@@ -1,4 +1,4 @@
-import { cpSync, readdirSync, rmSync } from "node:fs";
+import { cpSync, readdirSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 // Rolling known-good copies of the embedded data dir. Siblings named
@@ -37,4 +37,23 @@ export function latestGoodSnapshot(dataDir: string): string | null {
   } catch {
     return null;
   }
+}
+
+export const SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h
+
+// Boot-snapshot decision. Skip ONLY when the previous shutdown was clean AND the
+// newest snapshot is younger than SNAPSHOT_MAX_AGE_MS. Every other case takes a
+// snapshot: unclean shutdown, no snapshot yet, or a stale one.
+export function shouldSnapshot(
+  dataDir: string,
+  prevShutdownClean: boolean,
+  now: number,
+): { take: boolean; reason: string } {
+  if (!prevShutdownClean) return { take: true, reason: "unclean shutdown" };
+  const latest = latestGoodSnapshot(dataDir);
+  if (!latest) return { take: true, reason: "no snapshot yet" };
+  const ageS = Math.round((now - statSync(latest).mtimeMs) / 1000);
+  if (now - statSync(latest).mtimeMs >= SNAPSHOT_MAX_AGE_MS)
+    return { take: true, reason: `snapshot stale (${ageS}s old)` };
+  return { take: false, reason: `clean shutdown, snapshot ${ageS}s old` };
 }

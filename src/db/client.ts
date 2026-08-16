@@ -1,5 +1,6 @@
 import { resolveEmbeddedDataDir } from "../runtime/home.js";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { drizzle as drizzlePg } from "drizzle-orm/postgres-js";
@@ -18,6 +19,7 @@ export let db!: ReturnType<typeof drizzlePg<typeof schema>>;
 export let embeddedDbError: import("./lifecycle.js").EmbeddedDbOpenError | null = null;
 let embeddedClient: import("@electric-sql/pglite").PGlite | null = null;
 let embeddedDataDir: string | null = null;
+let embeddedPrevShutdownClean = false;
 
 // Default close = end the postgres-js pool (non-embedded / test lanes).
 let closeImpl: () => Promise<void> = async () => { await sql.end({ timeout: 5 }); };
@@ -33,6 +35,9 @@ async function makeDb(): Promise<void> {
   // PGlite's mkdir is not recursive; create the data dir (and ~/.vibeops) first.
   const dataDir = resolveEmbeddedDataDir();
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  // Clean-shutdown signal must be read BEFORE new PGlite writes a fresh
+  // postmaster.pid. Absent pid == prior close went through closeEmbedded.
+  embeddedPrevShutdownClean = !existsSync(join(dataDir, "postmaster.pid"));
 
   let client;
   try {
@@ -64,14 +69,32 @@ async function makeDb(): Promise<void> {
 }
 
 // Rolling known-good snapshot of the embedded data dir. Called by the server at
-// boot only (NOT from makeDb, or every CLI import would copy ~450MB). Checkpoints
-// first so the on-disk copy is consistent while the cluster is still quiescent.
-// Note: snapshot fires every embedded boot, keep 3; upgrade to daily/dirty-check if boot frequency makes 450MB copies costly.
+// boot only (NOT from makeDb, or every CLI import would copy ~450MB). Skips the
+// copy when the previous shutdown was clean and the newest snapshot is still
+// fresh (see shouldSnapshot); otherwise CHECKPOINTs and copies as before.
+export async function runBootSnapshot(
+  client: import("@electric-sql/pglite").PGlite,
+  dataDir: string,
+  prevShutdownClean: boolean,
+  now: number,
+): Promise<{ path: string | null; taken: boolean; reason: string }> {
+  const { shouldSnapshot, snapshotGood } = await import("./snapshots.js");
+  const { take, reason } = shouldSnapshot(dataDir, prevShutdownClean, now);
+  if (!take) {
+    console.log(`boot snapshot skipped: ${reason}`);
+    return { path: null, taken: false, reason };
+  }
+  await client.exec("CHECKPOINT");
+  const path = snapshotGood(dataDir, new Date(now).toISOString().replace(/[:.]/g, "-"));
+  console.log(`boot snapshot taken: ${reason} -> ${path}`);
+  return { path, taken: true, reason };
+}
+
 export async function snapshotKnownGood(): Promise<string | null> {
   if (!embeddedClient || !embeddedDataDir) return null;
-  const { snapshotGood } = await import("./snapshots.js");
-  await embeddedClient.exec("CHECKPOINT");
-  return snapshotGood(embeddedDataDir, new Date().toISOString().replace(/[:.]/g, "-"));
+  const { path } = await runBootSnapshot(
+    embeddedClient, embeddedDataDir, embeddedPrevShutdownClean, Date.now());
+  return path;
 }
 
 // Periodic CHECKPOINT reduces WAL replay time after an unclean exit. PGlite

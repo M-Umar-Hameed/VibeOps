@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -100,6 +100,18 @@ async function waitForStage(runId: string, stage: string, timeoutMs = 5000): Pro
     await new Promise((r) => setTimeout(r, 20));
   }
   throw new Error(`timed out waiting for stage "${stage}"`);
+}
+
+// waitForStage flips when the work agent is spawned, which on a loaded runner is
+// BEFORE the fixture writes its partial file. Poll the file so the stop always
+// lands on a dirty tree (the WIP commit git reset HEAD~1 later depends on).
+async function waitForFile(path: string, timeoutMs = 5000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (existsSync(path)) return;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  throw new Error(`timed out waiting for file "${path}"`);
 }
 
 // Persistence is fire-and-forget (settle() doesn't await the insert), so the
@@ -493,6 +505,7 @@ describe("forge run resume", () => {
     // Wait for work stage to start and write partial files.
     // Fixed sleeps flake under CPU contention; poll stage instead.
     await waitForStage(runId, "work");
+    await waitForFile(join(sandboxRoot, ticket.id, "partial.txt"));
 
     // Simulate process kill: stop the run, wait for it to settle, then UPDATE
     // the DB row to "interrupted" as if it hadn't settled cleanly (simulating

@@ -118,6 +118,18 @@ async function waitForStage(runId: string, stage: string, timeoutMs = 5000): Pro
   throw new Error(`timed out waiting for stage "${stage}"`);
 }
 
+// waitForStage flips when the work agent is spawned, which on a loaded runner is
+// BEFORE the fixture writes its partial file. Poll the file so a stop can't land
+// on a still-clean tree. Bounded; no sleeps.
+async function waitForFile(path: string, timeoutMs = 5000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (existsSync(path)) return;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  throw new Error(`timed out waiting for file "${path}"`);
+}
+
 // Persistence is fire-and-forget (settle() doesn't await the insert), so the
 // row can land a tick or two after awaitRun resolves. Poll instead of racing.
 async function waitForPersistedRun(runId: string, timeoutMs = 5000) {
@@ -487,6 +499,7 @@ describe("forge run manager", () => {
     });
 
     await waitForStage(runId, "work");
+    await waitForFile(join(sandboxRoot, ticket.id, "partial.txt"));
     expect(await stopRun(runId)).toBe(true);
     await awaitRun(runId);
 

@@ -31,7 +31,18 @@ test("completed turn ingests transcript; second turn re-ingests without duplicat
 
   await runTurn(actor, sess.id, `user asks ${marker}`);
 
-  const hits1 = await searchKnowledge(marker, { limit: 20 });
+  // Root cause of the under-load flake: the fake embedder hashes chunk text, so a
+  // bare `marker` query embeds to a vector at RANDOM cosine distance from the stored
+  // transcript chunk. The self-match only reaches the ANN candidate pool while the
+  // shared `embeddings` table is near-empty. Under full-suite parallel load, other
+  // files' dim=1024 rows fill this unscoped global search (no projectId => no scope
+  // filter) and evict it from top-k (mechanism per tests/global-setup.ts:6-10).
+  // Query the EXACT indexed chunk text: identical vector => cosine distance 0 =>
+  // ranks first regardless of how many foreign rows accumulate. No secrets here, so
+  // the stored redacted content equals the embedded input.
+  const [chunk] = await db.select({ content: embeddings.content }).from(embeddings)
+    .where(and(eq(embeddings.sourceKind, "chat"), eq(embeddings.sourceRef, sess.id), eq(embeddings.chunkIndex, 0)));
+  const hits1 = await searchKnowledge(chunk.content, { limit: 20 });
   expect(hits1.some((h) => h.sourceRef === sess.id && h.sourceKind === "chat")).toBe(true);
   const c1 = await chunkCount(sess.id);
   expect(c1).toBeGreaterThan(0);

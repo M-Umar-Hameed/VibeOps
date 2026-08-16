@@ -1,0 +1,99 @@
+# VibeOps Architecture Optimization Plan
+
+## 1. EXECUTIVE SUMMARY
+
+1. **Per-platform sidecar payloads + dead-weight strip** — payload 502.5MB → ~140-165MB per platform; .deb ~234MB → ~100-120MB, setup.exe 147MB → ~85MB (tauri.conf.json:52, build-server.mjs:35-53).
+2. **Fix the Linux updater manifest (one line)** — Linux clients currently receive no updates at all; `platformFor()` misses `.AppImage.sig` (scripts/updater-manifest.mjs:41).
+3. **Isolate agent runs from the API process lifecycle** — detached spawns, file logs, DB heartbeats, reattach on boot; restarts stop killing in-flight runs (src/forge/runs.ts:108, https://nodejs.org/api/child_process.html#optionsdetached).
+4. **Enforce single-open on PGlite** — OS lockfile + Tauri single-instance + Rust-owned sidecar lifetime; closes the 4x-corruption vector (src/db/lifecycle.ts:57-62, https://github.com/electric-sql/pglite/pull/892).
+5. **SSE push + incremental chat embedding** — UI steady state drops from ~3 req/s to ~0; chat embedding goes O(n²) → O(new content) (app/src/routes/forge.tsx:373, src/chat/turns.ts:119-123, https://hono.dev/docs/helpers/streaming).
+
+## 2. QUICK WINS (days, low risk)
+
+**QW1 — Linux updater fix.**
+What: teach `platformFor()` to recognize `VibeOps_X_amd64.AppImage.sig`. Why: v0.1.2 latest.json contains only darwin-aarch64 and windows-x86_64 (verified by download) — Linux users are stranded on old builds (scripts/updater-manifest.mjs:41). How: add the `.AppImage.sig` pattern; add a CI assertion that latest.json contains all three platforms. Gain: Linux auto-update works at all. Risk: none.
+
+**QW2 — Unconditional payload strip.**
+What: delete `onnxruntime-web` (128.2MB — browser WASM builds a Node sidecar can never load), `@types` + `undici-types` (2.5MB) in build-server.mjs alongside the existing CUDA strip (build-server.mjs:68-77). Gain: ~131MB off every artifact. Risk: transformers.js resolves its ORT backend at runtime — verify the sidecar boots and embeds after removal; if a bare `require` survives, leave a stub package.json. One smoke test, not a project.
+
+**QW3 — Per-CI-leg platform prune.**
+What: in each release matrix leg, delete the other platforms' `onnxruntime-node/bin` dirs (keep target only, 210.1MB → ≤64MB), foreign `@img` sharp trees, and 4 of 5 ripgrep vendors before `tauri build`. Why: the deliberate win+linux merge (build-server.mjs:42-53) ships everything everywhere via the resources glob (tauri.conf.json:52). How: a ~30-line prune script keyed on `runner.os`. Gain: ~200-240MB off each payload on top of QW2; also shortens the 15m Windows leg (upload-dominated, gh run 31865921413). Risk: low — pure deletion of provably foreign binaries; keep a boot smoke test per leg. This is the cheap precursor to S1.
+
+**QW4 — Incremental chat embedding + repo hash gate.**
+What: stop re-embedding the whole transcript every turn (turns.ts:119-123 → upsertSourceDoc deletes and re-embeds all chunks, knowledge.ts:37-60). How: per-chunk contentHash comparison inside upsertSourceDoc — reuse rows whose hash is unchanged, embed only changed/new chunks. Transcripts are append-mostly, so only tail chunks change. Apply the same hash gate to indexRepoDocs (knowledge.ts:125-151, self-marked ponytail ceiling). Gain: chat embed cost O(n²) → O(new); repo re-index becomes a hash scan. Risk: low; the vault/session paths already prove the hash-gate pattern (src/ingest/watch.ts:31-40).
+
+**QW5 — frontendDeps junction overlay.**
+What: replace the full dereferencing copy of app/node_modules per sandbox (sandbox.ts:153-158, marked `ponytail: disk-hungry`) with per-top-level-package junctions — the upgrade path the comment itself names. Gain: sandbox creation seconds instead of tens of seconds, no hundreds of MB per sandbox, no failing recursive deletes on Windows cleanup (sandbox.ts:395-405). Risk: a tool writing through a junction mutates the base repo — the existing deps-leak detector (sandbox.ts:446-484) is the backstop; note its nested-edit blind spot stays (sandbox.ts:443-445).
+
+**QW6 — Middleware and list N+1 hygiene.**
+What: (a) cache `cors.origins` and resolved actors in memory, invalidated on settings/actor writes — both are read per request today, including every 1s poll (app.ts:67 self-noted ponytail, auth.ts:50); (b) kill the client N+1: forge.tsx fetches one `/sandbox` per review ticket in a serial loop every 5s (forge.tsx:87-99) — include sandbox status in the tickets response server-side; (c) batch the per-run enrichment in listRunsWithHistory (verification + durations + comments per row × 40, runs.ts:957-979) into set-based queries. Gain: most per-poll DB work disappears even before SSE lands. Risk: cache invalidation bugs — keep TTL 5-10s as a belt-and-braces bound.
+
+**QW7 — Virtualized output pane.**
+What: react-virtuoso (`followOutput`) for run/chat/council output; store chunks in an array instead of `setRunOutput(prev => prev + chunk)` re-rendering the whole 1362-line ForgeScreen and repainting the full transcript per tick (forge.tsx:331, 1031-1033); replaces the setTimeout(10) force-scroll copy-pasted across three routes (forge.tsx:332-336, chat.tsx:79-83, create.tsx:201-202). Gain: O(n²) append cost gone; scroll-follow correct (respects user scroll-up). Risk: one new dep, actively maintained (v4.18.11, https://github.com/petyosi/react-virtuoso). It owns the scroll DOM — minor styling adjustment.
+
+**QW8 — Forge micro-parallelism + prompt-cache env.**
+What: `Promise.all` sandboxDiff + sandboxDiffSummary (runs.ts:700-701); compute sandboxRangePatch and sandboxDiffNames once in the gate and pass them (currently 4 redundant git spawns per review — gate.ts:195, 213, 278, 301). Set `ENABLE_PROMPT_CACHING_1H=1` in spawned-CLI env when on API-key auth — stages routinely idle >5m between plan approval and work start (https://code.claude.com/docs/en/prompt-caching). Gain: seconds per review, ~90% off cached input tokens on warm resumes. Risk: none.
+
+**QW9 — Boot snapshot dirty-check.**
+What: skip the ~450MB data-dir copy on every embedded boot when the previous shutdown was clean (postmaster.pid absent — the existing on-disk contract, lifecycle.ts:57-62) and the last snapshot is <24h old (client.ts:69-75, comment already flags this upgrade). Gain: seconds off every boot, less disk churn. Risk: slightly staler snapshots — logical export every 6h (server.ts:56) still bounds loss.
+
+## 3. STRUCTURAL (weeks)
+
+**S1 — Per-platform sidecar payloads, properly.**
+What: replace the QW3 prune hack — each matrix leg runs its own single-target npm install (drop the win+linux merge at build-server.mjs:42-53), and per-platform Tauri config files (`tauri.windows.conf.json` / `tauri.linux.conf.json` / `tauri.macos.conf.json`) carry the resources entry; JSON merge patch replaces arrays, so each OS sees only its payload (https://v2.tauri.app/reference/config/). Optionally adopt the documented middle ground: esbuild-bundled JS + stock Node as `externalBin` with target-triple naming so platform selection is automatic (https://v2.tauri.app/learn/sidecar-nodejs/). Why: the double-ship is the whole 412MB story. Gain: installers roughly halve; every future update download halves too (updater always downloads the full artifact — no deltas exist, https://v2.tauri.app/plugin/updater/). Cost: ~1 week of CI/build work + per-platform smoke tests. Risk: config drift between three platform files — keep a size-budget assertion per artifact in CI.
+
+**S2 — Run-supervisor process isolation.**
+What: agent runs survive API restarts. Phase A (incremental): spawn agents `detached: true`, stdio to log files not pipes, `unref()`, persist `{pid, runId, logPath, startedAt}` to the forgeRuns table, heartbeat rows; on boot, re-attach via `process.kill(pid, 0)` + log tail instead of blanket-marking "interrupted" (runs.ts:1012-1023). Phase B: move spawning into a small unwatched supervisor process; dev watches only the API (`node --watch-path=./src/api` — use it without bare `--watch`, duplicate-restart bug nodejs/node#57124; or tsx watch with ignore globs). API and supervisor share state through the DB they already both write. Why: owner pain #2 — tsx watch restart or sidecar update kills every in-flight run because all run state lives in the in-memory `runs` Map (runs.ts:108); promote already has to order DB writes before merge to dodge the watcher (forge-routes.ts:316-331). Cost: the largest item on this list — output buffers and settle promises move out of process memory into files/DB; budget 2-3 weeks incremental. Phase A alone fixes the dev-loop pain. Risk: reattach edge cases (PID reuse, half-written logs) — mitigate with run-token in the child env checked on reattach.
+
+**S3 — Push-not-poll transport.**
+What: one `/events` SSE route via Hono's built-in `streamSSE`, fed by an in-process EventEmitter emitting run-stage/ticket/chat/council events; client opens one EventSource and maps event types to `invalidateQueries` keys; run output streams as SSE data events into the QW7 pane. Keep the existing offset-poll endpoints as the reconnect/fallback path — they already exist and cost nothing to retain. Why: forge active state is ~3 HTTP req/s (forge.tsx:373 1s output poll + 5s ticketsQ + 5s recoveryQ + 1s clock; list.tsx:26,31,32; create.tsx:187,213,247), each poll re-running auth/CORS DB reads. SSE is the right shape: push is one-directional, EventSource auto-reconnects, zero new deps, and the HTTP/2 chunked-encoding caveat is irrelevant on localhost HTTP/1.1 (https://hono.dev/docs/helpers/streaming; invalidation pattern: https://ollioddi.dev/blog/tanstack-sse-guide). Cost: ~1-2 days server, 2-3 days removing pollers. Risk: low; fallback stays.
+
+**S4 — Single-writer DB hardening.**
+What: (a) verify the installed PGlite version includes the NodeFS data-dir lock (PR #892) so a second opener is rejected, not corrupting (https://github.com/electric-sql/pglite/pull/892 — corruption class: issues #324/#327); (b) take an OS-level exclusive lock with heartbeat via proper-lockfile — never a time-based stale steal, which has itself corrupted live processes per research; (c) tauri-plugin-single-instance so a second app launch focuses the running window instead of racing a second sidecar at the same data dir (https://v2.tauri.app/plugin/single-instance/); (d) spawn the sidecar from Rust setup with lifetime tied to app exit, tray + `prevent_close`/`prevent_exit` so closing the window doesn't kill the DB mid-write. Why: owner pain #1, paid four times. Cost: ~1 week across Rust + Node. Risk: low — all boring, documented patterns. Backup story: promote the 6h logical export + an on-demand export endpoint to primary backup; the stop-the-app snapshot demotes to QW9's dirty-checked safety net.
+
+**S5 — Knowledge scope + index hygiene.**
+What: replace the unindexable regex scope filter (`source_ref !~ '^[0-9a-fA-F-]{36}:'`, knowledge.ts:185-195) with a real indexed `project_id`/scope column + backfill migration; move the HNSW DDL from runtime-only ensureIndex (vector-setup.ts:8-15) into a drizzle migration so CLI imports aren't silently unindexed. For the post-ANN-filter recall hotspot (knowledge.ts:210-231): a scope column shrinks the filtered fraction, and ef_search/oversample can scale with row count — whether PGlite's pgvector supports iterative index scans is **unverified; inconclusive** — measure recall before building anything (see §6). Cost: one migration + backfill, ~2-3 days. Risk: backfill correctness — write the classifier once, test against the existing regex output.
+
+**S6 — Review-lane context budgeting.**
+What: reviewer stays a cold, diff-scoped session (it already gets diff + plan artifact — keep it that way); when the diff exceeds DIFF_PROMPT_CAP=40k (runs.ts:48), chunk the review per-directory rather than stat+truncate — first-party guidance says small fresh contexts beat big ones on cost and latency (https://code.claude.com/docs/en/prompt-caching, https://code.claude.com/docs/en/agent-sdk/sessions); adopt structured outputs (Zod schemas for verdict/findings) on the SDK lane to kill parse-retry re-reads — GA on the platform, not exposed to CLI lanes, where a strict-JSON prompt + one repair retry is the 80% fix (https://platform.claude.com/docs/en/build-with-claude/structured-outputs). Resume policy: resume/fork within a run (warm cache), fresh-seed from PGlite artifacts across runs or CLI upgrades. Cost: sidecar orchestration only. Risk: chunked review can miss cross-directory issues — keep the whole-diff stat summary in every chunk's preamble.
+
+**S7 — Frontend render structure.**
+What: decompose ForgeScreen (1362 lines, ~30 useState at top level — every tick re-renders everything) into subscription-scoped children using TanStack Query `select` so unchanged slices skip render (https://tanstack.com/query/v5/docs/framework/react/guides/render-optimizations); enable React Compiler 1.0 (React 19 already in place; run the compiler lint first, https://react.dev/blog/2025/10/07/react-compiler-1); route-level `lazy()` on the heavy screens in the existing code-based router. Gain: poll/event ticks stop repainting the world; 569KB single chunk splits. Cost: 1-2 weeks, incremental per-surface. Risk: low; compiler requires Rules-of-React-clean components — lint findings become the worklist.
+
+## 4. FOUNDATIONAL (only-if-needed)
+
+**F1 — Swap PGlite for embedded-postgres (real postmaster + pgvector).** Trigger: any corruption event after S4 lands, or a real need for concurrent external access / pg_dump-grade online backup. It is the architecturally correct fix (postmaster.pid locking, production WAL, actual pgvector HNSW) and drizzle schema/migrations carry over unchanged — but it costs ~30-50MB/platform, a managed child process, and Windows pgvector verification (https://github.com/leinelissen/embedded-postgres). Don't pay this while S4 holds.
+
+**F2 — Embedding model upgrade: snowflake-arctic-embed-xs.** Trigger: measured retrieval misses on a curated eval set (build it first — §6). Same 384 dims, so padding and dim-discriminator logic (embedder.ts:58-75) are untouched; change model id + revision, background re-embed, verify CLS pooling (https://huggingface.co/Snowflake/snowflake-arctic-embed-xs). ~8-point MTEB retrieval jump at MiniLM cost. Fold in the native-384 column change here (drop the zero-pad — 62.5% of vector storage/CPU wasted today, schema.ts:87) since a re-embed forces a rewrite anyway.
+
+**F3 — EmbeddingGemma-300m.** Trigger: F2 shipped and retrieval quality is still a felt pain, and ~300MB download + slower CPU inference is acceptable (https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX). Matryoshka-256 keeps rows small.
+
+**F4 — Compile sidecar to a single binary (bun --compile / Node SEA).** Trigger: installer size still a complaint after S1, and PGlite's WASM asset resolution is proven under the compiled runtime (the known risk, https://v2.tauri.app/develop/sidecar/). S1's stock-node middle ground is the pragmatic stop; this is the last ~50MB.
+
+**F5 — Local OSS work lane (qwen3-coder:30b behind a flag).** Trigger: monthly cloud work-lane spend (from ai_usage_logs) stays high after QW8/S6 caching, and only on the simplest ticket class. Tool-call reliability of local models multiplies review-gate failures, eating the savings (https://www.morphllm.com/best-ollama-models); spike, don't default.
+
+**F6 — WebSockets (@hono/node-server v2 upgradeWebSocket).** Trigger: a genuine client→server streaming need appears (interactive agent steering). SSE covers everything shipped today (https://github.com/honojs/node-server).
+
+## 5. EXPLICIT REJECTIONS
+
+- **DuckDB + vss as primary store** — HNSW persistence is experimental and WAL recovery for the index is unimplemented: the exact durability failure class already paid for four times (https://duckdb.org/docs/current/core_extensions/vss).
+- **libSQL or better-sqlite3 + sqlite-vec migration** — full SQL-dialect and schema rewrite for a durability gain embedded-postgres (F1) delivers at zero schema cost; sqlite-vec is pre-v1 with brute-force-only search (https://github.com/asg017/sqlite-vec, https://docs.turso.tech/features/ai-and-embeddings).
+- **fastembed-js** — duplicates what @huggingface/transformers already does in-repo, adds a second onnxruntime consumer and another native binary to the payload (https://github.com/Anush008/fastembed-js).
+- **uWebSockets.js** — 100k-socket native-addon machinery for an app with exactly one local client; GitHub-only install; can't sit behind @hono/node-server (https://github.com/uNetworking/uWebSockets.js/releases).
+- **crossws** — pre-1.0 API churn purchased for cross-runtime portability a Node-only sidecar never needs (https://github.com/h3js/crossws).
+- **PM2/systemd-class process managers** — PM2's tree-kill SIGTERMs detached grandchildren on restart, the opposite of run survival; plain-Node supervisor per S2 (https://github.com/Unitech/PM2/issues/1036).
+- **Custom split shell/sidecar delta-updater** — your own signing/rollback machinery to save bandwidth that S1 already cuts to ~100MB per update; and do not plan around Tauri delta updates arriving (no committed timeline, https://v2.tauri.app/plugin/updater/).
+- **File-based router migration just for autoCodeSplitting** — the feature is file-based-only, and on a local app code splitting buys parse/memory, not network; manual `lazy()` captures most of it (https://tanstack.com/router/latest/docs/framework/react/guide/automatic-code-splitting).
+- **Raising DIFF_PROMPT_CAP** — a bigger single review prompt is the expensive uncached path; chunk per-directory instead (S6, https://code.claude.com/docs/en/prompt-caching).
+
+## 6. MEASUREMENT FIRST
+
+Baselines already in hand (keep them recorded): dist-server 502.5MB; artifacts 147/233.8/299.8/219.8MB; release wall 15m47s; forge steady state ~3 req/s; bundle 568,906B.
+
+Add before Quick Wins: (a) a request-counter middleware logging req/min per route — the before/after for QW6 and S3; (b) boot-phase timings (snapshot ms, WAL replay ms, ensureIndex ms) around server.ts:25,50-64 — the before/after for QW9 and the S4 health signal; (c) a counter at markInterruptedRuns (runs.ts:1012) — interrupted-runs-per-week is THE metric for S2 (target: ~0 outside real crashes); (d) embeddings-created-per-turn logged in upsertSourceDoc — before/after for QW4; (e) cache_read token share and per-stage durations from ai_usage_logs (deriveStageDurations already exists) — before/after for QW8/S6; (f) sandbox create/cleanup duration log — before/after for QW5.
+
+Gate each tier in CI: per-artifact size budget assertion (fails if a platform payload regresses toward the merge); latest.json must contain all three platforms (QW1 regression guard); rollup-plugin-visualizer as a dev script for S7 (one dep, stop there — https://tailwindcss.com/blog/tailwindcss-v4 analyzers section).
+
+Foundational triggers are measurement-defined: a 20-50-query retrieval eval set with expected hits (drives F2/F3 and validates the S5 recall concern — the pgvector-iterative-scan question is unresolved, so measure recall at 10x current row count before designing anything); monthly $ per lane from ai_usage_logs (drives F5); corruption incidents post-S4 (drives F1).
+
+Test suite (owner pain, not covered by the code readers — honestly inconclusive): before touching anything, instrument per-file timings in both lanes; the vitest lane already runs postgres-js not PGlite (src/db/client.ts:10-27), so first find out whether the serial embedded lane's 3-4x cost is PGlite open/close overhead or test serialization, and which three tests are load-fragile and why. No recommendation until that data exists.

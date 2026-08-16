@@ -386,15 +386,16 @@ app.post("/knowledge/obsidian/stop", requireAdmin, async (c) => {
 app.post("/ingest/sessions", requireAdmin, async (c) => {
   const { sinceDays } = await c.req.json().catch(() => ({}));
   const days = Number.isFinite(Number(sinceDays)) && Number(sinceDays) >= 0 ? Number(sinceDays) : 30;
-  const { ingestSessions } = await import("../ingest/sessions/ingest.js");
+  const { ingestSessionsSerialized } = await import("../ingest/sessions/ingest.js");
   const { makeClaudeMemSource } = await import("../ingest/sessions/claude-mem.js");
   const { makeClaudeCodeSource } = await import("../ingest/sessions/claude-code.js");
   const { makeCodexSource } = await import("../ingest/sessions/codex.js");
   const { makeAntigravitySource } = await import("../ingest/sessions/antigravity.js");
-  const summary = await ingestSessions(
+  const summary = await ingestSessionsSerialized(
     [makeClaudeMemSource(), makeClaudeCodeSource(), makeCodexSource(), makeAntigravitySource()],
     getEmbedder(), days,
   );
+  if (!summary) return c.json({ skipped: "sync already running" }, 409);
   return c.json(summary);
 });
 

@@ -33,3 +33,21 @@ export async function ingestSessions(
   }
   return result;
 }
+
+// Single in-process guard shared by the manual Sync route and the auto-sync timer:
+// if one run holds it, the other skips (returns null) rather than double-ingesting.
+let sessionIngestRunning = false;
+
+export async function ingestSessionsSerialized(
+  sources: SessionSource[],
+  embedder: Embedder = getEmbedder(),
+  sinceDays = 30,
+): Promise<Record<string, { indexed: number; skipped: number; failed: number }> | null> {
+  if (sessionIngestRunning) return null;
+  sessionIngestRunning = true;
+  try {
+    return await ingestSessions(sources, embedder, sinceDays);
+  } finally {
+    sessionIngestRunning = false;
+  }
+}

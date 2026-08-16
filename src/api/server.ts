@@ -5,6 +5,7 @@ import { runBootstrap } from "../bootstrap.js";
 import { ensureIndex } from "../db/vector-setup.js";
 import { applyEnvSettings } from "../services/settings.js";
 import { startWatcher, rescanProjectVaults } from "../ingest/watch.js";
+import { startSessionAutoSync } from "../ingest/sessions/auto-sync.js";
 import { reapStaleTickets } from "../services/reaper.js";
 import { markInterruptedRuns } from "../forge/runs.js";
 import { restoreCouncilSessions } from "../council/runs.js";
@@ -69,30 +70,11 @@ async function bootNormally() {
   }
   void handleInterruptedRuns().catch(() => {});
 
-  // Sessions auto-ingest (opt-out via setting sessions.autoSync = "false"): the
-  // manual Sync button stays for on-demand runs; incremental 1-day window keeps
-  // the boot pass cheap. Never blocks or crashes boot.
-  async function autoSyncSessions(): Promise<void> {
-    try {
-      const { getSetting } = await import("../services/settings.js");
-      if ((await getSetting("sessions.autoSync")) === "false") return;
-      const { ingestSessions } = await import("../ingest/sessions/ingest.js");
-      const { makeClaudeMemSource } = await import("../ingest/sessions/claude-mem.js");
-      const { makeClaudeCodeSource } = await import("../ingest/sessions/claude-code.js");
-      const { makeCodexSource } = await import("../ingest/sessions/codex.js");
-      const { makeAntigravitySource } = await import("../ingest/sessions/antigravity.js");
-      const { getEmbedder } = await import("../knowledge/embedder.js");
-      const summary = await ingestSessions(
-        [makeClaudeMemSource(), makeClaudeCodeSource(), makeCodexSource(), makeAntigravitySource()],
-        getEmbedder(), 1,
-      );
-      console.log(`sessions auto-sync: ${JSON.stringify(summary)}`);
-    } catch (e) {
-      console.warn(`sessions auto-sync failed: ${(e as Error).message}`);
-    }
-  }
-  void autoSyncSessions();
-  setInterval(() => void autoSyncSessions(), 6 * 60 * 60_000).unref();
+  // Sessions auto-ingest on a 30-min interval (opt-out via setting
+  // sessions.autoSync="false"; interval via sessions.autoSyncIntervalMs). Serialized
+  // with the manual Sync button so the two never double-ingest. Never blocks boot.
+  void startSessionAutoSync({ runNow: true })
+    .catch((e) => console.warn(`sessions auto-sync failed to start: ${(e as Error).message}`));
   // Embedded (installed desktop) mode is loopback-only; external-Postgres deployments
   // legitimately serve other hosts.
   // overrideGlobalObjects:false — hono's lightweight global Response breaks

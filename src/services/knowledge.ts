@@ -382,9 +382,14 @@ export async function knowledgeGraph(limit = 60, projectId?: string, refs?: stri
       : dsql`WHERE ${globalScopeWhere()}`;
     const projectRows = unwrap(await groupQuery(projectWhere));
     const globalRows = unwrap(await groupQuery(globalWhere));
-    // ponytail: project block first, globals fill the rest. If a project ever
-    // exceeds `limit` nodes globals get 0 here; add a reserved global floor then.
-    rows = [...projectRows, ...globalRows].slice(0, limit);
+    // Reserve a floor for global (shared vault/session) nodes so shared knowledge
+    // stays visible even when a project has more than `limit` nodes; project-first
+    // for the remaining budget, newest-first within each group.
+    const GLOBAL_FLOOR = Math.floor(limit * 0.25);
+    const reservedGlobal = globalRows.slice(0, GLOBAL_FLOOR);
+    const projectTake = projectRows.slice(0, limit - reservedGlobal.length);
+    const extraGlobal = globalRows.slice(reservedGlobal.length, limit - projectTake.length);
+    rows = [...projectTake, ...reservedGlobal, ...extraGlobal].slice(0, limit);
   } else {
     // Fair-share the budget across kinds so the high-volume, always-newest
     // session stream can't starve vault/note/repo (which plain newest-first-

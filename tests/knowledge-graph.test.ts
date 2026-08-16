@@ -158,3 +158,24 @@ test("knowledgeGraph() no-project fair-shares budget across all four kinds", asy
     expect(ids.has(e.b)).toBe(true);
   }
 });
+
+test("knowledgeGraph(projectId) reserves a global floor: 55 repo + 28 global at limit 60", async () => {
+  const proj = randomUUID();
+  const stamp = Date.now();
+  const refs: string[] = [];
+  for (let i = 0; i < 55; i++) {
+    const r = `${proj}:floor-repo-${i}-${stamp}.md`;
+    await upsertSourceDoc("repo", r, `repo doc ${i}`, emb);
+    refs.push(r);
+  }
+  for (let i = 0; i < 28; i++) {
+    const r = `floor-sess-${i}-${stamp}`;
+    await upsertSourceDoc("session", r, `session ${i}`, emb);
+    refs.push(r);
+  }
+  const res = await knowledgeGraph(60, proj, refs);
+  const globalCount = res.nodes.filter((n) => !(n.kind === "repo" && n.id.startsWith(`${proj}:`))).length;
+  expect(globalCount).toBeGreaterThanOrEqual(Math.floor(60 * 0.25)); // >= 15
+  expect(res.nodes.length).toBe(60);
+});
+

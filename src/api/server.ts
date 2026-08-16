@@ -1,6 +1,6 @@
 import { serve } from "@hono/node-server";
 import { app } from "./app.js";
-import { isEmbedded, closeDb, embeddedDbError, db } from "../db/client.js";
+import { isEmbedded, closeDb, embeddedDbError, embeddedDbLockError, db } from "../db/client.js";
 import { runBootstrap } from "../bootstrap.js";
 import { ensureIndex } from "../db/vector-setup.js";
 import { applyEnvSettings } from "../services/settings.js";
@@ -13,6 +13,11 @@ import { configureExport } from "../services/export-debounce.js";
 import { timing } from "../services/metrics.js";
 
 const port = Number(process.env.PORT ?? 8787);
+
+if (embeddedDbLockError) {
+  console.error(embeddedDbLockError.message);
+  process.exit(1);
+}
 
 if (embeddedDbError) {
   const { serveDegraded } = await import("./degraded.js");

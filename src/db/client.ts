@@ -17,6 +17,7 @@ export const sql = postgres(url ?? "postgres://tickets:tickets@localhost:5433/ti
 
 export let db!: ReturnType<typeof drizzlePg<typeof schema>>;
 export let embeddedDbError: import("./lifecycle.js").EmbeddedDbOpenError | null = null;
+export let embeddedDbLockError: import("./lifecycle.js").EmbeddedDbLockedError | null = null;
 let embeddedClient: import("@electric-sql/pglite").PGlite | null = null;
 let embeddedDataDir: string | null = null;
 let embeddedPrevShutdownClean = false;
@@ -31,7 +32,7 @@ async function makeDb(): Promise<void> {
   const { vector } = await import("@electric-sql/pglite/vector");
   const { drizzle: drizzlePglite } = await import("drizzle-orm/pglite");
   const { migrate } = await import("drizzle-orm/pglite/migrator");
-  const { openEmbedded, EmbeddedDbOpenError, closeEmbedded } = await import("./lifecycle.js");
+  const { openEmbedded, EmbeddedDbOpenError, EmbeddedDbLockedError, closeEmbedded } = await import("./lifecycle.js");
   // PGlite's mkdir is not recursive; create the data dir (and ~/.vibeops) first.
   const dataDir = resolveEmbeddedDataDir();
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
@@ -46,6 +47,12 @@ async function makeDb(): Promise<void> {
       now: () => new Date().toISOString().replace(/[:.]/g, "-"),
     }));
   } catch (e) {
+    // Another process owns the data dir: record it; server.ts prints a clean
+    // startup message and exits rather than dumping a stack trace.
+    if (e instanceof EmbeddedDbLockedError) {
+      embeddedDbLockError = e;
+      return;
+    }
     // Corrupt cluster: do NOT crash the sidecar. Record it; server.ts serves a
     // degraded diagnostic so the failure reaches the user, not just stderr.
     if (e instanceof EmbeddedDbOpenError) {

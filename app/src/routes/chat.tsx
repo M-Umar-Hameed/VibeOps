@@ -25,12 +25,14 @@ type SessionDetail = {
   messages: ChatMessage[];
 };
 
+type RosterEntry = { agent: string; toolCapable: boolean; models: { name: string }[] };
+
 export function ChatScreen() {
   const queryClient = useQueryClient();
   const { activeProjectId, projects } = useProject();
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [input, setInput] = useState("");
-  const [model, setModel] = useState<"sonnet" | "opus">("sonnet");
+  const [model, setModel] = useState<string>("sonnet");
   const [isSending, setIsSending] = useState(false);
   const [liveOutput, setLiveOutput] = useState("");
   const [error, setError] = useState("");
@@ -42,6 +44,11 @@ export function ChatScreen() {
     queryFn: () => api.get("/chat/sessions") as Promise<ChatSession[]>,
   });
 
+  const { data: roster = [] } = useQuery<RosterEntry[]>({
+    queryKey: ["chat", "models"],
+    queryFn: () => api.get("/chat/models") as Promise<RosterEntry[]>,
+  });
+
   const { data: detail, refetch: refetchDetail } = useQuery<SessionDetail>({
     queryKey: ["chat", "session", selectedSessionId],
     queryFn: () => api.get(`/chat/sessions/${selectedSessionId}`) as Promise<SessionDetail>,
@@ -49,10 +56,13 @@ export function ChatScreen() {
   });
 
   useEffect(() => {
-    if (detail?.session?.model) {
-      setModel(detail.session.model as "sonnet" | "opus");
-    }
+    if (detail?.session?.model) setModel(detail.session.model);
   }, [detail?.session?.model]);
+
+  // Legacy 'sonnet'/'opus' (no '::') are the sdk lane and tool-capable.
+  const selectedToolCapable =
+    !model.includes("::") ||
+    roster.some((r) => r.toolCapable && r.models.some((m) => `${r.agent}::${m.name}` === model));
 
   // Poll for output while sending
   useEffect(() => {
@@ -178,11 +188,24 @@ export function ChatScreen() {
               </h2>
               <select
                 value={model}
-                onChange={(e) => setModel(e.target.value as "sonnet" | "opus")}
+                onChange={(e) => setModel(e.target.value)}
                 className="bg-surface-container-highest text-on-surface rounded px-2 py-1 text-sm border border-white/10"
               >
-                <option value="sonnet">Sonnet</option>
-                <option value="opus">Opus</option>
+                {roster.length === 0 && (
+                  <>
+                    <option value="sonnet">Sonnet</option>
+                    <option value="opus">Opus</option>
+                  </>
+                )}
+                {roster.map((r) => (
+                  <optgroup key={r.agent} label={r.toolCapable ? `${r.agent} · tools` : r.agent}>
+                    {r.models.map((m) => (
+                      <option key={`${r.agent}::${m.name}`} value={`${r.agent}::${m.name}`}>
+                        {m.name}{r.toolCapable ? " · tools" : ""}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
               </select>
             </div>
 
@@ -229,6 +252,11 @@ export function ChatScreen() {
             <div className="p-4 border-t border-white/10">
               {error && (
                 <div className="mb-2 text-error text-sm">{error}</div>
+              )}
+              {!selectedToolCapable && (detail?.messages?.length ?? 0) === 0 && (
+                <div className="mb-2 text-xs text-on-surface-variant">
+                  Tools (knowledge search, browser) are unavailable on this model.
+                </div>
               )}
               <div className="flex gap-2">
                 <textarea

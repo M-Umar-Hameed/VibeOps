@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { app } from "../src/api/app.js";
 import { createActor } from "../src/services/actors.js";
 import { setChatAgent } from "../src/chat/turns.js";
@@ -22,8 +25,30 @@ async function memberHeaders(): Promise<Record<string, string>> {
 
 describe("chat API", () => {
   afterEach(() => {
-    // Reset agent to prevent test pollution
     setChatAgent(async () => ({ ok: true, text: "default" }));
+    delete process.env.VIBEOPS_RELAY_CONFIG;
+  });
+
+  it("GET /chat/models returns the roster with only the sdk lane toolCapable", async () => {
+    const cfgPath = join(mkdtempSync(join(tmpdir(), "chat-models-cfg-")), "relay.json");
+    writeFileSync(cfgPath, JSON.stringify({
+      workdir: tmpdir(),
+      agents: {
+        "claude-sdk": { cmd: ["claude"], type: "sdk", roles: ["work"], models: [{ name: "opus", tier: "expensive", quality: 5 }] },
+        agy: { cmd: ["agy", "{model}"], roles: ["plan", "work"], models: [{ name: "flash", tier: "cheap", quality: 3 }] },
+      },
+    }));
+    process.env.VIBEOPS_RELAY_CONFIG = cfgPath;
+
+    const h = await adminHeaders();
+    const res = await app.request("/chat/models", { headers: h });
+    expect(res.status).toBe(200);
+    const roster = await res.json();
+    const sdk = roster.find((r: any) => r.agent === "claude-sdk");
+    const cli = roster.find((r: any) => r.agent === "agy");
+    expect(sdk.toolCapable).toBe(true);
+    expect(cli.toolCapable).toBe(false);
+    expect(cli.models).toEqual([{ name: "flash" }]);
   });
 
   it("POST /chat/sessions creates a session", async () => {

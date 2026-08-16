@@ -136,6 +136,10 @@ jobs:
           name: appimage-build-log
           path: appimage-build.log
           if-no-files-found: warn
+
+      - name: Assert artifact size budgets
+        run: node scripts/assert-release.mjs budget app/src-tauri/target/release/bundle
+
       # macOS updater downloads the .app.tar.gz, not the .app or .dmg; without it
       # latest.json points at a URL that 404s. deb/AppImage cover the Linux bundles.
       - name: Upload build artifacts
@@ -207,6 +211,9 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --out latest.json
           cat latest.json
+
+      - name: Assert manifest completeness
+        run: node scripts/assert-release.mjs manifest latest.json
 
       - name: Publish latest.json to the release
         uses: softprops/action-gh-release@v2

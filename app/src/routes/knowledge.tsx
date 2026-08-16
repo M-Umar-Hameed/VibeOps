@@ -22,6 +22,7 @@ const KIND_STYLE: Record<string, { fill: string; shape: NodeShape }> = {
   note: { fill: "fill-secondary-container", shape: "square" },
   session: { fill: "fill-amber-400", shape: "triangle" },
   repo: { fill: "fill-emerald-400", shape: "diamond" },
+  chat: { fill: "fill-fuchsia-400", shape: "circle" },
 };
 
 function kindStyle(kind: string): { fill: string; shape: NodeShape } {
@@ -158,7 +159,7 @@ export function KnowledgeScreen() {
                     </g>
                   </svg>
                   <div className="absolute bottom-4 left-4 flex gap-4 font-code-label text-[10px] uppercase text-on-surface-variant bg-surface-container-high/80 p-2 rounded backdrop-blur border border-white/5">
-                    {([['vault', 'Vault'], ['note', 'Note'], ['session', 'Session'], ['repo', 'Repo']] as const).map(([kind, label]) => {
+                    {([['vault', 'Vault'], ['note', 'Note'], ['session', 'Session'], ['repo', 'Repo'], ['chat', 'Chat']] as const).map(([kind, label]) => {
                       const { fill, shape } = kindStyle(kind);
                       return (
                         <span key={kind} data-kind={kind} data-shape={shape} className="flex items-center gap-1.5">

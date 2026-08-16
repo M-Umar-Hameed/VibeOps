@@ -191,6 +191,12 @@ export const forgeRuns = pgTable('forge_runs', {
   protectedViolations: jsonb('protected_violations').$type<string[]>(),
   policyWaivedAt: timestamp('policy_waived_at', { withTimezone: true }),
   checksDurationMs: integer('checks_duration_ms'),
+  // S2-A1: process identity for restart reattach. pid is cleared on settle so a
+  // settled row never looks live; log_path/run_token are immutable per-run. All
+  // nullable — legacy rows and sdk-lane runs (no OS child) carry nulls.
+  pid: integer('pid'),
+  logPath: text('log_path'),
+  runToken: text('run_token'),
   startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
 });

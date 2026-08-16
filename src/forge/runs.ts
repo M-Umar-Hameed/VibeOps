@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getLessons, lessonsClause } from "./lessons.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { vibeopsHome } from "../runtime/home.js";
 import type { ChildProcess } from "node:child_process";
 import { resolveCmd, loadRelayConfig, type RelayConfig, type RelayAgent } from "../relay/config.js";
 import { pipelineStartWarnings, pipelineStartBlockingError } from "../relay/doctor.js";
@@ -98,6 +99,9 @@ type Run = {
   effort?: Effort;
   protectedViolations?: string[];
   checksDurationMs?: number;
+  pid?: number;        // OS pid of the current stage's agent child; cleared on settle
+  logPath: string;     // stable per-run log path (recorded only; reattach ticket writes it)
+  runToken: string;    // value of env VIBEOPS_RUN_TOKEN handed to every stage child
   output: string; startedAt: string; finishedAt?: string;
   child?: ChildProcess; // the in-flight agent CLI for the current stage, if any
   checksChild?: ChildProcess; // the concurrently-running checks command, if any
@@ -109,11 +113,11 @@ type Run = {
 
 const runs = new Map<string, Run>();
 
-export type RunSummary = Omit<Run, "output" | "child" | "checksChild" | "abort" | "stopped" | "done" | "persisted">;
+export type RunSummary = Omit<Run, "output" | "child" | "checksChild" | "abort" | "stopped" | "done" | "persisted" | "pid" | "logPath" | "runToken">;
 
 function summarize(r: Run): RunSummary {
-  const { output, child, checksChild, abort, stopped, done, ...rest } = r;
-  void output; void child; void checksChild; void abort; void stopped; void done;
+  const { output, child, checksChild, abort, stopped, done, pid, logPath, runToken, ...rest } = r;
+  void output; void child; void checksChild; void abort; void stopped; void done; void pid; void logPath; void runToken;
   return rest;
 }
 
@@ -143,6 +147,16 @@ function append(run: Run, text: string): void {
 function enterStage(run: Run, stage: Stage): void {
   run.stage = stage;
   emitEvent("run.stage", { runId: run.id, ticketId: run.ticketId, stage });
+}
+
+// Records the just-spawned stage child and persists its pid so a restart can find
+// the live OS process (S2-A1). Fire-and-forget persist, like settle()'s. Also
+// honours an already-requested stop, exactly as the inline callbacks it replaces.
+function recordSpawn(run: Run, child: ChildProcess): void {
+  run.child = child;
+  run.pid = child.pid;
+  void persistRun(run);
+  if (run.stopped) void killTree(child);
 }
 
 function activeRuns(): Run[] {
@@ -421,11 +435,26 @@ export async function startPipeline(
   }
 
 
+  const id = randomUUID();
+  const runToken = randomUUID();
+  // Stable per-run log path under ~/.vibeops/runs — NOT the sandbox (per-ticket and
+  // discarded, and absent during the plan stage). ponytail: only recorded here, not
+  // created or written; the reattach ticket tees child output to it.
+  const logPath = join(vibeopsHome(), ".vibeops", "runs", `${id}.log`);
+  // Same token to every stage child via env. New object per agent — these agents are
+  // shallow spreads of shared config, so never mutate the nested env in place (leaks
+  // across runs). sdk-lane agents ignore agent.env and have no OS child: no token, no
+  // pid (documented S2-A1 scope).
+  agents.plan.env = { ...agents.plan.env, VIBEOPS_RUN_TOKEN: runToken };
+  agents.work.env = { ...agents.work.env, VIBEOPS_RUN_TOKEN: runToken };
+  agents.review.env = { ...agents.review.env, VIBEOPS_RUN_TOKEN: runToken };
+
   const run: Run = {
-    id: randomUUID(), ticketId: opts.ticketId, stage: "plan", status: "running",
+    id, ticketId: opts.ticketId, stage: "plan", status: "running",
     agents: { plan: composite(planPick), work: composite(workPick), review: composite(reviewPick) },
     operatorNotes: opts.operatorNotes?.slice(0, MAX_OPERATOR_NOTES),
     effort: opts.effort,
+    logPath, runToken,
     output: "", startedAt: new Date().toISOString(), stopped: false,
     done: Promise.resolve(),
   };
@@ -504,7 +533,7 @@ async function pipeline(
     const planPrompt = composePlanPrompt({ ticket, knowledge }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra;
     const res = await track(actorId, ticket.id, "plan", run.agents.plan, planPrompt.length, () => runAgent(
       agents.plan, planPrompt, workdir, onData,
-      (child) => { run.child = child; if (run.stopped) void killTree(child); },
+      (child) => recordSpawn(run, child),
     ));
     run.child = undefined;
     if (run.stopped) return settle(run, "stopped");
@@ -557,7 +586,7 @@ async function pipeline(
   const sentinelSnaps = snapshotSensitive(resolveSensitivePaths(await getSetting("forge.sensitivePaths")));
   const workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
     runAgent(agents.work, workPrompt, sandbox, onData,
-      (child) => { run.child = child; if (run.stopped) void killTree(child); }, (abort) => { run.abort = abort; },
+      (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
       modelOf(run.agents.work)));
   run.child = undefined;
   run.abort = undefined;
@@ -642,6 +671,7 @@ function settle(run: Run, status: Status): void {
   run.status = status;
   run.finishedAt = new Date().toISOString();
   emitEvent("run.settled", { runId: run.id, ticketId: run.ticketId, status });
+  run.pid = undefined; // a settled row must never look live (S2-A1)
   // Still never allowed to break a pipeline, but the promise is kept so run.done
   // can await it. hasActiveRun consults the DB after the in-memory map goes quiet,
   // so until this row lands a settled run still reads as active. That gap used to
@@ -737,10 +767,7 @@ async function reviewStage(
     reviewAgent,
     reviewPrompt,
     workdir, onData,
-    (child) => {
-      run.child = child;
-      if (run.stopped) void killTree(child);
-    },
+    (child) => recordSpawn(run, child),
   ));
   const [checkResults, reviewRes] = await Promise.all([checksPromise, reviewPromise]);
   run.child = undefined;
@@ -795,11 +822,14 @@ async function persistRun(run: Run): Promise<void> {
       effort: run.effort ?? null,
       protectedViolations: run.protectedViolations ?? null,
       checksDurationMs: run.checksDurationMs ?? null,
+      pid: run.pid ?? null,
+      logPath: run.logPath,
+      runToken: run.runToken,
       startedAt: new Date(run.startedAt),
       finishedAt,
     }).onConflictDoUpdate({
       target: forgeRuns.id,
-      set: { status: run.status, stage: run.stage, finishedAt, protectedViolations: run.protectedViolations ?? null, checksDurationMs: run.checksDurationMs ?? null }
+      set: { status: run.status, stage: run.stage, finishedAt, protectedViolations: run.protectedViolations ?? null, checksDurationMs: run.checksDurationMs ?? null, pid: run.pid ?? null }
     });
   } catch (e) {
     console.warn(`forge: failed to persist run ${run.id}:`, (e as Error).message);

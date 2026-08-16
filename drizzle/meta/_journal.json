@@ -141,6 +141,13 @@
       "when": 1786859671082,
       "tag": "0019_tidy_energizer",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1786860678294,
+      "tag": "0020_busy_hercules",
+      "breakpoints": true
     }
   ]
 }

@@ -9,6 +9,12 @@ import { join, dirname } from "node:path";
 const prompt = process.argv[2] ?? "";
 void prompt;
 
+// S2-A1 test hook: record the VIBEOPS_RUN_TOKEN this child was spawned with, so a
+// test can assert the persisted run_token reached the child env.
+if (process.env.FAKE_TOKEN_OUT) {
+  writeFileSync(process.env.FAKE_TOKEN_OUT, process.env.VIBEOPS_RUN_TOKEN ?? "");
+}
+
 if (process.argv.includes("--version")) {
   console.log("fake-agent 1.0.0");
   process.exit(0);

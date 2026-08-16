@@ -15,6 +15,9 @@ export function LocalNodeTab({ rejected }: { rejected: boolean }) {
     getSettings().then((s) => {
       setBaseUrl(s.baseUrl);
       setApiKey(s.apiKey);
+      // Probe on load so the uplink readout shows truth instead of WAITING
+      // until someone thinks to press Test Link.
+      projects.list().then(() => setStatus("ok")).catch(() => setStatus("bad"));
     });
   }, []);
 

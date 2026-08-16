@@ -15,16 +15,33 @@ function text(s: string): TextResult {
   return { content: [{ type: "text" as const, text: s }] };
 }
 
+// The model has no way to learn an instanceId on its own (live incident: the
+// extension was linked and the agent still declared itself unable to connect).
+// Omitted id -> the single live instance; ambiguity or absence explains itself.
+function resolveInstance(instanceId: string | undefined): { id?: string; err?: string } {
+  const live = list();
+  if (!instanceId) {
+    if (live.length === 1) return { id: live[0].instanceId };
+    if (live.length === 0) return { err: "no browser extension is connected. Open the VibeOps Browser Agent extension settings and press Connect." };
+    return { err: `multiple browser instances connected - pass instanceId. Connected: ${live.map((i) => `${i.instanceId} (${i.profileLabel})`).join(", ")}` };
+  }
+  if (!exists(instanceId)) {
+    const connected = live.map((i) => i.instanceId).join(", ") || "none connected";
+    return { err: `no browser instance "${instanceId}". Connected: ${connected}` };
+  }
+  return { id: instanceId };
+}
+
 async function browserStep(
-  instanceId: string,
+  requestedId: string | undefined,
   steps: ActionStep[],
   name: string,
   rec: (name: string, input: unknown, summary: string) => void,
 ): Promise<TextResult> {
-  if (!exists(instanceId)) {
-    const connected = list().map((i) => i.instanceId).join(", ") || "none connected";
-    rec(name, { instanceId }, "no such instance");
-    return text(`no browser instance "${instanceId}". Connected: ${connected}`);
+  const { id: instanceId, err } = resolveInstance(requestedId);
+  if (!instanceId) {
+    rec(name, { instanceId: requestedId }, "no instance");
+    return text(err!);
   }
   const result = await submitBatch(instanceId, instanceId, steps);
   if (!result) {
@@ -77,25 +94,25 @@ export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: stri
     ),
     tool(
       "browser_snapshot",
-      "Snapshot a connected browser instance (read-only).",
-      { instanceId: z.string() },
+      "Snapshot the connected browser (read-only). instanceId optional when one browser is connected.",
+      { instanceId: z.string().optional() },
       async ({ instanceId }) => browserStep(instanceId, [{ verb: "snapshot" }], "browser_snapshot", rec),
     ),
     tool(
       "browser_read",
-      "Read an element by ref from a browser instance (read-only).",
-      { instanceId: z.string(), ref: z.string() },
+      "Read an element by ref (read-only). instanceId optional when one browser is connected.",
+      { instanceId: z.string().optional(), ref: z.string() },
       async ({ instanceId, ref }) => browserStep(instanceId, [{ verb: "read", ref }], "browser_read", rec),
     ),
     tool(
       "browser_act",
       "Run mutating steps (click/type/select/press) on a browser instance; requires an act grant for targetOrigin.",
-      { instanceId: z.string(), targetOrigin: z.string(), steps: z.array(z.any()) },
-      async ({ instanceId, targetOrigin, steps }) => {
-        if (!exists(instanceId)) {
-          const connected = list().map((i) => i.instanceId).join(", ") || "none connected";
-          rec("browser_act", { instanceId, targetOrigin }, "no such instance");
-          return text(`no browser instance "${instanceId}". Connected: ${connected}`);
+      { instanceId: z.string().optional(), targetOrigin: z.string(), steps: z.array(z.any()) },
+      async ({ instanceId: requestedId, targetOrigin, steps }) => {
+        const { id: instanceId, err } = resolveInstance(requestedId);
+        if (!instanceId) {
+          rec("browser_act", { instanceId: requestedId, targetOrigin }, "no instance");
+          return text(err!);
         }
         const v = validateSteps(steps);
         if (!v.ok) {

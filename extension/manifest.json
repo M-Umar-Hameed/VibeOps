@@ -1,14 +1,37 @@
 {
   "manifest_version": 3,
-  "name": "Tickets Browser Agent",
+  "name": "VibeOps Browser Agent",
   "version": "0.1.0",
-  "icons": { "16": "icon-16.png", "48": "icon-48.png", "128": "icon-128.png" },
-  "action": { "default_title": "Tickets Browser Agent - open settings" },
-  "permissions": ["storage", "activeTab", "scripting"],
-  "host_permissions": ["http://127.0.0.1:8787/*"],
-  "background": { "service_worker": "worker.js", "type": "module" },
+  "icons": {
+    "16": "icon-16.png",
+    "48": "icon-48.png",
+    "128": "icon-128.png"
+  },
+  "action": {
+    "default_title": "VibeOps Browser Agent - open settings"
+  },
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8787/*"
+  ],
+  "background": {
+    "service_worker": "worker.js",
+    "type": "module"
+  },
   "options_page": "options.html",
   "web_accessible_resources": [
-    { "resources": ["snapshot.js", "execute.js"], "matches": ["<all_urls>"] }
+    {
+      "resources": [
+        "snapshot.js",
+        "execute.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
   ]
 }

@@ -77,7 +77,13 @@ export function KnowledgeScreen() {
   const sync = useMutation({
     mutationFn: () =>
       apiFetch("/ingest/sessions", { method: "POST", body: {} }) as Promise<Record<string, { indexed: number; skipped: number; failed: number }>>,
-    onSuccess: (summary) => setSyncResult(Object.entries(summary).map(([source, r]) => `${source} ${r.indexed}`).join(" · ")),
+    onSuccess: (summary) => {
+      setSyncResult(Object.entries(summary).map(([source, r]) => `${source} ${r.indexed}`).join(" · "));
+      // The graph and session list are what the user is looking at to judge
+      // whether sync did anything - stale caches read as "nothing happened".
+      qc.invalidateQueries({ queryKey: ["graph"] });
+      qc.invalidateQueries({ queryKey: ["sessions"] });
+    },
   });
 
   return (

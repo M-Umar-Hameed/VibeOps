@@ -298,6 +298,39 @@ describe("forge run resume", () => {
     expect(items.find(i => i.ticketId === ticket.id)).toBeUndefined();
   });
 
+  it("resume finds the targeted ticket's run past the 60-row unfiltered window", async () => {
+    const config = loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG!);
+    const { ticket: target } = await seedTicket("Past-window target");
+    const base = Date.now() - 300_000;
+
+    // Target's interrupted run: oldest of the batch.
+    await db.insert(forgeRuns).values({
+      id: randomUUID(), ticketId: target.id, status: "interrupted", stage: "plan",
+      planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+      startedAt: new Date(base), finishedAt: new Date(base),
+    });
+
+    // 65 newer interrupted runs for unrelated tickets push the target past limit(60).
+    for (let i = 1; i <= 65; i++) {
+      await db.insert(forgeRuns).values({
+        id: randomUUID(), ticketId: randomUUID(), status: "interrupted", stage: "plan",
+        planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+        startedAt: new Date(base + i * 1000), finishedAt: new Date(base + i * 1000),
+      });
+    }
+
+    // Unfiltered listing stays bounded at 60: the target row falls outside the window.
+    const unfiltered = await listInterruptedRuns(config);
+    expect(unfiltered.find(i => i.ticketId === target.id)).toBeUndefined();
+
+    // Ticket-filtered query targets the row in SQL, so the limit cannot hide it.
+    const filtered = await listInterruptedRuns(config, target.id);
+    const item = filtered.find(i => i.ticketId === target.id);
+    expect(item).toBeDefined();
+    expect(item!.resumable).toBe(true);
+    expect(item!.resumeMode).toBe("plan");
+  });
+
   it("resume after work-commit goes straight to review and passes", async () => {
     const { actorId, apiKey, ticket } = await seedTicket("Resume to review");
 

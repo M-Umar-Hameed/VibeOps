@@ -1141,8 +1141,10 @@ const RESUMABLE_STATUSES = new Set<Status>(["interrupted", "failed", "stopped"])
 // Interrupted runs still worth recovering: latest run per ticket, only if that
 // latest run is itself interrupted (a newer run supersedes it). Read-only —
 // computes disk truth (sandbox, branch commits) but never starts anything.
-export async function listInterruptedRuns(config: RelayConfig): Promise<RecoveryItem[]> {
-  const rows = await db.select().from(forgeRuns).orderBy(desc(forgeRuns.startedAt)).limit(60);
+export async function listInterruptedRuns(config: RelayConfig, ticketId?: string): Promise<RecoveryItem[]> {
+  const rows = ticketId
+    ? await db.select().from(forgeRuns).where(eq(forgeRuns.ticketId, ticketId)).orderBy(desc(forgeRuns.startedAt)).limit(1)
+    : await db.select().from(forgeRuns).orderBy(desc(forgeRuns.startedAt)).limit(60);
   const latestByTicket = new Map<string, typeof rows[number]>();
   for (const r of rows) if (!latestByTicket.has(r.ticketId)) latestByTicket.set(r.ticketId, r);
   const items: RecoveryItem[] = [];

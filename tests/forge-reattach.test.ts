@@ -5,21 +5,19 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
-import { markInterruptedRuns, getRunOutput, awaitRun } from "../src/forge/runs.js";
+import { markInterruptedRuns, getRunOutput, awaitRun, tokenReader } from "../src/forge/runs.js";
 import { db } from "../src/db/client.js";
 import { forgeRuns } from "../src/db/schema.js";
 
 process.env.EMBED_PROVIDER = "fake";
 
-const LINUX = process.platform === "linux";
 const spawned: number[] = [];
+const originalTokenReader = tokenReader.read;
 
-// A real, live process carrying (or not) VIBEOPS_RUN_TOKEN in its environment.
-function sleeper(token?: string): number {
-  const env = { ...process.env };
-  if (token !== undefined) env.VIBEOPS_RUN_TOKEN = token; else delete env.VIBEOPS_RUN_TOKEN;
+// A real, live process for the dead-pid test (the only test needing a real child).
+function sleeper(): number {
   const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e9)"],
-    { env, stdio: "ignore", detached: true });
+    { stdio: "ignore", detached: true });
   child.unref();
   spawned.push(child.pid!);
   return child.pid!;
@@ -52,14 +50,20 @@ async function insertRow(v: { pid: number | null; logPath: string; runToken: str
   return id;
 }
 
-afterEach(() => { while (spawned.length) kill(spawned.pop()!); });
+afterEach(() => {
+  while (spawned.length) kill(spawned.pop()!);
+  tokenReader.read = originalTokenReader;
+});
 
 describe("forge boot reattach", () => {
-  it.skipIf(!LINUX)("live pid + matching token: reattached, not interrupted, output continues from the log", async () => {
+  it("live pid + matching token: reattached, not interrupted, output continues from the log", async () => {
     const token = randomUUID();
-    const pid = sleeper(token);
+    const pid = sleeper(); // Real live pid
     const logPath = tmpLog();
     const id = await insertRow({ pid, logPath, runToken: token });
+
+    // Override tokenReader.read: always return the matching token for this pid
+    tokenReader.read = (p: number) => (p === pid ? token : null);
 
     const marked = await markInterruptedRuns();
 
@@ -73,7 +77,7 @@ describe("forge boot reattach", () => {
     appendFileSync(logPath, "LIVE-AFTER-REATTACH\n");
     await poll(() => (getRunOutput(id, 0)?.chunk ?? "").includes("LIVE-AFTER-REATTACH"));
 
-    // Orphan exits -> run settles interrupted (verdict continuation is S2-B).
+    // Kill the real pid; run settles interrupted (verdict continuation is S2-B)
     kill(pid);
     await poll(() => getRunOutput(id, 0)?.status !== "running");
     await awaitRun(id);
@@ -82,7 +86,7 @@ describe("forge boot reattach", () => {
   }, 15000);
 
   it("dead pid: marked interrupted, exactly as today", async () => {
-    const pid = sleeper(randomUUID());
+    const pid = sleeper();
     kill(pid);
     await poll(() => { try { process.kill(pid, 0); return false; } catch { return true; } });
     const id = await insertRow({ pid, logPath: tmpLog(), runToken: randomUUID() });
@@ -95,8 +99,13 @@ describe("forge boot reattach", () => {
   });
 
   it("live pid + NON-matching token: interrupted, never adopted (recycled-pid guard)", async () => {
-    const pid = sleeper(randomUUID());                              // live, unrelated token
-    const id = await insertRow({ pid, logPath: tmpLog(), runToken: randomUUID() }); // different token
+    const pid = sleeper(); // Real live pid
+    const expectedToken = randomUUID();
+    const actualToken = randomUUID(); // Different token = recycled pid
+    const id = await insertRow({ pid, logPath: tmpLog(), runToken: expectedToken });
+
+    // Override tokenReader.read: return a DIFFERENT token -> mismatch -> interrupt
+    tokenReader.read = (p: number) => (p === pid ? actualToken : null);
 
     const marked = await markInterruptedRuns();
     const [row] = await db.select().from(forgeRuns).where(eq(forgeRuns.id, id));

@@ -1092,7 +1092,7 @@ const REATTACH_POLL_MS = 200;
 // ponytail: Linux-only identity check; macOS/Windows never reattach (safe
 // default -- they interrupt exactly as today). Upgrade path: a per-platform env
 // reader, or S2-B's DB-backed supervisor, if off-Linux desktop reattach is needed.
-function readRunToken(pid: number): string | null {
+function readRunTokenDefault(pid: number): string | null {
   try {
     for (const kv of readFileSync(`/proc/${pid}/environ`, "utf-8").split("\0")) {
       if (kv.startsWith("VIBEOPS_RUN_TOKEN=")) return kv.slice("VIBEOPS_RUN_TOKEN=".length);
@@ -1102,6 +1102,11 @@ function readRunToken(pid: number): string | null {
     return null;
   }
 }
+
+// Injectable token reader for testing; production uses /proc, tests substitute
+// a controllable stub to exercise match/mismatch paths on all platforms.
+// Exported as an object so the .read property is mutable in test imports.
+export const tokenReader = { read: readRunTokenDefault };
 
 // Rebuild a minimal in-memory Run for an agent process that SURVIVED an API
 // restart (S2-A2 spawns detached+unref'd, writing stdout to logPath). Resumes
@@ -1170,7 +1175,7 @@ export async function markInterruptedRuns(): Promise<string[]> {
       // A recycled pid is a DIFFERENT process: its env has no/other token -> mismatch
       // -> falls through to interrupt. That guard is the point of this ticket.
       if (row.pid != null && row.logPath && row.runToken
-          && pidAlive(row.pid) && readRunToken(row.pid) === row.runToken) {
+          && pidAlive(row.pid) && tokenReader.read(row.pid) === row.runToken) {
         reattach(row);
         reattached++;
         continue;

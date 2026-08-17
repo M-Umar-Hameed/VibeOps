@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runBootstrap } from "../src/bootstrap.js";
+import { db } from "../src/db/client.js";
+import { sql } from "drizzle-orm";
 
 test("bootstrap default dir honours VIBEOPS_HOME, not the real home", async () => {
   const prev = process.env.VIBEOPS_HOME;
@@ -28,6 +30,12 @@ test("bootstrap never overwrites an existing credentials.json", async () => {
   const credsPath = join(vibeops, "credentials.json");
   const sentinel = JSON.stringify({ baseUrl: "http://localhost:1", apiKey: "SENTINEL-KEEP-ME" });
   writeFileSync(credsPath, sentinel);
+
+  // The "already initialized" probe returns before any credential write, so with
+  // actors present this test would pass even without the guard. Empty actors +
+  // credentials.json on disk IS the real incident (DB reset/restore). This file's
+  // slice is its own database, so cascading the clear affects nothing else.
+  await db.execute(sql`TRUNCATE actors CASCADE`);
 
   await runBootstrap(9999, vibeops);
   expect(readFileSync(credsPath, "utf8")).toBe(sentinel);

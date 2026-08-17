@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getLessons, lessonsClause } from "./lessons.js";
-import { existsSync } from "node:fs";
+import { existsSync, openSync, readSync, fstatSync, closeSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { vibeopsHome } from "../runtime/home.js";
 import type { ChildProcess } from "node:child_process";
@@ -28,7 +28,8 @@ import { listActors } from "../services/actors.js";
 import { bump } from "../services/metrics.js";
 import { desc, isNull, sum, eq, gte, lte, and, inArray } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { forgeRuns, aiUsageLogs, tickets, type Ticket } from "../db/schema.js";
+import { pidAlive } from "../db/lifecycle.js";
+import { forgeRuns, aiUsageLogs, tickets, type Ticket, type ForgeRun } from "../db/schema.js";
 import { verifyModel, MISMATCH_WARNING, computeVerificationStatus } from "./verify.js";
 import { resolveChecks, runChecks, formatChecks, type CheckResult } from "./checks.js";
 import { runGate, resolveMutationCmd } from "./gate.js";
@@ -1082,14 +1083,106 @@ export function awaitRun(id: string): Promise<void> {
   return runs.get(id)?.done ?? Promise.resolve();
 }
 
+const REATTACH_POLL_MS = 200;
+
+// Reads VIBEOPS_RUN_TOKEN from a LIVE process's environment to confirm the pid
+// is still OUR agent child and not an unrelated, recycled pid. Linux /proc only;
+// returns null wherever the environment cannot be read (win32/darwin, or a
+// dead/unreadable pid), which the caller treats as unverifiable -> interrupt.
+// ponytail: Linux-only identity check; macOS/Windows never reattach (safe
+// default -- they interrupt exactly as today). Upgrade path: a per-platform env
+// reader, or S2-B's DB-backed supervisor, if off-Linux desktop reattach is needed.
+function readRunToken(pid: number): string | null {
+  try {
+    for (const kv of readFileSync(`/proc/${pid}/environ`, "utf-8").split("\0")) {
+      if (kv.startsWith("VIBEOPS_RUN_TOKEN=")) return kv.slice("VIBEOPS_RUN_TOKEN=".length);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Rebuild a minimal in-memory Run for an agent process that SURVIVED an API
+// restart (S2-A2 spawns detached+unref'd, writing stdout to logPath). Resumes
+// tailing the log from the CURRENT offset so live output continues, and polls
+// the pid; when the orphan finally exits its supervising pipeline is gone (that
+// continuation is S2-B), so the run settles interrupted with output intact and
+// the existing listInterruptedRuns resume path applies.
+function reattach(row: ForgeRun): void {
+  const run: Run = {
+    id: row.id, ticketId: row.ticketId, stage: row.stage as Stage, status: "running",
+    agents: { plan: row.planAgent, work: row.workAgent, review: row.reviewAgent },
+    effort: (row.effort ?? undefined) as Effort | undefined,
+    protectedViolations: row.protectedViolations ?? undefined,
+    checksDurationMs: row.checksDurationMs ?? undefined,
+    pid: row.pid ?? undefined,
+    logPath: row.logPath!, runToken: row.runToken!,
+    output: "", startedAt: row.startedAt.toISOString(), stopped: false,
+    done: Promise.resolve(),
+  };
+  runs.set(run.id, run);
+  run.done = tailUntilExit(run);
+}
+
+function tailUntilExit(run: Run): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const pid = run.pid;
+    let readFd: number | undefined;
+    let tailPos = 0;
+    try {
+      if (existsSync(run.logPath)) { readFd = openSync(run.logPath, "r"); tailPos = fstatSync(readFd).size; }
+    } catch { readFd = undefined; }
+    const drain = () => {
+      if (readFd === undefined) return;
+      try {
+        const size = fstatSync(readFd).size;
+        if (size <= tailPos) return;
+        const buf = Buffer.allocUnsafe(size - tailPos);
+        const n = readSync(readFd, buf, 0, size - tailPos, tailPos);
+        tailPos += n;
+        append(run, buf.toString("utf-8", 0, n));
+      } catch { /* log rotated/removed under us */ }
+    };
+    const timer = setInterval(() => {
+      drain();
+      if (run.stopped || pid === undefined || !pidAlive(pid)) {
+        clearInterval(timer);
+        drain();
+        if (readFd !== undefined) { try { closeSync(readFd); } catch { /* best effort */ } }
+        settle(run, run.stopped ? "stopped" : "interrupted");
+        resolve();
+      }
+    }, REATTACH_POLL_MS);
+    timer.unref();
+  });
+}
+
 export async function markInterruptedRuns(): Promise<string[]> {
   try {
-    const rows = await db.update(forgeRuns)
-      .set({ status: "interrupted", finishedAt: new Date() })
-      .where(isNull(forgeRuns.finishedAt))
-      .returning({ ticketId: forgeRuns.ticketId });
-    bump("runs.interrupted", rows.length);
-    return rows.map((r) => r.ticketId);
+    const rows = await db.select().from(forgeRuns).where(isNull(forgeRuns.finishedAt));
+    const interrupted: string[] = [];
+    let reattached = 0;
+    for (const row of rows) {
+      // A run THIS process still tracks is not a restart casualty; never touch it.
+      if (runs.has(row.id)) continue;
+      // Alive AND provably still our child (token read from its live env) -> reattach.
+      // A recycled pid is a DIFFERENT process: its env has no/other token -> mismatch
+      // -> falls through to interrupt. That guard is the point of this ticket.
+      if (row.pid != null && row.logPath && row.runToken
+          && pidAlive(row.pid) && readRunToken(row.pid) === row.runToken) {
+        reattach(row);
+        reattached++;
+        continue;
+      }
+      await db.update(forgeRuns)
+        .set({ status: "interrupted", finishedAt: new Date() })
+        .where(eq(forgeRuns.id, row.id));
+      interrupted.push(row.ticketId);
+    }
+    bump("runs.interrupted", interrupted.length);
+    if (reattached) console.log(`forge: reattached ${reattached} surviving run(s)`);
+    return interrupted;
   } catch (e) {
     console.warn("forge: failed to mark interrupted runs:", (e as Error).message);
     return [];

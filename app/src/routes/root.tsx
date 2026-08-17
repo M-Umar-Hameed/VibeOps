@@ -6,6 +6,7 @@ import { ShortcutsPopup } from "../components/layout/ShortcutsPopup";
 import { Wizard } from "../components/Wizard";
 import { api } from "../lib/api";
 import { checkForUpdate } from "../lib/updater";
+import { startEventStream } from "../lib/events";
 
 export function Root() {
   const [showWizard, setShowWizard] = useState(false);
@@ -15,6 +16,7 @@ export function Root() {
       if (res.firstRun) setShowWizard(true);
     }).catch(() => {});
     checkForUpdate();
+    startEventStream();
   }, []);
 
   return (

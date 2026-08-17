@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api.js";
+import { useStreamConnected } from "../lib/events.js";
 import { NotFoundError } from "../api/errors.js";
 import { useProject } from "../context/project.js";
 import { parseUnifiedDiff, type DiffFile } from "../lib/diff-parse.js";
@@ -26,6 +27,7 @@ type SandboxActivityData = { stage: string; files: SandboxActivityFile[]; totalA
 export function ForgeScreen() {
   const { activeProjectId } = useProject();
   const queryClient = useQueryClient();
+  const streamConnected = useStreamConnected();
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
 
   const [planAgent, setPlanAgent] = useState("auto::");
@@ -96,7 +98,7 @@ export function ForgeScreen() {
       }
       return { tickets: t, sandboxes };
     },
-    refetchInterval: 5000,
+    refetchInterval: streamConnected ? false : 5000,
   });
   const tickets = ticketsQ.data?.tickets ?? [];
   const sandboxes = ticketsQ.data?.sandboxes ?? {};
@@ -144,7 +146,7 @@ export function ForgeScreen() {
   const recoveryQ = useQuery({
     queryKey: ["forge", "recovery"],
     queryFn: () => api.get("/forge/recovery") as Promise<{ interrupted: { ticketId: string; resumable: boolean; reason: string }[] }>,
-    refetchInterval: 5000,
+    refetchInterval: streamConnected ? false : 5000,
   });
   const recoveryByTicket = useMemo(() => {
     const m = new Map<string, { resumable: boolean; reason: string }>();

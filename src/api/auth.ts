@@ -29,7 +29,8 @@ function purgeExpired(now: number): void {
 
 export const auth = createMiddleware<{ Variables: { actor: Actor } }>(async (c, next) => {
   const header = c.req.header("Authorization") ?? "";
-  const key = header.replace(/^Bearer\s+/i, "");
+  const key = header.replace(/^Bearer\s+/i, "")
+    || (c.req.path === "/events" ? (c.req.query("access_token") ?? "") : "");
   const bucket = bucketOf(key);
   const now = Date.now();
 

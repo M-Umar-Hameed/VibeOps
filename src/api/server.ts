@@ -93,8 +93,12 @@ async function bootNormally() {
   // overrideGlobalObjects:false — hono's lightweight global Response breaks
   // transformers.js model caching (`response instanceof Response` fails, so the
   // local embedder can never download its model inside the server).
-  const server = serve({ fetch: app.fetch, port, hostname: isEmbedded ? "127.0.0.1" : "0.0.0.0", overrideGlobalObjects: false });
+  const server = serve({ fetch: app.fetch, port, hostname: isEmbedded ? "127.0.0.1" : "0.0.0.0", overrideGlobalObjects: false }, (info) => {
+    // With PORT=0 the OS assigns an ephemeral port; reflect the real bound port
+    // into env so /mcp/config and /mcp/install report the actual URL.
+    process.env.PORT = String(info.port);
+    console.log(`api on :${info.port}${isEmbedded ? " (embedded db)" : ""}`);
+  });
   const { installShutdown } = await import("./shutdown.js");
   installShutdown(server, closeDb, isEmbedded, runLogicalExport);
-  console.log(`api on :${port}${isEmbedded ? " (embedded db)" : ""}`);
 }

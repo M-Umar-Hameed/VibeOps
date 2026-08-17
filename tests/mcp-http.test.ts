@@ -8,21 +8,29 @@ import { join } from "node:path";
 // node-server raw req/res), so boot the dev entrypoint on an ephemeral port.
 test("MCP over HTTP: 401 keyless, tools listed with key, config + install endpoints", { timeout: 120_000 }, async () => {
   const home = mkdtempSync(join(tmpdir(), "vibeops-mcp-http-"));
-  const port = 18983;
-  const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: String(port) };
+  const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: "0" };
   delete (env as Record<string, unknown>).DATABASE_URL;
   delete (env as Record<string, unknown>).VITEST;
-  const child: ChildProcess = spawn(process.execPath, ["node_modules/tsx/dist/cli.mjs", "src/api/server.ts"], { env, stdio: "ignore" });
+  const child: ChildProcess = spawn(process.execPath, ["node_modules/tsx/dist/cli.mjs", "src/api/server.ts"], { env, stdio: ["ignore", "pipe", "ignore"] });
+  let out = "";
+  child.stdout!.on("data", (d) => { out += String(d); });
   try {
+    let port = 0;
     let key = "";
     for (let i = 0; i < 60; i++) {
       await new Promise((r) => setTimeout(r, 1000));
+      if (!port) {
+        const m = out.match(/api on :(\d+)/);
+        if (m) port = Number(m[1]);
+      }
+      if (!port) continue;
       try {
         key = JSON.parse(readFileSync(join(home, ".vibeops", "credentials.json"), "utf-8")).apiKey;
         const ping = await fetch(`http://127.0.0.1:${port}/projects`, { headers: { Authorization: `Bearer ${key}` } });
         if (ping.status === 200) break;
       } catch { /* not up yet */ }
     }
+    expect(port).not.toBe(0);
     expect(key).not.toBe("");
 
     // 401 without key

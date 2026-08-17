@@ -100,6 +100,9 @@ type Run = {
   effort?: Effort;
   protectedViolations?: string[];
   checksDurationMs?: number;
+  checksStartedAt?: number;   // epoch ms checks were kicked off (concurrent lane)
+  checksEndedAt?: number;     // epoch ms checks actually resolved (true runtime end)
+  reviewStartedAt?: number;   // epoch ms the review loop began
   pid?: number;        // OS pid of the current stage's agent child; cleared on settle
   logPath: string;     // stable per-run log path (recorded only; reattach ticket writes it)
   runToken: string;    // value of env VIBEOPS_RUN_TOKEN handed to every stage child
@@ -759,16 +762,17 @@ async function reviewStage(
   // Checks run CONCURRENTLY with the whole review (single or chunked): the
   // reviewer only needs check RESULTS at verdict time. Checks execute in
   // `sandbox`; the review agent runs in `workdir`, so no filesystem race.
-  const checksStartedAt = checkCmds.length ? Date.now() : undefined;
+  if (checkCmds.length) run.checksStartedAt = Date.now();
   const checksPromise: Promise<CheckResult[]> = checkCmds.length
     ? runChecks(checkCmds, sandbox, undefined, (child) => {
         run.checksChild = child;
         if (run.stopped) void killTree(child);
-      }).then((results) => { run.checksChild = undefined; return results; })
+      }).then((results) => { run.checksChild = undefined; run.checksEndedAt = Date.now(); return results; })
     : Promise.resolve<CheckResult[]>([]);
 
   // One review invocation per chunk, sequential: recordSpawn tracks a single
   // live child/pid, and chunked review is the rare oversized-diff path.
+  run.reviewStartedAt = Date.now();
   const reviewResults: AgentResult[] = [];
   for (const chunk of chunks) {
     if (run.stopped) { run.child = undefined; return settle(run, "stopped"); }
@@ -784,7 +788,7 @@ async function reviewStage(
   }
   run.child = undefined;
   const checkResults = await checksPromise;
-  if (checksStartedAt !== undefined) run.checksDurationMs = Date.now() - checksStartedAt;
+  if (run.checksStartedAt !== undefined) run.checksDurationMs = Date.now() - run.checksStartedAt;
   if (run.stopped) return settle(run, "stopped");
 
   let checksText: string | undefined;
@@ -1047,6 +1051,14 @@ export function getRunOutput(id: string, after: number) {
   if (!r) return undefined;
   const from = Math.max(0, Math.min(after, r.output.length));
   return { chunk: r.output.slice(from), next: r.output.length, stage: r.stage, status: r.status };
+}
+
+// Test/introspection accessor: absolute timestamps for the checks-vs-review
+// overlap. reviewStartedAt < checksEndedAt proves the two ran concurrently.
+export function getRunTimings(id: string) {
+  const r = runs.get(id);
+  if (!r) return undefined;
+  return { checksStartedAt: r.checksStartedAt, checksEndedAt: r.checksEndedAt, reviewStartedAt: r.reviewStartedAt };
 }
 
 // Test-teardown hook: resolve once every in-flight run has fully settled. Deleting a

@@ -192,7 +192,7 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
   app.post("/forge/tickets/:id/resume", requireAdmin, async (c) => {
     const ticketId = c.req.param("id");
     const config = forgeConfig();
-    const item = (await listInterruptedRuns(config)).find((r) => r.ticketId === ticketId);
+    const item = (await listInterruptedRuns(config, ticketId))[0];
     const ticket = await getTicket(ticketId);
     // No interrupted run recorded: fall back to a normal open/planned start.
     if (item && !item.resumable) return c.json({ error: item.reason }, 409);

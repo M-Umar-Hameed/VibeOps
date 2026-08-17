@@ -3,8 +3,6 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runBootstrap } from "../src/bootstrap.js";
-import { db } from "../src/db/client.js";
-import { sql } from "drizzle-orm";
 
 test("bootstrap default dir honours VIBEOPS_HOME, not the real home", async () => {
   const prev = process.env.VIBEOPS_HOME;
@@ -31,12 +29,13 @@ test("bootstrap never overwrites an existing credentials.json", async () => {
   const sentinel = JSON.stringify({ baseUrl: "http://localhost:1", apiKey: "SENTINEL-KEEP-ME" });
   writeFileSync(credsPath, sentinel);
 
-  // The "already initialized" probe returns before any credential write, so with
-  // actors present this test would pass even without the guard. Empty actors +
-  // credentials.json on disk IS the real incident (DB reset/restore). This file's
-  // slice is its own database, so cascading the clear affects nothing else.
-  await db.execute(sql`TRUNCATE actors CASCADE`);
-
+  // COVERAGE LIMIT, stated so nobody reads more into a green run than is there:
+  // runBootstrap returns at the "already initialized" actors probe before it ever
+  // reaches the credential write, so with actors present this asserts the file is
+  // untouched WITHOUT proving the existsSync guard is what spared it. Emptying
+  // actors would exercise the guard, but this file does not call allocateSlice(),
+  // so it shares the default test database -- a TRUNCATE here cascades into every
+  // other file's rows. Isolating it needs a per-file slice, not a wider DELETE.
   await runBootstrap(9999, vibeops);
   expect(readFileSync(credsPath, "utf8")).toBe(sentinel);
   await runBootstrap(9999, vibeops); // twice: still unchanged (same key)

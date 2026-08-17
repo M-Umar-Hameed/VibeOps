@@ -34,20 +34,26 @@ test("secrets are redacted before indexing (vault and note)", async () => {
   const content = `# Creds ${uniq}\ntoken is ${key} do not share`;
   const p = `secret-${uniq}.md`;
   await upsertVaultFile(p, content, emb);
-  const hits = await searchKnowledge(content, { limit: 20 }, emb);
-  const mine = hits.find((h) => h.sourceRef === p);
-  expect(mine).toBeDefined();
-  expect(mine!.content).not.toContain(key);
-  expect(mine!.content).toContain("[redacted]");
+  // Redaction is a write-time transform on the stored chunk; assert the stored row
+  // directly by its unique sourceRef. Querying via searchKnowledge (HNSW approximate
+  // ANN over the shared table) let parallel writers crowd this row out of the top-k
+  // and flaked — ranking is irrelevant to what this test checks.
+  const vaultRows = await db.select({ content: embeddings.content })
+    .from(embeddings).where(eq(embeddings.sourceRef, p));
+  expect(vaultRows.length).toBeGreaterThan(0);
+  const vaultContent = vaultRows.map((r) => r.content).join("\n");
+  expect(vaultContent).not.toContain(key);
+  expect(vaultContent).toContain("[redacted]");
 
   const { actor } = await createActor({ name: `secnote-${uniq}`, kind: "agent" });
   const noteBody = `note secret ${uniq} ${key}`;
   const note = await saveNote(actor.id, { body: noteBody, scope: "global" }, emb);
-  const noteHits = await searchKnowledge(noteBody, { limit: 20 }, emb);
-  const mineNote = noteHits.find((h) => h.sourceRef === note.id);
-  expect(mineNote).toBeDefined();
-  expect(mineNote!.content).not.toContain(key);
-  expect(mineNote!.content).toContain("[redacted]");
+  const noteRows = await db.select({ content: embeddings.content })
+    .from(embeddings).where(eq(embeddings.sourceRef, note.id));
+  expect(noteRows.length).toBeGreaterThan(0);
+  const noteContent = noteRows.map((r) => r.content).join("\n");
+  expect(noteContent).not.toContain(key);
+  expect(noteContent).toContain("[redacted]");
 });
 
 test("search results carry provenance and recency-decayed score", async () => {

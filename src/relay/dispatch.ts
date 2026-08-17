@@ -13,7 +13,8 @@ export function runAgent(
   onSpawn?: (child: ChildProcess) => void,
   onAbort?: (abort: () => void) => void,
   model?: string,
+  logPath?: string,
 ): Promise<AgentResult> {
   if (agent.type === "sdk") return runAgentSdk(agent, prompt, workdir, onData, onAbort, model);
-  return runAgentCli(agent, prompt, workdir, onData, onSpawn);
+  return runAgentCli(agent, prompt, workdir, onData, onSpawn, logPath);
 }

@@ -1,91 +1,30 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api.js";
 import { useStreamConnected } from "../lib/events.js";
-import { NotFoundError } from "../api/errors.js";
 import { useProject } from "../context/project.js";
-import { parseUnifiedDiff, type DiffFile } from "../lib/diff-parse.js";
-import { stageLabel, parseChecks, elapsedLabel, failureLine, formatStageDurations } from "../lib/run-summary.js";
 import { SpecEditor } from "../components/SpecEditor.js";
-import { CommentList } from "../components/CommentList.js";
-import { WorkOrderComposer, modelOptionsForRole } from "../components/WorkOrderComposer.js";
-import { ContextMenu, type MenuItemSpec } from "../components/ContextMenu.js";
-import { OutputPane } from "../components/OutputPane.js";
-
-const parseSel = (s: string) => { const [agent, model] = s.split("::"); return { agent, model }; };
-const SELECTED_TICKET_KEY = "vibeops.forgeSelectedTicketId";
-
-type Ticket = { id: string; title: string; status: string; version: number; body: string | null };
-type Agent = { name: string; roles: string[]; models?: { name: string }[] };
-type Skill = { name: string };
-type SandboxStatus = { exists: boolean; branch?: string; lastVerdict?: string; protectedViolation?: string[] };
-type Diff = { diff: string };
-type DoctorStatus = { name: string; binary: string; probe: { ok: boolean; error?: string }; auth: { known: boolean; connected: boolean | null }; lastChecked: string };
-type SandboxActivityFile = { path: string; status: "A" | "M" | "D"; additions: number; deletions: number };
-type SandboxActivityData = { stage: string; files: SandboxActivityFile[]; totalAdditions: number; totalDeletions: number; lastChangeAt: string };
+import {
+  type Ticket, type Agent, type Skill, type SandboxStatus, type DoctorStatus, SELECTED_TICKET_KEY,
+} from "./forge/types.js";
+import { useForgeRun } from "./forge/useForgeRun.js";
+import { TicketHeader } from "./forge/TicketHeader.js";
+import { TicketListPane } from "./forge/TicketListPane.js";
+import { PipelineSettingsPane } from "./forge/PipelineSettingsPane.js";
+import { RunStatusPane } from "./forge/RunStatusPane.js";
+import { SandboxPane } from "./forge/SandboxPane.js";
+import { DiscussionPane } from "./forge/DiscussionPane.js";
+import { RunHistoryPane } from "./forge/RunHistoryPane.js";
 
 export function ForgeScreen() {
   const { activeProjectId } = useProject();
   const queryClient = useQueryClient();
   const streamConnected = useStreamConnected();
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
-
   const [planAgent, setPlanAgent] = useState("auto::");
   const [workAgent, setWorkAgent] = useState("auto::");
   const [reviewAgent, setReviewAgent] = useState("auto::");
-  const [extraPrompt, setExtraPrompt] = useState("");
-
-  const [autocompleteOpen, setAutocompleteOpen] = useState(false);
-  const [autocompleteFilter, setAutocompleteFilter] = useState("");
-  const [autocompleteCursor, setAutocompleteCursor] = useState(0);
-
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [runChunks, setRunChunks] = useState<string[]>([]);
-  const runOutput = runChunks.join("");
-  const [runStage, setRunStage] = useState("");
-  const [runStatus, setRunStatus] = useState("");
-  const [runError, setRunError] = useState("");
-  const [outputUnavailable, setOutputUnavailable] = useState(false);
-  const [showDetails, setShowDetails] = useState(false);
-  const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  const nextOffsetRef = useRef<number>(0);
-  const prevStageRef = useRef("");
-  const lastDerivedRunTicketRef = useRef<string | null>(null);
-
-  const [diff, setDiff] = useState<string | null>(null);
-  const [diffParsed, setDiffParsed] = useState<DiffFile[]>([]);
-  const [diffMode, setDiffMode] = useState<"sbs" | "unified" | "explain">("sbs");
-  const [diffExplain, setDiffExplain] = useState<string | null>(null);
-  const [explaining, setExplaining] = useState(false);
-  const [selectedDiffFile, setSelectedDiffFile] = useState<DiffFile | null>(null);
-  const [sandboxError, setSandboxError] = useState("");
-  const [sandboxActivity, setSandboxActivity] = useState<SandboxActivityData | null>(null);
   const [selectedActivityFile, setSelectedActivityFile] = useState<string | null>(null);
-  const [viewDiff, setViewDiff] = useState(false);
-
-  const [interruptedRun, setInterruptedRun] = useState(false);
-  const [ticketRunActive, setTicketRunActive] = useState(false);
-
-  const [commentInput, setCommentInput] = useState("");
-  const [commentError, setCommentError] = useState("");
-  const [postingComment, setPostingComment] = useState(false);
-  const [requestingChanges, setRequestingChanges] = useState(false);
-
-  const [statusSaving, setStatusSaving] = useState(false);
-  const [statusError, setStatusError] = useState("");
-
-  const commentsQ = useQuery({
-    queryKey: ["tickets", selectedTicket?.id, "comments"],
-    queryFn: () => api.get(`/tickets/${selectedTicket!.id}/comments`),
-    enabled: !!selectedTicket,
-  });
-  const ticketComments = Array.isArray(commentsQ.data) ? commentsQ.data : [];
-
-  const actorName = (aid: string) => actors.find((a) => a.id === aid)?.name ?? aid;
-
-
 
   const ticketsQ = useQuery({
     queryKey: ["forge", "tickets", activeProjectId],
@@ -93,8 +32,7 @@ export function ForgeScreen() {
       const t = await api.get(activeProjectId ? `/tickets?projectId=${encodeURIComponent(activeProjectId)}` : "/tickets") as Ticket[];
       const sandboxes: Record<string, SandboxStatus> = {};
       for (const id of t.filter(x => x.status === "review").map(x => x.id)) {
-        try { sandboxes[id] = await api.get(`/forge/tickets/${id}/sandbox`) as SandboxStatus; }
-        catch { /* single sandbox failure never blocks the list, as today */ }
+        try { sandboxes[id] = await api.get(`/forge/tickets/${id}/sandbox`) as SandboxStatus; } catch {}
       }
       return { tickets: t, sandboxes };
     },
@@ -123,13 +61,11 @@ export function ForgeScreen() {
     return byName;
   }, [doctorQ.data]);
 
-
   const sandboxQ = useQuery({
     queryKey: ["forge", "sandbox", selectedTicket?.id],
     queryFn: () => api.get(`/forge/tickets/${selectedTicket!.id}/sandbox`) as Promise<SandboxStatus>,
     enabled: !!selectedTicket,
   });
-  const sandbox = sandboxQ.data ?? null;
 
   const runsQ = useQuery({
     queryKey: ["forge", "runs", selectedTicket?.id],
@@ -138,9 +74,7 @@ export function ForgeScreen() {
   });
   const ticketRuns = useMemo(() => {
     const all = Array.isArray(runsQ.data) ? runsQ.data : [];
-    return all
-      .filter((r: any) => r.ticketId === selectedTicket?.id)
-      .sort((a: any, b: any) => b.startedAt.localeCompare(a.startedAt));
+    return all.filter((r: any) => r.ticketId === selectedTicket?.id).sort((a: any, b: any) => b.startedAt.localeCompare(a.startedAt));
   }, [runsQ.data, selectedTicket?.id]);
 
   const recoveryQ = useQuery({
@@ -154,108 +88,16 @@ export function ForgeScreen() {
     return m;
   }, [recoveryQ.data]);
 
-  const [runMenu, setRunMenu] = useState<{ items: MenuItemSpec[]; x: number; y: number; label: string } | null>(null);
-
-  const [cleaningSandboxes, setCleaningSandboxes] = useState(false);
-  const [cleanupNote, setCleanupNote] = useState("");
-  const handleCleanupSandboxes = async () => {
-    setCleaningSandboxes(true);
-    setCleanupNote("");
-    try {
-      const r = await api.post("/forge/sandboxes/cleanup") as { discarded: string[]; reclaimedBytes: number; orphans: string[] };
-      const mb = (r.reclaimedBytes / 1_048_576).toFixed(1);
-      setCleanupNote(r.discarded.length
-        ? `Removed ${r.discarded.length} merged sandbox${r.discarded.length === 1 ? "" : "es"} (${mb} MB)${r.orphans.length ? `; ${r.orphans.length} orphan dir(s) need manual removal` : ""}`
-        : "Nothing to clean - no merged sandboxes on disk");
-    } catch (e: any) {
-      setCleanupNote(e.message || "Cleanup failed");
-    } finally {
-      setCleaningSandboxes(false);
-    }
-  };
+  const run = useForgeRun(selectedTicket, ticketRuns, runsQ, queryClient, { planAgent, workAgent, reviewAgent });
 
   useEffect(() => {
-    if (sandboxQ.data && !sandboxQ.data.exists) {
-      setDiff(null); setDiffParsed([]); setDiffExplain(null); setViewDiff(false);
-    }
-  }, [sandboxQ.data]);
-
-  useEffect(() => {
-    if (selectedTicket) {
-      setSandboxError("");
-      setViewDiff(false);
-      setDiff(null);
-      setDiffParsed([]);
-      setDiffExplain(null);
-      setSandboxActivity(null);
-      setConfirmApprove(false); // never carry an armed confirm across tickets
-      setCommentInput("");
-      setCommentError("");
-      setOutputUnavailable(false);
-      setRunStartedAt(null);
-      setShowDetails(false);
-    }
+    if (selectedTicket) run.resetForTicket();
   }, [selectedTicket?.id]);
 
-  // Run-state derivation: runs once per ticket selection (guarded by ref) so a
-  // background runs refetch never clobbers live poll state. Restores run history
-  // and reattaches to a running run on (re)selection, including after reload.
-  useEffect(() => {
-    if (!selectedTicket) { lastDerivedRunTicketRef.current = null; return; }
-    if (lastDerivedRunTicketRef.current === selectedTicket.id) return;
-    if (runsQ.isError) {
-      lastDerivedRunTicketRef.current = selectedTicket.id;
-      setInterruptedRun(false);
-      setTicketRunActive(false);
-      setActiveRunId(null);
-      setIsSubmitting(false);
-      setRunChunks([]);
-      setRunStage("");
-      setRunStatus("");
-      setRunError("");
-      nextOffsetRef.current = 0;
-      return;
-    }
-    if (!runsQ.isSuccess) return;
-    lastDerivedRunTicketRef.current = selectedTicket.id;
-
-    const latest = ticketRuns[0];
-    setInterruptedRun(latest?.status === "interrupted");
-    setTicketRunActive(latest?.status === "running");
-    setRunError("");
-    nextOffsetRef.current = 0;
-
-    if (latest?.status === "running") {
-      setRunChunks([]);
-      setRunStage(latest.stage);
-      setRunStatus("running");
-      setActiveRunId(latest.id);
-      setRunStartedAt(Date.parse(latest.startedAt));
-    } else if (latest?.status === "passed" || latest?.status === "rejected" || latest?.status === "failed" || latest?.status === "stopped") {
-      setActiveRunId(null);
-      setIsSubmitting(false);
-      setRunStage(latest.stage);
-      setRunStatus(latest.status);
-      api.get(`/forge/runs/${latest.id}/output?after=0`)
-        .then((res: any) => setRunChunks(res.chunk ? [res.chunk] : []))
-        .catch(() => setOutputUnavailable(true));
-    } else {
-      setActiveRunId(null);
-      setIsSubmitting(false);
-      setRunChunks([]);
-      setRunStage("");
-      setRunStatus("");
-    }
-  }, [runsQ.isSuccess, runsQ.isError, runsQ.data, selectedTicket?.id]);
-
-  // Persist the current selection so a reload can restore the detail panel.
   useEffect(() => {
     if (selectedTicket) localStorage.setItem(SELECTED_TICKET_KEY, selectedTicket.id);
   }, [selectedTicket?.id]);
 
-  // On tickets load (mount, project switch): restore a stored selection if the
-  // ticket is still present; drop a dangling selection/key otherwise so the
-  // detail panel never renders empty.
   useEffect(() => {
     if (!ticketsQ.isSuccess) return;
     if (selectedTicket) {
@@ -272,1073 +114,62 @@ export function ForgeScreen() {
     else localStorage.removeItem(SELECTED_TICKET_KEY);
   }, [ticketsQ.data, ticketsQ.isSuccess, selectedTicket]);
 
-  useEffect(() => {
-    if (viewDiff && selectedTicket && diff === null) {
-      const path = runStatus === "running"
-        ? `/forge/tickets/${selectedTicket.id}/diff?worktree=true`
-        : `/forge/tickets/${selectedTicket.id}/diff`;
-      api.get(path)
-         .then(d => {
-           const text = (d as Diff).diff;
-           setDiff(text);
-           if (text) {
-             const parsed = parseUnifiedDiff(text);
-             setDiffParsed(parsed.files);
-             setSelectedDiffFile(parsed.files[0] || null);
-           }
-         })
-         .catch((e: any) => {
-            if (e instanceof NotFoundError) {
-              setDiff("");
-            } else {
-              setSandboxError(e.message || "Failed to load diff");
-            }
-         });
-    }
-  }, [viewDiff, selectedTicket, diff, runStatus]);
-
-  // Once a targeted file diff finishes loading (triggered from the activity
-  // panel), select it -- runs after the effect above's default files[0] pick.
-  useEffect(() => {
-    if (selectedActivityFile && diffParsed.length > 0) {
-      const match = diffParsed.find(f => f.path === selectedActivityFile);
-      if (match) setSelectedDiffFile(match);
-      setSelectedActivityFile(null);
-    }
-  }, [selectedActivityFile, diffParsed]);
-
-  const fetchExplain = async (fresh = false) => {
-    if (!selectedTicket) return;
-    setExplaining(true);
-    setSandboxError("");
-    try {
-      const res = await api.post(`/forge/tickets/${selectedTicket.id}/explain-diff${fresh ? "?fresh=true" : ""}`);
-      setDiffExplain((res as any).summary);
-    } catch (e: any) {
-      setSandboxError(e.message || "Failed to explain diff");
-    } finally {
-      setExplaining(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!activeRunId) return;
-    prevStageRef.current = "";
-    let running = true;
-    const poll = async () => {
-      try {
-        const res = await api.get(`/forge/runs/${activeRunId}/output?after=${nextOffsetRef.current}`) as { chunk: string, next: number, stage: string, status: string };
-        if (!running) return;
-        
-        if (res.chunk) {
-          setRunChunks(prev => [...prev, res.chunk]);
-        }
-        nextOffsetRef.current = res.next;
-        setRunStage(res.stage);
-        setRunStatus(res.status);
-        if (res.status === "running" && prevStageRef.current && res.stage !== prevStageRef.current) {
-          queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] }); // columns follow the pipeline on stage transitions
-        }
-        prevStageRef.current = res.stage;
-        if (res.status !== "running") {
-          setActiveRunId(null);
-          // The latch is set once per ticket selection and the selection guard
-          // stops it recomputing, so a run that settles under a selected ticket
-          // must clear it here or every post-run button stays disabled.
-          setTicketRunActive(false);
-          if (selectedTicket) queryClient.invalidateQueries({ queryKey: ["forge", "sandbox", selectedTicket.id] });
-          queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] }); // ticket status moved server-side; refresh the columns
-          
-          // Refresh runs list to get updated history
-          queryClient.invalidateQueries({ queryKey: ["forge", "runs", selectedTicket?.id] });
-        }
-
-        if (selectedTicket) {
-          try {
-            const act = await api.get(`/forge/tickets/${selectedTicket.id}/sandbox/activity`) as SandboxActivityData;
-            if (running) setSandboxActivity(act);
-          } catch (e: any) {
-            if (running && e instanceof NotFoundError) setSandboxActivity(null);
-          }
-        }
-      } catch (e: any) {
-        if (!running) return;
-        setRunError(e.message || "Failed to poll output");
-        setActiveRunId(null);
-      }
-    };
-    
-    const interval = setInterval(poll, 1000);
-    poll();
-    return () => { running = false; clearInterval(interval); };
-  }, [activeRunId, selectedTicket]);
-
-  useEffect(() => {
-    if (runStatus !== "running") return;
-    const id = setInterval(() => setNowMs(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [runStatus]);
-
-  const handleRun = async (force = false) => {
-    if (!selectedTicket) return;
-    setIsSubmitting(true);
-    setRunError("");
-    setRunChunks([]);
-    setOutputUnavailable(false);
-    setRunStage("");
-    setRunStatus("running");
-    setRunStartedAt(Date.now());
-    setShowDetails(false);
-    nextOffsetRef.current = 0;
-    try {
-
-      const plan = parseSel(planAgent), work = parseSel(workAgent), review = parseSel(reviewAgent);
-      const body: Record<string, any> = {
-        ticketId: selectedTicket.id,
-        planAgent: plan.agent, workAgent: work.agent, reviewAgent: review.agent,
-        extraPrompt,
-        force,
-      };
-      if (plan.model) body.planModel = plan.model;
-      if (work.model) body.workModel = work.model;
-      if (review.model) body.reviewModel = review.model;
-      const res = await api.post("/forge/pipeline", body) as { runId: string };
-      setActiveRunId(res.runId);
-    } catch (e: any) {
-      setRunError(e.message || "Pipeline start failed");
-      setRunStatus("error");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleStop = async () => {
-    if (activeRunId) {
-      try {
-        await api.post(`/forge/runs/${activeRunId}/stop`);
-      } catch (e: any) {
-        setRunError(e.message || "Failed to stop run");
-      }
-    }
-  };
-
-  const handleResume = async () => {
-    if (!selectedTicket) return;
-    setIsSubmitting(true);
-    setRunError("");
-    setRunChunks([]);
-    setOutputUnavailable(false);
-    setRunStage("");
-    setRunStatus("running");
-    setRunStartedAt(Date.now());
-    setShowDetails(false);
-    nextOffsetRef.current = 0;
-    try {
-      const res = await api.post(`/forge/tickets/${selectedTicket.id}/resume`) as { runId: string };
-      setActiveRunId(res.runId);
-      setInterruptedRun(false);
-    } catch (e: any) {
-      setRunError(e.message || "Pipeline resume failed");
-      setRunStatus("error");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleRework = async () => {
-    if (!selectedTicket) return;
-    setIsSubmitting(true);
-    setRunError("");
-    try {
-      const res = await api.post(`/forge/tickets/${selectedTicket.id}/rework`) as { runId: string };
-      setActiveRunId(res.runId);
-      setRunStatus("running");
-      setRunStage("work");
-      setRunStartedAt(Date.now());
-      nextOffsetRef.current = 0;
-      runsQ.refetch?.();
-    } catch (e: any) {
-      setRunError(e.message || "Rework failed");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handlePromote = async () => {
-    if (!selectedTicket) return;
-    try {
-      await api.post(`/forge/tickets/${selectedTicket.id}/promote`);
-      await queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] });
-      await queryClient.invalidateQueries({ queryKey: ["forge", "sandbox", selectedTicket.id] });
-    } catch (e: any) {
-      setSandboxError(e.message || "Failed to promote");
-    }
-  };
-
-  const [confirmApprove, setConfirmApprove] = useState(false);
-  const handleApprove = async () => {
-    if (!selectedTicket) return;
-    if (!confirmApprove) { setConfirmApprove(true); return; }
-    setConfirmApprove(false);
-    try {
-      await api.post(`/forge/tickets/${selectedTicket.id}/approve`);
-      await queryClient.invalidateQueries({ queryKey: ["forge", "sandbox", selectedTicket.id] });
-    } catch (e: any) {
-      setSandboxError(e.message || "Failed to approve");
-    }
-  };
-
-  const handleDiscard = async () => {
-    if (!selectedTicket) return;
-    try {
-      await api.post(`/forge/tickets/${selectedTicket.id}/discard`);
-      await queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] });
-      await queryClient.invalidateQueries({ queryKey: ["forge", "sandbox", selectedTicket.id] });
-    } catch (e: any) {
-      setSandboxError(e.message || "Failed to discard");
-    }
-  };
-
-  const handleWaivePolicy = async () => {
-    if (!selectedTicket || !sandbox?.protectedViolation) return;
-    try {
-      await api.post(`/forge/tickets/${selectedTicket.id}/waive-policy`, { paths: sandbox.protectedViolation });
-      await queryClient.invalidateQueries({ queryKey: ["forge", "sandbox", selectedTicket.id] });
-      await queryClient.invalidateQueries({ queryKey: ["tickets", selectedTicket.id, "comments"] });
-    } catch (e: any) {
-      setSandboxError(e.message || "Failed to waive policy");
-    }
-  };
-
-  const openActivityFile = (path: string) => {
-    setDiffMode("sbs");
-    setSelectedActivityFile(path);
-    setDiff(null);
-    setDiffParsed([]);
-    setViewDiff(true);
-  };
-
-  const handlePostComment = async () => {
-    if (!selectedTicket || !commentInput.trim()) return;
-    setPostingComment(true);
-    setCommentError("");
-    try {
-      await api.post(`/tickets/${selectedTicket.id}/comments`, { body: commentInput });
-      setCommentInput("");
-      await queryClient.invalidateQueries({ queryKey: ["tickets", selectedTicket.id, "comments"] });
-    } catch (e: any) {
-      setCommentError(e.message || "Failed to post comment");
-    } finally {
-      setPostingComment(false);
-    }
-  };
-
-  const handleRequestChanges = async () => {
-    if (!selectedTicket || !commentInput.trim()) return;
-    setRequestingChanges(true);
-    setCommentError("");
-    try {
-      const body = `CHANGE REQUEST:\n${commentInput}`;
-      await api.post(`/tickets/${selectedTicket.id}/comments`, { body });
-      if (selectedTicket.status === "review") {
-        const updated = await api.patch(`/tickets/${selectedTicket.id}`, { 
-          expectedVersion: selectedTicket.version, 
-          status: "planned" 
-        });
-        await queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] });
-        setSelectedTicket(updated as Ticket);
-      } else {
-        await queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] });
-      }
-      setCommentInput("");
-      await queryClient.invalidateQueries({ queryKey: ["tickets", selectedTicket.id, "comments"] });
-    } catch (e: any) {
-      setCommentError(e.message || "Failed to request changes");
-    } finally {
-      setRequestingChanges(false);
-    }
-  };
-
-  const handleStatusChange = async (newStatus: string) => {
-    if (!selectedTicket) return;
-    setStatusSaving(true);
-    setStatusError("");
-    try {
-      const updated = await api.patch(`/tickets/${selectedTicket.id}`, {
-        expectedVersion: selectedTicket.version,
-        status: newStatus,
-      });
-      setSelectedTicket(updated as Ticket);
-      await queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] });
-    } catch (e: any) {
-      setStatusError(e.message || "Failed to update status");
-    } finally {
-      setStatusSaving(false);
-    }
-  };
-
-  const handlePromptChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const val = e.target.value;
-    setExtraPrompt(val);
-    
-    const cursor = e.target.selectionStart;
-    const textBeforeCursor = val.slice(0, cursor);
-    const words = textBeforeCursor.split(/\s+/);
-    const lastWord = words[words.length - 1];
-    
-    if (lastWord.startsWith("/")) {
-      setAutocompleteFilter(lastWord.slice(1).toLowerCase());
-      setAutocompleteCursor(cursor);
-      setAutocompleteOpen(true);
-    } else {
-      setAutocompleteOpen(false);
-    }
-  };
-
-  const insertSkill = (skillName: string) => {
-    const textBeforeCursor = extraPrompt.slice(0, autocompleteCursor);
-    const textAfterCursor = extraPrompt.slice(autocompleteCursor);
-    
-    const lastSlashIndex = textBeforeCursor.lastIndexOf("/");
-    
-    const newText = textBeforeCursor.slice(0, lastSlashIndex) + "/" + skillName + " " + textAfterCursor;
-    setExtraPrompt(newText);
-    setAutocompleteOpen(false);
-  };
-
-  const groups = {
-    open: tickets.filter(t => t.status === "open"),
-    planned: tickets.filter(t => t.status === "planned"),
-    in_progress: tickets.filter(t => t.status === "in_progress"),
-    review: tickets.filter(t => t.status === "review"),
-  };
-
-  const planAgents = agents.filter(a => a.roles.includes("plan"));
-  const workAgents = agents.filter(a => a.roles.includes("work"));
-  const reviewAgents = agents.filter(a => a.roles.includes("review"));
-
-  type ModelOption = { agent: string; model: string; label: string };
-  function dotColor(name: string): string {
-    const s = doctorStatuses[name];
-    if (!s) return "bg-white/20"; // never checked
-    return s.probe.ok ? "bg-green-500" : "bg-red-500";
-  }
-
-  function roleOptions(list: Agent[]): ModelOption[] {
-    return list.flatMap(a =>
-      a.models && a.models.length > 0
-        ? a.models.map(m => ({ agent: a.name, model: m.name, label: `${a.name} - ${m.name}` }))
-        : [{ agent: a.name, model: "", label: a.name }]
-    );
-  }
-
-  const filteredSkills = skills.filter(s => s.name.toLowerCase().includes(autocompleteFilter));
-  const runActiveForTicket = runStatus === "running" || ticketRunActive;
-
-  const buildRunItems = (run: any): MenuItemSpec[] => {
-    const running = run.status === "running";
-    const rec = recoveryByTicket.get(run.ticketId);
-    const slot1: MenuItemSpec = running
-      ? {
-          key: "stop", label: "Stop run", danger: true,
-          confirm: {
-            title: "Stop this run?",
-            message: "Halts the run now. The sandbox and any committed work are kept — this is not Discard. Work in progress is committed before the run stops.",
-            confirmLabel: "Stop run",
-          },
-          onSelect: async () => {
-            await api.post(`/forge/runs/${run.id}/stop`);
-            queryClient.invalidateQueries({ queryKey: ["forge", "runs", run.ticketId] });
-          },
-        }
-      : {
-          key: "resume", label: "Resume run",
-          disabled: !rec?.resumable,
-          disabledReason: rec?.reason || "no resumable state for this run",
-          onSelect: async () => {
-            const res = await api.post(`/forge/tickets/${run.ticketId}/resume`) as { runId: string };
-            queryClient.invalidateQueries({ queryKey: ["forge", "runs", run.ticketId] });
-            queryClient.invalidateQueries({ queryKey: ["forge", "recovery"] });
-            if (run.ticketId === selectedTicket?.id) setActiveRunId(res.runId);
-          },
-        };
-    const retry: MenuItemSpec = {
-      key: "retry", label: "Retry from plan",
-      disabled: running, disabledReason: "run in flight",
-      confirm: {
-        title: "Retry from the beginning?",
-        message: "Starts a fresh run from the plan stage. The existing sandbox is not deleted.",
-        confirmLabel: "Retry run",
-      },
-      onSelect: async () => {
-        await api.post("/forge/pipeline", { ticketId: run.ticketId, planAgent: "auto", workAgent: "auto", reviewAgent: "auto", force: false });
-        queryClient.invalidateQueries({ queryKey: ["forge", "runs", run.ticketId] });
-        queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] });
-      },
-    };
-    return [slot1, retry];
-  };
-
-  const openRunMenu = (run: any, x: number, y: number) =>
-    setRunMenu({ items: buildRunItems(run), x, y, label: `Actions for run ${run.id.substring(0, 8)}` });
+  const handleSelectTicket = useCallback((t: Ticket) => setSelectedTicket(t), []);
+  const handleTicketCreated = useCallback((t: Ticket) => setSelectedTicket(t), []);
+  const handleOpenActivityFile = useCallback((path: string) => setSelectedActivityFile(path), []);
+  const handleActivityFileConsumed = useCallback(() => setSelectedActivityFile(null), []);
+  const handleResumeRun = useCallback((runId: string) => run.setActiveRunId(runId), [run.setActiveRunId]);
 
   return (
-    // -m cancels the outlet padding so this screen owns its own scrolling —
-    // otherwise the outer scroller and the columns double up scrollbars.
     <div className="absolute inset-0 flex overflow-hidden">
-      <div className="w-80 border-r border-white/10 bg-surface-container/30 overflow-y-auto flex flex-col">
-        <div className="p-4 border-b border-white/5 space-y-3">
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <h2 className="font-headline-sm text-on-surface font-bold">Forge Work Orders</h2>
-              <p className="text-xs text-on-surface-variant/70 mt-1">Plan, run, and promote agent work per work order.</p>
-            </div>
-            <button
-              type="button"
-              title="Remove sandboxes of closed work orders whose branches are fully merged"
-              aria-label="Clean up merged sandboxes"
-              disabled={cleaningSandboxes}
-              onClick={handleCleanupSandboxes}
-              className="shrink-0 p-1.5 rounded text-on-surface-variant hover:text-on-surface hover:bg-white/5 transition-colors disabled:opacity-50"
-            >
-              <span className={`material-symbols-outlined text-[18px] ${cleaningSandboxes ? "animate-spin" : ""}`}>
-                {cleaningSandboxes ? "refresh" : "cleaning_services"}
-              </span>
-            </button>
-          </div>
-          {cleanupNote && <p className="text-[11px] font-code-sm text-on-surface-variant/70">{cleanupNote}</p>}
-          {!activeProjectId && (
-            <p className="text-xs text-on-surface-variant/70">Select a project to create a work order.</p>
-          )}
-          <WorkOrderComposer
-            submitDisabled={!activeProjectId}
-            createTicket={({ title, body }) =>
-              api.post("/tickets", { projectId: activeProjectId, title, body }) as Promise<Ticket>}
-            modelOptions={modelOptionsForRole(agents, "work")}
-            defaultModel={workDefaultQ.data ?? ""}
-            launchPipeline={(t, effort, work) => {
-              const plan = parseSel(planAgent), workSel = parseSel(workAgent), review = parseSel(reviewAgent);
-              const w = work ?? workSel;
-              const body: Record<string, any> = {
-                ticketId: t.id,
-                planAgent: plan.agent, workAgent: w.agent, reviewAgent: review.agent,
-                extraPrompt: "", force: false, effort,
-              };
-              if (plan.model) body.planModel = plan.model;
-              if (w.model) body.workModel = w.model;
-              if (review.model) body.reviewModel = review.model;
-              return api.post("/forge/pipeline", body) as Promise<{ runId: string; doctorWarnings?: string[] }>;
-            }}
-            onCreated={async (t) => {
-              // select AFTER pipeline start: the ticket-select effect reattaches to the
-              // running run and takes over console follow.
-              await queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] });
-              setSelectedTicket(t as Ticket);
-            }}
-          />
-        </div>
-        {ticketsError && <div className="text-error text-xs p-4">{ticketsError}</div>}
-        <div className="flex-1 p-4 space-y-6">
-          {Object.entries(groups).map(([status, list]) => (
-            <div key={status} className="space-y-2">
-              <h3 className="font-code-label text-code-label text-on-surface-variant uppercase tracking-widest">{status}</h3>
-              <div className="space-y-2">
-                {list.map(t => (
-                  <div
-                    key={t.id}
-                    onClick={() => setSelectedTicket(t)}
-                    className={`p-3 rounded border transition-colors cursor-pointer ${selectedTicket?.id === t.id ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim text-primary' : 'bg-surface-container-lowest border-white/5 text-on-surface hover:border-white/20'}`}
-                  >
-                    <div className="text-sm font-medium truncate">{t.title}</div>
-                    {status === "review" && sandboxes[t.id]?.lastVerdict === "pass" && (
-                      <div className="mt-2 text-[10px] font-code-label bg-green-500/20 text-green-400 px-2 py-1 rounded inline-block">PASS - awaiting promote</div>
-                    )}
-                  </div>
-                ))}
-                {list.length === 0 && <div className="text-xs text-on-surface-variant/50 italic">None</div>}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      <TicketListPane
+        tickets={tickets} sandboxes={sandboxes} selectedTicketId={selectedTicket?.id ?? null}
+        activeProjectId={activeProjectId} agents={agents} workDefaultModel={workDefaultQ.data ?? ""}
+        planAgent={planAgent} workAgent={workAgent} reviewAgent={reviewAgent}
+        onSelectTicket={handleSelectTicket} onTicketCreated={handleTicketCreated} ticketsError={ticketsError}
+      />
 
       <div className="flex-1 flex flex-col overflow-y-auto bg-surface-container-lowest">
         {selectedTicket ? (
           <div className="p-6 md:p-8 space-y-8 max-w-4xl mx-auto w-full">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="font-headline-md text-primary font-bold">{selectedTicket.title}</h2>
-                <div className="text-xs text-on-surface-variant font-code-sm mt-1">Ticket ID: {selectedTicket.id}</div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {statusError && <span className="text-error text-[10px]">{statusError}</span>}
-                {(selectedTicket.status === "planned" || selectedTicket.status === "review") ? (
-                  <span className="px-2 py-0.5 rounded border font-code-sm text-[10px] uppercase tracking-wider border-secondary/30 bg-secondary/10 text-secondary">
-                    {selectedTicket.status}
-                  </span>
-                ) : (
-                  <select
-                    aria-label="Ticket status"
-                    className="bg-transparent text-primary-fixed-dim text-xs font-code-label uppercase outline-none cursor-pointer hover:bg-white/5 rounded px-2 py-1 disabled:opacity-50 disabled:cursor-not-allowed"
-                    value={selectedTicket.status}
-                    disabled={runActiveForTicket || statusSaving}
-                    title={runActiveForTicket ? "Pipeline run in progress for this ticket" : undefined}
-                    onChange={(e) => handleStatusChange(e.target.value)}
-                  >
-                    <option className="bg-surface text-on-surface" value="open">OPEN</option>
-                    <option className="bg-surface text-on-surface" value="in_progress">IN_PROGRESS</option>
-                    <option className="bg-surface text-on-surface" value="closed">CLOSED</option>
-                  </select>
-                )}
-              </div>
-            </div>
-
+            <TicketHeader selectedTicket={selectedTicket} runActiveForTicket={run.runActiveForTicket} onTicketUpdated={setSelectedTicket} />
             {agentsError && <div className="text-error text-sm">{agentsError}</div>}
             
-            <SpecEditor 
+            <SpecEditor
               ticket={selectedTicket} 
-              onSave={(t) => {
-                setSelectedTicket(t);
-                queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] });
-              }}
+              onSave={(t) => { setSelectedTicket(t); queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] }); }}
             />
 
-            <div className="glass-card rounded-xl border border-white/10 p-6 flex flex-col gap-4">
-              <h3 className="font-headline-sm text-on-surface font-bold border-b border-white/5 pb-2">Pipeline Settings</h3>
-              
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-code-sm text-on-surface-variant uppercase">Plan Model</label>
-                  <select value={planAgent} onChange={e => setPlanAgent(e.target.value)} className="bg-surface-container/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface outline-none cursor-pointer">
-                    <option value="auto::">Auto (routing strategy)</option>
-                    {roleOptions(planAgents).map(o => (
-                      <option key={`${o.agent}::${o.model}`} value={`${o.agent}::${o.model}`}>{o.label}</option>
-                    ))}
-                  </select>
-                  <div className="flex flex-wrap gap-2 mt-1">
-                    {planAgents.map(a => (
-                      <span key={a.name} className="inline-flex items-center gap-1 text-[10px] text-on-surface-variant">
-                        <span data-testid={`doctor-dot-${a.name}`} className={`w-1.5 h-1.5 rounded-full ${dotColor(a.name)}`} />
-                        {a.name}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-code-sm text-on-surface-variant uppercase">Work Model</label>
-                  <select value={workAgent} onChange={e => setWorkAgent(e.target.value)} className="bg-surface-container/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface outline-none cursor-pointer">
-                    <option value="auto::">Auto (routing strategy)</option>
-                    {roleOptions(workAgents).map(o => (
-                      <option key={`${o.agent}::${o.model}`} value={`${o.agent}::${o.model}`}>{o.label}</option>
-                    ))}
-                  </select>
-                  <div className="flex flex-wrap gap-2 mt-1">
-                    {workAgents.map(a => (
-                      <span key={a.name} className="inline-flex items-center gap-1 text-[10px] text-on-surface-variant">
-                        <span data-testid={`doctor-dot-${a.name}`} className={`w-1.5 h-1.5 rounded-full ${dotColor(a.name)}`} />
-                        {a.name}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-code-sm text-on-surface-variant uppercase">Review Model</label>
-                  <select value={reviewAgent} onChange={e => setReviewAgent(e.target.value)} className="bg-surface-container/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface outline-none cursor-pointer">
-                    <option value="auto::">Auto (routing strategy)</option>
-                    {roleOptions(reviewAgents).map(o => (
-                      <option key={`${o.agent}::${o.model}`} value={`${o.agent}::${o.model}`}>{o.label}</option>
-                    ))}
-                  </select>
-                  <div className="flex flex-wrap gap-2 mt-1">
-                    {reviewAgents.map(a => (
-                      <span key={a.name} className="inline-flex items-center gap-1 text-[10px] text-on-surface-variant">
-                        <span data-testid={`doctor-dot-${a.name}`} className={`w-1.5 h-1.5 rounded-full ${dotColor(a.name)}`} />
-                        {a.name}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
+            <PipelineSettingsPane
+              agents={agents} skills={skills} doctorStatuses={doctorStatuses} runsData={runsQ.data} tickets={tickets}
+              planAgent={planAgent} setPlanAgent={setPlanAgent} workAgent={workAgent} setWorkAgent={setWorkAgent}
+              reviewAgent={reviewAgent} setReviewAgent={setReviewAgent} extraPrompt={run.extraPrompt}
+              onExtraPromptChange={run.setExtraPrompt} activeRunId={run.activeRunId} isSubmitting={run.isSubmitting}
+              interruptedRun={run.interruptedRun} runStage={run.runStage} runStatus={run.runStatus} runError={run.runError}
+              onRun={run.handleRun} onStop={run.handleStop} onResume={run.handleResume}
+            />
 
-              <div className="flex flex-col gap-1 relative">
-                <label className="text-xs font-code-sm text-on-surface-variant uppercase">Operator Prompt</label>
-                <textarea
-                  className="bg-surface-container/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface outline-none min-h-[80px] resize-y"
-                  placeholder="Extra instructions for this run (optional). Type / for skills."
-                  value={extraPrompt}
-                  onChange={handlePromptChange}
-                  onKeyDown={e => {
-                    if (e.key === "Escape") setAutocompleteOpen(false);
-                  }}
-                />
-                {autocompleteOpen && filteredSkills.length > 0 && (
-                  <ul className="absolute bottom-full left-0 mb-1 w-64 max-h-48 overflow-y-auto bg-surface-container-highest border border-white/10 rounded shadow-lg z-10">
-                    {filteredSkills.map(s => (
-                      <li
-                        key={s.name}
-                        onClick={() => insertSkill(s.name)}
-                        className="px-3 py-2 text-sm hover:bg-primary/20 hover:text-primary cursor-pointer text-on-surface transition-colors"
-                      >
-                        /{s.name}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+            <RunStatusPane
+              activeRunId={run.activeRunId} runChunks={run.runChunks} runOutput={run.runOutput} runStage={run.runStage}
+              runStatus={run.runStatus} runError={run.runError} outputUnavailable={run.outputUnavailable}
+              showDetails={run.showDetails} setShowDetails={run.setShowDetails} runStartedAt={run.runStartedAt}
+              nowMs={run.nowMs} sandboxActivity={run.sandboxActivity} rejectionReason={ticketRuns[0]?.rejectionReason}
+              onOpenActivityFile={handleOpenActivityFile}
+            />
 
-              {/* In-flight runs strip */}
-              {(() => {
-                const allRuns = Array.isArray(runsQ.data) ? runsQ.data : [];
-                const running = allRuns.filter((r: any) => r.status === "running");
-                if (!running.length) return null;
-                const ticketTitle = (id: string) => tickets.find((t) => t.id === id)?.title ?? id;
-                return (
-                  <div className="p-3 rounded-lg bg-surface-container border border-white/10 text-sm text-on-surface-variant mb-2">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="w-2 h-2 rounded-full bg-secondary animate-pulse" />
-                      <span className="font-bold text-on-surface">{running.length} run{running.length > 1 ? "s" : ""} in flight</span>
-                    </div>
-                    <ul className="text-xs space-y-0.5">
-                      {running.map((r: any) => (
-                        <li key={r.id}>{ticketTitle(r.ticketId)} <span className="text-on-surface-variant/70">({r.stage})</span></li>
-                      ))}
-                    </ul>
-                    <p className="mt-2 text-[11px] text-on-surface-variant/70">Note: Concurrent runs multiply token spend and can hit provider rate limits.</p>
-                  </div>
-                );
-              })()}
+            <SandboxPane
+              selectedTicket={selectedTicket} sandbox={sandboxQ.data ?? null}
+              sandboxQError={(sandboxQ.error as any)?.message ?? ""} runStatus={run.runStatus}
+              runActiveForTicket={run.runActiveForTicket} isSubmitting={run.isSubmitting} ticketRuns={ticketRuns}
+              onRework={run.handleRework} selectedActivityFile={selectedActivityFile}
+              onActivityFileConsumed={handleActivityFileConsumed}
+            />
 
-              <div className="flex items-center flex-wrap gap-4 gap-y-2 pt-2">
-                <button
-                  onClick={() => handleRun()}
-                  disabled={!!activeRunId || isSubmitting || !planAgent || !workAgent || !reviewAgent}
-                  className="px-6 py-2 rounded bg-primary hover:brightness-110 text-on-primary text-sm font-bold uppercase tracking-widest transition-all disabled:opacity-50 cursor-pointer"
-                >
-                  Run pipeline
-                </button>
-                {runStatus === "error" && runError.includes("token cap exceeded") && (
-                  <button
-                    onClick={() => handleRun(true)}
-                    disabled={isSubmitting}
-                    className="px-4 py-2 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-400 text-sm font-bold uppercase tracking-widest transition-all cursor-pointer"
-                  >
-                    Run anyway (force)
-                  </button>
-                )}
-                {activeRunId && (
-                  <button
-                    onClick={handleStop}
-                    className="px-4 py-2 rounded bg-error/20 hover:bg-error/40 text-error text-sm font-bold uppercase tracking-widest transition-all cursor-pointer"
-                  >
-                    Stop
-                  </button>
-                )}
-                {interruptedRun && !activeRunId && (
-                  <div className="flex items-center gap-3">
-                    <span className="text-amber-400 text-sm font-medium">Run interrupted (app restarted)</span>
-                    <button
-                      onClick={handleResume}
-                      disabled={isSubmitting}
-                      className="px-4 py-2 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-400 text-sm font-bold uppercase tracking-widest transition-all disabled:opacity-50 cursor-pointer"
-                    >
-                      Resume
-                    </button>
-                  </div>
-                )}
-                {runStage && (
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-1 bg-surface-container border border-white/10 rounded text-[10px] font-code-label text-on-surface-variant uppercase">{runStage}</span>
-                    <span className="px-2 py-1 bg-surface-container border border-white/10 rounded text-[10px] font-code-label text-on-surface-variant uppercase">{runStatus}</span>
-                  </div>
-                )}
-              </div>
-              {runError && <div className="text-error text-sm">{runError}</div>}
-            </div>
-
-            {(activeRunId || runOutput || outputUnavailable) && (() => {
-              const checks = parseChecks(runOutput);
-              const fail = failureLine(runStatus, runError);
-              const fileCount = sandboxActivity?.files?.length ?? 0;
-              const reviewChecksPending = runStatus === "running" && runStage === "review" && checks.length === 0;
-              return (
-              <div className="glass-card rounded-xl border border-white/10 overflow-hidden flex flex-col">
-                <div className="p-3 bg-surface-container/50 border-b border-white/5 flex items-center justify-between">
-                  <span className="font-code-sm text-xs text-on-surface-variant uppercase tracking-widest">Run status</span>
-                  {activeRunId && <span className="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>}
-                </div>
-                <div className="p-4 space-y-3">
-                  <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-                    <div>
-                      <span className="text-on-surface-variant">Stage: </span>
-                      <span className="text-on-surface font-medium" data-testid="run-stage-label">{stageLabel(runStage)}</span>
-                    </div>
-                    {runStatus === "running" && runStartedAt !== null && (
-                      <div>
-                        <span className="text-on-surface-variant">Elapsed: </span>
-                        <span className="text-on-surface font-medium" data-testid="run-elapsed">{elapsedLabel(runStartedAt, nowMs)}</span>
-                      </div>
-                    )}
-                    <div>
-                      <span className="text-on-surface-variant">Files changed: </span>
-                      <span className="text-on-surface font-medium" data-testid="run-file-count">{fileCount}</span>
-                      {sandboxActivity && (fileCount > 0) && (
-                        <span className="ml-2 font-code-sm text-xs">
-                          <span className="text-green-400">+{sandboxActivity.totalAdditions ?? 0}</span>{" "}
-                          <span className="text-red-400">-{sandboxActivity.totalDeletions ?? 0}</span>
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {(checks.length > 0 || reviewChecksPending) && (
-                    <div className="flex flex-wrap items-center gap-2" data-testid="run-checks">
-                      <span className="text-on-surface-variant text-sm">Checks:</span>
-                      {reviewChecksPending ? (
-                        <span className="text-on-surface-variant text-sm italic animate-pulse">running...</span>
-                      ) : checks.map((ck) => (
-                        <span
-                          key={ck.command}
-                          className={`px-2 py-0.5 rounded text-[10px] font-code-label uppercase ${ck.code === 0 ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"}`}
-                        >
-                          {ck.command} {ck.code === 0 ? "pass" : "fail"}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-
-                  {runStatus === "rejected" && ticketRuns[0]?.rejectionReason && (
-                    <div className="text-sm text-on-surface font-medium" data-testid="run-reason">
-                      <span className="font-bold text-error">Rejected: </span>{ticketRuns[0].rejectionReason}
-                    </div>
-                  )}
-                  {fail && (
-                    <div className="text-sm text-error" data-testid="run-failure-line">{fail}</div>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() => setShowDetails((s) => !s)}
-                    className="text-xs uppercase tracking-widest text-on-surface-variant hover:text-on-surface cursor-pointer"
-                  >
-                    {showDetails ? "Hide details" : "Show details"}
-                  </button>
-                  {showDetails && (
-                    outputUnavailable ? (
-                      <div className="p-4 text-on-surface-variant italic text-sm">view previous run output unavailable after restart</div>
-                    ) : (
-                      <OutputPane chunks={runChunks} />
-                    )
-                  )}
-                </div>
-              </div>
-              );
-            })()}
-
-            {runStatus === "running" && sandboxActivity && (
-              <div className="glass-card rounded-xl border border-white/10 p-6 flex flex-col gap-4">
-                <div className="flex items-center justify-between border-b border-white/5 pb-2">
-                  <h3 className="font-headline-sm text-on-surface font-bold">Sandbox activity</h3>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-code-sm">
-                      <span className="text-green-400">+{sandboxActivity.totalAdditions ?? 0}</span>{" "}
-                      <span className="text-red-400">-{sandboxActivity.totalDeletions ?? 0}</span>
-                    </span>
-                    <span className="px-2 py-1 bg-surface-container border border-white/10 rounded text-[10px] font-code-label text-on-surface-variant uppercase">{sandboxActivity.stage}</span>
-                  </div>
-                </div>
-                {(sandboxActivity.files ?? []).length === 0 ? (
-                  <div className="text-sm text-on-surface-variant italic">
-                    {sandboxActivity.stage === "plan" ? "planning, no file changes expected" : "no file changes yet"}
-                  </div>
-                ) : (
-                  <div className="max-h-64 overflow-y-auto border border-white/10 rounded-lg bg-surface-container-lowest">
-                    {sandboxActivity.files.map(f => (
-                      <button
-                        key={f.path}
-                        onClick={() => openActivityFile(f.path)}
-                        className="w-full text-left p-2 text-xs font-mono border-b border-white/5 truncate flex items-center justify-between text-on-surface hover:bg-white/5"
-                      >
-                        <span className="truncate" title={f.path}>{f.status} {f.path}</span>
-                        <span className="flex-shrink-0 flex gap-1 ml-2">
-                          {f.additions > 0 && <span className="text-green-400">+{f.additions}</span>}
-                          {f.deletions > 0 && <span className="text-red-400">-{f.deletions}</span>}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="glass-card rounded-xl border border-white/10 p-6 flex flex-col gap-4">
-              <h3 className="font-headline-sm text-on-surface font-bold border-b border-white/5 pb-2">Sandbox</h3>
-              {((sandboxQ.error as any)?.message || sandboxError) && <div className="text-error text-sm">{(sandboxQ.error as any)?.message || sandboxError}</div>}
-              
-              {sandbox?.exists ? (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-4">
-                    <span className="text-sm text-on-surface-variant"><span className="font-bold text-on-surface">Branch:</span> {sandbox.branch}</span>
-                    <span className="text-sm text-on-surface-variant"><span className="font-bold text-on-surface">Verdict:</span> {sandbox.lastVerdict || "none"}</span>
-                  </div>
-
-
-                  
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => setViewDiff(!viewDiff)}
-                      className="px-4 py-2 rounded bg-surface-container-highest hover:bg-white/10 text-on-surface text-sm transition-all cursor-pointer"
-                    >
-                      {viewDiff ? "Hide diff" : "View diff"}
-                    </button>
-                    <button
-                      onClick={handlePromote}
-                      disabled={sandbox.lastVerdict !== "pass" || runActiveForTicket || (sandbox.protectedViolation?.length ?? 0) > 0}
-                      title={
-                        runActiveForTicket
-                          ? "Pipeline run in progress for this work order"
-                          : sandbox.lastVerdict !== "pass"
-                            ? "Needs a passing review — inspect the diff, then use Approve override"
-                            : undefined
-                      }
-                      className="px-4 py-2 rounded bg-green-500/20 hover:bg-green-500/40 text-green-400 text-sm font-bold uppercase transition-all disabled:opacity-50 cursor-pointer"
-                    >
-                      Promote
-                    </button>
-                    {!(sandbox.protectedViolation?.length) && sandbox.lastVerdict !== "pass" && (
-                      <button
-                        onClick={handleApprove}
-                        disabled={runActiveForTicket}
-                        title={runActiveForTicket ? "Pipeline run in progress for this work order" : undefined}
-                        className="px-4 py-2 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-400 text-sm font-bold uppercase transition-all disabled:opacity-50 cursor-pointer"
-                      >
-                        {confirmApprove ? "Confirm approve?" : "Approve override"}
-                      </button>
-                    )}
-                    <button
-                      onClick={handleDiscard}
-                      className="px-4 py-2 rounded bg-error/20 hover:bg-error/40 text-error text-sm font-bold uppercase transition-all cursor-pointer"
-                    >
-                      Discard
-                    </button>
-                    {ticketRuns[0]?.status === "rejected" && (
-                      <button
-                        onClick={handleRework}
-                        disabled={runActiveForTicket || isSubmitting}
-                        title={runActiveForTicket ? "Pipeline run in progress for this work order" : "Rework the existing sandbox against the review findings"}
-                        className="px-4 py-2 rounded bg-primary/20 hover:bg-primary/40 text-primary text-sm font-bold uppercase transition-all disabled:opacity-50 cursor-pointer"
-                      >
-                        Continue
-                      </button>
-                    )}
-                  </div>
-                  {(sandbox.protectedViolation?.length ?? 0) > 0 && (
-                    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 space-y-3">
-                      <div className="text-sm font-bold text-amber-300">Protected-path policy violation</div>
-                      <div className="text-xs text-on-surface-variant">
-                        This run modified files that control how the project is built or tested. Allowing them unblocks promotion for this run only — the next run on any ticket is blocked again.
-                      </div>
-                      <ul className="text-xs font-code-label text-amber-200 list-disc pl-5">
-                        {sandbox.protectedViolation!.map((p) => <li key={p}>{p}</li>)}
-                      </ul>
-                      <button
-                        onClick={handleWaivePolicy}
-                        disabled={runActiveForTicket}
-                        className="px-4 py-2 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-300 text-sm font-bold uppercase transition-all disabled:opacity-50 cursor-pointer"
-                      >
-                        Allow for this run only
-                      </button>
-                    </div>
-                  )}
-                  {!(sandbox.protectedViolation?.length) && sandbox.lastVerdict !== "pass" && (
-                    <div className="text-xs text-on-surface-variant">
-                      Promote unlocks after a passing review. Approve override records YOUR passing review on the ticket, then Promote merges.
-                    </div>
-                  )}
-
-                  {viewDiff && diff === "" && (
-                    <div className="p-4 bg-background/80 text-on-surface-variant italic border border-white/10 rounded-lg text-sm text-center">
-                      No sandbox / no changes yet
-                    </div>
-                  )}
-
-                  {viewDiff && diff && diff !== "" && (
-                    <div className="flex flex-col border border-white/10 rounded-lg overflow-hidden bg-background/50">
-                      <div className="flex items-center gap-1 border-b border-white/10 bg-surface-container-highest p-1">
-                        <button onClick={() => setDiffMode("sbs")} className={`px-3 py-1.5 text-xs font-bold uppercase rounded ${diffMode === "sbs" ? "bg-primary text-on-primary" : "text-on-surface hover:bg-white/5"}`}>Side-by-side</button>
-                        <button onClick={() => setDiffMode("unified")} className={`px-3 py-1.5 text-xs font-bold uppercase rounded ${diffMode === "unified" ? "bg-primary text-on-primary" : "text-on-surface hover:bg-white/5"}`}>Unified</button>
-                        <button onClick={() => { setDiffMode("explain"); if (!diffExplain && !explaining) fetchExplain(); }} className={`px-3 py-1.5 text-xs font-bold uppercase rounded ${diffMode === "explain" ? "bg-primary text-on-primary" : "text-on-surface hover:bg-white/5"}`}>Explain</button>
-                      </div>
-
-                      {diffMode === "explain" && (
-                        <div className="p-4 flex flex-col gap-4">
-                          <div className="flex items-center justify-between">
-                            <h4 className="font-headline-sm font-bold text-on-surface">Plain-English Summary</h4>
-                            <button onClick={() => fetchExplain(true)} disabled={explaining} className="px-3 py-1 rounded bg-surface-container hover:bg-white/10 text-xs font-bold uppercase disabled:opacity-50">Regenerate</button>
-                          </div>
-                          {explaining && !diffExplain ? (
-                            <div className="text-sm text-on-surface-variant italic animate-pulse">Generating summary...</div>
-                          ) : diffExplain ? (
-                            <div className="text-sm text-on-surface whitespace-pre-wrap">{diffExplain}</div>
-                          ) : (
-                            <div className="text-sm text-error">Failed to load summary.</div>
-                          )}
-                        </div>
-                      )}
-
-                      {diffMode === "unified" && (
-                        <pre className="p-4 text-code-sm text-on-surface font-mono whitespace-pre-wrap overflow-x-auto">
-                          {diff}
-                        </pre>
-                      )}
-
-                      {diffMode === "sbs" && (
-                        <div className="flex flex-col md:flex-row h-[600px] overflow-hidden">
-                          <div className="w-full md:w-64 border-r border-white/10 overflow-y-auto bg-surface-container-lowest">
-                            {diffParsed.map(f => (
-                              <button
-                                key={f.path}
-                                onClick={() => setSelectedDiffFile(f)}
-                                className={`w-full text-left p-2 text-xs font-mono border-b border-white/5 truncate flex items-center justify-between ${selectedDiffFile?.path === f.path ? "bg-primary/20 text-primary" : "text-on-surface hover:bg-white/5"}`}
-                              >
-                                <span className="truncate" title={f.path}>{f.path.split("/").pop()}</span>
-                                <span className="flex-shrink-0 flex gap-1 ml-2">
-                                  {f.additions > 0 && <span className="text-green-400">+{f.additions}</span>}
-                                  {f.deletions > 0 && <span className="text-red-400">-{f.deletions}</span>}
-                                </span>
-                              </button>
-                            ))}
-                          </div>
-                          <div className="flex-1 overflow-y-auto bg-background p-2 font-mono text-code-sm">
-                            {selectedDiffFile ? (
-                              <div className="space-y-4">
-                                <div className="text-xs text-on-surface-variant pb-2 border-b border-white/10">{selectedDiffFile.path}</div>
-                                {selectedDiffFile.binary ? (
-                                  <div className="text-on-surface-variant italic text-center p-8">Binary file differs</div>
-                                ) : selectedDiffFile.hunks.length === 0 ? (
-                                  <div className="text-on-surface-variant italic text-center p-8">Empty file or no hunks</div>
-                                ) : (
-                                  selectedDiffFile.hunks.map((h, i) => (
-                                    <div key={i} className="mb-4">
-                                      <div className="text-blue-400 bg-blue-900/20 px-2 py-1 select-none">{h.header}</div>
-                                      <div className="grid grid-cols-[30px_30px_1fr_1fr] md:grid-cols-[40px_40px_1fr_1fr] bg-surface-container-lowest border border-white/5">
-                                        {h.rows.map((r, j) => (
-                                          <div key={j} className={`contents ${r.type === "add" ? "bg-green-500/10 text-green-300" : r.type === "del" ? "bg-red-500/10 text-red-300" : "text-on-surface hover:bg-white/5"}`}>
-                                            <div className="text-right pr-2 select-none border-r border-white/10 opacity-50">{r.left || ""}</div>
-                                            <div className="text-right pr-2 select-none border-r border-white/10 opacity-50">{r.right || ""}</div>
-                                            <div className="col-span-2 px-2 whitespace-pre overflow-x-auto">{r.text}</div>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  ))
-                                )}
-                              </div>
-                            ) : (
-                              <div className="flex h-full items-center justify-center text-on-surface-variant italic">Select a file to view</div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="p-8 text-center text-on-surface-variant border border-white/10 rounded-lg bg-surface-container-highest/50 border-dashed">
-                  Sandbox not created yet. Run the pipeline to generate code.
-                </div>
-              )}
-            </div>
-
-            <div className="glass-card rounded-xl border border-white/10 p-6 flex flex-col gap-4">
-              <h3 className="font-headline-sm text-on-surface font-bold border-b border-white/5 pb-2">Discussion</h3>
-              <CommentList items={ticketComments} actorName={actorName} />
-              
-              <div className="relative mt-4">
-                <textarea 
-                  className="w-full bg-surface-container-lowest border border-white/10 rounded-xl p-4 text-sm text-on-surface focus:border-primary-fixed-dim focus:ring-1 focus:ring-primary-fixed-dim/30 outline-none transition-all min-h-[100px] resize-y pb-12" 
-                  placeholder="Type your comment... prefix with CHANGE REQUEST: or use the button."
-                  value={commentInput}
-                  onChange={(e) => setCommentInput(e.target.value)}
-                ></textarea>
-                <div className="absolute bottom-3 right-3 flex gap-2">
-                  <button 
-                    className="px-4 py-2 bg-surface-container border border-white/10 hover:bg-white/5 text-on-surface font-bold text-sm rounded transition-transform active:scale-95 disabled:opacity-50 cursor-pointer"
-                    disabled={!commentInput.trim() || postingComment || requestingChanges || (selectedTicket.status !== "review" && selectedTicket.status !== "planned")}
-                    onClick={handleRequestChanges}
-                    title="Enabled when status is review or planned"
-                  >
-                    Request changes
-                  </button>
-                  <button 
-                    className="px-4 py-2 bg-primary text-on-primary font-bold text-sm rounded transition-transform active:scale-95 shadow-[0_0_15px_rgba(0,219,233,0.3)] disabled:opacity-50 cursor-pointer"
-                    disabled={!commentInput.trim() || postingComment || requestingChanges}
-                    onClick={handlePostComment}
-                  >
-                    Post comment
-                  </button>
-                </div>
-              </div>
-              {commentError && <div className="text-error text-xs">{commentError}</div>}
-            </div>
-
-            {ticketRuns.length > 0 && (
-              <div className="glass-card rounded-xl border border-white/10 p-6 flex flex-col gap-4">
-                <h3 className="font-headline-sm text-on-surface font-bold border-b border-white/5 pb-2">Run History</h3>
-                <div className="space-y-2">
-                  {ticketRuns.map(run => (
-                    <div
-                      key={run.id}
-                      onContextMenu={(e) => { e.preventDefault(); openRunMenu(run, e.clientX, e.clientY); }}
-                      className="relative flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border border-white/5 bg-surface-container-lowest rounded-lg p-3"
-                    >
-                      <button
-                        type="button"
-                        aria-label={`Actions for run ${run.id.substring(0, 8)}`}
-                        onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); openRunMenu(run, r.right, r.bottom); }}
-                        className="absolute top-1 right-1 px-1 text-on-surface-variant hover:text-on-surface"
-                      >
-                        <span className="material-symbols-outlined text-lg">more_vert</span>
-                      </button>
-                      <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-code-sm text-sm text-on-surface">Run {run.id.substring(0, 8)}</span>
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-code-label uppercase ${run.status === 'passed' ? 'bg-green-500/20 text-green-400' : run.status === 'failed' || run.status === 'rejected' ? 'bg-red-500/20 text-red-400' : 'bg-surface-container text-on-surface-variant'}`}>
-                            {run.status}
-                          </span>
-                          {run.effort && (
-                            <span data-testid={`run-effort-${run.id}`} className="px-2 py-0.5 rounded text-[10px] font-code-label uppercase border border-white/10 bg-surface-container text-on-surface-variant">
-                              {run.effort}
-                            </span>
-                          )}
-                        </div>
-                        <span className="text-xs text-on-surface-variant/70 font-code-sm">
-                          {new Date(run.startedAt).toLocaleString()}
-                        </span>
-                        {run.stageDurationsMs && formatStageDurations(run.stageDurationsMs) && (
-                          <span data-testid={`run-stage-durations-${run.id}`} className="text-xs text-on-surface-variant/70 font-code-sm">
-                            {formatStageDurations(run.stageDurationsMs)}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2 text-right">
-                        <span className="text-xs text-on-surface-variant">
-                          Plan: {run.agents?.plan || 'auto'} | Work: {run.agents?.work || 'auto'} | Review: {run.agents?.review || 'auto'}
-                        </span>
-                        {run.modelVerified === false ? (
-                          <span className="px-2 py-0.5 border border-amber-500/30 bg-amber-500/10 text-amber-500 text-[10px] rounded font-code-label uppercase" title="Executed model did not match requested tier">
-                            Mismatch
-                          </span>
-                        ) : run.modelVerified === true ? (
-                          <span className="px-2 py-0.5 border border-green-500/30 bg-green-500/10 text-green-400 text-[10px] rounded font-code-label uppercase">
-                            Verified
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            <DiscussionPane selectedTicket={selectedTicket} actors={actors} onTicketUpdated={setSelectedTicket} />
+            <RunHistoryPane
+              ticketRuns={ticketRuns} recoveryByTicket={recoveryByTicket}
+              selectedTicketId={selectedTicket?.id ?? null} onResumeRun={handleResumeRun}
+            />
           </div>
         ) : tickets.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
@@ -1352,7 +183,6 @@ export function ForgeScreen() {
           <div className="flex-1 flex items-center justify-center text-on-surface-variant/50">Select a work order to enter the Forge</div>
         )}
       </div>
-      {runMenu && <ContextMenu {...runMenu} onClose={() => setRunMenu(null)} />}
     </div>
   );
 }

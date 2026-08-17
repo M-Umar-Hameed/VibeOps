@@ -102,15 +102,15 @@ if (mode === "review-pass-slow") {
   process.exit(0);
 }
 if (mode === "review-hang") {
-  await new Promise(() => {}); // hang forever
+  await new Promise(() => { setInterval(() => {}, 1 << 30); }); // hang forever (the timer holds the event loop open; a bare pending promise exits with code 13)
 }
 if (mode === "plan-hang") {
-  await new Promise(() => {}); // hang forever
+  await new Promise(() => { setInterval(() => {}, 1 << 30); }); // hang forever (the timer holds the event loop open; a bare pending promise exits with code 13)
 }
 if (mode === "work-hang") {
   // Write partial edits then hang forever (to simulate being killed mid-work)
   writeFileSync(join(process.cwd(), "partial.txt"), "partial work\n");
-  await new Promise(() => {}); // hang forever
+  await new Promise(() => { setInterval(() => {}, 1 << 30); }); // hang forever (the timer holds the event loop open; a bare pending promise exits with code 13)
 }
 if (mode === "leaky") {
   console.log("token sk-abcdefghij0123456789");

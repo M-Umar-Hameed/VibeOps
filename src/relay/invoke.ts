@@ -1,8 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { writeFile, unlink } from "node:fs/promises";
+import { mkdirSync, openSync, readSync, fstatSync, closeSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import type { RelayAgent } from "./config.js";
 
 const OUTPUT_CAP = 100_000;
@@ -49,6 +50,7 @@ export async function runAgent(
   agent: RelayAgent, prompt: string, workdir: string,
   onData?: (chunk: string) => void,
   onSpawn?: (child: ChildProcess) => void,
+  logPath?: string,
 ): Promise<AgentResult> {
   const promptFile = join(tmpdir(), `vibeops-relay-${randomUUID()}.txt`);
   const needsFile = agent.cmd.some((p) => p.includes("{promptFile}"));
@@ -76,6 +78,25 @@ export async function runAgent(
     childEnv = { ...(childEnv ?? process.env), ENABLE_PROMPT_CACHING_1H: "1" };
   }
 
+  // S2-A2: with a run logPath, the stage child writes stdout+stderr straight to
+  // that file (fd stdio) and is spawned detached+unref'd, so an API restart
+  // orphans neither the OS process nor its output; live output is tailed from the
+  // file instead of read from a pipe. outFd is opened append so sequential stages
+  // share one file; readFd + tailStart bound the tail to THIS stage's new bytes.
+  // Without a logPath (unit callers) the original piped path runs unchanged.
+  // ponytail: the log file is written raw — redaction still happens downstream in
+  // append()/res.output before any DB/comment storage; redacting the file at rest
+  // is the reattach/security ticket's job, not this one.
+  let outFd: number | undefined;
+  let readFd: number | undefined;
+  let tailStart = 0;
+  if (logPath) {
+    mkdirSync(dirname(logPath), { recursive: true });
+    outFd = openSync(logPath, "a");
+    readFd = openSync(logPath, "r");
+    tailStart = fstatSync(outFd).size;
+  }
+
   try {
     // Written inside try so the finally unlinks it on every exit path (spawn
     // throw, agent failure, timeout/kill), never only the happy return.
@@ -83,7 +104,14 @@ export async function runAgent(
     return await new Promise((resolve) => {
       // stdin ignored unless piping the prompt: headless CLIs (codex exec)
       // otherwise block reading an open stdin.
-      const child = spawn(cmd0, rest, { cwd: workdir, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", "pipe", "pipe"] });
+      const child = outFd !== undefined
+        ? spawn(cmd0, rest, { cwd: workdir, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", outFd, outFd], detached: true, windowsHide: true })
+        : spawn(cmd0, rest, { cwd: workdir, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", "pipe", "pipe"] });
+      // Detached child must not keep the parent's event loop alive; the run still
+      // awaits its exit via the listeners below (unref drops only the keep-alive
+      // ref, not the handlers). This is what lets an API restart leave the child
+      // running for the reattach ticket to pick up.
+      if (outFd !== undefined) child.unref();
       onSpawn?.(child);
       if (viaStdin) {
         child.stdin?.on("error", () => {});
@@ -93,22 +121,45 @@ export async function runAgent(
       let output = "";
       let settled = false;
       let exitTimer: NodeJS.Timeout | undefined;
+      let pollTimer: NodeJS.Timeout | undefined;
+      let tailPos = tailStart;
 
       const timer = setTimeout(() => { void killTree(child); }, agent.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
-      const capture = (chunk: Buffer) => {
-        const s = chunk.toString("utf-8");
+      const push = (s: string) => {
         if (output.length < OUTPUT_CAP) output += s;
         onData?.(s);
       };
-      child.stdout?.on("data", capture);
-      child.stderr?.on("data", capture);
+
+      // Read only the bytes appended since tailPos. readSync at an explicit
+      // position keeps no shared cursor; drainTail() also runs once at settle so a
+      // fast-exiting child's final bytes are never lost to poll timing.
+      const drainTail = () => {
+        if (readFd === undefined) return;
+        const size = fstatSync(readFd).size;
+        if (size <= tailPos) return;
+        const buf = Buffer.allocUnsafe(size - tailPos);
+        const n = readSync(readFd, buf, 0, size - tailPos, tailPos);
+        tailPos += n;
+        push(buf.toString("utf-8", 0, n));
+      };
+
+      if (outFd !== undefined) {
+        pollTimer = setInterval(drainTail, 100);
+        pollTimer.unref();
+      } else {
+        const capture = (chunk: Buffer) => push(chunk.toString("utf-8"));
+        child.stdout?.on("data", capture);
+        child.stderr?.on("data", capture);
+      }
 
       const finish = (ok: boolean) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
         if (exitTimer) clearTimeout(exitTimer);
+        if (pollTimer) clearInterval(pollTimer);
+        drainTail();
         resolve({ ok, output: output.slice(0, OUTPUT_CAP) });
       };
       child.on("close", (code) => finish(code === 0));
@@ -119,13 +170,17 @@ export async function runAgent(
       // while killTree no-oped on the already-exited child). Settle a short drain
       // after the process itself exits so a wedged pipe can't hang the run; the
       // drain lets any final buffered output flush first, and "close" (normal
-      // case) still wins the race and clears this timer.
+      // case) still wins the race and clears this timer. With fd-to-file stdio
+      // there is no pipe to wedge, but the same exit-settle keeps behaviour
+      // identical and still captures late bytes via drainTail().
       child.on("exit", (code) => {
         exitTimer = setTimeout(() => finish(code === 0), EXIT_DRAIN_MS);
         exitTimer.unref();
       });
     });
   } finally {
+    if (readFd !== undefined) closeSync(readFd);
+    if (outFd !== undefined) closeSync(outFd);
     if (needsFile) await unlink(promptFile).catch(() => {});
   }
 }

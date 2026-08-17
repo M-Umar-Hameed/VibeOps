@@ -575,3 +575,39 @@ describe("parseReason", () => {
     expect(parseReason("")).toBe("");
   });
 });
+
+test("runAgent writes stdout to logPath and tails it back to output+onData (S2-A2)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-log-"));
+  const logPath = join(dir, "run.log");
+  const chunks: string[] = [];
+  const res = await runAgent(
+    { cmd: [process.execPath, "-e", "console.log('hello-log')"], roles: [] },
+    "unused", process.cwd(),
+    (c) => chunks.push(c),
+    undefined,        // onSpawn
+    logPath,
+  );
+  expect(res.ok).toBe(true);
+  const fileContent = readFileSync(logPath, "utf-8");
+  expect(fileContent).toContain("hello-log");            // mutation guard: pipe stdio leaves the file empty
+  expect(res.output).toContain("hello-log");             // tail fed the returned output
+  expect(chunks.join("")).toContain("hello-log");        // tail fed onData
+  expect(res.output.trim()).toBe(fileContent.trim());    // in-memory output == file content
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("runAgent: killTree still kills a detached (logPath) child (S2-A2)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-log-kill-"));
+  const logPath = join(dir, "run.log");
+  const res = await runAgent(
+    { cmd: [process.execPath, "-e", "setInterval(()=>{},1000)"], roles: [], timeoutMs: 60_000 },
+    "unused", process.cwd(),
+    undefined,        // onData
+    (child) => { setTimeout(() => { void killTree(child); }, 200); },
+    logPath,
+  );
+  // 60s timeout means only killTree can make this return quickly & non-ok.
+  expect(res.ok).toBe(false);
+  rmSync(dir, { recursive: true, force: true });
+}, 15_000);
+

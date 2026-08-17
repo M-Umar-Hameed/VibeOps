@@ -535,6 +535,7 @@ async function pipeline(
     const res = await track(actorId, ticket.id, "plan", run.agents.plan, planPrompt.length, () => runAgent(
       agents.plan, planPrompt, workdir, onData,
       (child) => recordSpawn(run, child),
+      undefined, undefined, run.logPath,
     ));
     run.child = undefined;
     if (run.stopped) return settle(run, "stopped");
@@ -588,7 +589,7 @@ async function pipeline(
   const workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
     runAgent(agents.work, workPrompt, sandbox, onData,
       (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
-      modelOf(run.agents.work)));
+      modelOf(run.agents.work), run.logPath));
   run.child = undefined;
   run.abort = undefined;
   const tampered = detectAndRestore(sentinelSnaps);
@@ -777,6 +778,7 @@ async function reviewStage(
       reviewPrompt,
       workdir, onData,
       (child) => recordSpawn(run, child),
+      undefined, undefined, run.logPath,
     ));
     reviewResults.push(res);
   }

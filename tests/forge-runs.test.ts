@@ -275,6 +275,31 @@ describe("forge run manager", () => {
     expect(persisted.finishedAt).toBeTruthy();
   });
 
+  it("stage stdout is written to the run's logPath and mirrored into run output (S2-A2)", async () => {
+    const { actorId, ticket } = await seedTicket("Log file streaming");
+    setScript("plan,work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const [row] = await db.select().from(forgeRuns).where(eq(forgeRuns.id, runId));
+    expect(row.logPath).toBeTruthy();
+    expect(existsSync(row.logPath!)).toBe(true);
+    const fileContent = readFileSync(row.logPath!, "utf-8");
+    // The log file holds agent stdout; FORGE banners are appended to run.output only.
+    expect(fileContent).toContain("do the thing");    // plan agent stdout
+    expect(fileContent).toContain("VERDICT: PASS");    // review agent stdout
+
+    // Same bytes reached the in-memory offset API via the tail.
+    const chunk = getRunOutput(runId, 0)?.chunk ?? "";
+    expect(chunk).toContain("do the thing");
+    expect(chunk).toContain("VERDICT: PASS");
+
+    rmSync(row.logPath!, { force: true }); // avoid littering a real ~/.vibeops in the postgres lane
+  });
+
   it("SSE stream carries run.stage before run.settled for a real pipeline run", async () => {
     const { actorId, ticket } = await seedTicket("SSE pipeline");
     const { apiKey } = await createActor({ name: uniq("sse-pipe"), kind: "agent" });

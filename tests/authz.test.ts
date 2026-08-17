@@ -170,3 +170,23 @@ test("verification comments and council export are admin-only surfaces", async (
   const memberExport = await app.request(`/export/brief?kind=council&id=${uniq("cid")}`, { headers: memberH });
   expect(memberExport.status).toBe(403);
 });
+
+test("empty bearer never rate-limits: many no-token requests stay 401 JSON", async () => {
+  for (let i = 0; i < 30; i++) {
+    const res = await app.request("/system/logs");
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "unauthorized" });
+  }
+});
+
+test("wrong-but-present key still hits the rate limiter after 20 failures", async () => {
+  const badKey = uniq("authz-badkey");
+  const badH = { Authorization: `Bearer ${badKey}` };
+  for (let i = 0; i < 20; i++) {
+    expect((await app.request("/system/logs", { headers: badH })).status).toBe(401);
+  }
+  const limited = await app.request("/system/logs", { headers: badH });
+  expect(limited.status).toBe(429);
+  expect(await limited.text()).toBe("Too Many Requests");
+});
+

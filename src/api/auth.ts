@@ -31,6 +31,9 @@ export const auth = createMiddleware<{ Variables: { actor: Actor } }>(async (c, 
   const header = c.req.header("Authorization") ?? "";
   const key = header.replace(/^Bearer\s+/i, "")
     || (c.req.path === "/events" ? (c.req.query("access_token") ?? "") : "");
+  // Empty/absent token is unauthorized before it ever touches a bucket: every
+  // no-token probe would otherwise share the sha256("") bucket and trip 429.
+  if (!key) throw new AuthError("unauthorized");
   const bucket = bucketOf(key);
   const now = Date.now();
 

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useStreamConnected } from "../lib/events.js";
 import { Link } from "@tanstack/react-router";
 import { tickets } from "../api/tickets.js";
 import { projects } from "../api/projects.js";
@@ -19,11 +20,12 @@ export function ListScreen() {
   const actQ = useQuery({ queryKey: ["actors"], queryFn: actors.list });
   
   const effectiveProjectId = activeProjectId ?? (projectId || undefined);
+  const streamConnected = useStreamConnected();
   
   const listQ = useQuery({
     queryKey: ["tickets", { activeProjectId, projectId, status, q }],
     queryFn: () => q ? tickets.search(q) : tickets.list({ projectId: effectiveProjectId, status: status || undefined }),
-    refetchInterval: 5000,
+    refetchInterval: streamConnected ? false : 5000,
   });
   
   const actorName = (id: string | null) => actQ.data?.find((a) => a.id === id)?.name ?? "Unassigned";

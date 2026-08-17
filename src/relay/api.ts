@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { vibeopsHome } from "../runtime/home.js";
 import type { RelayConfig } from "./config.js";
 import type { Ticket, Comment } from "../db/schema.js";
 
@@ -11,7 +11,7 @@ function baseUrlFor(config: RelayConfig): string {
 function apiKeyFor(config: RelayConfig): string {
   if (config.apiKey) return config.apiKey;
   try {
-    const raw = readFileSync(join(homedir(), ".vibeops", "credentials.json"), "utf-8");
+    const raw = readFileSync(join(vibeopsHome(), ".vibeops", "credentials.json"), "utf-8");
     const key = JSON.parse(raw).apiKey;
     if (typeof key === "string" && key) return key;
   } catch {

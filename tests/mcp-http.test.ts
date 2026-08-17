@@ -8,7 +8,7 @@ import { join } from "node:path";
 // node-server raw req/res), so boot the dev entrypoint on an ephemeral port.
 test("MCP over HTTP: 401 keyless, tools listed with key, config + install endpoints", { timeout: 120_000 }, async () => {
   const home = mkdtempSync(join(tmpdir(), "vibeops-mcp-http-"));
-  const port = 28983;
+  const port = 18983;
   const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: String(port) };
   delete (env as Record<string, unknown>).DATABASE_URL;
   delete (env as Record<string, unknown>).VITEST;

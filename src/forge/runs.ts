@@ -8,6 +8,7 @@ import { resolveCmd, loadRelayConfig, type RelayConfig, type RelayAgent } from "
 import { pipelineStartWarnings, pipelineStartBlockingError } from "../relay/doctor.js";
 import { roleStyle } from "../relay/style.js";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted } from "../relay/prompts.js";
+import { chunkReviewDiff, mergeReviewVerdicts } from "./review-chunks.js";
 import { killTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { redactSecrets } from "./redact.js";
@@ -747,15 +748,16 @@ async function reviewStage(
     sandboxDiff(workdir, ticket.id),
     sandboxDiffSummary(workdir, ticket.id),
   ]);
-  const reviewPrompt = composeReviewPrompt({ ticket, plan, report: reportOutput, diff: reviewDiffPayload(diff, stat), operatorNotes: run.operatorNotes, protectedViolation: protectedFinding, amendments, gate: gate.report || undefined, citations: gate.citations || undefined }) + roleStyle("review", styleSetting);
+  // S6: under the cap this is one chunk (the elided diff verbatim -- single-
+  // invocation path unchanged). Over the cap, one chunk per directory group,
+  // each carrying the whole-diff stat so the reviewer knows what it cannot see.
+  const chunks = chunkReviewDiff(elideGeneratedDiffs(diff), stat, DIFF_PROMPT_CAP);
 
   if (run.stopped) return settle(run, "stopped");
 
-  // Checks and the review agent run CONCURRENTLY: the reviewer only needs
-  // check RESULTS at verdict time, not while it's still reading the diff.
-  // Checks execute in `sandbox` (already quiesced by the gate's revert/
-  // restore above); the review agent runs in `workdir`, a different
-  // directory, so there is no filesystem race between the two.
+  // Checks run CONCURRENTLY with the whole review (single or chunked): the
+  // reviewer only needs check RESULTS at verdict time. Checks execute in
+  // `sandbox`; the review agent runs in `workdir`, so no filesystem race.
   const checksStartedAt = checkCmds.length ? Date.now() : undefined;
   const checksPromise: Promise<CheckResult[]> = checkCmds.length
     ? runChecks(checkCmds, sandbox, undefined, (child) => {
@@ -763,14 +765,23 @@ async function reviewStage(
         if (run.stopped) void killTree(child);
       }).then((results) => { run.checksChild = undefined; return results; })
     : Promise.resolve<CheckResult[]>([]);
-  const reviewPromise = track(actorId, ticket.id, "review", run.agents.review, reviewPrompt.length, () => runAgent(
-    reviewAgent,
-    reviewPrompt,
-    workdir, onData,
-    (child) => recordSpawn(run, child),
-  ));
-  const [checkResults, reviewRes] = await Promise.all([checksPromise, reviewPromise]);
+
+  // One review invocation per chunk, sequential: recordSpawn tracks a single
+  // live child/pid, and chunked review is the rare oversized-diff path.
+  const reviewResults: AgentResult[] = [];
+  for (const chunk of chunks) {
+    if (run.stopped) { run.child = undefined; return settle(run, "stopped"); }
+    const reviewPrompt = composeReviewPrompt({ ticket, plan, report: reportOutput, diff: chunk.payload, operatorNotes: run.operatorNotes, protectedViolation: protectedFinding, amendments, gate: gate.report || undefined, citations: gate.citations || undefined }) + roleStyle("review", styleSetting);
+    const res = await track(actorId, ticket.id, "review", run.agents.review, reviewPrompt.length, () => runAgent(
+      reviewAgent,
+      reviewPrompt,
+      workdir, onData,
+      (child) => recordSpawn(run, child),
+    ));
+    reviewResults.push(res);
+  }
   run.child = undefined;
+  const checkResults = await checksPromise;
   if (checksStartedAt !== undefined) run.checksDurationMs = Date.now() - checksStartedAt;
   if (run.stopped) return settle(run, "stopped");
 
@@ -782,8 +793,8 @@ async function reviewStage(
     append(run, `\n=== FORGE checks ===\n${checksText}\n`);
   }
 
-  applyVerification(reviewRes, run.agents.review, run, config);
-  const verdict = parseVerdict(reviewRes.output);
+  for (const res of reviewResults) applyVerification(res, run.agents.review, run, config);
+  const verdict = mergeReviewVerdicts(chunks, reviewResults.map((r) => r.output));
 
   // Gate block or a failing check forces FAIL regardless of the model's verdict
   const pass = verdict.pass && !gateBlocked && !checksFailed;

@@ -12,6 +12,7 @@ import {
   listRuns,
   listRunsWithHistory,
   getRunOutput,
+  getRunTimings,
   hasActiveRun,
   markInterruptedRuns,
   resolveWorkdir,
@@ -389,23 +390,25 @@ describe("forge run manager", () => {
     expect((await getTicket(ticket.id)).status).toBe("planned");
   });
 
-  it("checks run concurrently with review: a slow check doesn't add to wall clock when review takes longer", async () => {
+  it("checks run concurrently with review: review starts before the slow check finishes", async () => {
     const { actorId, ticket } = await seedTicket("Concurrent checks");
     await withSetting("forge.checks", JSON.stringify([`node "${join(__dirname, "fixtures", "check-slow.mjs")}"`]), async () => {
       setScript("plan,work,review-pass-slow");
-      const start = Date.now();
       const { runId } = await startPipeline(actorId, relayConfig(), {
         ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
       });
       await awaitRun(runId);
-      const elapsed = Date.now() - start;
 
-      // review sleeps 4000ms, check sleeps 2000ms. Sequential floor is
-      // ~6000ms + overhead; concurrent should land near ~4000ms + overhead.
-      // 6500 leaves margin below the sequential floor while comfortably
-      // clearing a generous overhead estimate for the concurrent path --
-      // re-serializing checks before review must push this over 6500.
-      expect(elapsed).toBeLessThan(6500);
+      // Causality, not wall clock: the review loop must START before the
+      // concurrent check FINISHES -- that overlap is what "runs concurrently"
+      // means, and it is immune to CPU scheduling drift. Serializing checks
+      // before review (await checksPromise first) lands reviewStartedAt after
+      // checksEndedAt and fails this.
+      const t = getRunTimings(runId);
+      expect(t?.checksStartedAt).toBeDefined();
+      expect(t?.checksEndedAt).toBeDefined();
+      expect(t?.reviewStartedAt).toBeDefined();
+      expect(t!.reviewStartedAt!).toBeLessThan(t!.checksEndedAt!);
 
       const output = getRunOutput(runId, 0);
       expect(output?.status).toBe("passed");

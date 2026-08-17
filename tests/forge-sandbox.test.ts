@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync, rmdirSync, readFileSync, readlinkSync, readdirSync, symlinkSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync, rmdirSync, readFileSync, readlinkSync, readdirSync, symlinkSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -375,6 +375,41 @@ describe("deps leak guard", () => {
     expect(leaked[0]).toContain("marker.txt");
     expect(leaked[0]).toContain("(modified)");
     expect(existsSync(markerPath)).toBe(true);
+  });
+
+  it("vite .vite-temp added into node_modules is not reported as a leak", () => {
+    const baseline = snapshotDeps(workdir);
+    const viteTemp = join(workdir, "node_modules", ".vite-temp");
+    mkdirSync(viteTemp, { recursive: true });
+    writeFileSync(join(viteTemp, "cfg.mjs"), "x\n");
+    expect(detectDepsLeak(baseline)).toEqual([]);
+  });
+
+  it("vite .vite-temp already present then mtime-bumped is not reported as a leak", () => {
+    const viteTemp = join(workdir, "node_modules", ".vite-temp");
+    mkdirSync(viteTemp, { recursive: true });
+    const baseline = snapshotDeps(workdir);
+    // move the dir mtime forward deterministically -> would hit the modified branch
+    const later = new Date(Date.now() + 10_000);
+    utimesSync(viteTemp, later, later);
+    expect(detectDepsLeak(baseline)).toEqual([]);
+  });
+
+  it("a real added package alongside a changed .vite-temp is still reported; sentinel not blind", () => {
+    const viteTemp = join(workdir, "node_modules", ".vite-temp");
+    mkdirSync(viteTemp, { recursive: true });
+    const baseline = snapshotDeps(workdir);
+    const later = new Date(Date.now() + 10_000);
+    utimesSync(viteTemp, later, later);
+    const evilPkg = join(workdir, "node_modules", "evil-pkg");
+    mkdirSync(evilPkg, { recursive: true });
+    writeFileSync(join(evilPkg, "index.js"), "bad\n");
+    const leaked = detectDepsLeak(baseline);
+    expect(leaked.length).toBe(1);
+    expect(leaked[0]).toContain("evil-pkg");
+    expect(leaked[0]).toContain("added; reverted");
+    expect(leaked.some((l) => l.includes(".vite-temp"))).toBe(false);
+    expect(existsSync(evilPkg)).toBe(false);
   });
 });
 

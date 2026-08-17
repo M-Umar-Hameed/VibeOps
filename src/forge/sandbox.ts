@@ -461,6 +461,12 @@ export function snapshotDeps(workdir: string): DepsBaseline {
 // Compare live base deps dirs against the baseline. ADDED top-level entries are
 // deleted from the base (revert the leak) and reported; TOUCHED entries are
 // reported but not restored (no byte snapshot). Empty array => clean.
+// Vite's config loader writes a transient ".vite-temp" scratch dir inside
+// node_modules while it runs; through the shared junction that write lands in
+// the base and trips the sentinel on an otherwise clean run. Ignore ONLY this
+// one known transient entry -- do NOT widen it, the sentinel guards real writes.
+const DEPS_LEAK_IGNORE = new Set([".vite-temp"]);
+
 export function detectDepsLeak(baseline: DepsBaseline): string[] {
   const leaked: string[] = [];
   for (const { dir, entries } of baseline) {
@@ -469,12 +475,14 @@ export function detectDepsLeak(baseline: DepsBaseline): string[] {
     const nowSet = new Set(now);
     for (const name of now) {
       if (entries.has(name)) continue;
+      if (DEPS_LEAK_IGNORE.has(name)) continue;
       const p = join(dir, name);
       try { rmSync(p, { recursive: true, force: true }); } catch { /* best-effort revert */ }
       leaked.push(`${p} (added; reverted)`);
     }
     for (const [name, mtime] of entries) {
       if (!nowSet.has(name)) continue;
+      if (DEPS_LEAK_IGNORE.has(name)) continue;
       let cur: number;
       try { cur = statSync(join(dir, name)).mtimeMs; } catch { continue; }
       if (cur > mtime) leaked.push(`${join(dir, name)} (modified)`);

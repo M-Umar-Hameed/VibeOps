@@ -801,6 +801,18 @@ async function reviewStage(
   if (run.checksStartedAt !== undefined) run.checksDurationMs = Date.now() - run.checksStartedAt;
   if (run.stopped) return settle(run, "stopped");
 
+  // A reviewer that never produced a verdict (non-zero exit, thrown error, or an
+  // API/transport error surfaced in output) is "could not be reached", NOT
+  // "judged and said no". Settle `failed` (the infra-trouble status) so recovery
+  // offers resume-to-review against the existing work commit, instead of
+  // `rejected` — which routes to rework and needlessly re-runs the whole work
+  // stage over code that was already complete and verified.
+  const reviewFailure = reviewResults.find((r) => !r.ok);
+  if (reviewFailure) {
+    await bounce(run, actorId, "reviewer failed", reviewFailure.output);
+    return settle(run, "failed");
+  }
+
   let checksText: string | undefined;
   let checksFailed = false;
   if (checkCmds.length) {

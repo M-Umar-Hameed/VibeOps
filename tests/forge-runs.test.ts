@@ -18,7 +18,8 @@ import {
   resolveWorkdir,
   awaitRun,
   latestRunPolicy,
-  resolveMaxActive
+  resolveMaxActive,
+  listInterruptedRuns
 } from "../src/forge/runs.js";
 import { sandboxExists, branchName, promoteSandbox, sandboxDiff, hasCommitsToPromote } from "../src/forge/sandbox.js";
 import { app } from "../src/api/app.js";
@@ -356,6 +357,51 @@ describe("forge run manager", () => {
 
     const persisted = await waitForPersistedRun(runId);
     expect(persisted.status).toBe("rejected");
+  });
+
+  it("reviewer transport failure settles failed (not rejected) and records the error", async () => {
+    const { actorId, ticket } = await seedTicket("Reviewer unreachable");
+    // review stage exits non-zero: the reviewer never returns a verdict. work
+    // writes a file (FAKE_WRITE) so a promotable commit exists.
+    setScript("plan,work,exit", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    // Could-not-be-reached is infra failure, NOT a rejection.
+    expect(getRunOutput(runId, 0)?.status).toBe("failed");
+    const persisted = await waitForPersistedRun(runId);
+    expect(persisted.status).toBe("failed");
+
+    // No phantom rejection: ticket stays in review (rejected would bounce to planned),
+    // and the committed work is intact.
+    expect((await getTicket(ticket.id)).status).toBe("review");
+    expect(await hasCommitsToPromote(workdir, ticket.id)).toBe(true);
+
+    // The reviewer's error text is recorded; no FAIL verdict was invented.
+    const report = [...(await listComments(ticket.id))].reverse().find((c) => c.kind === "report");
+    expect(report?.body).toContain("reviewer failed");
+    expect(report?.body).toContain("boom"); // stderr from the fake-agent "exit" mode
+  });
+
+  it("after a reviewer transport failure, recovery offers resume-to-review (not a work re-run)", async () => {
+    const { actorId, ticket } = await seedTicket("Reviewer unreachable recovery");
+    setScript("plan,work,exit", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+    await waitForPersistedRun(runId); // listInterruptedRuns reads the DB row
+
+    const items = await listInterruptedRuns(relayConfig());
+    const item = items.find((i) => i.ticketId === ticket.id);
+    expect(item).toBeDefined();
+    expect(item!.resumable).toBe(true);
+    expect(item!.hasCommits).toBe(true);
+    expect(item!.resumeMode).toBe("review"); // resume to review against the commit, not "work"
   });
 
   it("failing check forces VERDICT: FAIL even when the reviewer passes", async () => {

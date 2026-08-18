@@ -4,7 +4,7 @@ import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TicketListPane } from "./TicketListPane.js";
 import { RunStatusPane } from "./RunStatusPane.js";
-import type { Ticket, Agent, SandboxStatus } from "./types.js";
+import type { Ticket, Agent } from "./types.js";
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 const wrap = (ui: React.ReactNode) => (
@@ -14,7 +14,6 @@ const wrap = (ui: React.ReactNode) => (
 test("TicketListPane is memoized to isolate renders from run state changes", () => {
   let parentRenders = 0;
   const stableTickets: Ticket[] = [{ id: "t1", title: "Ticket 1", status: "open", version: 1, body: null }];
-  const stableSandboxes: Record<string, SandboxStatus> = {};
   const stableAgents: Agent[] = [];
   const stableOnSelect = vi.fn();
   const stableOnCreated = vi.fn();
@@ -26,7 +25,6 @@ test("TicketListPane is memoized to isolate renders from run state changes", () 
         <span data-testid="run-state">{runState}</span>
         <TicketListPane
           tickets={stableTickets}
-          sandboxes={stableSandboxes}
           selectedTicketId="t1"
           activeProjectId="p1"
           agents={stableAgents}

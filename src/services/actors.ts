@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { actors, type Actor } from "../db/schema.js";
 import { AuthError, NotFoundError } from "./errors.js";
+import { invalidateActor } from "./actor-cache.js";
 
 export function hashKey(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");
@@ -16,6 +17,7 @@ export async function createActor(input: {
     name: input.name, kind: input.kind, role: input.role ?? "member",
     apiKeyHash: hashKey(apiKey),
   }).returning();
+  invalidateActor(actor.apiKeyHash);
   return { actor, apiKey };
 }
 
@@ -34,5 +36,6 @@ export async function revokeActor(id: string): Promise<{ id: string; revoked: bo
   const [actor] = await db.update(actors).set({ revoked: true })
     .where(eq(actors.id, id)).returning();
   if (!actor) throw new NotFoundError(`actor not found: ${id}`);
+  invalidateActor(actor.apiKeyHash);
   return { id: actor.id, revoked: actor.revoked };
 }

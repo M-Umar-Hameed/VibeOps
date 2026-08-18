@@ -6,7 +6,7 @@ import { auth } from "./auth.js";
 import { createTicket, updateTicket } from "../services/tickets.js";
 import { addComment, listComments } from "../services/comments.js";
 import { getTicket, getTicketHistory, listTickets, searchTickets } from "../services/history.js";
-import { assertTicketId } from "../forge/sandbox.js";
+import { assertTicketId, sandboxExists } from "../forge/sandbox.js";
 import { saveNote, updateNote, deleteNote, listNotes, getNote } from "../services/notes.js";
 import { searchKnowledge, getKnowledgeSource, upsertSourceDoc, listSessionDocs, knowledgeGraph, indexRepoDocs } from "../services/knowledge.js";
 import { AuthError, ConflictError, ForbiddenError, NotFoundError, StaleVersionError } from "../services/errors.js";
@@ -19,6 +19,7 @@ import { requireAdmin } from "./auth.js";
 import { bump, snapshot } from "../services/metrics.js";
 import { getSystemMetrics, getSystemLogs, getSystemTopology, getAiUsage, getSystemStatus, getKnowledgeUsage } from "../services/system.js";
 import { getSetting, setSetting } from "../services/settings.js";
+import { getCorsOrigins } from "../services/settings-cache.js";
 import { getVaultStatus, startWatcher, stopWatcher, rescanProjectVaults, getProjectVaultStatus } from "../ingest/watch.js";
 import { fetchDocs } from "../knowledge/docs.js";
 import { getEmbedder } from "../knowledge/embedder.js";
@@ -26,7 +27,7 @@ import { execFileSync } from "node:child_process";
 import { loadRelayConfig } from "../relay/config.js";
 import type { Actor } from "../db/schema.js";
 import { registerMcpRoutes } from "./mcp-routes.js";
-import { registerForgeRoutes } from "./forge-routes.js";
+import { registerForgeRoutes, lastVerdict } from "./forge-routes.js";
 import { registerSkillsRoutes } from "./skills-routes.js";
 import { registerCouncilRoutes } from "./council-routes.js";
 import { registerExportRoutes } from "./export-routes.js";
@@ -62,12 +63,12 @@ async function jsonBody(c: Context): Promise<unknown> {
 // is refused by the browser. Exact match only; never `*`, never blind Origin
 // reflection. Registered before `auth` so the credential-less OPTIONS preflight
 // is answered here (204) instead of being 401'd by auth.
-// ponytail: reads the setting per request; cache in-memory + refresh on
-// setSetting("cors.origins") if this ever fronts non-loopback traffic.
+// Cached (settings-cache.ts, 10s TTL) and invalidated on setSetting/setOverride;
+// a per-request DB read here fronted every request.
 app.use("*", cors({
   origin: async (origin) => {
     if (!origin) return null;
-    const raw = await getSetting("cors.origins");
+    const raw = await getCorsOrigins();
     if (!raw) return null;
     const allowed = raw.split(",").map((o) => o.trim()).filter(Boolean);
     return allowed.includes(origin) ? origin : null;
@@ -191,7 +192,18 @@ const TICKET_LIST_MAX = 200;
 app.get("/tickets", async (c) => {
   const n = Number(c.req.query("limit"));
   const limit = Number.isFinite(n) && n > 0 ? Math.min(n, TICKET_LIST_MAX) : undefined;
-  return c.json(await listTickets({ projectId: c.req.query("projectId"), status: c.req.query("status"), limit }));
+  const list = await listTickets({ projectId: c.req.query("projectId"), status: c.req.query("status"), limit });
+  // Fold sandbox status for review rows so the forge screen needs no per-ticket
+  // /sandbox poll (kills the client N+1). Bounded by the number of review
+  // tickets; non-review rows are returned untouched.
+  const hasReview = list.some((t) => t.status === "review");
+  const admins = hasReview ? new Set((await listActors()).filter((a) => a.role === "admin").map((a) => a.id)) : undefined;
+  const enriched = await Promise.all(list.map(async (t) =>
+    t.status === "review"
+      ? { ...t, sandbox: { exists: sandboxExists(t.id), lastVerdict: await lastVerdict(t.id, admins) } }
+      : t
+  ));
+  return c.json(enriched);
 });
 app.get("/search", async (c) => c.json(await searchTickets(c.req.query("q") ?? "")));
 

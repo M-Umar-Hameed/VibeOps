@@ -130,6 +130,28 @@ async function runToPassed(h: Record<string, string>, ticketId: string): Promise
 }
 
 describe("forge API", () => {
+  it("GET /tickets carries sandbox status for review rows only", async () => {
+    const h = await adminHeaders();
+    const { actor } = await createActor({ name: uniq("fold-actor"), kind: "human" });
+    const project = await createProject({ key: uniq("fold-proj"), name: "Fold" });
+    const admin = await createActor({ name: uniq("fold-admin"), kind: "human", role: "admin" });
+
+    const review = await createTicket(actor.id, { projectId: project.id, title: "review row" });
+    let t = await getTicket(review.id);
+    t = await updateTicket(actor.id, t.id, t.version, { status: "review" });
+    await addComment(admin.actor.id, review.id, "looks good\n\nVERDICT: PASS", "review");
+
+    const openT = await createTicket(actor.id, { projectId: project.id, title: "open row" });
+
+    const res = await app.request(`/tickets?projectId=${project.id}`, { headers: h });
+    expect(res.status).toBe(200);
+    const rows = await res.json() as any[];
+    const rev = rows.find((r) => r.id === review.id);
+    const opn = rows.find((r) => r.id === openT.id);
+    expect(rev.sandbox).toEqual({ exists: false, lastVerdict: "pass" });
+    expect(opn.sandbox).toBeUndefined();
+  });
+
   it("GET /forge/agents lists agents by name/roles and never a cmd", async () => {
     const h = await adminHeaders();
     const res = await app.request("/forge/agents", { headers: h });

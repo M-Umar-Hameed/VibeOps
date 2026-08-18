@@ -58,8 +58,8 @@ function listSkillDir(dir: string): string[] {
 // count, or any member key could post "VERDICT: PASS" and unlock Promote for
 // unreviewed sandbox code. (Forge itself writes reviews as the admin who
 // started the run; member relay reviewers still close tickets their own way.)
-async function lastVerdict(ticketId: string): Promise<"pass" | "fail" | null> {
-  const admins = new Set((await listActors()).filter((a) => a.role === "admin").map((a) => a.id));
+export async function lastVerdict(ticketId: string, adminSet?: Set<string>): Promise<"pass" | "fail" | null> {
+  const admins = adminSet ?? new Set((await listActors()).filter((a) => a.role === "admin").map((a) => a.id));
   const review = [...(await listComments(ticketId))].reverse()
     .find((c) => c.kind === "review" && admins.has(c.authorId));
   if (!review) return null;

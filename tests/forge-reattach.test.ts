@@ -5,7 +5,8 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
-import { markInterruptedRuns, getRunOutput, awaitRun, tokenReader } from "../src/forge/runs.js";
+import { markInterruptedRuns, getRunOutput, awaitRun, stopRun, tokenReader } from "../src/forge/runs.js";
+import { pidAlive } from "../src/db/lifecycle.js";
 import { db } from "../src/db/client.js";
 import { forgeRuns } from "../src/db/schema.js";
 
@@ -112,5 +113,28 @@ describe("forge boot reattach", () => {
     expect(row.status).toBe("interrupted");
     expect(marked).toContain(row.ticketId);
     expect(getRunOutput(id, 0)).toBeUndefined();   // the stranger was never put in the runs map
+  });
+
+  it("stopping a reattached run actually kills the process", async () => {
+    const token = randomUUID();
+    const pid = sleeper(); // Real live pid
+    const logPath = tmpLog();
+    const id = await insertRow({ pid, logPath, runToken: token });
+
+    tokenReader.read = (p: number) => (p === pid ? token : null);
+
+    const marked = await markInterruptedRuns();
+    const [row] = await db.select().from(forgeRuns).where(eq(forgeRuns.id, id));
+    expect(row.status).toBe("running");
+    expect(marked).not.toContain(row.ticketId);
+    expect(pidAlive(pid)).toBe(true);
+
+    const stopped = await stopRun(id);
+    expect(stopped).toBe(true);
+    expect(pidAlive(pid)).toBe(false);
+
+    await awaitRun(id);
+    const [settled] = await db.select().from(forgeRuns).where(eq(forgeRuns.id, id));
+    expect(settled.status).toBe("stopped");
   });
 });

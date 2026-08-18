@@ -9,7 +9,7 @@ import { pipelineStartWarnings, pipelineStartBlockingError } from "../relay/doct
 import { roleStyle } from "../relay/style.js";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted } from "../relay/prompts.js";
 import { chunkReviewDiff, mergeReviewVerdicts } from "./review-chunks.js";
-import { killTree, type AgentResult } from "../relay/invoke.js";
+import { killTree, killPidTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { redactSecrets } from "./redact.js";
 import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch } from "./sandbox.js";
@@ -1074,6 +1074,7 @@ export async function stopRun(id: string): Promise<boolean> {
   if (!r || r.status !== "running") return false;
   r.stopped = true; // checked between stages so a running stage still lands on "stopped"
   if (r.child) await killTree(r.child);
+  else if (r.pid) await killPidTree(r.pid);
   if (r.checksChild) await killTree(r.checksChild);
   if (r.abort) r.abort();
   return true;
@@ -1127,7 +1128,7 @@ function reattach(row: ForgeRun): void {
     done: Promise.resolve(),
   };
   runs.set(run.id, run);
-  run.done = tailUntilExit(run);
+  run.done = tailUntilExit(run).then(() => run.persisted).catch(() => {});
 }
 
 function tailUntilExit(run: Run): Promise<void> {

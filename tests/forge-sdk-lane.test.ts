@@ -66,4 +66,30 @@ describe("forge SDK lane", () => {
     doAbort();
     expect(capturedAbort!.signal.aborted).toBe(true);
   });
+
+  it("surfaces the error-result diagnosis and CLI version on error_during_execution + exit 1", async () => {
+    (query as any).mockImplementation(async function* () {
+      yield { type: "system", subtype: "init", claude_code_version: "1.2.3" };
+      yield { type: "assistant", message: { content: [{ type: "text", text: "final report" }] } };
+      yield {
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["boom", "teardown"],
+        permission_denials: [{ tool_name: "WebFetch", tool_use_id: "t1", tool_input: {} }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+        total_cost_usd: 0.001,
+      };
+      throw new Error("Claude Code process exited with code 1");
+    });
+
+    const res = await runAgentSdk({ type: "sdk", roles: ["work"], cmd: [] }, "prompt", workdir);
+    expect(res.ok).toBe(false);
+    expect(res.output).toContain("final report");
+    expect(res.output).toContain("[forge: sdk result error_during_execution is_error=true cli=1.2.3]");
+    expect(res.output).toContain("[forge: sdk errors: boom; teardown]");
+    expect(res.output).toContain("[forge: sdk permission_denials: WebFetch]");
+    expect(res.output).toContain("[forge: sdk error: Claude Code process exited with code 1 cli=1.2.3]");
+  });
 });
+

@@ -193,9 +193,11 @@ single-writer and has no inter-process locking, so a second process opening
 `~/.vibeops/data` while the app is running corrupts it — not the copy, the original. This
 is not theoretical: it destroyed this project's database three times in one day, every
 time by running a backup or a probe script against a live server. Hard kills are fine
-(the write-ahead log replays on restart); a concurrent open is not. `npm run backup` now
-reads `postmaster.pid` and refuses to run while a live process holds the directory, but a
-manual `cp -r` has no such guard.
+(the write-ahead log replays on restart); a concurrent open is not. The data directory now
+takes an exclusive lock on open and a second opener is refused rather than admitted, and
+`npm run backup` reads `postmaster.pid` and refuses to run while a live process holds the
+directory. A stale lock left by a hard kill is reclaimed automatically once its pid is
+confirmed dead. A manual `cp -r` still has no guard, so the advice above stands.
 
 Useful scripts: `npm run ingest:sessions` (index recent agent sessions), `npm run ingest:watch` (standalone vault watcher), `npm run mcp` (stdio MCP server for external-Postgres setups), `npm test`.
 
@@ -328,6 +330,8 @@ flowchart TB
 - **Truth vs. retrieval:** authoritative records live in Postgres tables; pgvector holds embeddings — a projection you can always rebuild, never the sole record.
 - **Database seam:** `DATABASE_URL` set → external Postgres; otherwise an embedded PGlite database in `~/.vibeops/data`. Same code, same migrations (additive-only, run at boot).
 - **One code path:** REST and MCP both route through the same service layer, so every mutation lands in the same audit trail no matter who made it.
+- **Push, not poll:** the server publishes run and ticket changes on an SSE stream at `GET /events`; the UI holds one `EventSource` and invalidates queries from it. The polling endpoints remain as the fallback the client uses when the stream is disconnected.
+- **Runs outlive the server:** stage agents are spawned detached with stdout going straight to `~/.vibeops/runs/<runId>.log`, so restarting the API doesn't kill an in-flight agent or lose its output. Each run persists its pid, log path and a run token; boot currently still marks surviving runs interrupted and offers them for resume, with reattachment to a verified live child in progress.
 
 ## Security model
 

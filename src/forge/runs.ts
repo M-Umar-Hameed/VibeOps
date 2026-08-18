@@ -422,15 +422,24 @@ export async function startPipeline(
   }
 
   const ticket = await getTicket(opts.ticketId);
-  const allowed = opts.resumeStage === "review"
-    ? ["review"]
-    : opts.resumeStage === "work"
+  const workdir = await resolveWorkdir(ticket.projectId, config);
+  if (opts.resumeStage === "review") {
+    // Resume-to-review skips plan+work and reviews the existing sandbox commit.
+    // Its precondition is a promotable work commit, not a specific ticket status:
+    // a run that died in work leaves the ticket `planned` (bounced), one that died
+    // in review leaves it `review`. Gate on the commit so recovery's "review" mode
+    // is honoured for both, while a sandbox with nothing to review is still refused.
+    if (!(await hasCommitsToPromote(workdir, opts.ticketId).catch(() => false))) {
+      throw new ConflictError(`ticket ${opts.ticketId} has no work commit to review`);
+    }
+  } else {
+    const allowed = opts.resumeStage === "work"
       ? ["open", "planned", "in_progress"]
       : ["open", "planned"];
-  if (!allowed.includes(ticket.status)) {
-    throw new ConflictError(`ticket is ${ticket.status}; pipeline needs ${allowed.join(" or ")}`);
+    if (!allowed.includes(ticket.status)) {
+      throw new ConflictError(`ticket is ${ticket.status}; pipeline needs ${allowed.join(" or ")}`);
+    }
   }
-  const workdir = await resolveWorkdir(ticket.projectId, config);
 
   if (await projectWorkdir(ticket.projectId)) {
     if (!(await repoIndexed(ticket.projectId))) {

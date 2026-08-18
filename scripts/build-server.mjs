@@ -33,24 +33,33 @@ cpSync("node_modules/@electric-sql/pglite", join(outDir, "node_modules", "@elect
 cpSync("node_modules/@anthropic-ai/claude-agent-sdk", join(outDir, "node_modules", "@anthropic-ai", "claude-agent-sdk"), { recursive: true });
 cpSync("drizzle", join(outDir, "drizzle"), { recursive: true });
 
-// Local-embeddings stack: npm resolves the native tree (onnxruntime, sharp) into
-// the payload. The payload serves BOTH bundle platforms, but a same-prefix second
-// pass for the other platform's optionals prunes the first pass's binaries
-// (verified: an in-place win-then-linux install drops @img/sharp-win32-x64).
-// Install each platform into its own temp prefix instead, then merge the trees
-// (linux over win) so both platforms' native binaries coexist. onnxruntime-node
-// ships every platform inside one package, so either pass alone covers it.
+// node-target -> npm platform-override flags. Matches prune-platform.mjs KEEP and
+// the release matrix node-target vocabulary. Default target is the host so
+// `build:sidecar:server` and the payload smoke test resolve the running platform.
+const NPM_FLAGS = {
+  "win-x64": "--os=win32 --cpu=x64",
+  "linux-x64": "--os=linux --cpu=x64 --libc=glibc",
+  "darwin-arm64": "--os=darwin --cpu=arm64",
+};
+const hostTarget = `${process.platform === "win32" ? "win" : process.platform}-${process.arch}`;
+const target = process.argv.includes("--target")
+  ? process.argv[process.argv.indexOf("--target") + 1]
+  : hostTarget;
+const npmFlags = NPM_FLAGS[target];
+if (!npmFlags) throw new Error(`build-server: unknown --target ${target} (expected ${Object.keys(NPM_FLAGS).join(", ")})`);
+
+// Single-target native install: npm resolves only this leg's optionalDependencies
+// (@img/sharp-*), so the payload carries one platform's sharp tree instead of the
+// old win+linux merge. onnxruntime-node and the agent-sdk ripgrep vendor bundle
+// every platform inside one package (not optional deps), so prune-platform.mjs
+// still strips their foreign binaries in CI.
 const tfVersion = JSON.parse(readFileSync("package.json", "utf-8")).dependencies["@huggingface/transformers"];
-const winPrefix = mkdtempSync(join(tmpdir(), "vibeops-tf-win-"));
-const linuxPrefix = mkdtempSync(join(tmpdir(), "vibeops-tf-linux-"));
+const tfPrefix = mkdtempSync(join(tmpdir(), "vibeops-tf-"));
 try {
-  execSync(`npm install --prefix "${winPrefix}" --no-save --omit=dev --os=win32 --cpu=x64 @huggingface/transformers@${tfVersion}`, { stdio: "inherit" });
-  execSync(`npm install --prefix "${linuxPrefix}" --no-save --omit=dev --os=linux --cpu=x64 --libc=glibc @huggingface/transformers@${tfVersion}`, { stdio: "inherit" });
-  cpSync(join(winPrefix, "node_modules"), join(outDir, "node_modules"), { recursive: true });
-  cpSync(join(linuxPrefix, "node_modules"), join(outDir, "node_modules"), { recursive: true });
+  execSync(`npm install --prefix "${tfPrefix}" --no-save --omit=dev ${npmFlags} @huggingface/transformers@${tfVersion}`, { stdio: "inherit" });
+  cpSync(join(tfPrefix, "node_modules"), join(outDir, "node_modules"), { recursive: true });
 } finally {
-  rmSync(winPrefix, { recursive: true, force: true });
-  rmSync(linuxPrefix, { recursive: true, force: true });
+  rmSync(tfPrefix, { recursive: true, force: true });
 }
 
 // npm writes node_modules/.bin as SYMLINKS on POSIX (real .cmd shims on Windows).

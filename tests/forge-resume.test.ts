@@ -638,6 +638,55 @@ describe("forge run resume", () => {
     expect(runs.find((r) => r.ticketId === ticket.id)).toBeUndefined();
   });
 
+  it("planned ticket with a work commit resumes to review via /resume (recovery mode agrees)", async () => {
+    const { actorId, apiKey, ticket } = await seedTicket("Planned resume to review");
+    const config = loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG!);
+
+    // Work committed a diff, then the run died -> ticket bounced to planned.
+    await ensureSandbox(workdir, ticket.id);
+    writeFileSync(join(sandboxRoot, ticket.id, "result.txt"), "work done");
+    await forgeCommit(ticket.id, "WIP committed work");
+    await addComment(actorId, ticket.id, "The plan is to do work on result.txt", "plan");
+    await addComment(actorId, ticket.id, "Work completed", "report");
+    const t2 = await getTicket(ticket.id);
+    await updateTicket(actorId, ticket.id, t2.version, { status: "planned" });
+    await db.insert(forgeRuns).values({
+      id: randomUUID(), ticketId: ticket.id, status: "failed", stage: "work",
+      planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+      startedAt: new Date(), finishedAt: new Date(),
+    });
+
+    // Recovery advertises review for this planned+commit state.
+    const item = (await listInterruptedRuns(config, ticket.id))[0];
+    expect(item.resumeMode).toBe("review");
+    expect(item.resumable).toBe(true);
+
+    // /resume AGREES: 201, straight to review, no work re-run.
+    setScript("review-pass", false);
+    const h = { Authorization: `Bearer ${apiKey}` };
+    const res = await app.request(`/forge/tickets/${ticket.id}/resume`, { method: "POST", headers: h });
+    expect(res.status).toBe(201);
+    const { runId } = await res.json();
+    await awaitRun(runId);
+    const output = getRunOutput(runId, 0);
+    expect(output?.status).toBe("passed");
+    expect(output?.chunk).toContain("=== FORGE resume: straight to review");
+    expect(output?.chunk).not.toContain("=== FORGE work");
+  });
+
+  it("startPipeline refuses resumeStage review when no work commit exists", async () => {
+    const { actorId, ticket } = await seedTicket("No commit review guard");
+    const config = loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG!);
+    const t2 = await getTicket(ticket.id);
+    await updateTicket(actorId, ticket.id, t2.version, { status: "review" });
+    await expect(
+      startPipeline(actorId, config, {
+        ticketId: ticket.id, planAgent: "auto", workAgent: "auto", reviewAgent: "auto", resumeStage: "review",
+      }),
+    ).rejects.toThrow(/no work commit/);
+    expect(listRuns().find((r) => r.ticketId === ticket.id)).toBeUndefined();
+  });
+
   // MUST be last test: closeDb ends the connection for subsequent tests
   it("closeDb is idempotent and does not throw", async () => {
     // Under vitest isEmbedded is false, so this exercises the sql.end branch

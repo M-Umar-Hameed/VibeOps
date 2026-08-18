@@ -82,7 +82,7 @@ jobs:
         run: cd app && npm ci
 
       - name: Build sidecar server
-        run: node scripts/build-server.mjs --out app/src-tauri/resources/server
+        run: node scripts/build-server.mjs --out app/src-tauri/resources/server --target ${{ matrix.node-target }}
 
       - name: Prune foreign-platform binaries
         run: node scripts/prune-platform.mjs --dir app/src-tauri/resources/server --keep ${{ matrix.node-target }}

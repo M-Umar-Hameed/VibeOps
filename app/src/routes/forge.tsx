@@ -28,18 +28,13 @@ export function ForgeScreen() {
 
   const ticketsQ = useQuery({
     queryKey: ["forge", "tickets", activeProjectId],
-    queryFn: async () => {
-      const t = await api.get(activeProjectId ? `/tickets?projectId=${encodeURIComponent(activeProjectId)}` : "/tickets") as Ticket[];
-      const sandboxes: Record<string, SandboxStatus> = {};
-      for (const id of t.filter(x => x.status === "review").map(x => x.id)) {
-        try { sandboxes[id] = await api.get(`/forge/tickets/${id}/sandbox`) as SandboxStatus; } catch {}
-      }
-      return { tickets: t, sandboxes };
-    },
+    // One request: GET /tickets folds sandbox status into review rows, so the
+    // old per-review-ticket /sandbox loop (an N+1) is gone.
+    queryFn: async () =>
+      await api.get(activeProjectId ? `/tickets?projectId=${encodeURIComponent(activeProjectId)}` : "/tickets") as Ticket[],
     refetchInterval: streamConnected ? false : 5000,
   });
-  const tickets = ticketsQ.data?.tickets ?? [];
-  const sandboxes = ticketsQ.data?.sandboxes ?? {};
+  const tickets = ticketsQ.data ?? [];
   const ticketsError = ticketsQ.error ? ((ticketsQ.error as any).message || "Failed to load tickets") : "";
 
   const agentsQ = useQuery({ queryKey: ["forge", "agents"], queryFn: () => api.get("/forge/agents") as Promise<Agent[]>, staleTime: Infinity });
@@ -123,7 +118,7 @@ export function ForgeScreen() {
   return (
     <div className="absolute inset-0 flex overflow-hidden">
       <TicketListPane
-        tickets={tickets} sandboxes={sandboxes} selectedTicketId={selectedTicket?.id ?? null}
+        tickets={tickets} selectedTicketId={selectedTicket?.id ?? null}
         activeProjectId={activeProjectId} agents={agents} workDefaultModel={workDefaultQ.data ?? ""}
         planAgent={planAgent} workAgent={workAgent} reviewAgent={reviewAgent}
         onSelectTicket={handleSelectTicket} onTicketCreated={handleTicketCreated} ticketsError={ticketsError}

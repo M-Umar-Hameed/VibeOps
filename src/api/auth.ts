@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createMiddleware } from "hono/factory";
-import { resolveActor } from "../services/actors.js";
+import { resolveActorCached } from "../services/actor-cache.js";
 import { AuthError, ForbiddenError } from "../services/errors.js";
 import type { Actor } from "../db/schema.js";
 
@@ -51,7 +51,7 @@ export const auth = createMiddleware<{ Variables: { actor: Actor } }>(async (c, 
 
   let actor: Actor;
   try {
-    actor = await resolveActor(key);
+    actor = await resolveActorCached(bucket, key);
   } catch {
     recordFailure();
     throw new AuthError("unauthorized");

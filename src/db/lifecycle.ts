@@ -44,7 +44,7 @@ export class EmbeddedDbLockedError extends Error {
 // signal-0 means alive; any throw means the pid is not signalable (dead/reaped).
 // ponytail: any-throw=dead is safe because the DB holder is always the same user;
 // a cross-user deployment would need to treat EPERM as alive.
-function pidAlive(pid: number): boolean {
+export function pidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 

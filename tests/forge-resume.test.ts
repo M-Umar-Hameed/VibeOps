@@ -140,7 +140,7 @@ async function waitForPersistedStatus(runId: string, timeoutMs = 5000) {
 }
 
 describe("forge run resume", () => {
-  it("startPipeline inserts running row, markInterruptedRuns flips it", async () => {
+  it("markInterruptedRuns leaves a run this process still tracks untouched", async () => {
     const { actorId, apiKey, ticket } = await seedTicket("Interrupted path via pipeline");
     setScript("plan-hang", true);
 
@@ -148,15 +148,19 @@ describe("forge run resume", () => {
     const { runId } = await startPipeline(actorId, config, {
       ticketId: ticket.id, planAgent: "auto", workAgent: "auto", reviewAgent: "auto"
     });
-    
+
     await waitForPersistedRow(runId);
 
+    // S2-A3: a live run still in THIS process's in-memory map is not a restart
+    // casualty (real boot starts with an empty map). It is neither interrupted
+    // nor reattached; the interrupt/reattach paths are exercised in
+    // tests/forge-reattach.test.ts with raw orphan rows.
     const marked = await markInterruptedRuns();
-    expect(marked).toContain(ticket.id);
+    expect(marked).not.toContain(ticket.id);
     const [row] = await db.select().from(forgeRuns).where(eq(forgeRuns.id, runId));
-    expect(row.status).toBe("interrupted");
-    expect(row.finishedAt).not.toBeNull();
-    
+    expect(row.status).toBe("running");
+    expect(row.finishedAt).toBeNull();
+
     await stopRun(runId);
     await awaitRun(runId);
   });

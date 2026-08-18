@@ -5,6 +5,7 @@ import { mkdirSync, openSync, readSync, fstatSync, closeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import type { RelayAgent } from "./config.js";
+import { pidAlive } from "../db/lifecycle.js";
 
 const OUTPUT_CAP = 100_000;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
@@ -44,6 +45,25 @@ export function killTree(child: ChildProcess): Promise<void> {
     timer.unref();
     child.once("exit", done);
   });
+}
+
+// Kills an adopted process tree by PID (used when reattached runs have no ChildProcess handle).
+// Confirms death by polling pidAlive rather than waiting for an exit event that will never fire.
+export async function killPidTree(pid: number, timeoutMs = KILL_TIMEOUT_MS): Promise<void> {
+  if (!pidAlive(pid)) return;
+  if (process.platform === "win32") {
+    spawn("taskkill", ["/pid", String(pid), "/T", "/F"]);
+  } else {
+    try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+  }
+  const start = Date.now();
+  while (pidAlive(pid)) {
+    if (Date.now() - start > timeoutMs) {
+      console.warn(`forge: killPidTree pid ${pid} did not exit within ${timeoutMs}ms`);
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 25));
+  }
 }
 
 export async function runAgent(

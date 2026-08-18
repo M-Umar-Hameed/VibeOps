@@ -76,6 +76,7 @@ export async function runAgentSdk(
   const append = (s: string) => { if (output.length < OUTPUT_CAP) output += s; onData?.(s); };
   let usage: { tokens: number; cost: number } | undefined;
   let ok = false;
+  let cliVersion = "unknown";
   try {
     const response = query({
       prompt,
@@ -92,17 +93,26 @@ export async function runAgentSdk(
         for (const block of message.message.content) {
           if (block.type === "text") append(block.text);
         }
+      } else if (message.type === "system" && message.subtype === "init") {
+        cliVersion = message.claude_code_version;
       } else if (message.type === "result") {
         ok = message.subtype === "success" && !message.is_error;
         const u = message.usage;
         const tokens = (u?.input_tokens ?? 0) + (u?.output_tokens ?? 0)
           + (u?.cache_creation_input_tokens ?? 0) + (u?.cache_read_input_tokens ?? 0);
         usage = { tokens, cost: Math.round((message.total_cost_usd ?? 0) * 1e6) };
-        if (message.subtype !== "success") append(`\n[forge: sdk result ${message.subtype}]\n`);
+        if (message.subtype !== "success") {
+          const errs = message.errors.length ? message.errors.join("; ") : "(none reported)";
+          const denied = message.permission_denials.length
+            ? message.permission_denials.map((d) => d.tool_name).join(",") : "(none)";
+          append(`\n[forge: sdk result ${message.subtype} is_error=${message.is_error} cli=${cliVersion}]\n`);
+          append(`[forge: sdk errors: ${errs}]\n`);
+          append(`[forge: sdk permission_denials: ${denied}]\n`);
+        }
       }
     }
   } catch (e) {
-    append(`\n[forge: sdk error: ${(e as Error).message}]\n`);
+    append(`\n[forge: sdk error: ${(e as Error).message} cli=${cliVersion}]\n`);
     ok = false;
   } finally {
     clearTimeout(timer);

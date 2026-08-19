@@ -8,6 +8,41 @@ import { PG_BASE, ensureTemplate } from "../src/runtime/slice.js";
 // missing the top-k — the recurring "flake" in knowledge/e2e tests. One wipe
 // per suite run keeps the vector index deterministic; per-file cleanup can't,
 // because files run in parallel against the shared DB.
+// Nothing else migrates this database. src/db/client.ts migrates only the
+// embedded PGlite lane; with DATABASE_URL set it just wraps the connection, and
+// ensureTemplate migrates the SLICE TEMPLATE, not this one. So this is the only
+// place the shared test database is kept in step with drizzle/.
+//
+// Three cases, keyed off whether the schema and drizzle's own bookkeeping exist:
+//   1. Empty DB (no actors): provision from scratch. migrate() also creates
+//      drizzle.__drizzle_migrations, so every later run takes case 3.
+//   2. Schema present, NO bookkeeping (database predates drizzle tracking): we
+//      cannot know which migrations it has, so we can neither baseline nor
+//      migrate safely — drizzle would replay 0000 and die on CREATE TYPE
+//      actor_kind (42710). Fail loudly with the one-time rebuild command instead
+//      of letting a later test fail with a confusing missing-column error.
+//   3. Schema present, bookkeeping present: migrate() applies only migrations
+//      newer than the latest recorded timestamp — an up-to-date DB is untouched
+//      (no 0000 replay), a behind-but-tracked DB is brought current. This keeps
+//      the shared DB from silently drifting behind the migration folder.
+export async function ensureSharedSchema(sql: ReturnType<typeof postgres>): Promise<void> {
+  const [provisioned] = await sql`SELECT to_regclass('public.actors') IS NOT NULL AS ok`;
+  if (!provisioned?.ok) {
+    await sql`CREATE EXTENSION IF NOT EXISTS vector`;
+    await migrate(drizzle(sql), { migrationsFolder: "drizzle" });
+    return;
+  }
+  const [tracked] = await sql`SELECT to_regclass('drizzle.__drizzle_migrations') IS NOT NULL AS ok`;
+  if (!tracked?.ok) {
+    throw new Error(
+      "Test database is provisioned but has no drizzle migration history " +
+        "(drizzle.__drizzle_migrations is missing), so it will silently drift behind " +
+        "drizzle/. Rebuild it once: docker compose down -v && npm run db:up",
+    );
+  }
+  await migrate(drizzle(sql), { migrationsFolder: "drizzle" });
+}
+
 export default async function setup() {
   if (process.env.VIBEOPS_TEST_EMBEDDED === "1") {
     // Serial embedded lane: no Postgres. Migrate the throwaway PGlite once and
@@ -30,24 +65,7 @@ export default async function setup() {
   const url = process.env.DATABASE_URL ?? "postgres://tickets:tickets@localhost:5433/tickets";
   const sql = postgres(url, { max: 1 });
   try {
-    // Nothing else migrates this database. src/db/client.ts migrates only the
-    // embedded PGlite lane; with DATABASE_URL set it just wraps the connection,
-    // and ensureTemplate below migrates the SLICE TEMPLATE, not this one. On a
-    // developer machine the database was migrated long ago so it never showed;
-    // on a fresh CI database every test using the shared db import failed with
-    // relation "actors" does not exist.
-    //
-    // Only provision an EMPTY database. Existing developer databases were set up
-    // before drizzle kept its __drizzle_migrations bookkeeping here, so drizzle
-    // considers nothing applied and replays 0000, which dies on CREATE TYPE
-    // actor_kind (42710, already exists) and takes the whole suite down with it.
-    // Nothing migrated those databases before this either, so skipping matches
-    // the behaviour they already had.
-    const [provisioned] = await sql`SELECT to_regclass('public.actors') IS NOT NULL AS ok`;
-    if (!provisioned?.ok) {
-      await sql`CREATE EXTENSION IF NOT EXISTS vector`;
-      await migrate(drizzle(sql), { migrationsFolder: "drizzle" });
-    }
+    await ensureSharedSchema(sql);
   } catch (e) {
     console.error("global-setup: migrating the test database failed:", (e as Error).message);
     throw e;

@@ -197,6 +197,11 @@ export const forgeRuns = pgTable('forge_runs', {
   pid: integer('pid'),
   logPath: text('log_path'),
   runToken: text('run_token'),
+  // Cross-platform restart identity: the child's OS process start time, read at
+  // spawn and re-checked at boot. A recycled pid necessarily has a different
+  // start time, so pid+startTime together prove "still our child" where the
+  // Linux-only env-token read could not (win32/darwin). Nullable: legacy/sdk rows.
+  procStartedAt: text('proc_started_at'),
   startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
 });

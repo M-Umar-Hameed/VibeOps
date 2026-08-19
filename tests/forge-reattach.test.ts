@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
-import { markInterruptedRuns, getRunOutput, awaitRun, stopRun, tokenReader } from "../src/forge/runs.js";
+import { markInterruptedRuns, getRunOutput, awaitRun, stopRun, startTimeReader } from "../src/forge/runs.js";
 import { pidAlive } from "../src/db/lifecycle.js";
 import { db } from "../src/db/client.js";
 import { forgeRuns } from "../src/db/schema.js";
@@ -13,7 +13,7 @@ import { forgeRuns } from "../src/db/schema.js";
 process.env.EMBED_PROVIDER = "fake";
 
 const spawned: number[] = [];
-const originalTokenReader = tokenReader.read;
+const originalStartReader = startTimeReader.read;
 
 // A real, live process for the dead-pid test (the only test needing a real child).
 function sleeper(): number {
@@ -40,12 +40,12 @@ function tmpLog(): string {
   return p;
 }
 
-async function insertRow(v: { pid: number | null; logPath: string; runToken: string }): Promise<string> {
+async function insertRow(v: { pid: number | null; logPath: string; runToken: string; procStartedAt: string | null }): Promise<string> {
   const id = randomUUID();
   await db.insert(forgeRuns).values({
     id, ticketId: randomUUID(), status: "running", stage: "work",
     planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
-    pid: v.pid, logPath: v.logPath, runToken: v.runToken,
+    pid: v.pid, logPath: v.logPath, runToken: v.runToken, procStartedAt: v.procStartedAt,
     startedAt: new Date(), finishedAt: null,
   });
   return id;
@@ -53,32 +53,28 @@ async function insertRow(v: { pid: number | null; logPath: string; runToken: str
 
 afterEach(() => {
   while (spawned.length) kill(spawned.pop()!);
-  tokenReader.read = originalTokenReader;
+  startTimeReader.read = originalStartReader;
 });
 
 describe("forge boot reattach", () => {
-  it("live pid + matching token: reattached, not interrupted, output continues from the log", async () => {
-    const token = randomUUID();
-    const pid = sleeper(); // Real live pid
+  it("live pid + matching start time: reattached via the real OS reader, output continues from the log", async () => {
+    const pid = sleeper();                          // real live child
+    const started = startTimeReader.read(pid);      // real reader; must be non-null on this platform
+    expect(started).not.toBeNull();
     const logPath = tmpLog();
-    const id = await insertRow({ pid, logPath, runToken: token });
+    const id = await insertRow({ pid, logPath, runToken: randomUUID(), procStartedAt: started });
 
-    // Override tokenReader.read: always return the matching token for this pid
-    tokenReader.read = (p: number) => (p === pid ? token : null);
-
-    const marked = await markInterruptedRuns();
+    const marked = await markInterruptedRuns();     // no stub: real reader re-reads the same start time
 
     const [row] = await db.select().from(forgeRuns).where(eq(forgeRuns.id, id));
-    expect(row.status).toBe("running");            // NOT interrupted at boot
+    expect(row.status).toBe("running");
     expect(row.finishedAt).toBeNull();
     expect(marked).not.toContain(row.ticketId);
     expect(getRunOutput(id, 0)?.status).toBe("running");
 
-    // Output continues from the log (tail resumes at the current offset).
     appendFileSync(logPath, "LIVE-AFTER-REATTACH\n");
     await poll(() => (getRunOutput(id, 0)?.chunk ?? "").includes("LIVE-AFTER-REATTACH"));
 
-    // Kill the real pid; run settles interrupted (verdict continuation is S2-B)
     kill(pid);
     await poll(() => getRunOutput(id, 0)?.status !== "running");
     await awaitRun(id);
@@ -90,7 +86,7 @@ describe("forge boot reattach", () => {
     const pid = sleeper();
     kill(pid);
     await poll(() => { try { process.kill(pid, 0); return false; } catch { return true; } });
-    const id = await insertRow({ pid, logPath: tmpLog(), runToken: randomUUID() });
+    const id = await insertRow({ pid, logPath: tmpLog(), runToken: randomUUID(), procStartedAt: randomUUID() });
 
     const marked = await markInterruptedRuns();
     const [row] = await db.select().from(forgeRuns).where(eq(forgeRuns.id, id));
@@ -99,29 +95,28 @@ describe("forge boot reattach", () => {
     expect(marked).toContain(row.ticketId);
   });
 
-  it("live pid + NON-matching token: interrupted, never adopted (recycled-pid guard)", async () => {
-    const pid = sleeper(); // Real live pid
-    const expectedToken = randomUUID();
-    const actualToken = randomUUID(); // Different token = recycled pid
-    const id = await insertRow({ pid, logPath: tmpLog(), runToken: expectedToken });
+  it("live pid + NON-matching start time: interrupted, never adopted (recycled-pid guard)", async () => {
+    const pid = sleeper();
+    const expected = "111111";
+    const actual = "222222";                        // different start time = recycled pid
+    const id = await insertRow({ pid, logPath: tmpLog(), runToken: randomUUID(), procStartedAt: expected });
 
-    // Override tokenReader.read: return a DIFFERENT token -> mismatch -> interrupt
-    tokenReader.read = (p: number) => (p === pid ? actualToken : null);
+    startTimeReader.read = (p: number) => (p === pid ? actual : null);
 
     const marked = await markInterruptedRuns();
     const [row] = await db.select().from(forgeRuns).where(eq(forgeRuns.id, id));
     expect(row.status).toBe("interrupted");
     expect(marked).toContain(row.ticketId);
-    expect(getRunOutput(id, 0)).toBeUndefined();   // the stranger was never put in the runs map
+    expect(getRunOutput(id, 0)).toBeUndefined();    // stranger never entered the runs map
   });
 
   it("stopping a reattached run actually kills the process", async () => {
-    const token = randomUUID();
     const pid = sleeper(); // Real live pid
     const logPath = tmpLog();
-    const id = await insertRow({ pid, logPath, runToken: token });
+    const started = "424242";
+    const id = await insertRow({ pid, logPath, runToken: randomUUID(), procStartedAt: started });
 
-    tokenReader.read = (p: number) => (p === pid ? token : null);
+    startTimeReader.read = (p: number) => (p === pid ? started : null);
 
     const marked = await markInterruptedRuns();
     const [row] = await db.select().from(forgeRuns).where(eq(forgeRuns.id, id));

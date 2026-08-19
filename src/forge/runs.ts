@@ -4,6 +4,7 @@ import { existsSync, openSync, readSync, fstatSync, closeSync, readFileSync } fr
 import { join } from "node:path";
 import { vibeopsHome } from "../runtime/home.js";
 import type { ChildProcess } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { resolveCmd, loadRelayConfig, type RelayConfig, type RelayAgent } from "../relay/config.js";
 import { pipelineStartWarnings, pipelineStartBlockingError } from "../relay/doctor.js";
 import { roleStyle } from "../relay/style.js";
@@ -107,6 +108,7 @@ type Run = {
   pid?: number;        // OS pid of the current stage's agent child; cleared on settle
   logPath: string;     // stable per-run log path (recorded only; reattach ticket writes it)
   runToken: string;    // value of env VIBEOPS_RUN_TOKEN handed to every stage child
+  procStartedAt?: string; // child OS start time at spawn; boot compares to prove same process
   output: string; startedAt: string; finishedAt?: string;
   child?: ChildProcess; // the in-flight agent CLI for the current stage, if any
   checksChild?: ChildProcess; // the concurrently-running checks command, if any
@@ -118,11 +120,11 @@ type Run = {
 
 const runs = new Map<string, Run>();
 
-export type RunSummary = Omit<Run, "output" | "child" | "checksChild" | "abort" | "stopped" | "done" | "persisted" | "pid" | "logPath" | "runToken">;
+export type RunSummary = Omit<Run, "output" | "child" | "checksChild" | "abort" | "stopped" | "done" | "persisted" | "pid" | "logPath" | "runToken" | "procStartedAt">;
 
 function summarize(r: Run): RunSummary {
-  const { output, child, checksChild, abort, stopped, done, pid, logPath, runToken, ...rest } = r;
-  void output; void child; void checksChild; void abort; void stopped; void done; void pid; void logPath; void runToken;
+  const { output, child, checksChild, abort, stopped, done, pid, logPath, runToken, procStartedAt, ...rest } = r;
+  void output; void child; void checksChild; void abort; void stopped; void done; void pid; void logPath; void runToken; void procStartedAt;
   return rest;
 }
 
@@ -160,6 +162,11 @@ function enterStage(run: Run, stage: Stage): void {
 function recordSpawn(run: Run, child: ChildProcess): void {
   run.child = child;
   run.pid = child.pid;
+  // Capture the child's OS start time now so a boot reattach can prove THIS exact
+  // process (not a recycled pid) is still ours. ponytail: synchronous read at each
+  // stage spawn — a file read on Linux, one ps/PowerShell shell-out on macOS/Windows
+  // (~150ms, boot-tier infra, 3x per run). Move async if stage-start latency bites.
+  run.procStartedAt = child.pid != null ? (startTimeReader.read(child.pid) ?? undefined) : undefined;
   void persistRun(run);
   if (run.stopped) void killTree(child);
 }
@@ -864,11 +871,12 @@ async function persistRun(run: Run): Promise<void> {
       pid: run.pid ?? null,
       logPath: run.logPath,
       runToken: run.runToken,
+      procStartedAt: run.procStartedAt ?? null,
       startedAt: new Date(run.startedAt),
       finishedAt,
     }).onConflictDoUpdate({
       target: forgeRuns.id,
-      set: { status: run.status, stage: run.stage, finishedAt, protectedViolations: run.protectedViolations ?? null, checksDurationMs: run.checksDurationMs ?? null, pid: run.pid ?? null }
+      set: { status: run.status, stage: run.stage, finishedAt, protectedViolations: run.protectedViolations ?? null, checksDurationMs: run.checksDurationMs ?? null, pid: run.pid ?? null, procStartedAt: run.procStartedAt ?? null }
     });
   } catch (e) {
     console.warn(`forge: failed to persist run ${run.id}:`, (e as Error).message);
@@ -1107,28 +1115,44 @@ export function awaitRun(id: string): Promise<void> {
 
 const REATTACH_POLL_MS = 200;
 
-// Reads VIBEOPS_RUN_TOKEN from a LIVE process's environment to confirm the pid
-// is still OUR agent child and not an unrelated, recycled pid. Linux /proc only;
-// returns null wherever the environment cannot be read (win32/darwin, or a
-// dead/unreadable pid), which the caller treats as unverifiable -> interrupt.
-// ponytail: Linux-only identity check; macOS/Windows never reattach (safe
-// default -- they interrupt exactly as today). Upgrade path: a per-platform env
-// reader, or S2-B's DB-backed supervisor, if off-Linux desktop reattach is needed.
-function readRunTokenDefault(pid: number): string | null {
+// Reads a LIVE process's OS start time to confirm the pid is still OUR agent
+// child and not an unrelated, recycled pid (which necessarily has a different
+// start time). Cross-platform: Linux reads /proc/<pid>/stat field 22 (a plain
+// file read); Windows reads StartTime.Ticks via PowerShell; macOS/others shell
+// `ps -o lstart=`. Returns null wherever the value can't be read (dead/unreadable
+// pid) -> caller treats as unverifiable -> interrupt. The SAME reader runs at
+// spawn and at boot, so the platform's string compares by equality.
+function readLinuxStart(pid: number): string | null {
   try {
-    for (const kv of readFileSync(`/proc/${pid}/environ`, "utf-8").split("\0")) {
-      if (kv.startsWith("VIBEOPS_RUN_TOKEN=")) return kv.slice("VIBEOPS_RUN_TOKEN=".length);
-    }
-    return null;
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf-8");
+    // comm (field 2) is parenthesised and may hold spaces/parens; start after the
+    // LAST ')'. starttime (field 22) is then index 19 of the remaining fields.
+    const after = stat.slice(stat.lastIndexOf(")") + 2);
+    return after.split(" ")[19] || null;
   } catch {
     return null;
   }
 }
+function readPsLstart(pid: number): string | null {
+  const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf-8" });
+  const out = r.stdout?.trim();
+  return out ? out : null;
+}
+function readWinStart(pid: number): string | null {
+  const r = spawnSync("powershell", ["-NoProfile", "-Command", `(Get-Process -Id ${pid}).StartTime.Ticks`], { encoding: "utf-8" });
+  const out = r.stdout?.trim();
+  return out && /^\d+$/.test(out) ? out : null;
+}
+function readProcStartTimeDefault(pid: number): string | null {
+  if (process.platform === "linux") return readLinuxStart(pid);
+  if (process.platform === "win32") return readWinStart(pid);
+  return readPsLstart(pid);
+}
 
-// Injectable token reader for testing; production uses /proc, tests substitute
-// a controllable stub to exercise match/mismatch paths on all platforms.
-// Exported as an object so the .read property is mutable in test imports.
-export const tokenReader = { read: readRunTokenDefault };
+// Injectable start-time reader for testing; production reads the real OS start
+// time, tests substitute a controllable stub to exercise match/mismatch on every
+// platform. Exported as an object so the .read property is mutable in tests.
+export const startTimeReader = { read: readProcStartTimeDefault };
 
 // Rebuild a minimal in-memory Run for an agent process that SURVIVED an API
 // restart (S2-A2 spawns detached+unref'd, writing stdout to logPath). Resumes
@@ -1145,6 +1169,7 @@ function reattach(row: ForgeRun): void {
     checksDurationMs: row.checksDurationMs ?? undefined,
     pid: row.pid ?? undefined,
     logPath: row.logPath!, runToken: row.runToken!,
+    procStartedAt: row.procStartedAt ?? undefined,
     output: "", startedAt: row.startedAt.toISOString(), stopped: false,
     done: Promise.resolve(),
   };
@@ -1193,11 +1218,13 @@ export async function markInterruptedRuns(): Promise<string[]> {
     for (const row of rows) {
       // A run THIS process still tracks is not a restart casualty; never touch it.
       if (runs.has(row.id)) continue;
-      // Alive AND provably still our child (token read from its live env) -> reattach.
-      // A recycled pid is a DIFFERENT process: its env has no/other token -> mismatch
-      // -> falls through to interrupt. That guard is the point of this ticket.
-      if (row.pid != null && row.logPath && row.runToken
-          && pidAlive(row.pid) && tokenReader.read(row.pid) === row.runToken) {
+      // Alive AND provably still our child: its CURRENT OS start time equals the
+      // one persisted at spawn. A recycled pid is a different process with a
+      // different start time -> mismatch -> falls through to interrupt. That guard
+      // is the point of this ticket; do NOT weaken it to a pid-only or file-token
+      // compare (a recycled pid would be adopted, losing S2-A3's protection).
+      if (row.pid != null && row.logPath && row.procStartedAt
+          && pidAlive(row.pid) && startTimeReader.read(row.pid) === row.procStartedAt) {
         reattach(row);
         reattached++;
         continue;

@@ -111,3 +111,20 @@ test("tickets query polls: advancing 5s triggers a refetch", async () => {
     vi.useRealTimers();
   }
 });
+
+test("active-run badge: renders stage for a live run, absent otherwise; one list request for N rows", async () => {
+  (tickets.list as any).mockResolvedValue([
+    { id: "t1", title: "Live", status: "in_progress", priority: "normal", assigneeId: null, activeRun: { stage: "work" } },
+    { id: "t2", title: "Idle", status: "open", priority: "normal", assigneeId: null },
+  ]);
+  render(<TestHarness />);
+  await waitFor(() => expect(screen.getByText("Live")).toBeInTheDocument());
+
+  // Badge present exactly once (the live row only).
+  expect(screen.getAllByTestId("active-run-badge")).toHaveLength(1);
+  expect(screen.getByTestId("active-run-badge").textContent).toBe("work");
+
+  // ONE request for N tickets — no per-ticket fetch (guards the QW4 N+1).
+  expect((tickets.list as any).mock.calls.length).toBe(1);
+  expect((apiFetch as any).mock.calls.every((c: any[]) => !String(c[0]).match(/^\/tickets\/[^/]+/))).toBe(true);
+});

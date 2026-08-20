@@ -10,6 +10,19 @@ import { runAgent } from "../relay/invoke.js";
 import { loadRelayConfig, resolveCmd } from "../relay/config.js";
 import { parseModelRef, rollTranscript } from "./roster.js";
 
+// Composed onto the chat voice clause for the tool-capable SDK lane only. States
+// what the connected tools can do and the act-grant rule, so the agent stops
+// denying capabilities it has (live incident: extension linked, agent claimed it
+// could not open a URL). Describes capability classes, not tool names, so it does
+// not rot as the tool set changes.
+export const CHAT_CAPABILITIES = `
+Your tools connect you to this app's own surfaces. With a linked browser extension you can snapshot and read the current page, and you can act on it: click, type, select, press keys, and navigate to an http/https URL. You can also search the knowledge index and list board tickets. Do not tell the owner you cannot open a URL or drive the browser when an extension is connected; those actions are available to you.
+
+Acting on a page and navigating both require an "act" grant for the target origin, and for navigation the grant must cover the DESTINATION origin. Whether a grant exists is decided server-side, not by you.
+
+If an action is refused because a grant is missing, the refusal states the exact setting to add. Relay that refusal to the owner word for word; do not paraphrase it or substitute a limitation of your own. When you are unsure whether an action will be permitted, attempt it and report the actual result or refusal rather than declining up front.
+`;
+
 type AgentFn = (p: Parameters<typeof runChatTurn>[0]) => Promise<ChatTurnResult>;
 
 // ponytail: test seam only
@@ -78,14 +91,15 @@ export async function runTurn(
     if (!agentName || agentDef?.type === "sdk") {
       // SDK lane: tool-capable, resumable. Legacy 'sonnet'/'opus' land here (no '::').
       const tools = buildChatTools(actor, calls, session.projectId ?? undefined);
+      const systemPrompt = voice + CHAT_CAPABILITIES;
       try {
         res = await agentImpl({
-          userBody, tools, model: modelName, systemPrompt: voice,
+          userBody, tools, model: modelName, systemPrompt,
           resume: session.sdkSessionId ?? undefined, onData,
         });
       } catch (e) {
         // C3: stale resume -> one fresh retry
-        res = await agentImpl({ userBody, tools, model: modelName, systemPrompt: voice, onData });
+        res = await agentImpl({ userBody, tools, model: modelName, systemPrompt, onData });
       }
       if (res.sessionId) {
         await store.updateSessionRuntime(sessionId, { sdkSessionId: res.sessionId });

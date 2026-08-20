@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as store from "../src/chat/store.js";
-import { setChatAgent, runTurn, getChatOutput, isRunning, ChatBusyError } from "../src/chat/turns.js";
+import { setChatAgent, runTurn, getChatOutput, isRunning, ChatBusyError, CHAT_CAPABILITIES } from "../src/chat/turns.js";
 import { createActor } from "../src/services/actors.js";
+import { roleStyle } from "../src/relay/style.js";
+import { getSetting } from "../src/services/settings.js";
 
 const FAKE_AGENT = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-agent.mjs");
 
@@ -200,5 +202,30 @@ describe("chat turns", () => {
     expect(turn2Assistant).toContain("ALPHA"); // turn 1 user message present
     expect(turn2Assistant).toContain("BRAVO"); // turn 2 user message present
     expect(turn2Assistant.startsWith("PROMPT:")).toBe(true);
+  });
+
+  it("hands the SDK agent the voice clause AND the capability section", async () => {
+    const { actor } = await createActor({ name: uniq("chat-cap"), kind: "human" });
+    const sess = await store.createSession("cap test");
+
+    let seenPrompt: string | undefined;
+    setChatAgent(async (params) => {
+      seenPrompt = params.systemPrompt;
+      return { ok: true, text: "ok" };
+    });
+
+    await runTurn(actor, sess.id, "open a github url");
+
+    const voice = roleStyle("chat", await getSetting("agents.commProfile"));
+    expect(voice.length).toBeGreaterThan(0);
+    // Assert on the actual string handed to agentImpl, not a helper in isolation.
+    expect(seenPrompt).toContain(voice);
+    expect(seenPrompt).toContain(CHAT_CAPABILITIES);
+    expect(seenPrompt).toBe(voice + CHAT_CAPABILITIES);
+  });
+
+  it("keeps the capability section out of other roles' voice", async () => {
+    expect(roleStyle("work", null)).not.toContain(CHAT_CAPABILITIES);
+    expect(roleStyle("review", null)).not.toContain(CHAT_CAPABILITIES);
   });
 });

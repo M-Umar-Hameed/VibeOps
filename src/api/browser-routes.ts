@@ -2,7 +2,8 @@ import type { Hono } from "hono";
 import type { Actor } from "../db/schema.js";
 import { register, list, exists, nextBatch, submitResult, submitBatch, type BatchResult } from "../browser/channel.js";
 import { validateSteps } from "../browser/validate.js";
-import { hasActGrant, noActGrantReason } from "../browser/grants.js";
+import { hasActGrant, noActGrantReason, addActGrant } from "../browser/grants.js";
+import { requireAdmin } from "./auth.js";
 
 const MUTATING = new Set(["click", "type", "select", "press", "navigate"]);
 
@@ -12,6 +13,19 @@ type AppEnv = { Variables: { actor: Actor } };
 // ticket/notes work surface. Transport is HTTP long-poll on this same server;
 // see channel.ts for the WebSocket upgrade path.
 export function registerBrowserRoutes(app: Hono<AppEnv>): void {
+  // Admin-only, like every host-touching route (settings sit behind requireAdmin in
+  // app.ts). Appends one { origin, mode:"act" } to browserGrants. The origin is the
+  // one the caller was refused; hasActGrant's exact match keeps this scoped to it.
+  app.post("/browser/grants", requireAdmin, async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const b = (body ?? {}) as { origin?: unknown };
+    if (typeof b.origin !== "string" || !b.origin.trim()) {
+      return c.json({ error: "origin required" }, 400);
+    }
+    await addActGrant(b.origin);
+    return c.json({ ok: true });
+  });
+
   app.post("/browser/instances/register", async (c) => {
     const body = await c.req.json().catch(() => null);
     const { browserChannel, profileId, profileLabel } = (body ?? {}) as Record<string, unknown>;

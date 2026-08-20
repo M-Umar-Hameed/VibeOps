@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getLessons, lessonsClause } from "./lessons.js";
-import { existsSync, openSync, readSync, fstatSync, closeSync, readFileSync } from "node:fs";
+import { existsSync, openSync, readSync, fstatSync, closeSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { vibeopsHome } from "../runtime/home.js";
 import type { ChildProcess } from "node:child_process";
@@ -106,6 +106,8 @@ type Run = {
   checksEndedAt?: number;     // epoch ms checks actually resolved (true runtime end)
   reviewStartedAt?: number;   // epoch ms the review loop began
   pid?: number;        // OS pid of the current stage's agent child; cleared on settle
+  lastLogSize?: number;      // last observed logPath size (stall detection)
+  lastLogGrowthAt?: number;  // epoch ms the log last grew; the stall clock resets here
   logPath: string;     // stable per-run log path (recorded only; reattach ticket writes it)
   runToken: string;    // value of env VIBEOPS_RUN_TOKEN handed to every stage child
   procStartedAt?: string; // child OS start time at spawn; boot compares to prove same process
@@ -120,11 +122,11 @@ type Run = {
 
 const runs = new Map<string, Run>();
 
-export type RunSummary = Omit<Run, "output" | "child" | "checksChild" | "abort" | "stopped" | "done" | "persisted" | "pid" | "logPath" | "runToken" | "procStartedAt">;
+export type RunSummary = Omit<Run, "output" | "child" | "checksChild" | "abort" | "stopped" | "done" | "persisted" | "pid" | "logPath" | "runToken" | "procStartedAt" | "lastLogSize" | "lastLogGrowthAt">;
 
 function summarize(r: Run): RunSummary {
-  const { output, child, checksChild, abort, stopped, done, pid, logPath, runToken, procStartedAt, ...rest } = r;
-  void output; void child; void checksChild; void abort; void stopped; void done; void pid; void logPath; void runToken; void procStartedAt;
+  const { output, child, checksChild, abort, stopped, done, pid, logPath, runToken, procStartedAt, lastLogSize, lastLogGrowthAt, ...rest } = r;
+  void output; void child; void checksChild; void abort; void stopped; void done; void pid; void logPath; void runToken; void procStartedAt; void lastLogSize; void lastLogGrowthAt;
   return rest;
 }
 
@@ -690,6 +692,7 @@ async function pipeline(
 }
 
 function settle(run: Run, status: Status): void {
+  if (run.finishedAt) return; // first settle wins; a later stall/tail settle must never override
   run.status = status;
   run.finishedAt = new Date().toISOString();
   emitEvent("run.settled", { runId: run.id, ticketId: run.ticketId, status });
@@ -1107,6 +1110,70 @@ export async function stopRun(id: string): Promise<boolean> {
   if (r.checksChild) await killTree(r.checksChild);
   if (r.abort) r.abort();
   return true;
+}
+
+// Server-side stall detector. Silence, not elapsed time, is the signal: a run
+// whose log file has not grown for windowMs is wedged (agent alive but blocked,
+// typically on a child `npm test` that never exits), while a legitimately long
+// stage narrates and keeps the log growing so its clock keeps resetting. The
+// per-child setTimeout in invoke.ts cannot cover this — it dies with the API
+// process on restart and is never re-armed for a reattached run (tailUntilExit
+// only polls pidAlive), so a wedged survivor runs forever. Settle such runs
+// FAILED with a reason naming the stall, NOT interrupted (interrupted offers
+// resume as if nothing were wrong).
+const DEFAULT_STALL_WINDOW_MS = 30 * 60_000;
+
+export function resolveStallWindowMs(setting: string | null): number {
+  const n = parseInt(setting ?? "", 10);
+  return Number.isInteger(n) && n >= 1 ? n : DEFAULT_STALL_WINDOW_MS;
+}
+
+// Injectable so tests drive size growth without a real file. ponytail: statSync
+// on the path — size, not mtime (NTFS lazily updates mtime for an open append
+// handle, which the live tail's own fstatSync(size) path already works around).
+export const logSizeReader = {
+  read(logPath: string): number | null {
+    try { return statSync(logPath).size; } catch { return null; }
+  },
+};
+
+export async function sweepStalledRuns(now: number, windowMs: number): Promise<string[]> {
+  const stalled: string[] = [];
+  for (const run of activeRuns()) {
+    const size = logSizeReader.read(run.logPath);
+    // No log yet (or sdk lane, which writes none): seed the clock, never judge.
+    if (size === null) { run.lastLogGrowthAt ??= now; continue; }
+    if (run.lastLogSize === undefined || size > run.lastLogSize) {
+      run.lastLogSize = size;
+      run.lastLogGrowthAt = now;
+      continue; // grew (or first sight) -> reset the stall clock
+    }
+    const since = run.lastLogGrowthAt ?? now;
+    if (now - since <= windowMs) continue; // silent, but not long enough yet
+    const mins = Math.round((now - since) / 60_000);
+    const iso = new Date(since).toISOString().replace(/\.\d{3}Z$/, "Z");
+    const reason = `stalled: no output for ${mins}m in ${run.stage} stage (last output ${iso})`;
+    const pid = run.pid;
+    const child = run.child;
+    // Record the reason durably, then settle BEFORE killing: a reattached run's
+    // tailUntilExit would otherwise settle it `interrupted` when the pid dies, but
+    // the row is already terminal so its settle() no-ops on the first-wins guard.
+    const admin = (await listActors()).find((a) => a.role === "admin");
+    if (admin) await bounce(run, admin.id, reason, "");
+    else append(run, `\nforge: ${reason}\n`);
+    settle(run, "failed");
+    if (child) await killTree(child);
+    else if (pid) await killPidTree(pid);
+    stalled.push(run.id);
+  }
+  return stalled;
+}
+
+// Production entry: read the configured window and sweep once. Wired to a server
+// interval (see src/api/server.ts).
+export async function sweepStalledRunsWithConfig(now = Date.now()): Promise<string[]> {
+  const windowMs = resolveStallWindowMs(await getSetting("forge.stallWindowMs"));
+  return sweepStalledRuns(now, windowMs);
 }
 
 export function awaitRun(id: string): Promise<void> {

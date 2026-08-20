@@ -318,7 +318,10 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     const beforeMerge = await getTicket(ticketId);
     const updated = await updateTicket(c.get("actor").id, ticketId, beforeMerge.version, { status: "closed" });
     try {
-      await promoteSandbox(workdir, ticketId, ticket.title, discardAfter);
+      // Merge only. The post-merge sandbox discard is a SEPARATE step below with its own
+      // failure handling: a discard-time fault (e.g. Windows EBUSY worktree lock) must not
+      // masquerade as a merge failure and wrongly reopen a ticket whose code already landed.
+      await promoteSandbox(workdir, ticketId, ticket.title, false);
     } catch (e) {
       // Merge failed after we already closed the ticket. A closed ticket whose code
       // never landed is worse than the race, so compensate: bounce it back to review
@@ -328,6 +331,18 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
         `forge: promote merge failed, ticket reopened to review — ${(e as Error).message}`, "comment");
       await updateTicket(c.get("actor").id, ticketId, closed.version, { status: "review" });
       throw e;
+    }
+    // Merge landed — the code is on the base branch and the ticket stays CLOSED. Discarding
+    // the sandbox is best-effort cleanup; on Windows an EBUSY lock (e.g. a test runner still
+    // holding the worktree) can make it fail. That is NOT a promote failure: WARN and leave
+    // the ticket closed. The leftover sandbox is reclaimable via /forge/sandboxes/cleanup;
+    // a wrongly-reopened ticket is not self-correcting.
+    if (discardAfter) {
+      try {
+        await discardSandbox(workdir, ticketId);
+      } catch (e) {
+        console.warn(`forge: ${ticketId} merged but sandbox ${branchName(ticketId)} cleanup failed: ${(e as Error).message}`);
+      }
     }
     // Repo files just changed on disk (sandbox merged into the project repo); refresh the
     // doc index so stale README/CLAUDE/AGENTS text stops feeding plan/work prompts. Only this

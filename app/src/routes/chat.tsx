@@ -17,7 +17,7 @@ type ChatMessage = {
   id: string;
   role: string;
   body: string;
-  toolCalls?: { name: string; input: unknown; summary: string }[];
+  toolCalls?: { name: string; input: unknown; summary: string; grantOrigin?: string }[];
   createdAt: string;
 };
 
@@ -41,6 +41,8 @@ export function ChatScreen() {
   const [sessionMenu, setSessionMenu] = useState<{ items: MenuItemSpec[]; x: number; y: number; label: string } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [grantedOrigins, setGrantedOrigins] = useState<Set<string>>(new Set());
+  const [grantingOrigin, setGrantingOrigin] = useState<string | null>(null);
   const nextOffsetRef = useRef(0);
 
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery<ChatSession[]>({
@@ -146,6 +148,22 @@ export function ChatScreen() {
       }],
       x, y, label: `Actions for ${s.title}`,
     });
+
+  // Origin comes verbatim from the tool-call refusal record (server-sourced), never
+  // from assistant prose — a page steering the agent cannot substitute an origin the
+  // user did not see. Explicit click only; no auto-approve, no remembered default.
+  const handleGrant = async (origin: string) => {
+    setError("");
+    setGrantingOrigin(origin);
+    try {
+      await api.post("/browser/grants", { origin });
+      setGrantedOrigins((s) => new Set(s).add(origin));
+    } catch (e: any) {
+      setError(e.message || "Failed to grant");
+    } finally {
+      setGrantingOrigin(null);
+    }
+  };
 
   const handleSend = async () => {
     if (!selectedSessionId || !input.trim() || isSending) return;
@@ -293,14 +311,31 @@ export function ChatScreen() {
                   {m.toolCalls && m.toolCalls.length > 0 && (
                     <div className="mt-2 space-y-1">
                       {m.toolCalls.map((tc, i) => (
-                        <details key={i} className="text-xs">
-                          <summary className="cursor-pointer text-on-surface-variant hover:text-on-surface">
-                            <span className="font-mono">{tc.name}</span> — {tc.summary}
-                          </summary>
-                          <pre className="mt-1 p-2 bg-black/20 rounded overflow-x-auto text-on-surface-variant">
-                            {JSON.stringify(tc.input, null, 2)}
-                          </pre>
-                        </details>
+                        <div key={i}>
+                          <details className="text-xs">
+                            <summary className="cursor-pointer text-on-surface-variant hover:text-on-surface">
+                              <span className="font-mono">{tc.name}</span> — {tc.summary}
+                            </summary>
+                            <pre className="mt-1 p-2 bg-black/20 rounded overflow-x-auto text-on-surface-variant">
+                              {JSON.stringify(tc.input, null, 2)}
+                            </pre>
+                          </details>
+                          {tc.grantOrigin && (
+                            grantedOrigins.has(tc.grantOrigin) ? (
+                              <p className="mt-1 text-xs text-primary">
+                                Granted browser actions on {tc.grantOrigin}. Send again to retry.
+                              </p>
+                            ) : (
+                              <button
+                                onClick={() => handleGrant(tc.grantOrigin!)}
+                                disabled={grantingOrigin === tc.grantOrigin}
+                                className="mt-1 px-3 py-1 rounded bg-primary text-on-primary text-xs font-medium disabled:opacity-50"
+                              >
+                                Allow browser actions on {tc.grantOrigin}
+                              </button>
+                            )
+                          )}
+                        </div>
                       ))}
                     </div>
                   )}

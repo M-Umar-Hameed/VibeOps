@@ -33,6 +33,17 @@ describe("browser_act", () => {
     expect(submitBatch).not.toHaveBeenCalled();
   });
 
+  it("records the server-refused origin as grantOrigin, verbatim (Allow affordance source)", async () => {
+    hasActGrant.mockResolvedValue(false);
+    const calls: ToolCall[] = [];
+    await getAct(calls).handler(
+      { instanceId: "i1", targetOrigin: "https://github.com", steps: [{ verb: "click", ref: "ref1" }] }, {},
+    );
+    const refusal = calls.find((c) => c.summary.includes("refused"))!;
+    // Comes from the origin the server checked, not from any model-authored text.
+    expect(refusal.grantOrigin).toBe("https://github.com");
+  });
+
   it("with a grant, enqueues with grant:act+targetOrigin and returns the snapshot", async () => {
     hasActGrant.mockResolvedValue(true);
     submitBatch.mockResolvedValue({ results: [{ ok: true }], snapshot: { origin: "https://github.com", nodes: [] } });

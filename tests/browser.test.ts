@@ -16,6 +16,11 @@ async function memberHeaders() {
   return { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
 }
 
+async function adminHeaders() {
+  const { apiKey } = await createActor({ name: uniq("admin"), kind: "human", role: "admin" });
+  return { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+}
+
 async function registerInstance(h: Record<string, string>) {
   const res = await app.request("/browser/instances/register", {
     method: "POST",
@@ -281,3 +286,63 @@ test("with an act grant the navigate batch is delivered carrying grant+targetOri
   expect(client.batch.steps).toEqual([{ verb: "navigate", url: "https://github.com/org/repo" }]);
   expect(batchRes.status).toBe(200);
 });
+
+test("POST /browser/grants is admin-only", async () => {
+  expect((await app.request("/browser/grants", { method: "POST", body: "{}" })).status).toBe(401);
+  const m = await memberHeaders();
+  const res = await app.request("/browser/grants", {
+    method: "POST", headers: m, body: JSON.stringify({ origin: "https://github.com" }),
+  });
+  expect(res.status).toBe(403);
+});
+
+test("POST /browser/grants requires a non-empty origin", async () => {
+  const h = await adminHeaders();
+  expect((await app.request("/browser/grants", { method: "POST", headers: h, body: JSON.stringify({}) })).status).toBe(400);
+  expect((await app.request("/browser/grants", { method: "POST", headers: h, body: JSON.stringify({ origin: "   " }) })).status).toBe(400);
+});
+
+test("granting appends to browserGrants and leaves existing entries intact", async () => {
+  const admin = await adminHeaders();
+  await setSetting("browserGrants", JSON.stringify([{ origin: "https://a.com", mode: "act" }]));
+  const res = await app.request("/browser/grants", {
+    method: "POST", headers: admin, body: JSON.stringify({ origin: "https://github.com" }),
+  });
+  expect(res.status).toBe(200);
+  const saved = await (await app.request("/settings/browserGrants", { headers: admin })).json();
+  expect(JSON.parse(saved.value)).toEqual([
+    { origin: "https://a.com", mode: "act" },
+    { origin: "https://github.com", mode: "act" },
+  ]);
+});
+
+test("granting an origin unlocks its mutating batch; a different origin stays refused", async () => {
+  const admin = await adminHeaders();
+  const h = await memberHeaders();
+  const id = await registerInstance(h);
+  const granted = await app.request("/browser/grants", {
+    method: "POST", headers: admin, body: JSON.stringify({ origin: "https://github.com" }),
+  });
+  expect(granted.status).toBe(200);
+
+  const canned = { results: [{ ok: true }], snapshot: { instanceId: id, origin: "https://github.com", identity: null, nodes: [] } };
+  const [ok] = await Promise.all([
+    app.request("/browser/batches", {
+      method: "POST", headers: h,
+      body: JSON.stringify({ instanceId: id, tenant: "acme", targetOrigin: "https://github.com", steps: [{ verb: "click", ref: "ref1" }] }),
+    }),
+    fakeClientCycle(h, id, canned),
+  ]);
+  expect(ok.status).toBe(200);
+
+  // Injection guard: granting github.com must NOT widen a different origin.
+  // Mutation check: drop the exact-origin match in grants.ts hasActGrant and this
+  // 403 flips to a deliver.
+  BROWSER_TUNING.pollTimeoutMs = 80;
+  const evil = await app.request("/browser/batches", {
+    method: "POST", headers: h,
+    body: JSON.stringify({ instanceId: id, tenant: "acme", targetOrigin: "https://evil.com", steps: [{ verb: "click", ref: "ref1" }] }),
+  });
+  expect(evil.status).toBe(403);
+});
+

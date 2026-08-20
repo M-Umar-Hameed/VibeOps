@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
-vi.mock("../src/services/settings.js", () => ({ getSetting: vi.fn() }));
-import { getSetting } from "../src/services/settings.js";
-import { hasActGrant, noActGrantReason } from "../src/browser/grants.js";
+vi.mock("../src/services/settings.js", () => ({ getSetting: vi.fn(), setSetting: vi.fn() }));
+import { getSetting, setSetting } from "../src/services/settings.js";
+import { hasActGrant, noActGrantReason, addActGrant } from "../src/browser/grants.js";
 
 const set = (v: string | null) => (getSetting as any).mockResolvedValue(v);
 
@@ -25,3 +25,28 @@ describe("hasActGrant", () => {
     expect(noActGrantReason("https://github.com")).toContain("https://github.com");
   });
 });
+
+describe("addActGrant", () => {
+  it("appends {origin, mode:'act'} lowercased and leaves other origins intact", async () => {
+    set(JSON.stringify([{ origin: "https://a.com", mode: "act" }]));
+    await addActGrant("https://GitHub.com");
+    const saved = (setSetting as any).mock.calls.at(-1)[1];
+    expect(JSON.parse(saved)).toEqual([
+      { origin: "https://a.com", mode: "act" },
+      { origin: "https://github.com", mode: "act" },
+    ]);
+  });
+  it("replaces a same-origin entry instead of duplicating", async () => {
+    set(JSON.stringify([{ origin: "https://github.com", mode: "read" }]));
+    await addActGrant("https://github.com");
+    const saved = (setSetting as any).mock.calls.at(-1)[1];
+    expect(JSON.parse(saved)).toEqual([{ origin: "https://github.com", mode: "act" }]);
+  });
+  it("writes a single-entry array when nothing was set", async () => {
+    set(null);
+    await addActGrant("https://github.com");
+    const saved = (setSetting as any).mock.calls.at(-1)[1];
+    expect(JSON.parse(saved)).toEqual([{ origin: "https://github.com", mode: "act" }]);
+  });
+});
+

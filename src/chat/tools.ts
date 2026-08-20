@@ -7,7 +7,7 @@ import { validateSteps } from "../browser/validate.js";
 import { hasActGrant, noActGrantReason } from "../browser/grants.js";
 import type { Actor } from "../db/schema.js";
 
-export type ToolCall = { name: string; input: unknown; summary: string };
+export type ToolCall = { name: string; input: unknown; summary: string; grantOrigin?: string };
 
 type TextResult = { content: [{ type: "text"; text: string }] };
 
@@ -61,8 +61,8 @@ async function browserStep(
 }
 
 export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: string) {
-  const rec = (name: string, input: unknown, summary: string) => {
-    calls.push({ name, input, summary });
+  const rec = (name: string, input: unknown, summary: string, grantOrigin?: string) => {
+    calls.push({ name, input, summary, ...(grantOrigin ? { grantOrigin } : {}) });
   };
 
   return [
@@ -121,7 +121,10 @@ export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: stri
         }
         if (!(await hasActGrant(targetOrigin))) {
           const reason = noActGrantReason(targetOrigin);
-          rec("browser_act", { instanceId, targetOrigin }, `refused: ${reason}`);
+          // grantOrigin is the exact origin the server just refused (the value
+          // hasActGrant checked). The chat Allow affordance grants THIS and only
+          // this — never an origin sourced from model text. DATA, not instructions.
+          rec("browser_act", { instanceId, targetOrigin }, `refused: ${reason}`, targetOrigin);
           return text(`browser refused: ${reason}`);
         }
         const result = await submitBatch(instanceId, instanceId, v.steps as ActionStep[], { grant: "act", targetOrigin });

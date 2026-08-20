@@ -7,7 +7,7 @@ import { applyEnvSettings } from "../services/settings.js";
 import { startWatcher, rescanProjectVaults } from "../ingest/watch.js";
 import { startSessionAutoSync } from "../ingest/sessions/auto-sync.js";
 import { reapStaleTickets } from "../services/reaper.js";
-import { markInterruptedRuns, reconcileMergedTickets } from "../forge/runs.js";
+import { markInterruptedRuns, reconcileMergedTickets, sweepStalledRunsWithConfig } from "../forge/runs.js";
 import { restoreCouncilSessions } from "../council/runs.js";
 import { configureExport } from "../services/export-debounce.js";
 import { timing } from "../services/metrics.js";
@@ -82,6 +82,10 @@ async function bootNormally() {
     if (healed.length) console.log(`forge: reconciled ${healed.length} already-merged ticket(s) to closed`);
   }
   void handleInterruptedRuns().catch(() => {});
+
+  // Server-side stall detector: fail runs whose log has gone silent past the
+  // window (default 30m, forge.stallWindowMs). Cadence 60s; window is the real knob.
+  setInterval(() => void sweepStalledRunsWithConfig().catch(() => {}), 60_000).unref();
 
   // Sessions auto-ingest on a 30-min interval (opt-out via setting
   // sessions.autoSync="false"; interval via sessions.autoSyncIntervalMs). Serialized

@@ -1,3 +1,4 @@
+name: tickets
 services:
   db:
     image: pgvector/pgvector:pg16

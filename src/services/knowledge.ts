@@ -155,6 +155,11 @@ export async function deleteVaultFile(path: string): Promise<void> {
     .where(and(eq(embeddings.sourceKind, "vault"), eq(embeddings.sourceRef, path)));
 }
 
+export async function deleteChatDoc(ref: string): Promise<void> {
+  await db.delete(embeddings)
+    .where(and(eq(embeddings.sourceKind, "chat"), eq(embeddings.sourceRef, ref)));
+}
+
 export async function insertNoteEmbedding(noteId: string, body: string, embedder: Embedder): Promise<boolean> {
   const chunks = chunkMarkdown(body);
   const hash = fileHash(body);

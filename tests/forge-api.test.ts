@@ -16,6 +16,7 @@ import { resolveSyncActor } from "../src/sync/actor.js";
 import { addComment, listComments } from "../src/services/comments.js";
 import { settleAll, reconcileMergedTickets } from "../src/forge/runs.js";
 import { withSetting } from "./helpers/settings.js";
+import * as sandbox from "../src/forge/sandbox.js";
 
 process.env.EMBED_PROVIDER = "fake";
 
@@ -744,6 +745,61 @@ describe("forge API", () => {
       const afterPromote = await app.request(`/forge/tickets/${ticket.id}/sandbox`, { headers: h });
       expect((await afterPromote.json()).exists).toBe(true);
     });
+  });
+
+  it("promote: merge succeeds but sandbox discard fails — ticket stays closed, success response, cleanup warning names the sandbox", async () => {
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+    setScript("plan,work,review-pass", true);
+
+    const startRes = await app.request("/forge/pipeline", {
+      method: "POST", headers: h,
+      body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+    });
+    const { runId } = await startRes.json();
+    await pollUntilDone(h, runId);
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const discardSpy = vi.spyOn(sandbox, "discardSandbox")
+      .mockRejectedValue(new Error("EBUSY: resource busy or locked"));
+
+    const promoteRes = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
+    expect(promoteRes.status).toBe(200);
+    expect((await promoteRes.json()).status).toBe("closed");
+
+    // stays closed — NOT reopened to review
+    expect((await getTicket(ticket.id)).status).toBe("closed");
+    // reported as a cleanup warning naming the sandbox branch, not a merge failure
+    expect(discardSpy).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(`forge/${ticket.id}`));
+    expect(warn.mock.calls.flat().join(" ")).not.toContain("merge failed");
+
+    discardSpy.mockRestore();
+    warn.mockRestore();
+  });
+
+  it("promote: merge failure still reopens the ticket to review and surfaces the error", async () => {
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+    setScript("plan,work,review-pass", true);
+
+    const startRes = await app.request("/forge/pipeline", {
+      method: "POST", headers: h,
+      body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+    });
+    const { runId } = await startRes.json();
+    await pollUntilDone(h, runId);
+
+    const promoteSpy = vi.spyOn(sandbox, "promoteSandbox")
+      .mockRejectedValue(new Error("EBUSY: resource busy or locked"));
+
+    const promoteRes = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
+    expect(promoteRes.status).toBe(500);
+    expect((await getTicket(ticket.id)).status).toBe("review");
+    const reopen = (await listComments(ticket.id)).find((cm) => cm.body.includes("promote merge failed"));
+    expect(reopen).toBeTruthy();
+
+    promoteSpy.mockRestore();
   });
 
   it("cleanup route enforces authz and returns the correct shape", async () => {

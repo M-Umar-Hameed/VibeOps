@@ -39,12 +39,18 @@ export function ChatScreen() {
   const liveOutput = liveChunks.join("");
   const [error, setError] = useState("");
   const [sessionMenu, setSessionMenu] = useState<{ items: MenuItemSpec[]; x: number; y: number; label: string } | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
   const nextOffsetRef = useRef(0);
 
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery<ChatSession[]>({
     queryKey: ["chat", "sessions"],
     queryFn: () => api.get("/chat/sessions") as Promise<ChatSession[]>,
   });
+
+  const visibleSessions = sessions.filter(
+    (s) => s.projectId == null || s.projectId === activeProjectId
+  );
 
   const { data: roster = [] } = useQuery<RosterEntry[]>({
     queryKey: ["chat", "models"],
@@ -116,9 +122,20 @@ export function ChatScreen() {
     queryClient.invalidateQueries({ queryKey: ["chat", "sessions"] });
   };
 
+  const commitRename = async (s: ChatSession) => {
+    const title = renameValue.trim();
+    setRenamingId(null);
+    if (!title || title === s.title) return;
+    await api.patch(`/chat/sessions/${s.id}`, { title });
+    queryClient.invalidateQueries({ queryKey: ["chat", "sessions"] });
+  };
+
   const openSessionMenu = (s: ChatSession, x: number, y: number) =>
     setSessionMenu({
       items: [{
+        key: "rename", label: "Rename",
+        onSelect: () => { setRenamingId(s.id); setRenameValue(s.title); },
+      }, {
         key: "delete", label: "Delete chat", danger: true,
         confirm: {
           title: "Delete this chat?",
@@ -172,7 +189,7 @@ export function ChatScreen() {
         </button>
         {sessionsLoading && <p className="text-on-surface-variant text-sm">Loading...</p>}
         <div className="flex-1 overflow-y-auto space-y-1">
-          {sessions.map((s) => (
+          {visibleSessions.map((s) => (
             <div
               key={s.id}
               onContextMenu={(e) => { e.preventDefault(); openSessionMenu(s, e.clientX, e.clientY); }}
@@ -186,7 +203,24 @@ export function ChatScreen() {
                     : "hover:bg-white/5 text-on-surface-variant"
                 }`}
               >
-                <div className="truncate text-sm font-medium">{s.title}</div>
+                {renamingId === s.id ? (
+                  <input
+                    autoFocus
+                    aria-label={`Rename ${s.title}`}
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      e.stopPropagation();
+                      if (e.key === "Enter") { e.preventDefault(); commitRename(s); }
+                      if (e.key === "Escape") { e.preventDefault(); setRenamingId(null); }
+                    }}
+                    onBlur={() => commitRename(s)}
+                    className="w-full bg-surface-container-highest text-on-surface rounded px-1 py-0.5 text-sm border border-primary/40 focus:outline-none"
+                  />
+                ) : (
+                  <div className="truncate text-sm font-medium">{s.title}</div>
+                )}
                 <div className="text-xs opacity-60">
                   {projects.find((p) => p.id === s.projectId)?.name ?? "All projects"}
                 </div>
@@ -272,6 +306,15 @@ export function ChatScreen() {
                   )}
                 </div>
               ))}
+              {isSending && !liveOutput && (
+                <div
+                  data-testid="chat-pending"
+                  className="mr-auto bg-surface-container-highest max-w-[90%] rounded-lg p-3 flex items-center gap-2 text-on-surface-variant"
+                >
+                  <span className="material-symbols-outlined animate-spin text-sm">sync</span>
+                  <span className="text-sm">Working...</span>
+                </div>
+              )}
               {liveOutput && (
                 <div className="mr-auto bg-surface-container-highest max-w-[90%] rounded-lg p-3 animate-pulse">
                   <Markdown text={liveOutput} />

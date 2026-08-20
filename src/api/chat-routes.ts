@@ -77,4 +77,17 @@ export function registerChatRoutes(app: Hono<AppEnv>): void {
     await store.deleteSession(id);
     return c.json({ ok: true });
   });
+
+  app.patch("/chat/sessions/:id", requireAdmin, async (c) => {
+    const id = c.req.param("id");
+    if (!(await store.getSession(id))) {
+      return c.json({ error: "session not found" }, 404);
+    }
+    const body = await c.req.json().catch(() => ({}));
+    const title = typeof body.title === "string" ? body.title.trim() : "";
+    if (!title) {
+      return c.json({ error: "title required" }, 400);
+    }
+    return c.json(await store.renameSession(id, title));
+  });
 }

@@ -58,3 +58,8 @@ export async function deleteSession(id: string): Promise<void> {
     await tx.delete(chatSessions).where(eq(chatSessions.id, id));
   });
 }
+
+export async function renameSession(id: string, title: string): Promise<ChatSession | undefined> {
+  const [row] = await db.update(chatSessions).set({ title }).where(eq(chatSessions.id, id)).returning();
+  return row;
+}

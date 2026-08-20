@@ -12,7 +12,7 @@ import { searchKnowledge, getKnowledgeSource, upsertSourceDoc, listSessionDocs, 
 import { AuthError, ConflictError, ForbiddenError, NotFoundError, StaleVersionError } from "../services/errors.js";
 import { listProjects, createProject, updateProjectRepo, gitInitProject, getProjectSettings, setProjectSetting, scanFolder, importProjects, deleteProject } from "../services/projects.js";
 import { clearProjectKnowledge } from "../services/knowledge.js";
-import { activeRunForProject } from "../forge/runs.js";
+import { activeRunForProject, activeStageForTicket } from "../forge/runs.js";
 import { syncProject } from "../sync/run.js";
 import { listActors, createActor, revokeActor } from "../services/actors.js";
 import { requireAdmin } from "./auth.js";
@@ -198,11 +198,13 @@ app.get("/tickets", async (c) => {
   // tickets; non-review rows are returned untouched.
   const hasReview = list.some((t) => t.status === "review");
   const admins = hasReview ? new Set((await listActors()).filter((a) => a.role === "admin").map((a) => a.id)) : undefined;
-  const enriched = await Promise.all(list.map(async (t) =>
-    t.status === "review"
+  const enriched = await Promise.all(list.map(async (t) => {
+    const stage = activeStageForTicket(t.id);
+    const base = t.status === "review"
       ? { ...t, sandbox: { exists: sandboxExists(t.id), lastVerdict: await lastVerdict(t.id, admins) } }
-      : t
-  ));
+      : t;
+    return stage ? { ...base, activeRun: { stage } } : base;
+  }));
   return c.json(enriched);
 });
 app.get("/search", async (c) => c.json(await searchTickets(c.req.query("q") ?? "")));

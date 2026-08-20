@@ -158,7 +158,17 @@ export function ListScreen() {
                     </span>
                   </td>
                   <td className="px-6 py-4">
-                    <StatusBadge status={t.status} />
+                    <div className="flex items-center gap-2">
+                      <StatusBadge status={t.status} />
+                      {t.activeRun && (
+                        <span
+                          data-testid="active-run-badge"
+                          className="px-2 py-0.5 rounded text-[10px] font-code-label border border-secondary/50 bg-secondary/10 text-secondary uppercase neon-pulse"
+                        >
+                          {t.activeRun.stage}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-2">

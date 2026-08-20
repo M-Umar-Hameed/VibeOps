@@ -2,6 +2,7 @@ export type Ticket = {
   id: string; projectId: string; title: string; body: string;
   status: "open" | "in_progress" | "closed"; priority: "low" | "normal" | "high";
   assigneeId: string | null; requiresVerification: boolean; version: number; createdAt: string; updatedAt: string;
+  activeRun?: { stage: string };
 };
 export type Comment = { id: string; ticketId: string; authorId: string; body: string; createdAt: string; kind?: string };
 export type Event = {

@@ -14,7 +14,7 @@ import { indexRepoDocs, searchKnowledge, repoIndexed } from "../src/services/kno
 import * as knowledgeSvc from "../src/services/knowledge.js";
 import { resolveSyncActor } from "../src/sync/actor.js";
 import { addComment, listComments } from "../src/services/comments.js";
-import { settleAll, reconcileMergedTickets } from "../src/forge/runs.js";
+import { settleAll, reconcileMergedTickets, stopRun, awaitRun, activeStageForTicket } from "../src/forge/runs.js";
 import { withSetting } from "./helpers/settings.js";
 import * as sandbox from "../src/forge/sandbox.js";
 
@@ -1079,3 +1079,35 @@ it("boot reconcile does NOT touch a review ticket whose last run failed", async 
   expect(healed).not.toContain(ticket.id);
   expect((await getTicket(ticket.id)).status).toBe("review");
 });
+
+  it("GET /tickets carries active-run stage for a live run, none for an idle ticket", async () => {
+    const h = await adminHeaders();
+    const { actor } = await createActor({ name: uniq("run-actor"), kind: "human" });
+    const project = await createProject({ key: uniq("run-proj"), name: "Run" });
+
+    const live = await createTicket(actor.id, { projectId: project.id, title: "live row" });
+    const idle = await createTicket(actor.id, { projectId: project.id, title: "idle row" });
+
+    setScript("plan,slow"); // work stage sleeps ~2s so the run stays running
+    const startRes = await app.request("/forge/pipeline", {
+      method: "POST", headers: h,
+      body: JSON.stringify({ ticketId: live.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+    });
+    const { runId } = await startRes.json();
+    try {
+      // Wait until the run reaches the work stage (the ~2s window).
+      const deadline = Date.now() + 10_000;
+      while (activeStageForTicket(live.id) !== "work") {
+        if (Date.now() > deadline) throw new Error("run never reached work stage");
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      const res = await app.request(`/tickets?projectId=${project.id}`, { headers: h });
+      expect(res.status).toBe(200);
+      const rows = await res.json() as any[];
+      expect(rows.find((r) => r.id === live.id).activeRun).toEqual({ stage: "work" });
+      expect(rows.find((r) => r.id === idle.id).activeRun).toBeUndefined();
+    } finally {
+      await stopRun(runId);
+      await awaitRun(runId);
+    }
+  }, 15000);

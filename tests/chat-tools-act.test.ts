@@ -44,6 +44,18 @@ describe("browser_act", () => {
     expect(refusal.grantOrigin).toBe("https://github.com");
   });
 
+  it("pins grantOrigin to the server-refused origin, not model-supplied step input", async () => {
+    hasActGrant.mockResolvedValue(false);
+    const calls: ToolCall[] = [];
+    await getAct(calls).handler(
+      { instanceId: "i1", targetOrigin: "https://github.com", steps: [{ verb: "navigate", url: "https://evil.com/login" }] }, {},
+    );
+    const refusal = calls.find((c) => c.summary.includes("refused"))!;
+    // navigate.url carries a competing origin; grantOrigin must still be the
+    // server-checked targetOrigin, never the model's value.
+    expect(refusal.grantOrigin).toBe("https://github.com");
+  });
+
   it("with a grant, enqueues with grant:act+targetOrigin and returns the snapshot", async () => {
     hasActGrant.mockResolvedValue(true);
     submitBatch.mockResolvedValue({ results: [{ ok: true }], snapshot: { origin: "https://github.com", nodes: [] } });

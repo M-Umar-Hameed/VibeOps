@@ -51,3 +51,10 @@ export async function updateSessionRuntime(
   if (Object.keys(updates).length === 0) return;
   await db.update(chatSessions).set(updates).where(eq(chatSessions.id, id));
 }
+
+export async function deleteSession(id: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.delete(chatMessages).where(eq(chatMessages.sessionId, id));
+    await tx.delete(chatSessions).where(eq(chatSessions.id, id));
+  });
+}

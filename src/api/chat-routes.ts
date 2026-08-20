@@ -5,6 +5,7 @@ import * as store from "../chat/store.js";
 import { isRunning, runTurn, getChatOutput } from "../chat/turns.js";
 import { loadRelayConfig } from "../relay/config.js";
 import { buildRoster } from "../chat/roster.js";
+import { deleteChatDoc } from "../services/knowledge.js";
 
 type AppEnv = { Variables: { actor: Actor } };
 
@@ -56,5 +57,24 @@ export function registerChatRoutes(app: Hono<AppEnv>): void {
   app.get("/chat/sessions/:id/output", requireAdmin, async (c) => {
     const after = Number(c.req.query("after")) || 0;
     return c.json(getChatOutput(c.req.param("id"), after));
+  });
+
+  app.delete("/chat/sessions/:id", requireAdmin, async (c) => {
+    const id = c.req.param("id");
+    const session = await store.getSession(id);
+    if (!session) {
+      return c.json({ error: "session not found" }, 404);
+    }
+    // Chat is one-turn-at-a-time; never delete out from under a running agent.
+    if (isRunning(id)) {
+      return c.json({ error: "a turn is already running for this session" }, 409);
+    }
+    // Ref mirrors src/chat/turns.ts: "<projectId>:<id>" project-scoped, bare "<id>" global.
+    // Chunks first, then rows: a mid-failure leaves chunks already gone (deleteChatDoc is
+    // idempotent), never an orphaned transcript still searchable after the session is gone.
+    const ref = session.projectId ? `${session.projectId}:${id}` : id;
+    await deleteChatDoc(ref);
+    await store.deleteSession(id);
+    return c.json({ ok: true });
   });
 }

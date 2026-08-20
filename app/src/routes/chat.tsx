@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api.js";
 import { Markdown } from "../components/Markdown.js";
+import { ContextMenu, type MenuItemSpec } from "../components/ContextMenu.js";
 import { useProject } from "../context/project.js";
 
 type ChatSession = {
@@ -37,6 +38,7 @@ export function ChatScreen() {
   const [liveChunks, setLiveChunks] = useState<string[]>([]);
   const liveOutput = liveChunks.join("");
   const [error, setError] = useState("");
+  const [sessionMenu, setSessionMenu] = useState<{ items: MenuItemSpec[]; x: number; y: number; label: string } | null>(null);
   const nextOffsetRef = useRef(0);
 
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery<ChatSession[]>({
@@ -108,6 +110,26 @@ export function ChatScreen() {
     }
   };
 
+  const handleDeleteSession = async (s: ChatSession) => {
+    await api.del(`/chat/sessions/${s.id}`);
+    if (selectedSessionId === s.id) setSelectedSessionId(null);
+    queryClient.invalidateQueries({ queryKey: ["chat", "sessions"] });
+  };
+
+  const openSessionMenu = (s: ChatSession, x: number, y: number) =>
+    setSessionMenu({
+      items: [{
+        key: "delete", label: "Delete chat", danger: true,
+        confirm: {
+          title: "Delete this chat?",
+          message: "Permanently removes the conversation and its indexed transcript. This cannot be undone.",
+          confirmLabel: "Delete chat",
+        },
+        onSelect: () => handleDeleteSession(s),
+      }],
+      x, y, label: `Actions for ${s.title}`,
+    });
+
   const handleSend = async () => {
     if (!selectedSessionId || !input.trim() || isSending) return;
     setError("");
@@ -151,25 +173,39 @@ export function ChatScreen() {
         {sessionsLoading && <p className="text-on-surface-variant text-sm">Loading...</p>}
         <div className="flex-1 overflow-y-auto space-y-1">
           {sessions.map((s) => (
-            <button
+            <div
               key={s.id}
-              onClick={() => setSelectedSessionId(s.id)}
-              className={`w-full text-left px-3 py-2 rounded transition-colors ${
-                selectedSessionId === s.id
-                  ? "bg-primary-fixed-dim/10 text-primary-fixed-dim"
-                  : "hover:bg-white/5 text-on-surface-variant"
-              }`}
+              onContextMenu={(e) => { e.preventDefault(); openSessionMenu(s, e.clientX, e.clientY); }}
+              className="relative"
             >
-              <div className="truncate text-sm font-medium">{s.title}</div>
-              <div className="text-xs opacity-60">
-                {projects.find((p) => p.id === s.projectId)?.name ?? "All projects"}
-              </div>
-              <div className="text-xs opacity-60">
-                {new Date(s.createdAt).toLocaleString()}
-              </div>
-            </button>
+              <button
+                onClick={() => setSelectedSessionId(s.id)}
+                className={`w-full text-left px-3 py-2 pr-8 rounded transition-colors ${
+                  selectedSessionId === s.id
+                    ? "bg-primary-fixed-dim/10 text-primary-fixed-dim"
+                    : "hover:bg-white/5 text-on-surface-variant"
+                }`}
+              >
+                <div className="truncate text-sm font-medium">{s.title}</div>
+                <div className="text-xs opacity-60">
+                  {projects.find((p) => p.id === s.projectId)?.name ?? "All projects"}
+                </div>
+                <div className="text-xs opacity-60">
+                  {new Date(s.createdAt).toLocaleString()}
+                </div>
+              </button>
+              <button
+                type="button"
+                aria-label={`Actions for ${s.title}`}
+                onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); openSessionMenu(s, r.right, r.bottom); }}
+                className="absolute top-1 right-1 px-1 text-on-surface-variant hover:text-on-surface"
+              >
+                <span className="material-symbols-outlined text-lg">more_vert</span>
+              </button>
+            </div>
           ))}
         </div>
+        {sessionMenu && <ContextMenu {...sessionMenu} onClose={() => setSessionMenu(null)} />}
       </div>
 
       {/* Chat area */}

@@ -16,6 +16,7 @@ export type ActionStep =
   | { verb: "select"; ref: string; option: string }
   | { verb: "press"; key: string }
   | { verb: "snapshot" }
+  | { verb: "screenshot" }
   | { verb: "read"; ref: string }
   | { verb: "navigate"; url: string };
 

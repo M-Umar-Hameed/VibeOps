@@ -122,6 +122,24 @@ async function poll() {
   }
 }
 
+// A 4K screen encodes to several MB of base64; the channel carries results as
+// JSON, so cap rather than let one frame wedge a batch. Rejected, not silently
+// truncated — a half image is worse than a named failure.
+const MAX_SCREENSHOT_B64 = 8 * 1024 * 1024;
+
+async function captureScreenshot() {
+  try {
+    const dataUrl = await chrome.tabs.captureVisibleTab({ format: "png" });
+    const b64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+    if (b64.length > MAX_SCREENSHOT_B64) {
+      return { ok: false, error: `screenshot too large (${b64.length} > ${MAX_SCREENSHOT_B64})` };
+    }
+    return { ok: true, value: b64 };
+  } catch (err) {
+    return { ok: false, error: `screenshot failed: ${String(err)}` };
+  }
+}
+
 async function executeBatch(batch) {
   const apiKey = await getApiKey();
 
@@ -148,6 +166,13 @@ async function executeBatch(batch) {
 
     // Set instanceId on snapshot
     result.snapshot.instanceId = instanceId;
+
+    // screenshot cannot run in the page: captureVisibleTab is a worker-only API,
+    // so execute.js leaves its slot as an unknown-verb error and we fill it here.
+    for (let i = 0; i < batch.steps.length; i++) {
+      if (batch.steps[i]?.verb !== "screenshot") continue;
+      result.results[i] = await captureScreenshot();
+    }
 
     await submitResult(batch.batchId, result);
   } catch (err) {

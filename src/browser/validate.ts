@@ -11,6 +11,7 @@ const SHAPES: Record<string, Record<string, "string">> = {
   select: { ref: "string", option: "string" },
   press: { key: "string" },
   snapshot: {},
+  screenshot: {},
   read: { ref: "string" },
   navigate: { url: "string" },
 };

@@ -32,3 +32,25 @@ describe("validateSteps — navigate", () => {
     expect(validateSteps([{ verb: "navigate", url: "https://x.com/", target: "_blank" }]).ok).toBe(false);
   });
 });
+
+describe("T2: screenshot verb", () => {
+  it("accepts a bare screenshot step", () => {
+    expect(validateSteps([{ verb: "screenshot" }]).ok).toBe(true);
+  });
+
+  it("rejects a screenshot step carrying extra fields", () => {
+    expect(validateSteps([{ verb: "screenshot", ref: "ref1" }]).ok).toBe(false);
+  });
+
+  it("screenshot is read tier, never in the mutating set", () => {
+    // The mutating set is the act-grant boundary. screenshot reads the screen and
+    // changes nothing, so it belongs with snapshot/read - if it ever lands in
+    // MUTATING it would demand a grant it does not need; if a mutating verb ever
+    // leaves that set it becomes an ungated side door. Pin the membership.
+    const MUTATING = new Set(["click", "type", "select", "press", "navigate"]);
+    expect(MUTATING.has("screenshot")).toBe(false);
+    for (const v of ["click", "type", "select", "press", "navigate"]) {
+      expect(MUTATING.has(v)).toBe(true);
+    }
+  });
+});

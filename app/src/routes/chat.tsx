@@ -309,17 +309,12 @@ export function ChatScreen() {
                     <p className="whitespace-pre-wrap">{m.body}</p>
                   )}
                   {m.toolCalls && m.toolCalls.length > 0 && (
-                    <div className="mt-2 space-y-1">
+                    <div data-testid="tool-trace" className="mt-2 space-y-1">
                       {m.toolCalls.map((tc, i) => (
-                        <div key={i}>
-                          <details className="text-xs">
-                            <summary className="cursor-pointer text-on-surface-variant hover:text-on-surface">
-                              <span className="font-mono">{tc.name}</span> — {tc.summary}
-                            </summary>
-                            <pre className="mt-1 p-2 bg-black/20 rounded overflow-x-auto text-on-surface-variant">
-                              {JSON.stringify(tc.input, null, 2)}
-                            </pre>
-                          </details>
+                        <div key={i} data-testid="tool-trace-entry">
+                          <div className="text-xs text-on-surface-variant">
+                            <span className="font-mono">{tc.name}</span> — {tc.summary}
+                          </div>
                           {tc.grantOrigin && (
                             grantedOrigins.has(tc.grantOrigin) ? (
                               <p className="mt-1 text-xs text-primary">

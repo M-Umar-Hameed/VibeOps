@@ -56,8 +56,13 @@ checks and CI"). My ticket ACs overrode the lesson I wrote.
 1. **Stop demanding full-suite runs in work-stage ACs.** Free, immediate, and the
    biggest single lever. Targeted tests plus the named mutation is what the work
    stage should prove; breadth belongs to checks and the supervisor.
-2. **Keep Docker up.** 10–15m → ~2.5m for any suite that does run. Purely
-   environmental, no code.
+2. **Keep Docker up — DEV ONLY, not a product concern.** 10–15m → ~2.5m for any
+   suite that does run. This applies to developing *this repo*, where the
+   parallel test lane needs a real Postgres on :5433. The shipped app never uses
+   Docker: it runs embedded PGlite at `~/.vibeops/data`, and users do not run the
+   test suite at all. A standalone user's work-stage cost is set by their own
+   project's tests, so fix 1 is what generalises — the shape holds (work
+   dominates because the agent runs tests), only the magnitude changes.
 3. **Do fully-specified small changes directly.** The whole plan→work→review
    ceremony costs 5–33m plus supervisor gating. For a one-line compose fix or a
    guard-key change, that ceremony exceeds the work by an order of magnitude.

@@ -5,6 +5,7 @@ import { listTickets } from "../services/history.js";
 import { exists, list, submitBatch, type ActionStep } from "../browser/channel.js";
 import { validateSteps } from "../browser/validate.js";
 import { hasActGrant, noActGrantReason } from "../browser/grants.js";
+import { runMarks, marksAsText } from "../browser/marks-run.js";
 import type { Actor } from "../db/schema.js";
 
 export type ToolCall = { name: string; input: unknown; summary: string; grantOrigin?: string };
@@ -103,6 +104,28 @@ export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: stri
       "Read an element by ref (read-only). instanceId optional when one browser is connected.",
       { instanceId: z.string().optional(), ref: z.string() },
       async ({ instanceId, ref }) => browserStep(instanceId, [{ verb: "read", ref }], "browser_read", rec),
+    ),
+    tool(
+      "browser_marks",
+      "Screenshot the browser with numbered boxes over every interactive element, and return the mark table as text plus a file path to the annotated PNG. Choose a target by its MARK NUMBER, then act on it with browser_act using the ref this returns. Works without vision: the table lists each mark's role and name.",
+      { instanceId: z.string().optional() },
+      async ({ instanceId: requestedId }) => {
+        const { id: instanceId, err } = resolveInstance(requestedId);
+        if (!instanceId) {
+          rec("browser_marks", { instanceId: requestedId }, "no instance");
+          return text(err!);
+        }
+        const run = await runMarks(instanceId);
+        if (!run.ok) {
+          rec("browser_marks", { instanceId }, `failed: ${run.error}`);
+          return text(`browser refused: ${run.error}`);
+        }
+        rec("browser_marks", { instanceId }, `ok: ${run.marks.length} marks`);
+        // Mark -> ref mapping is returned so the caller can act; the ref it acts
+        // on still passes the same act grant as any other click.
+        const refs = run.marks.map((m) => `${m.mark}=${m.ref}`).join(" ");
+        return text(`${marksAsText(run.marks, run.imagePath)}\n\nrefs: ${refs}`);
+      },
     ),
     tool(
       "browser_act",

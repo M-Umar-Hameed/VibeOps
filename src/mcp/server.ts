@@ -10,6 +10,7 @@ import { fetchDocs } from "../knowledge/docs.js";
 import { exists, list, submitBatch, type ActionStep } from "../browser/channel.js";
 import { validateSteps } from "../browser/validate.js";
 import { hasActGrant, noActGrantReason } from "../browser/grants.js";
+import { runMarks, marksAsText } from "../browser/marks-run.js";
 export async function buildServer(apiKey: string) {
   const actor = await resolveActor(apiKey);
   const server = new McpServer({ name: "tickets", version: "0.1.0" });
@@ -114,6 +115,20 @@ export async function buildServer(apiKey: string) {
     { description: "Read an element by ref (read-only). instanceId optional when one browser is connected.",
       inputSchema: { instanceId: z.string().optional(), ref: z.string() } },
     async ({ instanceId, ref }) => ({ content: [{ type: "text", text: await readOnly(instanceId, { verb: "read", ref }) }] }));
+
+  server.registerTool("browser_marks",
+    { description: "Screenshot the connected browser with numbered boxes over every interactive element; returns the mark table as text plus a file path to the annotated PNG. Choose a target by MARK NUMBER and act on its ref with browser_act. Works without vision: each mark lists its role and name.",
+      inputSchema: { instanceId: z.string().optional() } },
+    async ({ instanceId }) => {
+      const { id, err } = resolveInstance(instanceId);
+      if (!id) return { content: [{ type: "text", text: err! }] };
+      const run = await runMarks(id);
+      if (!run.ok) return { content: [{ type: "text", text: `browser refused: ${run.error}` }] };
+      const refs = run.marks.map((m) => `${m.mark}=${m.ref}`).join(" ");
+      return { content: [{ type: "text", text: `${marksAsText(run.marks, run.imagePath)}
+
+refs: ${refs}` }] };
+    });
 
   server.registerTool("browser_act",
     { description: "Run mutating steps (click/type/select/press/navigate) on a browser instance; requires an act grant for targetOrigin. navigate needs an act grant for the DESTINATION origin (http/https only).",

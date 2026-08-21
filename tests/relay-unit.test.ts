@@ -611,6 +611,29 @@ test("runAgent: killTree still kills a detached (logPath) child (S2-A2)", async 
   rmSync(dir, { recursive: true, force: true });
 }, 15_000);
 
+test("runAgent (logPath) settles via liveness poll when exit/close events never fire", async () => {
+  // Incident 6e3dcc32: the detached child completes but its exit/close events are
+  // never delivered to our handle. Strip those listeners once attached (queueMicrotask
+  // runs after the Promise executor wired them, before the child can exit), leaving
+  // the fd-branch liveness poll as the only path that can settle the run.
+  const dir = mkdtempSync(join(tmpdir(), "relay-log-poll-"));
+  const logPath = join(dir, "run.log");
+  const res = await runAgent(
+    { cmd: [process.execPath, "-e", "console.log('work-done');process.exit(0)"], roles: [], timeoutMs: 60_000 },
+    "unused", process.cwd(),
+    undefined,        // onData
+    (child) => queueMicrotask(() => {
+      child.removeAllListeners("exit");
+      child.removeAllListeners("close");
+      child.removeAllListeners("error");
+    }),
+    logPath,
+  );
+  expect(res.ok).toBe(true);                 // child.exitCode === 0 read by the poll
+  expect(res.output).toContain("work-done"); // final bytes drained at settle
+  rmSync(dir, { recursive: true, force: true });
+}, 15_000);
+
 test("loadRelayConfig accepts an agent with mcp: true", () => {
   const dir = mkdtempSync(join(tmpdir(), "relay-cfg-"));
   const path = join(dir, "relay.json");

@@ -165,7 +165,18 @@ export async function runAgent(
       };
 
       if (outFd !== undefined) {
-        pollTimer = setInterval(drainTail, 100);
+        // fd-to-file stdio has no pipe, so settle must NOT depend solely on the
+        // child's exit/close events: a detached child can exit without those
+        // reaching this handle (incident 6e3dcc32 — agy finished at 07:14, the run
+        // sat "running" 6.6h because no event fired finish()). Poll OS liveness as
+        // the authoritative settle, exactly as tailUntilExit's reattach poll does;
+        // child.exitCode is populated by Node on exit and carries the real code.
+        // The exit/close/error handlers below stay as a harmless faster path.
+        pollTimer = setInterval(() => {
+          drainTail();
+          const cpid = child.pid;
+          if (cpid === undefined || !pidAlive(cpid)) finish(child.exitCode === 0);
+        }, 100);
         pollTimer.unref();
       } else {
         const capture = (chunk: Buffer) => push(chunk.toString("utf-8"));

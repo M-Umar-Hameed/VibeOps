@@ -85,7 +85,7 @@ async function bootNormally() {
 
   // Server-side stall detector: fail runs whose log has gone silent past the
   // window (default 30m, forge.stallWindowMs). Cadence 60s; window is the real knob.
-  setInterval(() => void sweepStalledRunsWithConfig().catch(() => {}), 60_000).unref();
+  setInterval(() => void sweepStalledRunsWithConfig().catch((e) => console.warn(`forge: stall sweep failed: ${(e as Error).message}`)), 60_000).unref();
 
   // Sessions auto-ingest on a 30-min interval (opt-out via setting
   // sessions.autoSync="false"; interval via sessions.autoSyncIntervalMs). Serialized

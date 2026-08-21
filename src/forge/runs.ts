@@ -1140,31 +1140,38 @@ export const logSizeReader = {
 export async function sweepStalledRuns(now: number, windowMs: number): Promise<string[]> {
   const stalled: string[] = [];
   for (const run of activeRuns()) {
-    const size = logSizeReader.read(run.logPath);
-    // No log yet (or sdk lane, which writes none): seed the clock, never judge.
-    if (size === null) { run.lastLogGrowthAt ??= now; continue; }
-    if (run.lastLogSize === undefined || size > run.lastLogSize) {
-      run.lastLogSize = size;
-      run.lastLogGrowthAt = now;
-      continue; // grew (or first sight) -> reset the stall clock
+    try {
+      const size = logSizeReader.read(run.logPath);
+      // No log yet (or sdk lane, which writes none): seed the clock, never judge.
+      if (size === null) { run.lastLogGrowthAt ??= now; continue; }
+      if (run.lastLogSize === undefined || size > run.lastLogSize) {
+        run.lastLogSize = size;
+        run.lastLogGrowthAt = now;
+        continue; // grew (or first sight) -> reset the stall clock
+      }
+      const since = run.lastLogGrowthAt ?? now;
+      if (now - since <= windowMs) continue; // silent, but not long enough yet
+      const mins = Math.round((now - since) / 60_000);
+      const iso = new Date(since).toISOString().replace(/\.\d{3}Z$/, "Z");
+      const reason = `stalled: no output for ${mins}m in ${run.stage} stage (last output ${iso})`;
+      const pid = run.pid;
+      const child = run.child;
+      // Record the reason durably, then settle BEFORE killing: a reattached run's
+      // tailUntilExit would otherwise settle it `interrupted` when the pid dies, but
+      // the row is already terminal so its settle() no-ops on the first-wins guard.
+      const admin = (await listActors()).find((a) => a.role === "admin");
+      if (admin) await bounce(run, admin.id, reason, "");
+      else append(run, `\nforge: ${reason}\n`);
+      settle(run, "failed");
+      if (child) await killTree(child);
+      else if (pid) await killPidTree(pid);
+      stalled.push(run.id);
+    } catch (e) {
+      // One run's failure must never abort the sweep and starve every other run of
+      // judgement (root cause of incident 6e3dcc32: a throwing sweep body under the
+      // .catch(()=>{}) in server.ts made a wedged run immortal). Surface and continue.
+      console.warn(`forge: stall sweep skipped run ${run.id}: ${(e as Error).message}`);
     }
-    const since = run.lastLogGrowthAt ?? now;
-    if (now - since <= windowMs) continue; // silent, but not long enough yet
-    const mins = Math.round((now - since) / 60_000);
-    const iso = new Date(since).toISOString().replace(/\.\d{3}Z$/, "Z");
-    const reason = `stalled: no output for ${mins}m in ${run.stage} stage (last output ${iso})`;
-    const pid = run.pid;
-    const child = run.child;
-    // Record the reason durably, then settle BEFORE killing: a reattached run's
-    // tailUntilExit would otherwise settle it `interrupted` when the pid dies, but
-    // the row is already terminal so its settle() no-ops on the first-wins guard.
-    const admin = (await listActors()).find((a) => a.role === "admin");
-    if (admin) await bounce(run, admin.id, reason, "");
-    else append(run, `\nforge: ${reason}\n`);
-    settle(run, "failed");
-    if (child) await killTree(child);
-    else if (pid) await killPidTree(pid);
-    stalled.push(run.id);
   }
   return stalled;
 }

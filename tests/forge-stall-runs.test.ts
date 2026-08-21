@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -151,4 +151,29 @@ describe("forge stall detection", () => {
     expect(resolveStallWindowMs("abc")).toBe(30 * 60_000);
     expect(resolveStallWindowMs("60000")).toBe(60_000);
   });
+
+  it("logs and survives a per-run sweep error instead of swallowing it", async () => {
+    const { actorId, ticket } = await seedTicket("sweep error");
+    setScript("plan,work-hang");
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await waitForStage(runId, "work");
+    await waitForPid(runId);
+
+    const orig = logSizeReader.read;
+    logSizeReader.read = () => { throw new Error("boom-read"); }; // replaces the whole method -> throws inside the loop
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const out = await sweepStalledRuns(Date.now(), WINDOW); // must resolve, not reject
+      expect(out).toEqual([]);
+      expect(warn.mock.calls.some((c) => String(c[0]).includes("boom-read"))).toBe(true);
+    } finally {
+      logSizeReader.read = orig;
+      warn.mockRestore();
+    }
+
+    expect(await stopRun(runId)).toBe(true); // clean up the hung child
+    await awaitRun(runId);
+  }, 20_000);
 });

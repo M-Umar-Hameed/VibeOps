@@ -20,6 +20,16 @@ What the survey repos actually show:
 | agent-zero | DOM annotation + screenshots, XFCE desktop in Docker | mixed DOM/coordinates | hybrid validates our direction; safety model is "sandbox everything in Docker", i.e. isolation over permissioning |
 | suitedaces/computer-agent | two modes: Claude computer-use (screenshot + pixel coords, takes the cursor) and background CDP (no cursor) | coords in mode 1, CDP in mode 2 | its *background* mode is architecturally our extension: structured control, user keeps the mouse |
 
+Fourth source, the GitHub `desktop-agent` topic survey (Eigent 15.1k stars, Workany,
+Ouroboros, Microsoft's WindowsAgentArena, terminaI, and others): the dominant pattern
+across general desktop agents is screenshots + vision + coordinates — because outside
+a browser there is no DOM to reference. That confirms the tier split rather than
+changing it: vision+coordinates is the *desktop* tier's native grounding (our deferred
+T5), not a better grounding for the browser, where structure exists. Two smaller
+signals worth keeping: terminaI ships explicit per-action approval workflows —
+independent validation of our grant gate over agent-zero's isolation-only stance —
+and WindowsAgentArena exists as a benchmark should T5 ever need evaluating.
+
 So the industry pattern is not "vision replaces DOM control" — it is DOM-structured
 control where possible, vision + coordinates only where structure is invisible.
 

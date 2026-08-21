@@ -98,11 +98,13 @@ match exists. CDP (`chrome.debugger`) for trusted OS-level input is explicitly
 deferred — the `debugger` permission triggers a scary browser banner and its
 power (arbitrary CDP) is out of proportion to the canvas use case.
 
-### T5 — full desktop control [deferred, trigger-gated]
-The bytebot tier: OS-level screenshot + input outside the browser. Different risk
-class (no origin model exists on a desktop), different runtime (native agent, not
-extension). Deferred until a concrete need names it; revisit only with a task in
-hand that T1–T4 cannot express.
+### T5 — full desktop control [REJECTED — owner decision, 2026-08-21]
+The bytebot tier: OS-level screenshot + input outside the browser. Rejected, not
+deferred: the owner ruled it out. The reasoning stands on its own — a different
+risk class (no origin model exists on a desktop, so the grant gate has nothing to
+anchor to) and a different runtime (native agent, not extension). Browser-scoped
+control via T1–T4 is the ceiling of this system. Do not re-propose without the
+owner reopening it.
 
 ## Security invariants (hold across every tier)
 
@@ -120,4 +122,4 @@ T1 → T2 ship independently and unblock experimentation with any vision-capable
 model already in the roster. T3 is where "which model can use this" stops
 mattering — every vision model can read an annotated PNG and answer with a number,
 which also serves the all-lanes goal (ticket f060b85a) for lanes whose CLI can
-take image input. T4 only after T3 shows its residual need. T5 stays parked.
+take image input. T4 only after T3 shows its residual need. T5 is rejected outright.

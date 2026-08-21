@@ -6,6 +6,7 @@ const config: RelayConfig = {
   workdir: "/tmp",
   agents: {
     "claude-sdk": { cmd: [], type: "sdk", roles: ["work"], models: [{ name: "sonnet", tier: "cheap", quality: 4 }, { name: "opus", tier: "expensive", quality: 5 }] },
+    "claude-cli": { cmd: ["claude", "-p", "{promptFile}"], roles: ["work"], mcp: true },
     agy: { cmd: ["agy", "{model}"], roles: ["plan", "work"], models: [{ name: "Gemini 3.7 Flash (High)", tier: "cheap", quality: 3 }] },
     noroles: { cmd: ["x"], roles: [], models: [{ name: "m", tier: "cheap", quality: 1 }] },
   },
@@ -14,9 +15,10 @@ const config: RelayConfig = {
 describe("chat roster", () => {
   it("lists every relay agent with any role; toolCapable only for the sdk lane", () => {
     const roster = buildRoster(config);
-    expect(roster.map((r) => r.agent).sort()).toEqual(["agy", "claude-sdk"]); // noroles excluded
+    expect(roster.map((r) => r.agent).sort()).toEqual(["agy", "claude-cli", "claude-sdk"]); // noroles excluded
     expect(roster.find((r) => r.agent === "claude-sdk")!.toolCapable).toBe(true);
-    expect(roster.find((r) => r.agent === "agy")!.toolCapable).toBe(false);
+    expect(roster.find((r) => r.agent === "claude-cli")!.toolCapable).toBe(true); // wired CLI lane
+    expect(roster.find((r) => r.agent === "agy")!.toolCapable).toBe(false);       // not wired
     expect(roster.find((r) => r.agent === "agy")!.models).toEqual([{ name: "Gemini 3.7 Flash (High)" }]);
   });
 

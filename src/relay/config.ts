@@ -5,7 +5,7 @@ import { substituteCmd } from "./invoke.js";
 
 export type ModelTier = "free" | "cheap" | "expensive";
 export type RelayModel = { name: string; tier: ModelTier; quality: number };
-export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" };
+export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk"; mcp?: boolean };
 export type RelayConfig = {
   workdir: string; apiKey?: string; baseUrl?: string; pollMs?: number;
   agents: Record<string, RelayAgent>;
@@ -49,6 +49,9 @@ export function loadRelayConfig(path?: string): RelayConfig {
     const a = agent as Record<string, unknown>;
     if (a.type !== undefined && a.type !== "cli" && a.type !== "sdk") {
       throw new Error(`relay config agent "${name}" type must be "cli" or "sdk"`);
+    }
+    if (a.mcp !== undefined && typeof a.mcp !== "boolean") {
+      throw new Error(`relay config agent "${name}" mcp must be a boolean`);
     }
     if (a.type !== "sdk") {
       if (!Array.isArray(a.cmd) || a.cmd.length === 0 || !a.cmd.every((c) => typeof c === "string")) {

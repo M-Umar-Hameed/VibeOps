@@ -611,3 +611,32 @@ test("runAgent: killTree still kills a detached (logPath) child (S2-A2)", async 
   rmSync(dir, { recursive: true, force: true });
 }, 15_000);
 
+test("loadRelayConfig accepts an agent with mcp: true", () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-cfg-"));
+  const path = join(dir, "relay.json");
+  writeFileSync(path, JSON.stringify({
+    workdir: dir,
+    agents: { claude: { cmd: ["claude", "-p", "{promptFile}"], roles: ["work"], mcp: true } },
+  }));
+  try {
+    const config = loadRelayConfig(path);
+    expect(config.agents.claude.mcp).toBe(true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("loadRelayConfig rejects an agent with non-boolean mcp", () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-cfg-"));
+  const path = join(dir, "relay.json");
+  writeFileSync(path, JSON.stringify({
+    workdir: dir,
+    agents: { bad: { cmd: ["claude"], roles: ["work"], mcp: "yes" } },
+  }));
+  try {
+    expect(() => loadRelayConfig(path)).toThrow(/agent "bad" mcp must be a boolean/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+

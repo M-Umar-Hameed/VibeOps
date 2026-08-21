@@ -7,6 +7,9 @@ import { getTicketHistory, searchTickets } from "../services/history.js";
 import { saveNote, updateNote, deleteNote, listNotes } from "../services/notes.js";
 import { searchKnowledge } from "../services/knowledge.js";
 import { fetchDocs } from "../knowledge/docs.js";
+import { exists, list, submitBatch, type ActionStep } from "../browser/channel.js";
+import { validateSteps } from "../browser/validate.js";
+import { hasActGrant, noActGrantReason } from "../browser/grants.js";
 export async function buildServer(apiKey: string) {
   const actor = await resolveActor(apiKey);
   const server = new McpServer({ name: "tickets", version: "0.1.0" });
@@ -68,6 +71,69 @@ export async function buildServer(apiKey: string) {
     async ({ library, topic }) => {
       const { text } = await fetchDocs(library, topic);
       return { content: [{ type: "text", text }] };
+    });
+
+  // Browser verbs — same in-process channel + act-grant gate as the chat SDK path
+  // (src/chat/tools.ts). Both callers hit hasActGrant/noActGrantReason from
+  // src/browser/grants.ts, so there is ONE grant model and one browserGrants
+  // setting, not two. Over the stdio entrypoint (npm run mcp) the channel is empty
+  // and every verb self-explains "no extension connected"; the browser is reachable
+  // only over the HTTP transport, which runs in the api process that holds it.
+  // ponytail: resolveInstance duplicated from tools.ts (12 lines) to keep this change
+  // inside the MCP file; extract to src/browser/verbs.ts if a third caller appears.
+  const resolveInstance = (instanceId?: string): { id?: string; err?: string } => {
+    const liveInst = list();
+    if (!instanceId) {
+      if (liveInst.length === 1) return { id: liveInst[0].instanceId };
+      if (liveInst.length === 0) return { err: "no browser extension is connected. Open the VibeOps Browser Agent extension settings and press Connect." };
+      return { err: `multiple browser instances connected - pass instanceId. Connected: ${liveInst.map((i) => `${i.instanceId} (${i.profileLabel})`).join(", ")}` };
+    }
+    if (!exists(instanceId)) {
+      const connected = liveInst.map((i) => i.instanceId).join(", ") || "none connected";
+      return { err: `no browser instance "${instanceId}". Connected: ${connected}` };
+    }
+    return { id: instanceId };
+  };
+
+  const readOnly = async (instanceId: string | undefined, step: ActionStep): Promise<string> => {
+    const { id, err } = resolveInstance(instanceId);
+    if (!id) return err!;
+    const result = await submitBatch(id, id, [step]);
+    if (!result) return "browser batch timed out (no extension response in 30s)";
+    const s = result.results[0];
+    if (!s?.ok) return `browser refused: ${s?.error ?? "unknown error"}`;
+    return typeof s.value === "string" ? s.value : JSON.stringify(result.snapshot ?? s.value ?? "").slice(0, 4000);
+  };
+
+  server.registerTool("browser_snapshot",
+    { description: "Snapshot the connected browser (read-only). instanceId optional when one browser is connected.",
+      inputSchema: { instanceId: z.string().optional() } },
+    async ({ instanceId }) => ({ content: [{ type: "text", text: await readOnly(instanceId, { verb: "snapshot" }) }] }));
+
+  server.registerTool("browser_read",
+    { description: "Read an element by ref (read-only). instanceId optional when one browser is connected.",
+      inputSchema: { instanceId: z.string().optional(), ref: z.string() } },
+    async ({ instanceId, ref }) => ({ content: [{ type: "text", text: await readOnly(instanceId, { verb: "read", ref }) }] }));
+
+  server.registerTool("browser_act",
+    { description: "Run mutating steps (click/type/select/press/navigate) on a browser instance; requires an act grant for targetOrigin. navigate needs an act grant for the DESTINATION origin (http/https only).",
+      inputSchema: { instanceId: z.string().optional(), targetOrigin: z.string(), steps: z.array(z.any()) } },
+    async ({ instanceId, targetOrigin, steps }) => {
+      const { id, err } = resolveInstance(instanceId);
+      if (!id) return { content: [{ type: "text", text: err! }] };
+      const v = validateSteps(steps);
+      if (!v.ok) return { content: [{ type: "text", text: `invalid steps: ${v.error}` }] };
+      // SECURITY GATE — identical to src/chat/tools.ts:122-123. Grant decided
+      // server-side against browserGrants; the model-supplied targetOrigin is the
+      // exact value checked and the value granted, never widened. MUTATION-TEST TARGET.
+      if (!(await hasActGrant(targetOrigin))) {
+        return { content: [{ type: "text", text: `browser refused: ${noActGrantReason(targetOrigin)}` }] };
+      }
+      const result = await submitBatch(id, id, v.steps as ActionStep[], { grant: "act", targetOrigin });
+      if (!result) return { content: [{ type: "text", text: "browser batch timed out (no extension response in 30s)" }] };
+      const failed = result.results.find((r) => !r.ok);
+      if (failed) return { content: [{ type: "text", text: `browser refused: ${failed.error ?? "unknown error"}` }] };
+      return { content: [{ type: "text", text: JSON.stringify(result.snapshot ?? "").slice(0, 4000) }] };
     });
 
   return server;

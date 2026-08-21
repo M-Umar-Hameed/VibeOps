@@ -8,16 +8,17 @@ export const CHAT_TRANSCRIPT_CAP = 24_000;
 export type RosterModel = { name: string };
 export type RosterEntry = { agent: string; toolCapable: boolean; models: RosterModel[] };
 
-// Every relay agent that holds any role, with its models. toolCapable is true
-// ONLY for the sdk lane: CLI lanes are one-shot processes with no MCP, so tool
-// use (knowledge search, browser) is impossible there.
+// Every relay agent that holds any role, with its models. toolCapable is true for
+// the sdk lane and for any CLI lane flagged mcp:true (reaches the shared MCP tools
+// via its own MCP client config; see docs/AGENT_CLIS.md). A CLI lane without a
+// verified tool mechanism stays false so the picker never over-promises.
 export function buildRoster(config: RelayConfig): RosterEntry[] {
   const roster: RosterEntry[] = [];
   for (const [name, agent] of Object.entries(config.agents)) {
     if (!agent.roles?.length) continue;
     roster.push({
       agent: name,
-      toolCapable: agent.type === "sdk",
+      toolCapable: agent.type === "sdk" || agent.mcp === true,
       models: (agent.models ?? []).map((m) => ({ name: m.name })),
     });
   }

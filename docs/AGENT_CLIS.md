@@ -10,6 +10,8 @@ type RelayAgent = {
   timeoutMs?: number;
   models?: RelayModel[];
   env?: Record<string, string>;
+  type?: "cli" | "sdk";
+  mcp?: boolean;
 };
 
 type RelayModel = {
@@ -39,10 +41,15 @@ Install: `npm install -g @anthropic-ai/claude-code`
 
 Login Flow: Run `claude login` once in a terminal on this machine. Signs in with your claude.ai account/subscription.
 
+MCP Wiring: Run once to reach VibeOps tools:
+`claude mcp add --transport http vibeops http://127.0.0.1:8787/mcp --header "Authorization: Bearer <key>"`
+Setting `"mcp": true` in `relay.json` marks the lane tool-capable in chat.
+
 ```json
 "claude": {
   "cmd": ["claude", "-p", "{promptFile}"],
-  "roles": ["plan", "review"]
+  "roles": ["plan", "review"],
+  "mcp": true
 }
 ```
 
@@ -53,6 +60,10 @@ Login Flow: Run `claude login` once in a terminal on this machine. Signs in with
 Install: Follow Antigravity installation docs.
 
 Login Flow: Sign in through the Antigravity CLI/app's own sign-in flow (no single flag — see Antigravity's docs). VibeOps only invokes agy once it's authenticated.
+
+MCP Wiring: Run once to reach VibeOps tools:
+`agy mcp add --header "Authorization: Bearer <key>" vibeops http://127.0.0.1:8787/mcp`
+Setting `"mcp": true` in `relay.json` marks the lane tool-capable in chat.
 
 ```json
 "agy": {
@@ -69,6 +80,8 @@ Install: `npm install -g @openai/codex`
 
 Login Flow: Run `codex login` once in a terminal on this machine. Signs in with your ChatGPT/OpenAI account.
 
+MCP Support: No streamable-HTTP MCP support verified (deferred in VibeOps one-click architecture). The lane remains tool-incapable (`mcp: false` / omitted).
+
 ```json
 "codex": {
   "cmd": ["codex", "exec", "--oss", "--sandbox", "workspace-write", "-C", "{workdir}", "{prompt}"],
@@ -84,10 +97,15 @@ Install: `pip install kimi-cli` (or `uv tool install kimi-cli`). Run `kimi` once
 
 Login Flow: Authenticate this CLI in your terminal the way its provider expects. VibeOps only invokes the binary — it never sees or stores the credentials.
 
+MCP Wiring: Run once to reach VibeOps tools:
+`kimi mcp add --transport http vibeops http://127.0.0.1:8787/mcp --header "Authorization: Bearer <key>"`
+Setting `"mcp": true` in `relay.json` marks the lane tool-capable in chat.
+
 ```json
 "kimi": {
   "cmd": ["kimi", "-p", "{promptFile}"],
   "roles": ["work"],
+  "mcp": true,
   "models": [
     {
       "name": "moonshot-ai/kimi-k2.7-code",

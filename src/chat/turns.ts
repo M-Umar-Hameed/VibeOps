@@ -108,12 +108,15 @@ export async function runTurn(
       res = { ok: false, text: `[chat: unknown agent "${agentName}" in relay config]` };
       onData(res.text);
     } else {
-      // CLI lane: one-shot process, no MCP -> no tools. Compose voice + the full
-      // rolled transcript (capped oldest-first) into one prompt; each turn is a
-      // single invocation via the shared relay invoke path.
+      // CLI lane: one-shot process. An mcp-wired lane reaches the shared MCP tools
+      // through its own CLI MCP client config (one-time `claude mcp add --transport
+      // http vibeops <url>`; see docs/AGENT_CLIS.md), so no flags or secrets are
+      // injected here. Surface CHAT_CAPABILITIES so a wired lane stops denying tools
+      // it has; an unwired lane gets voice only and makes no tool claims.
       const cliAgent = { ...agentDef, cmd: resolveCmd(agentDef, modelName || undefined) };
       const transcript = rollTranscript(await store.getMessages(sessionId));
-      const prompt = voice ? `${voice}\n\n${transcript}` : transcript;
+      const sys = agentDef.mcp ? `${voice}${CHAT_CAPABILITIES}` : voice;
+      const prompt = sys ? `${sys}\n\n${transcript}` : transcript;
       const out = await runAgent(cliAgent, prompt, config!.workdir, onData);
       res = { ok: out.ok, text: out.output };
     }

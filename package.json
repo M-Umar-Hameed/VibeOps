@@ -6,6 +6,7 @@
   "scripts": {
     "db:up": "docker compose up -d",
     "db:push": "drizzle-kit push",
+    "db:rebuild": "docker compose exec -T db psql -U tickets -d tickets -c \"DROP SCHEMA IF EXISTS drizzle CASCADE; DROP SCHEMA public CASCADE; CREATE SCHEMA public;\"",
     "db:generate": "drizzle-kit generate",
     "db:vector": "tsx -e \"import('./src/db/vector-setup.js').then(m=>m.ensureExtension())\"",
     "db:vector:index": "tsx -e \"import('./src/db/vector-setup.js').then(m=>m.ensureIndex())\"",

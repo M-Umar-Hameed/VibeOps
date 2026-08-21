@@ -37,7 +37,11 @@ export async function ensureSharedSchema(sql: ReturnType<typeof postgres>): Prom
     throw new Error(
       "Test database is provisioned but has no drizzle migration history " +
         "(drizzle.__drizzle_migrations is missing), so it will silently drift behind " +
-        "drizzle/. Rebuild it once: docker compose down -v && npm run db:up",
+        "drizzle/. Rebuild the schema once with `npm run db:rebuild`, then re-run. " +
+        "That DESTROYS everything in the shared test database on :5433, so make sure no " +
+        "other test run is using it. Do NOT use `docker compose down -v`: the compose " +
+        "project name is pinned, so it resolves to the shared stack from every worktree " +
+        "and sandbox and takes the container and volume down for the whole machine.",
     );
   }
   await migrate(drizzle(sql), { migrationsFolder: "drizzle" });

@@ -74,7 +74,7 @@ test("a provisioned database with no migration history fails loudly", async () =
   try {
     await ensureSharedSchema(sql);         // provision + bookkeeping
     await sql`DROP SCHEMA drizzle CASCADE`; // simulate a pre-bookkeeping legacy DB
-    await expect(ensureSharedSchema(sql)).rejects.toThrow(/docker compose down -v/);
+    await expect(ensureSharedSchema(sql)).rejects.toThrow(/npm run db:rebuild/);
   } finally {
     await sql.end();
   }

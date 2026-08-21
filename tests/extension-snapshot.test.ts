@@ -149,3 +149,41 @@ describe("buildSnapshot", () => {
     expect((new JSDOM(doc.documentElement.outerHTML).window as any).__pwned).toBeUndefined();
   });
 });
+
+describe("T1: rects and viewport metadata", () => {
+  it("carries viewport metadata captured with the rects", () => {
+    const doc = dom("<html><body><button>Go</button></body></html>");
+    const snap = buildSnapshot(doc, "inst1") as any;
+    expect(snap.viewport).toBeDefined();
+    // dpr is the load-bearing one: captureVisibleTab is physical px, rects are CSS px.
+    expect(typeof snap.viewport.dpr).toBe("number");
+    expect(snap.viewport.dpr).toBeGreaterThan(0);
+    for (const k of ["scrollX", "scrollY", "viewportW", "viewportH"]) {
+      expect(typeof snap.viewport[k]).toBe("number");
+    }
+  });
+
+  it("every node carries a rect field", () => {
+    const doc = dom(`<html><body><button>A</button><a href="/x">B</a></body></html>`);
+    const snap = buildSnapshot(doc, "inst1") as any;
+    expect(snap.nodes.length).toBe(2);
+    for (const n of snap.nodes) expect("rect" in n).toBe(true);
+  });
+
+  it("a zero-size element records rect null, not a zero box", () => {
+    // jsdom gives every element a 0x0 rect, which is exactly the absent case.
+    const doc = dom("<html><body><button>Hidden</button></body></html>");
+    const snap = buildSnapshot(doc, "inst1") as any;
+    expect(snap.nodes[0].rect).toBeNull();
+  });
+
+  it("a laid-out element records a page-coordinate box including scroll", () => {
+    const doc = dom("<html><body><button>Go</button></body></html>");
+    const el = doc.querySelector("button")!;
+    (el as any).getBoundingClientRect = () => ({ left: 10, top: 20, width: 30, height: 40 });
+    Object.defineProperty(doc.defaultView!, "scrollX", { value: 100, configurable: true });
+    Object.defineProperty(doc.defaultView!, "scrollY", { value: 200, configurable: true });
+    const snap = buildSnapshot(doc, "inst1") as any;
+    expect(snap.nodes[0].rect).toEqual({ x: 110, y: 220, w: 30, h: 40 });
+  });
+});

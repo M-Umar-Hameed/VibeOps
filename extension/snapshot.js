@@ -233,12 +233,37 @@ function getAnchor(el, doc) {
 }
 
 /**
+ * Page-coordinate box for an element, or null when it has none (display:none,
+ * zero-size). Absent and at-origin are different facts, so null is not {0,0,0,0}.
+ * CSS pixels, page-relative (viewport rect + scroll) so a box stays meaningful
+ * after the page scrolls.
+ * @param {Element} el
+ * @param {Window} view
+ * @returns {{x: number, y: number, w: number, h: number} | null}
+ */
+function getRect(el, view) {
+  try {
+    const r = el.getBoundingClientRect();
+    if (!r || (r.width === 0 && r.height === 0)) return null;
+    return {
+      x: r.left + (view.scrollX || 0),
+      y: r.top + (view.scrollY || 0),
+      w: r.width,
+      h: r.height,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Build snapshot from document.
  * @param {Document} doc
  * @param {string} instanceId
- * @returns {{instanceId: string, origin: string, identity: null, nodes: Array}}
+ * @returns {{instanceId: string, origin: string, identity: null, nodes: Array, viewport: object}}
  */
 export function buildSnapshot(doc, instanceId) {
+  const view = doc.defaultView || { scrollX: 0, scrollY: 0, devicePixelRatio: 1, innerWidth: 0, innerHeight: 0 };
   const interactive = collectInteractive(doc);
   const nodes = interactive.map((item, i) => {
     const { element, role } = item;
@@ -247,6 +272,7 @@ export function buildSnapshot(doc, instanceId) {
       role,
       name: getAccessibleName(element, doc),
       anchor: getAnchor(element, doc),
+      rect: getRect(element, view),
     };
 
     const value = getValue(element, role);
@@ -267,5 +293,16 @@ export function buildSnapshot(doc, instanceId) {
     origin: doc.location?.origin ?? "",
     identity: null,
     nodes,
+    // Captured in the SAME pass as the rects above. captureVisibleTab returns
+    // PHYSICAL pixels while rects are CSS pixels, so anything drawing on or
+    // clicking into a screenshot needs dpr and the scroll offsets from this
+    // exact moment — taken later they describe a page that has already moved.
+    viewport: {
+      dpr: view.devicePixelRatio || 1,
+      scrollX: view.scrollX || 0,
+      scrollY: view.scrollY || 0,
+      viewportW: view.innerWidth || 0,
+      viewportH: view.innerHeight || 0,
+    },
   };
 }

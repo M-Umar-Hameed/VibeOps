@@ -164,6 +164,8 @@ export async function runAgent(
         push(buf.toString("utf-8", 0, n));
       };
 
+      let deadSince: number | undefined;
+
       if (outFd !== undefined) {
         // fd-to-file stdio has no pipe, so settle must NOT depend solely on the
         // child's exit/close events: a detached child can exit without those
@@ -171,11 +173,23 @@ export async function runAgent(
         // sat "running" 6.6h because no event fired finish()). Poll OS liveness as
         // the authoritative settle, exactly as tailUntilExit's reattach poll does;
         // child.exitCode is populated by Node on exit and carries the real code.
+        // If liveness observes the OS process gone before Node has populated exitCode,
+        // do not fail immediately on (null === 0): wait for exitCode / exit event or
+        // grace timeout so a successful run never settles failed on a poll race.
         // The exit/close/error handlers below stay as a harmless faster path.
         pollTimer = setInterval(() => {
           drainTail();
           const cpid = child.pid;
-          if (cpid === undefined || !pidAlive(cpid)) finish(child.exitCode === 0);
+          if (cpid === undefined || !pidAlive(cpid)) {
+            if (child.exitCode !== null || child.signalCode !== null) {
+              finish(child.exitCode === 0);
+            } else {
+              deadSince ??= Date.now();
+              if (Date.now() - deadSince >= EXIT_DRAIN_MS) {
+                finish(child.exitCode === 0);
+              }
+            }
+          }
         }, 100);
         pollTimer.unref();
       } else {

@@ -54,3 +54,28 @@ describe("T2: screenshot verb", () => {
     }
   });
 });
+
+describe("T4: clickAt coordinate verb", () => {
+  it("accepts finite non-negative coordinates", () => {
+    expect(validateSteps([{ verb: "clickAt", x: 10, y: 20 }]).ok).toBe(true);
+    expect(validateSteps([{ verb: "clickAt", x: 0, y: 0 }]).ok).toBe(true);
+  });
+
+  it("rejects strings, negatives, NaN and Infinity", () => {
+    // typeof NaN === "number", so the shape check alone would let it through.
+    expect(validateSteps([{ verb: "clickAt", x: "10", y: 20 }]).ok).toBe(false);
+    expect(validateSteps([{ verb: "clickAt", x: -1, y: 20 }]).ok).toBe(false);
+    expect(validateSteps([{ verb: "clickAt", x: NaN, y: 20 }]).ok).toBe(false);
+    expect(validateSteps([{ verb: "clickAt", x: Infinity, y: 20 }]).ok).toBe(false);
+  });
+
+  it("rejects extra fields", () => {
+    expect(validateSteps([{ verb: "clickAt", x: 1, y: 2, ref: "ref1" }]).ok).toBe(false);
+  });
+
+  it("clickAt is MUTATING: a coordinate must not be a side door around the grant gate", () => {
+    const MUTATING = new Set(["click", "type", "select", "press", "navigate", "clickAt"]);
+    expect(MUTATING.has("clickAt")).toBe(true);
+    expect(MUTATING.has("screenshot")).toBe(false);
+  });
+});

@@ -5,7 +5,7 @@ import type { ActionStep } from "./channel.js";
 // verb — no unknown verb, no missing field, no extra field. A page-derived
 // string can never smuggle in an executable field, because every non-listed key
 // is rejected before anything is enqueued.
-const SHAPES: Record<string, Record<string, "string">> = {
+const SHAPES: Record<string, Record<string, "string" | "number">> = {
   click: { ref: "string" },
   type: { ref: "string", text: "string" },
   select: { ref: "string", option: "string" },
@@ -14,6 +14,7 @@ const SHAPES: Record<string, Record<string, "string">> = {
   screenshot: {},
   read: { ref: "string" },
   navigate: { url: "string" },
+  clickAt: { x: "number", y: "number" },
 };
 
 export function validateSteps(
@@ -41,6 +42,16 @@ export function validateSteps(
     // Injection defense for navigate: only absolute http(s) URLs. javascript:/
     // data:/file:/chrome: (and relative URLs) are rejected before anything is
     // enqueued or a location is ever assigned.
+    // clickAt coordinates must be real, finite, non-negative page pixels. NaN and
+    // Infinity are typeof "number", so the shape check alone is not enough.
+    if (s.verb === "clickAt") {
+      for (const f of ["x", "y"]) {
+        const n = s[f] as number;
+        if (!Number.isFinite(n) || n < 0) {
+          return { ok: false, error: `clickAt.${f} must be a finite non-negative number` };
+        }
+      }
+    }
     if (s.verb === "navigate") {
       let u: URL;
       try { u = new URL(s.url as string); } catch { return { ok: false, error: "navigate.url must be an absolute URL" }; }

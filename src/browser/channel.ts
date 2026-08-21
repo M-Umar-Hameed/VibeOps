@@ -18,7 +18,8 @@ export type ActionStep =
   | { verb: "snapshot" }
   | { verb: "screenshot" }
   | { verb: "read"; ref: string }
-  | { verb: "navigate"; url: string };
+  | { verb: "navigate"; url: string }
+  | { verb: "clickAt"; x: number; y: number };
 
 export type BatchResult = {
   results: Array<{ ok: boolean; value?: string; error?: string }>;

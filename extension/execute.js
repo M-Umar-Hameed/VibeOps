@@ -117,6 +117,27 @@ function runMutation(doc, refMap, step) {
     el.dispatchEvent(new view.KeyboardEvent("keyup", { key: step.key, bubbles: true }));
     return { ok: true };
   }
+  // clickAt is the last resort for surfaces the accessibility tree cannot see
+  // (canvas, image-only controls). It takes PAGE coordinates; elementFromPoint
+  // takes VIEWPORT coordinates, so subtract scroll. A point outside the viewport
+  // is refused rather than clamped - clamping would click something the caller
+  // never aimed at. Still act-gated server-side like every mutating verb.
+  if (step.verb === "clickAt") {
+    const vx = step.x - (view.scrollX || 0);
+    const vy = step.y - (view.scrollY || 0);
+    const w = view.innerWidth || 0;
+    const h = view.innerHeight || 0;
+    if (vx < 0 || vy < 0 || (w > 0 && vx > w) || (h > 0 && vy > h)) {
+      return { ok: false, error: `point (${step.x},${step.y}) is outside the viewport` };
+    }
+    const target = doc.elementFromPoint(vx, vy);
+    // No fallback to body: a dead zone must report failure, not click something else.
+    if (!target) return { ok: false, error: `no element at (${step.x},${step.y})` };
+    target.dispatchEvent(new view.MouseEvent("click", {
+      bubbles: true, cancelable: true, clientX: vx, clientY: vy,
+    }));
+    return { ok: true };
+  }
   const el = refMap.get(step.ref);
   if (!el) return { ok: false, error: "unknown ref" };
   if (step.verb === "click") {

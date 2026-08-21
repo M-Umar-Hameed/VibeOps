@@ -347,3 +347,29 @@ test("granting an origin unlocks its mutating batch; a different origin stays re
 });
 
 
+
+test("clickAt requires the same act grant as any other mutating verb", async () => {
+  // A coordinate click must not be a side door: same gate, same refusal text as a
+  // ref click. This is the one that would matter if it broke.
+  const { apiKey } = await createActor({ name: uniq("clickat-admin"), kind: "human", role: "admin" });
+  const h = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+  await deleteSetting("browserGrants");
+
+  const reg = await app.request("/browser/instances/register", {
+    method: "POST", headers: h,
+    body: JSON.stringify({ browserChannel: "chrome", profileId: uniq("p"), profileLabel: "Default" }),
+  });
+  const { instanceId } = await reg.json() as { instanceId: string };
+
+  const res = await app.request("/browser/batches", {
+    method: "POST", headers: h,
+    body: JSON.stringify({
+      instanceId, tenant: "t",
+      targetOrigin: "https://example.com",
+      steps: [{ verb: "clickAt", x: 10, y: 20 }],
+    }),
+  });
+  expect(res.status).toBe(403);
+  const body = await res.json() as { error: string };
+  expect(body.error).toContain("no act grant for https://example.com");
+});

@@ -40,18 +40,26 @@ export function useForgeRun(
     nextOffsetRef.current = 0;
   };
 
+  // Key the guard on the ticket AND its latest run identity, not the ticket alone.
+  // Ticket-only meant state was derived once per selection, so a run that STARTED
+  // after the ticket was selected (launched from the API, another window, or any
+  // path that skips initRunStart) never populated runStartedAt — the badges went
+  // live from the query while "Elapsed" stayed hidden. Including the run id and
+  // status re-derives on a real transition while still ignoring every other poll,
+  // which is what keeps it from clobbering an in-progress local run.
+  const latestRunKey = `${ticketRuns[0]?.id ?? ""}:${ticketRuns[0]?.status ?? ""}`;
   useEffect(() => {
     if (!selectedTicket) { lastDerivedRunTicketRef.current = null; return; }
-    if (lastDerivedRunTicketRef.current === selectedTicket.id) return;
+    if (lastDerivedRunTicketRef.current === `${selectedTicket.id}:${latestRunKey}`) return;
     if (runsQ.isError) {
-      lastDerivedRunTicketRef.current = selectedTicket.id;
+      lastDerivedRunTicketRef.current = `${selectedTicket.id}:${latestRunKey}`;
       setInterruptedRun(false); setTicketRunActive(false); setActiveRunId(null);
       setIsSubmitting(false); setRunChunks([]); setRunStage(""); setRunStatus("");
       setRunError(""); nextOffsetRef.current = 0;
       return;
     }
     if (!runsQ.isSuccess) return;
-    lastDerivedRunTicketRef.current = selectedTicket.id;
+    lastDerivedRunTicketRef.current = `${selectedTicket.id}:${latestRunKey}`;
 
     const latest = ticketRuns[0];
     setInterruptedRun(latest?.status === "interrupted");

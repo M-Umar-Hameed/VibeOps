@@ -11,6 +11,10 @@ const OUTPUT_CAP = 100_000;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 const KILL_TIMEOUT_MS = 10_000;
 const EXIT_DRAIN_MS = 2_000;
+// How long the liveness poll waits for Node to reap a vanished child and report
+// its exit status before declaring failure. Generous: a wrong "failed" on a
+// successful run is worse than settling a truly-lost child a second later.
+const EXIT_REAP_GRACE_MS = 5_000;
 
 export type AgentResult = { ok: boolean; output: string; usage?: { tokens: number; cost: number } };
 
@@ -165,7 +169,28 @@ export async function runAgent(
       };
 
       if (outFd !== undefined) {
-        pollTimer = setInterval(drainTail, 100);
+        // fd-to-file stdio has no pipe, so a detached child can exit without its
+        // close/exit events ever reaching this handle — the run then sits
+        // "running" forever (incident 6e3dcc32: agy finished at 07:14, the run
+        // hung 6.6h). Poll OS liveness as the backstop settle.
+        //
+        // But liveness alone must NOT decide ok/failed: pidAlive can see the
+        // process gone before Node reaps it and populates exitCode, and settling
+        // on a null exitCode reports a SUCCESSFUL run as failed. So once the pid
+        // is gone, wait for the real status, and only give up after a grace
+        // period — a run whose status never arrives is a genuine failure.
+        let goneAt = 0;
+        pollTimer = setInterval(() => {
+          drainTail();
+          const cpid = child.pid;
+          if (cpid !== undefined && pidAlive(cpid)) return;
+          if (child.exitCode !== null || child.signalCode !== null) {
+            finish(child.exitCode === 0);
+            return;
+          }
+          if (goneAt === 0) { goneAt = Date.now(); return; }
+          if (Date.now() - goneAt >= EXIT_REAP_GRACE_MS) finish(false);
+        }, 100);
         pollTimer.unref();
       } else {
         const capture = (chunk: Buffer) => push(chunk.toString("utf-8"));

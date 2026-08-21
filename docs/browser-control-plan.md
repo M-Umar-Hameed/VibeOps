@@ -88,6 +88,15 @@ the server resolves mark→ref and executes a normal ref click. A model cannot
 invent a target: an out-of-table mark is a refusal, and the executed thing is
 still a grant-gated ref click.
 
+**Any-model requirement (owner, binding — not just the Claude SDK lane):** the
+capability registers on the MCP server as well as the SDK tools, one
+implementation behind both; the annotated PNG is also written to a temp file and
+the path returned, because file-capable CLIs read files natively where inline
+base64 fails; and the mark table is always returned as text — `{mark, ref, role,
+name}` — so a non-vision model can choose a mark from the table alone.
+Set-of-marks degrades to a better-organized snapshot for text-only models;
+vision is an enhancement, never a requirement.
+
 ### T4 — `clickAt` coordinate verb [act-tier, last resort]
 For canvas and the structureless remainder. Content script maps CSS-px point via
 `document.elementFromPoint(x/dpr adjustments applied)` and dispatches the click.

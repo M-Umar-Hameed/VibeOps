@@ -12,6 +12,7 @@ import { loadRelayConfig, resolveCmd } from "../relay/config.js";
 import { parseModelRef, rollTranscript } from "./roster.js";
 import { recallBlock } from "../services/recall.js";
 import { fenceUntrusted, UNTRUSTED_CLAUSE } from "../relay/prompts.js";
+import { captureMemory } from "../services/memory-capture.js";
 
 // Composed onto the chat voice clause for the tool-capable SDK lane only. States
 // what the connected tools can do and the act-grant rule, so the agent stops
@@ -156,6 +157,13 @@ export async function runTurn(
       role: "assistant",
       body: res.text,
       toolCalls: calls.length ? calls : undefined,
+    });
+
+    // Background: never awaited, never affects the turn.
+    void captureMemory({
+      actorId: actor.id,
+      text: `user: ${userBody}\n\nassistant: ${res.text}`,
+      projectId: session.projectId ?? undefined,
     });
 
     // Fold the completed conversation into the knowledge index so later turns and

@@ -18,11 +18,12 @@ export const UNTRUSTED_CLAUSE =
 
 
 export function composePlanPrompt(
-  { ticket, knowledge }: { ticket: TicketLike; knowledge: KnowledgeItem[] },
+  { ticket, knowledge, memory }: { ticket: TicketLike; knowledge: KnowledgeItem[]; memory?: string },
 ): string {
   return [
     `Ticket: ${ticket.title}`,
     ticket.body ? fenceUntrusted("ticket-body", ticket.body) : "",
+    memory ? `\nMemory:\n${fenceUntrusted("memory", memory)}` : "",
     `\nRelevant knowledge:\n${fenceUntrusted("knowledge", formatKnowledge(knowledge))}`,
     `\nWrite an implementation plan for this ticket, with concrete acceptance criteria.`,
     UNTRUSTED_CLAUSE,
@@ -30,14 +31,15 @@ export function composePlanPrompt(
 }
 
 export function composeWorkPrompt(
-  { ticket, plan, knowledge, workdir }: {
-    ticket: TicketLike; plan: string; knowledge: KnowledgeItem[]; workdir: string;
+  { ticket, plan, knowledge, workdir, memory }: {
+    ticket: TicketLike; plan: string; knowledge: KnowledgeItem[]; workdir: string; memory?: string;
   },
 ): string {
   return [
     `Ticket: ${ticket.title}`,
     ticket.body ? fenceUntrusted("ticket-body", ticket.body) : "",
     `\nPlan:\n${plan}`,
+    memory ? `\nMemory:\n${fenceUntrusted("memory", memory)}` : "",
     `\nRelevant knowledge:\n${fenceUntrusted("knowledge", formatKnowledge(knowledge))}`,
     `\nImplement this plan. Work in ${workdir}.`,
     `\nEnd your output with a section starting REPORT:`,

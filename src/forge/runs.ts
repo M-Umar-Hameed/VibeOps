@@ -9,6 +9,7 @@ import { resolveCmd, loadRelayConfig, type RelayConfig, type RelayAgent } from "
 import { pipelineStartWarnings, pipelineStartBlockingError } from "../relay/doctor.js";
 import { roleStyle } from "../relay/style.js";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted } from "../relay/prompts.js";
+import { recallBlock } from "../services/recall.js";
 import { chunkReviewDiff, mergeReviewVerdicts } from "./review-chunks.js";
 import { killTree, killPidTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
@@ -553,7 +554,8 @@ async function pipeline(
     enterStage(run, "plan");
     append(run, `=== FORGE plan (${run.agents.plan}) ===\n`);
     const knowledge = await getKnowledgeSafe(ticket.title, ticket.projectId);
-    const planPrompt = composePlanPrompt({ ticket, knowledge }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra;
+    const memory = await getMemorySafe(ticket.title, ticket.projectId);
+    const planPrompt = composePlanPrompt({ ticket, knowledge, memory }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra;
     const res = await track(actorId, ticket.id, "plan", run.agents.plan, planPrompt.length, () => runAgent(
       agents.plan, planPrompt, workdir, onData,
       (child) => recordSpawn(run, child),
@@ -590,11 +592,12 @@ async function pipeline(
   const frontendDeps = (await getSetting("forge.frontendDeps")) === "true";
   const sandbox = await ensureSandbox(workdir, ticket.id, frontendDeps);
   const knowledge = await getKnowledgeSafe(ticket.title, ticket.projectId);
+  const memory = await getMemorySafe(ticket.title, ticket.projectId);
   // Rework passes must see why the last review failed, or the worker repeats
   // the same mistakes (live-hit on the first dogfood ticket).
   const lastReview = [...(await listComments(ticket.id))].reverse().find((c) => c.kind === "review");
   const findings = lastReview ? `\n\nPrevious review findings (address ALL of these):\n${fenceUntrusted("prior-review-findings", lastReview.body)}` : "";
-  const workPrompt = composeWorkPrompt({ ticket, plan, knowledge, workdir: sandbox })
+  const workPrompt = composeWorkPrompt({ ticket, plan, knowledge, workdir: sandbox, memory })
     // No lessons clause here: A/B'd 2026-08-12 (docs/findings/2026-08-12-lessons-clause-ab.md).
     // On work prompts the doc measured inert - identical output on a control task, same
     // defect rate on a task its own "test isolation" line targets. Most of its lines
@@ -896,6 +899,11 @@ async function bounce(run: Run, actorId: string, why: string, output: string): P
 
 async function getKnowledgeSafe(q: string, projectId?: string): Promise<{ content: string; citation: string }[]> {
   try { return await searchKnowledge(q, { limit: 5, projectId, caller: "forge:run" }); } catch { return []; }
+}
+
+async function getMemorySafe(q: string, projectId?: string | null): Promise<string> {
+  try { return await recallBlock(q, { projectId: projectId ?? undefined }); }
+  catch (e) { console.warn(`forge: recall failed: ${(e as Error).message}`); return ""; }
 }
 
 function trim(): void {

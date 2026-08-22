@@ -675,3 +675,20 @@ test("loadRelayConfig rejects http lanes with pipeline roles, bad baseUrl, or mi
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("composePlanPrompt and composeWorkPrompt place a fenced memory block above knowledge; absent memory changes nothing", () => {
+  const ticket = { title: "Fix the widget", body: "" };
+  const knowledge = [{ content: "widgets are fiddly", citation: "note-1" }];
+  const memory = "Memory (rules fire for: widgets):\nRules:\n- [widgets] Never hot-patch the widget";
+
+  const plan = composePlanPrompt({ ticket, knowledge, memory });
+  expect(plan).toContain('<UNTRUSTED label="memory">');
+  expect(plan).toContain("Never hot-patch the widget");
+  expect(plan.indexOf("Memory:")).toBeLessThan(plan.indexOf("Relevant knowledge:"));
+  expect(composePlanPrompt({ ticket, knowledge })).toBe(composePlanPrompt({ ticket, knowledge, memory: "" }));
+
+  const work = composeWorkPrompt({ ticket, plan: "do it", knowledge, workdir: "/w", memory });
+  expect(work.indexOf("Memory:")).toBeLessThan(work.indexOf("Relevant knowledge:"));
+  expect(composeWorkPrompt({ ticket, plan: "do it", knowledge, workdir: "/w" }))
+    .toBe(composeWorkPrompt({ ticket, plan: "do it", knowledge, workdir: "/w", memory: "" }));
+});

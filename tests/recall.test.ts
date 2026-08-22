@@ -4,6 +4,7 @@ import { createProject } from "../src/services/projects.js";
 import { saveNote, noteIndexText } from "../src/services/notes.js";
 import { FakeEmbedder } from "../src/knowledge/embedder.js";
 import { recall, formatRecall, recallBlock, domainsFor, partitionHits } from "../src/services/recall.js";
+import { upsertSourceDoc } from "../src/services/knowledge.js";
 
 const emb = new FakeEmbedder(1024);
 const uniq = (p: string) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -129,6 +130,17 @@ test("formatRecall never emits a bare header when the cap drops every section", 
   const head = `Memory (rules fire for: global only):`;
   const out = formatRecall(r, head.length + 5);
   expect(out).toBe("");
+});
+
+test("note-kind hits with non-uuid refs are treated as knowledge, not a crash", async () => {
+  const { project } = await fixture();
+  const marker = uniq("odd");
+  const text = `${marker} indexed under a non-uuid note ref`;
+  // Same path tests/knowledge-graph.test.ts uses: a "note" source with its own ref scheme.
+  await upsertSourceDoc("note", `fs-note-1-${marker}`, text, emb);
+  const r = await recall(text, { projectId: project.id, limit: 500 }, emb);
+  expect(r.knowledge.some((h) => h.content.includes(marker))).toBe(true);
+  expect(r.decisions.length).toBe(0);
 });
 
 test("recallBlock returns '' when nothing matches", async () => {

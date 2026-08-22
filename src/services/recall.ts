@@ -11,6 +11,7 @@ import { getEmbedder, type Embedder } from "../knowledge/embedder.js";
 export type KnowledgeHit = Awaited<ReturnType<typeof searchKnowledge>>[number];
 export type Recall = { rules: Note[]; decisions: Note[]; knowledge: KnowledgeHit[]; domains: string[] };
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_RULES = 10;
 const MAX_DECISIONS = 5;
 const MAX_KNOWLEDGE = 5;
@@ -49,7 +50,9 @@ export async function recall(
     .orderBy(desc(notes.createdAt)).limit(MAX_RULES);
 
   const hits = await searchKnowledge(query, { limit: opts.limit ?? 10, projectId: opts.projectId ?? undefined, caller: "recall" }, embedder);
-  const noteIds = hits.filter((h) => h.sourceKind === "note").map((h) => h.sourceRef);
+  // Note-kind hits may carry non-uuid refs (other indexers use "note" with
+  // their own ref scheme); only real note ids can be joined back to notes.
+  const noteIds = hits.filter((h) => h.sourceKind === "note" && UUID_RE.test(h.sourceRef)).map((h) => h.sourceRef);
   const typed = noteIds.length
     ? await db.select().from(notes).where(and(inArray(notes.id, noteIds), isNull(notes.deletedAt)))
     : [];

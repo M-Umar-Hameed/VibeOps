@@ -5,6 +5,7 @@ import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
 import { latestHandoff } from "../src/services/handoff.js";
 import { app } from "../src/api/app.js";
+import { UNTRUSTED_CLAUSE } from "../src/relay/prompts.js";
 
 process.env.EMBED_PROVIDER = "fake";
 const uniq = (p: string) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -31,7 +32,9 @@ describe("*handoff", () => {
     expect(msgs.at(-1)?.body).toContain(marker);
 
     const prime = await (await app.request(`/prime?q=anything&project=${project.id}`, { headers: { Authorization: `Bearer ${apiKey}` } })).text();
-    expect(prime.startsWith("Handoff (")).toBe(true);
+    expect(prime).toContain(`<UNTRUSTED label="handoff">`);
+    expect(prime).toContain("Handoff (");
+    expect(prime).toContain(UNTRUSTED_CLAUSE);
     expect(prime).toContain(marker);
   });
 

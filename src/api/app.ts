@@ -10,6 +10,7 @@ import { assertTicketId, sandboxExists } from "../forge/sandbox.js";
 import { saveNote, updateNote, deleteNote, listNotes, getNote } from "../services/notes.js";
 import { searchKnowledge, getKnowledgeSource, upsertSourceDoc, listSessionDocs, knowledgeGraph, indexRepoDocs } from "../services/knowledge.js";
 import { recallBlock } from "../services/recall.js";
+import { fenceUntrusted, UNTRUSTED_CLAUSE } from "../relay/prompts.js";
 import { latestHandoff } from "../services/handoff.js";
 import { AuthError, ConflictError, ForbiddenError, NotFoundError, StaleVersionError } from "../services/errors.js";
 import { listProjects, createProject, updateProjectRepo, gitInitProject, getProjectSettings, setProjectSetting, scanFolder, importProjects, deleteProject } from "../services/projects.js";
@@ -406,15 +407,24 @@ app.get("/prime", async (c) => {
   const limit = Math.min(Number.isFinite(n) && n > 0 ? n : 5, 10);
   const projectId = c.req.query("project") || undefined;
   const handoff = projectId ? await latestHandoff(projectId).catch(() => null) : null;
-  const lead = handoff ? `Handoff (${handoff.createdAt.toISOString().slice(0, 10)}): ${handoff.body.replace(/\r?\n/g, " ").slice(0, 600)}\n` : "";
+  const lead = handoff
+    ? `${fenceUntrusted("handoff", `Handoff (${handoff.createdAt.toISOString().slice(0, 10)}): ${handoff.body.replace(/\r?\n/g, " ").slice(0, 600)}`)}\n`
+    : "";
   const hits = await searchKnowledge(q, { limit, projectId, caller: "route:prime" });
-  if (!hits.length) return c.text(lead + `VibeOps primer: no relevant knowledge for "${q}".`);
-  const lines = [`VibeOps primer for "${q}" (${hits.length} hits):`];
-  for (const h of hits) {
-    const content = h.content.replace(/\r?\n/g, " ").slice(0, 400);
-    lines.push(`- [${h.sourceKind} ${h.score.toFixed(2)} ${h.createdAt.slice(0, 10)}] ${content}`);
+  let text: string;
+  if (!hits.length) {
+    text = lead + `VibeOps primer: no relevant knowledge for "${q}".`;
+  } else {
+    const lines = [`VibeOps primer for "${q}" (${hits.length} hits):`];
+    for (const h of hits) {
+      const content = h.content.replace(/\r?\n/g, " ").slice(0, 400);
+      lines.push(`- [${h.sourceKind} ${h.score.toFixed(2)} ${h.createdAt.slice(0, 10)}] ${content}`);
+    }
+    text = lead + lines.join("\n");
   }
-  return c.text((lead + lines.join("\n")).slice(0, 4000));
+  text = text.slice(0, 4000);
+  if (lead) text += UNTRUSTED_CLAUSE;
+  return c.text(text);
 });
 
 // Prompt-time memory for agent hooks (UserPromptSubmit): the block recall
@@ -423,7 +433,8 @@ app.get("/recall", async (c) => {
   const q = c.req.query("q") ?? "";
   const projectId = c.req.query("project") || undefined;
   try {
-    return c.text((await recallBlock(q, { projectId })).slice(0, 4000));
+    const block = await recallBlock(q, { projectId, maxChars: 3600 });
+    return c.text(block ? `${fenceUntrusted("memory", block)}\n${UNTRUSTED_CLAUSE}` : "");
   } catch (e) {
     console.warn(`recall route failed: ${(e as Error).message}`);
     return c.text("");

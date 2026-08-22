@@ -8,6 +8,7 @@ import { app } from "../src/api/app.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
 import { saveNote } from "../src/services/notes.js";
+import { UNTRUSTED_CLAUSE } from "../src/relay/prompts.js";
 
 const uniq = (p: string) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const ROOT = resolve(import.meta.dirname, "..");
@@ -33,7 +34,10 @@ test("GET /recall returns the memory block for the caller's query and project", 
   await saveNote(actor.id, { body: rule, scope: "project", refId: project.id, kind: "rule" });
   const res = await app.request(`/recall?q=anything&project=${project.id}`, { headers: { Authorization: `Bearer ${apiKey}` } });
   expect(res.status).toBe(200);
-  expect(await res.text()).toContain(rule);
+  const body = await res.text();
+  expect(body).toContain(rule);
+  expect(body).toContain(`<UNTRUSTED label="memory">`);
+  expect(body).toContain(UNTRUSTED_CLAUSE);
 });
 
 test("recall-hook.mjs prints the server's block for the prompt on stdin, and nothing when the server is dead", async () => {

@@ -94,8 +94,8 @@ export function formatRecall(r: Recall, maxChars = RECALL_MAX_CHARS): string {
 
 export async function recallBlock(
   query: string,
-  opts: { projectId?: string | null; domains?: string[]; limit?: number } = {},
+  opts: { projectId?: string | null; domains?: string[]; limit?: number; maxChars?: number } = {},
   embedder: Embedder = getEmbedder(),
 ): Promise<string> {
-  return formatRecall(await recall(query, opts, embedder));
+  return formatRecall(await recall(query, opts, embedder), opts.maxChars);
 }

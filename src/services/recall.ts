@@ -70,7 +70,9 @@ function line(prefix: string, body: string): string {
 }
 
 // Rules are never cut; knowledge is cut first, then decisions, until the block
-// fits. A truncated rule would be a wrong rule.
+// fits. A truncated rule would be a wrong rule: once knowledge and decisions
+// are both exhausted, an over-long rules section is returned whole, uncut,
+// even past maxChars.
 export function formatRecall(r: Recall, maxChars = RECALL_MAX_CHARS): string {
   if (!r.rules.length && !r.decisions.length && !r.knowledge.length) return "";
   const head = `Memory (rules fire for: ${r.domains.length ? r.domains.join(", ") : "global only"}):`;
@@ -87,7 +89,7 @@ export function formatRecall(r: Recall, maxChars = RECALL_MAX_CHARS): string {
   let out = render(d, k);
   while (out.length > maxChars && k.length) { k = k.slice(0, -1); out = render(d, k); }
   while (out.length > maxChars && d.length) { d = d.slice(0, -1); out = render(d, k); }
-  return out.length > maxChars ? out.slice(0, maxChars) : out;
+  return out;
 }
 
 export async function recallBlock(

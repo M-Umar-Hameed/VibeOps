@@ -78,6 +78,18 @@ test("the char cap drops knowledge before it drops rules", () => {
   expect(out).toContain("R".repeat(200));
 });
 
+test("a rule alone is never truncated, even past maxChars", () => {
+  const r = {
+    domains: [],
+    rules: [{ body: "R".repeat(300), domain: null }],
+    decisions: [],
+    knowledge: [],
+  } as any;
+  const out = formatRecall(r, 100);
+  expect(out.length).toBeGreaterThan(100);
+  expect(out).toContain("R".repeat(300));
+});
+
 test("recallBlock returns '' when nothing matches", async () => {
   const { project } = await fixture();
   const block = await recallBlock(uniq("nothing-matches-this"), { projectId: project.id, domains: ["no-such-domain"] }, emb);

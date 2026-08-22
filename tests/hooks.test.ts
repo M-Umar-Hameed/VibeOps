@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { spawnSync, spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createServer } from "node:http";
@@ -122,6 +122,35 @@ test("install-hooks.mjs adds both hooks once, backs up, and keeps unrelated hook
     expect(second.status).toBe(0);
     const after2 = JSON.parse(readFileSync(settingsPath, "utf8"));
     expect(after2).toEqual(after1);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("install-hooks.mjs never clobbers the backup and never rewrites settings.json on a no-op run", () => {
+  const home = mkdtempSync(join(tmpdir(), "hooks-home-"));
+  const settingsDir = join(home, ".claude");
+  mkdirSync(settingsDir);
+  const settingsPath = join(settingsDir, "settings.json");
+  const bakPath = join(settingsDir, "settings.json.bak-vibeops");
+  writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }));
+  try {
+    const run = () => spawnSync(process.execPath, [join(ROOT, "scripts/install-hooks.mjs")], {
+      env: { ...process.env, VIBEOPS_HOOKS_HOME: home }, encoding: "utf8",
+    });
+    expect(run().status).toBe(0);
+    expect(existsSync(bakPath)).toBe(true);
+
+    const marker = "MARKER-not-clobbered";
+    writeFileSync(bakPath, marker);
+    const before = { content: readFileSync(settingsPath, "utf8"), mtime: statSync(settingsPath).mtimeMs };
+
+    // Second run: hooks are already installed, so this must be a pure no-op —
+    // neither the backup nor settings.json may be touched.
+    expect(run().status).toBe(0);
+    expect(readFileSync(bakPath, "utf8")).toBe(marker);
+    expect(readFileSync(settingsPath, "utf8")).toBe(before.content);
+    expect(statSync(settingsPath).mtimeMs).toBe(before.mtime);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

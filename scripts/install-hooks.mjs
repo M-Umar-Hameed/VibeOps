@@ -27,7 +27,10 @@ if (existsSync(settingsPath)) {
     process.stderr.write(`settings.json is not valid JSON, nothing changed: ${settingsPath}\n`);
     process.exit(1);
   }
-  copyFileSync(settingsPath, join(settingsDir, "settings.json.bak-vibeops"));
+  // Only ever taken from the pristine file: a second run must not overwrite
+  // this backup with the already-modified settings.json.
+  const bak = join(settingsDir, "settings.json.bak-vibeops");
+  if (!existsSync(bak)) copyFileSync(settingsPath, bak);
 }
 settings.hooks ??= {};
 const added = [];
@@ -38,6 +41,6 @@ for (const [event, command] of WANTED) {
   groups.push({ hooks: [{ type: "command", command }] });
   added.push(`${event}: ${command}`);
 }
-writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+if (added.length) writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
 console.log(added.length ? `added:\n  ${added.join("\n  ")}` : "hooks already installed, nothing changed");
 console.log("projects are matched to Claude Code sessions by cwd against each project's repoPath; set VIBEOPS_PROJECT to force one");

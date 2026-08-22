@@ -17,6 +17,11 @@ export type Extracted = {
 export type Extractor = (text: string) => Promise<Extracted | null>;
 
 const MAX_ITEMS = 5;
+// A hung SDK query would otherwise hold a subprocess forever; bound both the
+// extractor's own runtime and how many can run at once.
+const EXTRACT_TIMEOUT_MS = 60_000;
+const MAX_INFLIGHT = 2;
+let inflight = 0;
 
 const EXTRACT_PROMPT = `You extract durable memory from a work transcript. Reply with JSON only, no prose, no code fence:
 {"decisions":[{"text":"...","rationale":"...","domain":"..."}],"rules":[{"text":"...","domain":"..."}]}
@@ -36,8 +41,16 @@ export function buildExtractorRequest(text: string): { userBody: string; systemP
 // CLI or OpenRouter extractor is a later swap behind the same seam.
 const defaultExtractor: Extractor = async (text) => {
   const { userBody, systemPrompt } = buildExtractorRequest(text);
-  const res = await runChatTurn({ userBody, tools: [], model: "haiku", systemPrompt });
-  return res.ok ? parseExtraction(res.text) : null;
+  let abortTimer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const res = await runChatTurn({
+      userBody, tools: [], model: "haiku", systemPrompt,
+      onAbort: (abort) => { abortTimer = setTimeout(abort, EXTRACT_TIMEOUT_MS); },
+    });
+    return res.ok ? parseExtraction(res.text) : null;
+  } finally {
+    clearTimeout(abortTimer);
+  }
 };
 
 let extractor: Extractor = defaultExtractor;
@@ -82,7 +95,11 @@ async function exists(kind: string, scope: string, refId: string | undefined, te
 }
 
 export async function captureMemory(input: { actorId: string; text: string; projectId?: string | null }): Promise<number> {
+  // A full slot returns 0 immediately (no warn) rather than queuing — the
+  // caller never awaits this, so backpressure has nowhere useful to go.
+  if (inflight >= MAX_INFLIGHT) return 0;
   try {
+    inflight++;
     if ((await getSetting("memory.autoCapture")) === "off") return 0;
     const got = await extractor(input.text);
     if (!got) return 0;
@@ -102,5 +119,7 @@ export async function captureMemory(input: { actorId: string; text: string; proj
   } catch (e) {
     console.warn(`memory capture skipped: ${(e as Error).message}`);
     return 0;
+  } finally {
+    inflight--;
   }
 }

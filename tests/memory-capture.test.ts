@@ -69,6 +69,29 @@ describe("captureMemory", () => {
     setMemoryExtractor(async () => { throw new Error("model down"); });
     expect(await captureMemory({ actorId: actor.id, text: "x" })).toBe(0);
   });
+
+  it("caps concurrent extractions; a full slot short-circuits without calling the extractor, and drains once released", async () => {
+    const { actor } = await createActor({ name: uniq("cap-inflight"), kind: "human" });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    let calls = 0;
+    setMemoryExtractor(async () => { calls++; await gate; return { decisions: [], rules: [] }; });
+
+    const p1 = captureMemory({ actorId: actor.id, text: "x" });
+    const p2 = captureMemory({ actorId: actor.id, text: "x" });
+
+    const start = Date.now();
+    const third = await captureMemory({ actorId: actor.id, text: "x" });
+    expect(Date.now() - start).toBeLessThan(200);
+    expect(third).toBe(0);
+
+    release();
+    await Promise.all([p1, p2]);
+    expect(calls).toBe(2); // the third call never reached the extractor
+
+    await captureMemory({ actorId: actor.id, text: "x" });
+    expect(calls).toBe(3); // a slot freed up: the next call does reach the extractor
+  });
 });
 
 describe("chat turn capture", () => {

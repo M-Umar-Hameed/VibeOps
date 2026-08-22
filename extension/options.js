@@ -37,29 +37,20 @@ async function probe(apiKey) {
   return res.json();
 }
 
-async function testRegistration(apiKey) {
+// Linking is the worker's job: we save the key, ask the worker to re-register,
+// then watch the server list until OUR profile's instance appears. The options
+// page itself never registers - that used to leave a phantom instance nobody
+// polled, and batches sent to it timed out (504).
+async function waitForOwnInstance(apiKey, timeoutMs) {
   const profileId = await getProfileId();
-
-  const res = await fetch(`${API_BASE}/browser/instances/register`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      browserChannel: "chrome",
-      profileId,
-      profileLabel: "Default",
-    }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`registration failed: ${res.status} ${text}`);
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const instances = await probe(apiKey);
+    const mine = instances.find((i) => i.profileId === profileId);
+    if (mine) return mine;
+    if (Date.now() >= deadline) return null;
+    await new Promise((r) => setTimeout(r, 500));
   }
-
-  const data = await res.json();
-  return data.instanceId;
 }
 
 saveButton.addEventListener("click", async () => {
@@ -68,15 +59,16 @@ saveButton.addEventListener("click", async () => {
     setReadout("failed", "Link failed", "", "Enter the server key first.");
     return;
   }
-
   saveButton.disabled = true;
   setReadout("checking", "Linking");
-
   try {
+    await probe(apiKey); // reject a bad key before touching stored state
     await chrome.storage.local.set({ apiKey });
-    const instanceId = await testRegistration(apiKey);
-    await chrome.storage.local.set({ instanceId });
-    setReadout("linked", "Linked", instanceId.slice(0, 8));
+    // Wakes the worker if Chrome killed it; no receiver is not an error here.
+    await chrome.runtime.sendMessage("relink").catch(() => {});
+    const mine = await waitForOwnInstance(apiKey, 10000);
+    if (mine) setReadout("linked", "Linked", mine.instanceId.slice(0, 8));
+    else setReadout("failed", "Link failed", "", "Server is up but the extension did not register within 10s - try reloading the extension.");
   } catch (err) {
     setReadout("failed", "Link failed", "", String(err.message || err)
       + " - check that the VibeOps server is running on 127.0.0.1:8787.");
@@ -85,15 +77,23 @@ saveButton.addEventListener("click", async () => {
   }
 });
 
-// On load: restore the key, then probe the server so the readout shows the
-// truth now, not the last saved state.
-chrome.storage.local.get(["apiKey", "instanceId"]).then(async ({ apiKey, instanceId }) => {
+// On load: restore the key, then verify against the server. Linked means OUR
+// instance is in the server's live list - not merely that the server answers,
+// and never remembered local state. A dead session must read as disconnected.
+chrome.storage.local.get(["apiKey"]).then(async ({ apiKey }) => {
   if (!apiKey) return;
   apiKeyInput.value = apiKey;
   setReadout("checking", "Checking");
   try {
-    await probe(apiKey);
-    setReadout("linked", "Linked", instanceId ? instanceId.slice(0, 8) : "server up");
+    const [instances, profileId] = await Promise.all([probe(apiKey), getProfileId()]);
+    const mine = instances.find((i) => i.profileId === profileId);
+    if (mine) {
+      setReadout("linked", "Linked", mine.instanceId.slice(0, 8));
+    } else {
+      setReadout("failed", "Not linked", "",
+        "Server is up but this browser has no live session. " +
+        "The extension reconnects within about 30 seconds, or click Save to link now.");
+    }
   } catch (err) {
     setReadout("failed", "Not reachable", "", String(err.message || err)
       + " - is the VibeOps server running?");

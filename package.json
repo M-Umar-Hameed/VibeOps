@@ -6,6 +6,7 @@
   "scripts": {
     "db:up": "docker compose up -d",
     "db:push": "drizzle-kit push",
+    "e2e:extension": "node e2e/extension.mjs",
     "db:rebuild": "docker compose exec -T db psql -U tickets -d tickets -c \"DROP SCHEMA IF EXISTS drizzle CASCADE; DROP SCHEMA public CASCADE; CREATE SCHEMA public;\"",
     "db:generate": "drizzle-kit generate",
     "db:vector": "tsx -e \"import('./src/db/vector-setup.js').then(m=>m.ensureExtension())\"",
@@ -43,6 +44,7 @@
     "drizzle-kit": "^0.28.0",
     "esbuild": "^0.19.12",
     "jsdom": "^29.1.1",
+    "playwright": "^1.62.1",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"

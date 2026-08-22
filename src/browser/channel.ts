@@ -44,9 +44,9 @@ export type DeliveredBatch = {
 // Named tuning; each constant states its reasoning. Exported as a mutable object
 // so tests can shrink the waits without a config system.
 // ponytail: test seam over 3 constants, per-request read; not a settings surface.
-const STALE_TTL_MS = 60_000; // an instance that has not polled within this window is treated as gone; poll doubles as heartbeat (<25s) so a live extension always refreshes well inside it
+const STALE_TTL_MS = 90_000; // Chrome kills an idle MV3 worker (~30s), so the poll loop alone cannot heartbeat; worker.js heartbeats via a 30s chrome.alarm instead. Two fires plus jitter fit inside 90s, so one missed alarm cannot evict a live extension. Past it the instance is gone and batches are refused (404, not 504).
 const POLL_TIMEOUT_MS = 25_000; // long-poll hold; kept under the ~30s idle cutoffs of proxies and MV3 service-worker keepalive so the extension reconnects before the socket is cut
-const BATCH_TIMEOUT_MS = 30_000; // max a /browser/batches caller waits for execute+report; MUST exceed POLL_TIMEOUT so a batch enqueued as one poll expires is still picked up by the next poll
+const BATCH_TIMEOUT_MS = 45_000; // max a /browser/batches caller waits for execute+report; MUST exceed both POLL_TIMEOUT and the 30s alarm cadence (+jitter) so a batch enqueued the moment the worker dies is still collected on the next wake
 export const BROWSER_TUNING = { ttlMs: STALE_TTL_MS, pollTimeoutMs: POLL_TIMEOUT_MS, batchTimeoutMs: BATCH_TIMEOUT_MS };
 
 type Pending = {

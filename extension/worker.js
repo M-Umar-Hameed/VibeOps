@@ -7,6 +7,13 @@ const API_BASE = "http://127.0.0.1:8787";
 chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
 
 let instanceId = null;
+// True while a poll loop is running in THIS worker instance. Chrome resets it
+// by killing the worker; the alarm then finds it false and starts a fresh loop.
+// Guards against the alarm stacking a second loop onto a live one, which would
+// double-collect batches.
+let polling = false;
+// In-flight long-poll, so a relink can cut the 25s hold instead of waiting it out.
+let pollAbort = null;
 let backoff = 1000;
 const MAX_BACKOFF = 30000;
 
@@ -88,8 +95,11 @@ async function poll() {
   }
 
   try {
+    const ctl = new AbortController();
+    pollAbort = ctl;
     const res = await fetch(`${API_BASE}/browser/poll?instanceId=${instanceId}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
+      signal: ctl.signal,
     });
 
     if (res.status === 204) {
@@ -202,11 +212,38 @@ async function submitResult(batchId, result) {
   }
 }
 
-// Start on install
-chrome.runtime.onInstalled.addListener(() => {
-  console.log("[worker] Installed, starting poll loop");
+function startPolling() {
+  if (polling) return;
+  polling = true;
   poll();
+}
+
+// Chrome kills an idle MV3 worker (~30s), which silently ends the poll loop and
+// with it the heartbeat the server expects. The alarm is the only wakeup that
+// survives worker death: every fire restarts the loop if it is not running.
+// 0.5 min is the Chrome 120+ floor; the server TTL (90s) tolerates one missed
+// fire. Worst case, a batch enqueued right after the worker dies waits ~30s
+// plus alarm jitter for the next wake.
+// Options page saves a (possibly new) key and asks us to re-register under it.
+// Registration is the WORKER's job - the options page never registers, so the
+// server list holds one instance per profile, never a phantom nobody polls.
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg !== "relink") return;
+  instanceId = null;
+  resetBackoff();
+  if (pollAbort) pollAbort.abort(); // cut the in-flight poll; its catch reschedules
+  startPolling(); // no-op if the loop is alive; starts it if this message woke us
 });
 
-// Also start on service worker activation (in case it was terminated and restarted)
-poll();
+chrome.alarms.create("poll-heartbeat", { periodInMinutes: 0.5 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === "poll-heartbeat") startPolling();
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  console.log("[worker] Installed, starting poll loop");
+  startPolling();
+});
+
+// Also start on service worker activation (terminated and restarted).
+startPolling();

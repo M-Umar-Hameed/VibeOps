@@ -373,3 +373,32 @@ test("clickAt requires the same act grant as any other mutating verb", async () 
   const body = await res.json() as { error: string };
   expect(body.error).toContain("no act grant for https://example.com");
 });
+
+test("a stale instance is refused batches outright, not offered them to time out", async () => {
+  BROWSER_TUNING.ttlMs = 50;
+  const h = await memberHeaders();
+  const id = await registerInstance(h);
+  await new Promise((r) => setTimeout(r, 80));
+  const res = await app.request("/browser/batches", {
+    method: "POST",
+    headers: h,
+    body: JSON.stringify({ instanceId: id, tenant: "acme", steps: [{ verb: "snapshot" }] }),
+  });
+  // 404, never 504: liveness is decided at enqueue, so a dead extension fails
+  // fast instead of holding the caller for the whole batch timeout.
+  expect(res.status).toBe(404);
+});
+
+// The MV3 worker heartbeats via a 30s chrome.alarm (worker.js); these
+// relationships make that cadence survivable. Pinned so neither side of the
+// contract drifts alone.
+test("tuning defaults honor the 30s alarm heartbeat contract", () => {
+  const ALARM_PERIOD_MS = 30_000;
+  // Two alarm fires plus jitter must fit inside the TTL: one missed fire
+  // cannot evict a live extension.
+  expect(DEFAULTS.ttlMs).toBeGreaterThanOrEqual(2 * ALARM_PERIOD_MS + 10_000);
+  // A batch enqueued the moment the worker dies must survive until the next
+  // alarm-driven poll collects it.
+  expect(DEFAULTS.batchTimeoutMs).toBeGreaterThanOrEqual(ALARM_PERIOD_MS + 10_000);
+  expect(DEFAULTS.pollTimeoutMs).toBeLessThan(30_000);
+});

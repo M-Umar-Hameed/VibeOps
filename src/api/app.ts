@@ -28,7 +28,8 @@ import { fetchDocs } from "../knowledge/docs.js";
 import { getEmbedder } from "../knowledge/embedder.js";
 import { execFileSync } from "node:child_process";
 import { loadRelayConfig } from "../relay/config.js";
-import type { Actor } from "../db/schema.js";
+import { db } from "../db/client.js";
+import { projects, type Actor } from "../db/schema.js";
 import { registerMcpRoutes } from "./mcp-routes.js";
 import { registerForgeRoutes, lastVerdict } from "./forge-routes.js";
 import { registerSkillsRoutes } from "./skills-routes.js";
@@ -399,13 +400,35 @@ app.get("/knowledge/docs", async (c) => {
   return c.json(result);
 });
 
+// Hooks identify the project by the session's cwd (Claude Code sends it in
+// every hook payload). Explicit ?project= wins; otherwise the project whose
+// repoPath is the cwd or one of its ancestors. Fail-open: no match = no project.
+async function resolveHookProject(c: { req: { query(k: string): string | undefined } }): Promise<string | null> {
+  const explicit = c.req.query("project");
+  if (explicit) return explicit;
+  const cwd = c.req.query("cwd");
+  if (!cwd) return null;
+  const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  const target = norm(cwd);
+  const rows = await db.select({ id: projects.id, repoPath: projects.repoPath }).from(projects);
+  let best: { id: string; len: number } | null = null;
+  for (const r of rows) {
+    if (!r.repoPath) continue;
+    const rp = norm(r.repoPath);
+    if (target === rp || target.startsWith(rp + "/")) {
+      if (!best || rp.length > best.len) best = { id: r.id, len: rp.length };
+    }
+  }
+  return best?.id ?? null;
+}
+
 // Session-start primer: a compact plain-text digest for agent hooks to inject
 // as context. Member-level (just `auth`, no requireAdmin) — every agent primes.
 app.get("/prime", async (c) => {
   const q = c.req.query("q") ?? "";
   const n = Number(c.req.query("limit"));
   const limit = Math.min(Number.isFinite(n) && n > 0 ? n : 5, 10);
-  const projectId = c.req.query("project") || undefined;
+  const projectId = (await resolveHookProject(c)) ?? undefined;
   const handoff = projectId ? await latestHandoff(projectId).catch(() => null) : null;
   const lead = handoff
     ? `${fenceUntrusted("handoff", `Handoff (${handoff.createdAt.toISOString().slice(0, 10)}): ${handoff.body.replace(/\r?\n/g, " ").slice(0, 600)}`)}\n`
@@ -431,7 +454,7 @@ app.get("/prime", async (c) => {
 // builds for this prompt. Member-level like /prime.
 app.get("/recall", async (c) => {
   const q = c.req.query("q") ?? "";
-  const projectId = c.req.query("project") || undefined;
+  const projectId = (await resolveHookProject(c)) ?? undefined;
   try {
     const block = await recallBlock(q, { projectId, maxChars: 3600 });
     return c.text(block ? `${fenceUntrusted("memory", block)}\n${UNTRUSTED_CLAUSE}` : "");

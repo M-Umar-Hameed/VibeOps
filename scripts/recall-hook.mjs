@@ -12,6 +12,7 @@ try {
   const prompt = typeof input.prompt === "string" ? input.prompt : "";
   if (!prompt.trim()) process.exit(0);
   const params = new URLSearchParams({ q: prompt.slice(0, 2000) });
+  if (typeof input.cwd === "string" && input.cwd) params.set("cwd", input.cwd);
   if (process.env.VIBEOPS_PROJECT) params.set("project", process.env.VIBEOPS_PROJECT);
   const res = await fetch(`${baseUrl}/recall?${params}`, {
     headers: { Authorization: `Bearer ${apiKey}` },

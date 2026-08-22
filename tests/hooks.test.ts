@@ -9,6 +9,9 @@ import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
 import { saveNote } from "../src/services/notes.js";
 import { UNTRUSTED_CLAUSE } from "../src/relay/prompts.js";
+import { db } from "../src/db/client.js";
+import { projects } from "../src/db/schema.js";
+import { eq } from "drizzle-orm";
 
 const uniq = (p: string) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const ROOT = resolve(import.meta.dirname, "..");
@@ -40,8 +43,10 @@ test("GET /recall returns the memory block for the caller's query and project", 
   expect(body).toContain(UNTRUSTED_CLAUSE);
 });
 
-test("recall-hook.mjs prints the server's block for the prompt on stdin, and nothing when the server is dead", async () => {
+test("recall-hook.mjs prints the server's block for the prompt on stdin, sends cwd from stdin, and nothing when the server is dead", async () => {
+  let lastUrl = "";
   const srv = createServer((req, res) => {
+    lastUrl = req.url!;
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end(`BLOCK for ${decodeURIComponent(new URL(req.url!, "http://x").searchParams.get("q") ?? "")}`);
   });
@@ -53,9 +58,10 @@ test("recall-hook.mjs prints the server's block for the prompt on stdin, and not
   const creds = join(dir, "credentials.json");
   writeFileSync(creds, JSON.stringify({ baseUrl: `http://127.0.0.1:${port}`, apiKey: "k" }));
   try {
-    const ok = await runHook({ ...process.env, VIBEOPS_CREDENTIALS: creds }, JSON.stringify({ prompt: "deploy payments" }));
+    const ok = await runHook({ ...process.env, VIBEOPS_CREDENTIALS: creds }, JSON.stringify({ prompt: "deploy payments", cwd: "C:/repos/payments" }));
     expect(ok.status).toBe(0);
     expect(ok.stdout).toBe("BLOCK for deploy payments");
+    expect(new URL(lastUrl, "http://x").searchParams.get("cwd")).toBe("C:/repos/payments");
 
     writeFileSync(creds, JSON.stringify({ baseUrl: "http://127.0.0.1:1", apiKey: "k" }));
     const dead = await runHook({ ...process.env, VIBEOPS_CREDENTIALS: creds }, JSON.stringify({ prompt: "x" }));
@@ -65,6 +71,27 @@ test("recall-hook.mjs prints the server's block for the prompt on stdin, and not
     srv.close();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("GET /recall resolves the project from cwd against repoPath; explicit ?project= wins", async () => {
+  const { apiKey, actor } = await createActor({ name: uniq("recall-cwd"), kind: "agent" });
+  const project = await createProject({ key: uniq("k"), name: uniq("CwdProj") });
+  const repoPath = `C:/repos/${uniq("proj")}`;
+  await db.update(projects).set({ repoPath }).where(eq(projects.id, project.id));
+  const rule = `${uniq("rule")} cwd-scoped rule`;
+  await saveNote(actor.id, { body: rule, scope: "project", refId: project.id, kind: "rule" });
+
+  const inScope = await app.request(
+    `/recall?q=anything&cwd=${encodeURIComponent(`${repoPath}/sub/dir`)}`,
+    { headers: { Authorization: `Bearer ${apiKey}` } },
+  );
+  expect(await inScope.text()).toContain(rule);
+
+  const outOfScope = await app.request(
+    `/recall?q=anything&cwd=${encodeURIComponent("C:/repos/unrelated")}`,
+    { headers: { Authorization: `Bearer ${apiKey}` } },
+  );
+  expect(await outOfScope.text()).not.toContain(rule);
 });
 
 test("install-hooks.mjs adds both hooks once, backs up, and keeps unrelated hooks", () => {

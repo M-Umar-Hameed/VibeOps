@@ -7,8 +7,15 @@ import { join, basename } from "node:path";
 try {
   const credsPath = join(homedir(), ".vibeops", "credentials.json");
   const { baseUrl, apiKey } = JSON.parse(readFileSync(credsPath, "utf-8"));
+  // SessionStart hook payloads carry cwd on stdin; fail-open so a session with
+  // no stdin, empty stdin, or non-JSON stdin primes exactly as before.
+  let input = {};
+  try { input = JSON.parse(readFileSync(0, "utf-8")); } catch { /* proceed without cwd */ }
   const query = process.argv[2] || basename(process.cwd());
-  const res = await fetch(`${baseUrl}/prime?q=${encodeURIComponent(query)}`, {
+  const params = new URLSearchParams({ q: query });
+  if (typeof input.cwd === "string" && input.cwd) params.set("cwd", input.cwd);
+  if (process.env.VIBEOPS_PROJECT) params.set("project", process.env.VIBEOPS_PROJECT);
+  const res = await fetch(`${baseUrl}/prime?${params}`, {
     headers: { Authorization: `Bearer ${apiKey}` },
   });
   if (res.ok) process.stdout.write(await res.text());

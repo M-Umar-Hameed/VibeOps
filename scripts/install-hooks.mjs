@@ -40,3 +40,4 @@ for (const [event, command] of WANTED) {
 }
 writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
 console.log(added.length ? `added:\n  ${added.join("\n  ")}` : "hooks already installed, nothing changed");
+console.log("projects are matched to Claude Code sessions by cwd against each project's repoPath; set VIBEOPS_PROJECT to force one");

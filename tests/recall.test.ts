@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
-import { saveNote } from "../src/services/notes.js";
+import { saveNote, noteIndexText } from "../src/services/notes.js";
 import { FakeEmbedder } from "../src/knowledge/embedder.js";
 import { recall, formatRecall, recallBlock, domainsFor } from "../src/services/recall.js";
 
@@ -36,15 +36,29 @@ test("rules fire by domain match or null domain, never by similarity", async () 
 test("decisions come back by similarity with rationale; other hits land in knowledge", async () => {
   const { actor, project } = await fixture();
   const marker = uniq("dec");
+  // FakeEmbedder has no semantic locality and embeddings share one table
+  // across the whole serial run, so ranking against an unrelated query is
+  // order-dependent. Query with the exact indexed text instead: cosine
+  // distance 0 makes this row the single nearest match regardless of what
+  // else is in the table, and limit: 500 keeps a wide-enough candidate pool
+  // that this run's rows can never be excluded from it.
   const text = `${marker} use chrome.alarms for the heartbeat`;
-  await saveNote(actor.id, { body: text, scope: "project", refId: project.id, kind: "decision", domain: "extension", rationale: "MV3 kills idle workers" }, emb);
+  await saveNote(actor.id, { body: text, scope: "project", refId: project.id, kind: "decision", domain: "extension" }, emb);
   await saveNote(actor.id, { body: `${marker} an ordinary note about heartbeats`, scope: "project", refId: project.id }, emb);
 
-  const r = await recall(text, { projectId: project.id }, emb);
+  const r = await recall(text, { projectId: project.id, limit: 500 }, emb);
   expect(r.decisions.map((n) => n.body)).toContain(text);
-  expect(r.decisions.find((n) => n.body === text)!.rationale).toBe("MV3 kills idle workers");
   expect(r.knowledge.some((h) => h.content.includes("ordinary note"))).toBe(true);
   expect(r.decisions.some((n) => n.body.includes("ordinary note"))).toBe(false);
+
+  // Rationale, checked separately: a second decision, queried by its own
+  // indexed text (body + rationale via noteIndexText) for the same exact-match
+  // guarantee.
+  const rationaleText = `${marker} store the alarm id in chrome.storage.session`;
+  const rationale = "MV3 kills idle workers";
+  const decision = await saveNote(actor.id, { body: rationaleText, scope: "project", refId: project.id, kind: "decision", domain: "extension", rationale }, emb);
+  const r2 = await recall(noteIndexText(decision), { projectId: project.id, limit: 500 }, emb);
+  expect(r2.decisions.find((n) => n.body === rationaleText)?.rationale).toBe(rationale);
 });
 
 test("formatRecall omits empty sections, orders rules > decisions > knowledge, and returns '' when empty", () => {

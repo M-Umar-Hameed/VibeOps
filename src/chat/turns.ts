@@ -17,9 +17,9 @@ import { parseModelRef, rollTranscript } from "./roster.js";
 // could not open a URL). Describes capability classes, not tool names, so it does
 // not rot as the tool set changes.
 export const CHAT_CAPABILITIES = `
-Your tools connect you to this app's own surfaces. With a linked browser extension you can snapshot and read the current page, and you can act on it: click, type, select, press keys, and navigate to an http/https URL. You can also search the knowledge index and list board tickets. Do not tell the owner you cannot open a URL or drive the browser when an extension is connected; those actions are available to you.
+Your tools connect you to this app's own surfaces. With a linked browser extension you can snapshot and read the current page, and you can act on it: click, type, select, press keys, and navigate to an http/https URL. You can also list the open tabs, open a URL in a NEW tab, and switch to another tab; page actions then apply to whichever tab is active. You can also search the knowledge index and list board tickets. Do not tell the owner you cannot open a URL or drive the browser when an extension is connected; those actions are available to you.
 
-Acting on a page and navigating both require an "act" grant for the target origin, and for navigation the grant must cover the DESTINATION origin. Whether a grant exists is decided server-side, not by you.
+Acting on a page, navigating, and opening a new tab all require an "act" grant for the target origin, and for navigation or a new tab the grant must cover the DESTINATION origin. Whether a grant exists is decided server-side, not by you.
 
 If an action is refused because a grant is missing, the refusal states the exact setting to add. Relay that refusal to the owner word for word; do not paraphrase it or substitute a limitation of your own. When you are unsure whether an action will be permitted, attempt it and report the actual result or refusal rather than declining up front.
 `;

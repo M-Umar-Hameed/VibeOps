@@ -49,7 +49,9 @@ async function browserStep(
     rec(name, { instanceId }, "timeout");
     return text("browser batch timed out (no extension response in 30s)");
   }
-  const step = result.results[0];
+  // First failure wins; otherwise the LAST step is the answer (switchTab then
+  // tabs returns the list after the switch).
+  const step = result.results.find((r) => !r.ok) ?? result.results[result.results.length - 1];
   if (!step?.ok) {
     rec(name, { instanceId }, `refused: ${step?.error ?? "unknown"}`);
     return text(`browser refused: ${step?.error ?? "unknown error"}`);
@@ -106,6 +108,16 @@ export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: stri
       async ({ instanceId, ref }) => browserStep(instanceId, [{ verb: "read", ref }], "browser_read", rec),
     ),
     tool(
+      "browser_tabs",
+      "List the open browser tabs (id, url, title, active), optionally switching to one first by tabId (read-only; page actions then apply to the active tab). To open a URL in a NEW tab use browser_act with a newTab step.",
+      { instanceId: z.string().optional(), switchTo: z.number().int().nonnegative().optional() },
+      async ({ instanceId, switchTo }) => browserStep(
+        instanceId,
+        switchTo === undefined ? [{ verb: "tabs" }] : [{ verb: "switchTab", tabId: switchTo }, { verb: "tabs" }],
+        "browser_tabs", rec,
+      ),
+    ),
+    tool(
       "browser_marks",
       "Screenshot the browser with numbered boxes over every interactive element, and return the mark table as text plus a file path to the annotated PNG. Choose a target by its MARK NUMBER, then act on it with browser_act using the ref this returns. Works without vision: the table lists each mark's role and name.",
       { instanceId: z.string().optional() },
@@ -129,7 +141,7 @@ export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: stri
     ),
     tool(
       "browser_act",
-      "Run mutating steps (click/type/select/press/navigate) on a browser instance; requires an act grant for targetOrigin. navigate needs an act grant for the DESTINATION origin (http/https only).",
+      "Run mutating steps (click/type/select/press/navigate/newTab) on a browser instance; requires an act grant for targetOrigin. navigate and newTab need an act grant for the DESTINATION origin (http/https only); newTab {url} opens it in a new active tab, and later steps in the same batch run there.",
       { instanceId: z.string().optional(), targetOrigin: z.string(), steps: z.array(z.any()) },
       async ({ instanceId: requestedId, targetOrigin, steps }) => {
         const { id: instanceId, err } = resolveInstance(requestedId);

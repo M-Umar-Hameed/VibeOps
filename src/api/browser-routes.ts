@@ -5,7 +5,7 @@ import { validateSteps } from "../browser/validate.js";
 import { hasActGrant, noActGrantReason, addActGrant } from "../browser/grants.js";
 import { requireAdmin } from "./auth.js";
 
-const MUTATING = new Set(["click", "type", "select", "press", "navigate", "clickAt"]);
+const MUTATING = new Set(["click", "type", "select", "press", "navigate", "clickAt", "newTab"]);
 
 type AppEnv = { Variables: { actor: Actor } };
 

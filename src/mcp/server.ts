@@ -96,12 +96,15 @@ export async function buildServer(apiKey: string) {
     return { id: instanceId };
   };
 
-  const readOnly = async (instanceId: string | undefined, step: ActionStep): Promise<string> => {
+  // Read-tier steps only; the LAST step's result is what the caller gets (e.g.
+  // switchTab then tabs returns the tab list after the switch).
+  const readOnly = async (instanceId: string | undefined, ...steps: ActionStep[]): Promise<string> => {
     const { id, err } = resolveInstance(instanceId);
     if (!id) return err!;
-    const result = await submitBatch(id, id, [step]);
+    const result = await submitBatch(id, id, steps);
     if (!result) return "browser batch timed out (no extension response in 30s)";
-    const s = result.results[0];
+    const failed = result.results.find((r) => !r.ok);
+    const s = failed ?? result.results[result.results.length - 1];
     if (!s?.ok) return `browser refused: ${s?.error ?? "unknown error"}`;
     return typeof s.value === "string" ? s.value : JSON.stringify(result.snapshot ?? s.value ?? "").slice(0, 4000);
   };
@@ -110,6 +113,11 @@ export async function buildServer(apiKey: string) {
     { description: "Snapshot the connected browser (read-only). instanceId optional when one browser is connected.",
       inputSchema: { instanceId: z.string().optional() } },
     async ({ instanceId }) => ({ content: [{ type: "text", text: await readOnly(instanceId, { verb: "snapshot" }) }] }));
+
+  server.registerTool("browser_tabs",
+    { description: "List the open browser tabs (id, url, title, active), optionally switching to one first by tabId (read-only; page actions then apply to the active tab). To open a URL in a NEW tab use browser_act with a newTab step.",
+      inputSchema: { instanceId: z.string().optional(), switchTo: z.number().int().nonnegative().optional() } },
+    async ({ instanceId, switchTo }) => ({ content: [{ type: "text", text: await readOnly(instanceId, ...(switchTo === undefined ? [{ verb: "tabs" } as const] : [{ verb: "switchTab", tabId: switchTo } as const, { verb: "tabs" } as const])) }] }));
 
   server.registerTool("browser_read",
     { description: "Read an element by ref (read-only). instanceId optional when one browser is connected.",
@@ -131,7 +139,7 @@ refs: ${refs}` }] };
     });
 
   server.registerTool("browser_act",
-    { description: "Run mutating steps (click/type/select/press/navigate) on a browser instance; requires an act grant for targetOrigin. navigate needs an act grant for the DESTINATION origin (http/https only).",
+    { description: "Run mutating steps (click/type/select/press/navigate/newTab) on a browser instance; requires an act grant for targetOrigin. navigate and newTab need an act grant for the DESTINATION origin (http/https only); newTab {url} opens it in a new active tab, and later steps in the same batch run there.",
       inputSchema: { instanceId: z.string().optional(), targetOrigin: z.string(), steps: z.array(z.any()) } },
     async ({ instanceId, targetOrigin, steps }) => {
       const { id, err } = resolveInstance(instanceId);

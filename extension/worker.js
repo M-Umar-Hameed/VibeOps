@@ -1,6 +1,10 @@
 // Service worker — MV3 background script
 // Long-poll loop against local server. Not unit-tested (thin); everything it calls is tested.
 
+// Static: MV3 service workers forbid dynamic import(), so a lazy import here
+// throws before the batch is ever reported and the server sees a 504.
+import { splitSegments } from "./segments.js";
+
 const API_BASE = "http://127.0.0.1:8787";
 
 // No popup: the toolbar button opens settings (API key entry).
@@ -150,41 +154,50 @@ async function captureScreenshot() {
   }
 }
 
+// Tab verbs (tabs/newTab/switchTab) need chrome.tabs, so the batch is split
+// into segments: page segments inject into whichever tab is active when they
+// run, tab verbs run here in between. Results go back in original order and
+// the batch stops at the first failure, same as execute.js does within a page.
 async function executeBatch(batch) {
-  const apiKey = await getApiKey();
-
+  const results = new Array(batch.steps.length);
+  let snapshot = { instanceId, origin: "", identity: null, nodes: [] };
   try {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tabs.length) {
-      await submitResult(batch.batchId, {
-        results: [{ ok: false, error: "no active tab" }],
-        snapshot: { instanceId, origin: "", identity: null, nodes: [] },
+    let failed = false;
+    for (const seg of splitSegments(batch.steps)) {
+      if (failed) break;
+      if (seg.kind === "tab") {
+        const r = await runTabStep(seg.step, batch.grant ?? null, batch.targetOrigin ?? null);
+        results[seg.start] = r;
+        if (!r.ok) failed = true;
+        continue;
+      }
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tabs.length) {
+        results[seg.start] = { ok: false, error: "no active tab" };
+        failed = true;
+        break;
+      }
+      const tabId = tabs[0].id;
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: async (steps, grant, targetOrigin) => {
+          const { executeSteps } = await import(chrome.runtime.getURL("execute.js"));
+          return executeSteps(document, steps, grant, targetOrigin);
+        },
+        args: [seg.steps, batch.grant ?? null, batch.targetOrigin ?? null],
       });
-      return;
+      // screenshot cannot run in the page: captureVisibleTab is a worker-only API,
+      // so execute.js leaves its slot as an unknown-verb error and we fill it here.
+      for (let i = 0; i < seg.steps.length; i++) {
+        const r = seg.steps[i]?.verb === "screenshot" ? await captureScreenshot() : result.results[i];
+        if (r === undefined) break; // execute.js stopped early
+        results[seg.start + i] = r;
+        if (!r.ok) failed = true;
+      }
+      snapshot = result.snapshot;
     }
-
-    const tabId = tabs[0].id;
-
-    const [{ result }] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: async (steps, grant, targetOrigin) => {
-        const { executeSteps } = await import(chrome.runtime.getURL("execute.js"));
-        return executeSteps(document, steps, grant, targetOrigin);
-      },
-      args: [batch.steps, batch.grant ?? null, batch.targetOrigin ?? null],
-    });
-
-    // Set instanceId on snapshot
-    result.snapshot.instanceId = instanceId;
-
-    // screenshot cannot run in the page: captureVisibleTab is a worker-only API,
-    // so execute.js leaves its slot as an unknown-verb error and we fill it here.
-    for (let i = 0; i < batch.steps.length; i++) {
-      if (batch.steps[i]?.verb !== "screenshot") continue;
-      result.results[i] = await captureScreenshot();
-    }
-
-    await submitResult(batch.batchId, result);
+    snapshot.instanceId = instanceId;
+    await submitResult(batch.batchId, { results: results.filter((r) => r !== undefined), snapshot });
   } catch (err) {
     console.error("[worker] Execute error:", err);
     await submitResult(batch.batchId, {
@@ -192,6 +205,48 @@ async function executeBatch(batch) {
       snapshot: { instanceId, origin: "", identity: null, nodes: [] },
     });
   }
+}
+
+const NEW_TAB_LOAD_MS = 15000;
+
+// Resolves when the tab reports status complete, or after the cap; a slow page
+// is reported, not silently skipped into a half-loaded snapshot.
+function waitForTabLoad(tabId) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok) => { if (done) return; done = true; chrome.tabs.onUpdated.removeListener(onUpdated); clearTimeout(t); resolve(ok); };
+    const onUpdated = (id, info) => { if (id === tabId && info.status === "complete") finish(true); };
+    const t = setTimeout(() => finish(false), NEW_TAB_LOAD_MS);
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs.get(tabId).then((tab) => { if (tab.status === "complete") finish(true); }).catch(() => finish(false));
+  });
+}
+
+async function runTabStep(step, grant, targetOrigin) {
+  if (step.verb === "tabs") {
+    const tabs = await chrome.tabs.query({ currentWindow: true });
+    return { ok: true, value: JSON.stringify(tabs.map((t) => ({ id: t.id, url: t.url, title: t.title, active: t.active }))) };
+  }
+  if (step.verb === "switchTab") {
+    try {
+      await chrome.tabs.update(step.tabId, { active: true });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: `no tab ${step.tabId}: ${String(err)}` };
+    }
+  }
+  if (step.verb === "newTab") {
+    // Mirrors navigate: mutating, and the grant must cover the DESTINATION origin.
+    let dest = null;
+    try { dest = new URL(step.url).origin; } catch { dest = null; }
+    if (grant !== "act") return { ok: false, error: `no act grant for ${dest ?? step.url}` };
+    if (dest !== targetOrigin) return { ok: false, error: `origin mismatch: newTab ${dest} != granted ${targetOrigin}` };
+    const tab = await chrome.tabs.create({ url: step.url, active: true });
+    const loaded = await waitForTabLoad(tab.id);
+    if (!loaded) return { ok: false, error: "new tab did not finish loading" };
+    return { ok: true, value: String(tab.id) };
+  }
+  return { ok: false, error: `unknown tab verb: ${step.verb}` };
 }
 
 async function submitResult(batchId, result) {

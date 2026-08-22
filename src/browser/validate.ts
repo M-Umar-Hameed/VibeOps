@@ -15,6 +15,9 @@ const SHAPES: Record<string, Record<string, "string" | "number">> = {
   read: { ref: "string" },
   navigate: { url: "string" },
   clickAt: { x: "number", y: "number" },
+  tabs: {},
+  newTab: { url: "string" },
+  switchTab: { tabId: "number" },
 };
 
 export function validateSteps(
@@ -52,12 +55,17 @@ export function validateSteps(
         }
       }
     }
-    if (s.verb === "navigate") {
+    // newTab opens a URL just like navigate does, so it takes the same scheme rule.
+    if (s.verb === "navigate" || s.verb === "newTab") {
       let u: URL;
-      try { u = new URL(s.url as string); } catch { return { ok: false, error: "navigate.url must be an absolute URL" }; }
+      try { u = new URL(s.url as string); } catch { return { ok: false, error: `${s.verb}.url must be an absolute URL` }; }
       if (u.protocol !== "http:" && u.protocol !== "https:") {
-        return { ok: false, error: `navigate.url scheme not allowed: ${u.protocol} (http/https only)` };
+        return { ok: false, error: `${s.verb}.url scheme not allowed: ${u.protocol} (http/https only)` };
       }
+    }
+    if (s.verb === "switchTab") {
+      const id = s.tabId as number;
+      if (!Number.isInteger(id) || id < 0) return { ok: false, error: "switchTab.tabId must be a non-negative integer" };
     }
   }
   return { ok: true, steps: steps as ActionStep[] };

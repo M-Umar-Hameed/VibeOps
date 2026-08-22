@@ -402,3 +402,28 @@ test("tuning defaults honor the 30s alarm heartbeat contract", () => {
   expect(DEFAULTS.batchTimeoutMs).toBeGreaterThanOrEqual(ALARM_PERIOD_MS + 10_000);
   expect(DEFAULTS.pollTimeoutMs).toBeLessThan(30_000);
 });
+
+test("newTab is mutating: refused without an act grant for the destination origin", async () => {
+  const h = await memberHeaders();
+  const id = await registerInstance(h);
+  const res = await app.request("/browser/batches", {
+    method: "POST",
+    headers: h,
+    body: JSON.stringify({ instanceId: id, tenant: "acme", steps: [{ verb: "newTab", url: "https://zapier.com/" }], targetOrigin: "https://zapier.com" }),
+  });
+  expect(res.status).toBe(403);
+  expect((await res.json()).error).toContain("https://zapier.com");
+});
+
+test("tabs is read-tier: no targetOrigin or grant needed to enqueue", async () => {
+  BROWSER_TUNING.batchTimeoutMs = 100;
+  const h = await memberHeaders();
+  const id = await registerInstance(h);
+  const res = await app.request("/browser/batches", {
+    method: "POST",
+    headers: h,
+    body: JSON.stringify({ instanceId: id, tenant: "acme", steps: [{ verb: "tabs" }] }),
+  });
+  // 504: enqueued and nobody collected it in this test - the gate let it through.
+  expect(res.status).toBe(504);
+});

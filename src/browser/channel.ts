@@ -19,7 +19,10 @@ export type ActionStep =
   | { verb: "screenshot" }
   | { verb: "read"; ref: string }
   | { verb: "navigate"; url: string }
-  | { verb: "clickAt"; x: number; y: number };
+  | { verb: "clickAt"; x: number; y: number }
+  | { verb: "tabs" }
+  | { verb: "newTab"; url: string }
+  | { verb: "switchTab"; tabId: number };
 
 export type BatchResult = {
   results: Array<{ ok: boolean; value?: string; error?: string }>;

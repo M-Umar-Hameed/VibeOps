@@ -59,7 +59,37 @@ try {
   assert.ok(body.snapshot, "batch result carries no snapshot");
   console.log("ok 3 - batch round-tripped through the real worker");
 
-  // 4. A session the server does not vouch for must never read as Linked.
+  // 4. Tab verbs through the real worker: grant the sidecar's own origin, open
+  // it in a NEW tab, list tabs, and confirm the snapshot now comes from the new tab.
+  const grants = await (await fetch(`${API}/settings/browserGrants`, { headers: H })).json();
+  const origin = new URL(API).origin;
+  const prior = grants.value;
+  const withGrant = JSON.stringify([...(prior ? JSON.parse(prior) : []).filter((g) => g.origin !== origin), { origin, mode: "act" }]);
+  await fetch(`${API}/settings/browserGrants`, { method: "PATCH", headers: H, body: JSON.stringify({ value: withGrant }) });
+  try {
+    const beforeRes = await fetch(`${API}/browser/batches`, { method: "POST", headers: H,
+      body: JSON.stringify({ instanceId: mine.instanceId, tenant: "e2e", steps: [{ verb: "tabs" }] }) });
+    const before = await beforeRes.json();
+    assert.equal(beforeRes.status, 200, `tabs batch returned ${beforeRes.status}: ${JSON.stringify(before)}`);
+    assert.ok(before.results[0].ok, `tabs step failed: ${before.results[0].error}`);
+    const tabsBefore = JSON.parse(before.results[0].value).length;
+    const tabRes = await fetch(`${API}/browser/batches`, { method: "POST", headers: H,
+      body: JSON.stringify({ instanceId: mine.instanceId, tenant: "e2e", targetOrigin: origin,
+        steps: [{ verb: "newTab", url: `${API}/browser/instances` }, { verb: "tabs" }, { verb: "snapshot" }] }) });
+    assert.equal(tabRes.status, 200, `newTab batch returned ${tabRes.status}`);
+    const body5 = await tabRes.json();
+    assert.ok(body5.results[0].ok, `newTab failed: ${body5.results[0].error}`);
+    const tabs = JSON.parse(body5.results[1].value);
+    assert.equal(tabs.length, tabsBefore + 1, `expected ${tabsBefore + 1} tabs, got ${tabs.length}`);
+    assert.ok(tabs.find((t) => t.active && t.url.startsWith(`${API}/browser/instances`)), "new tab is not the active one");
+    assert.equal(body5.snapshot.origin, origin, "snapshot did not come from the new tab");
+    console.log("ok 4 - newTab opened, listed, and became the snapshot target");
+  } finally {
+    await fetch(`${API}/settings/browserGrants`, { method: "PATCH", headers: H, body: JSON.stringify({ value: prior ?? "[]" }) });
+  }
+
+  // 5. A session the server does not vouch for must never read as Linked.
+  // LAST on purpose: the bogus key poisons the worker's polling for anything after.
   await page.goto(`chrome-extension://${extId}/options.html`);
   await page.evaluate(() => chrome.storage.local.set({ apiKey: "bogus-key" }));
   await page.reload();
@@ -69,7 +99,7 @@ try {
   }, null, { timeout: 10000 });
   const state = await page.textContent("#state");
   assert.notEqual(state, "Linked", "options page claimed Linked on a key the server rejects");
-  console.log("ok 4 - unverified session reads as disconnected:", state);
+  console.log("ok 5 - unverified session reads as disconnected:", state);
 
   console.log("PASS");
 } finally {

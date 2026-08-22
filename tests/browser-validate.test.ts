@@ -79,3 +79,20 @@ describe("T4: clickAt coordinate verb", () => {
     expect(MUTATING.has("screenshot")).toBe(false);
   });
 });
+
+describe("validateSteps - tab verbs", () => {
+  it("accepts tabs, newTab with an http(s) url, and switchTab with a numeric id", () => {
+    expect(validateSteps([{ verb: "tabs" }]).ok).toBe(true);
+    expect(validateSteps([{ verb: "newTab", url: "https://zapier.com/" }]).ok).toBe(true);
+    expect(validateSteps([{ verb: "switchTab", tabId: 42 }]).ok).toBe(true);
+  });
+  it("rejects newTab with a non-http scheme or relative url", () => {
+    expect(validateSteps([{ verb: "newTab", url: "javascript:alert(1)" }]).ok).toBe(false);
+    expect(validateSteps([{ verb: "newTab", url: "/relative" }]).ok).toBe(false);
+  });
+  it("rejects switchTab with a non-integer or negative id", () => {
+    expect(validateSteps([{ verb: "switchTab", tabId: 1.5 }]).ok).toBe(false);
+    expect(validateSteps([{ verb: "switchTab", tabId: -1 }]).ok).toBe(false);
+    expect(validateSteps([{ verb: "switchTab", tabId: "3" }]).ok).toBe(false);
+  });
+});

@@ -456,7 +456,7 @@ describe("chat memory injection", () => {
     await runTurn(actor, sess.id, "hello");
 
     expect(seenSystem).toContain(rule);
-    expect(seenSystem).toContain("<memory>");
+    expect(seenSystem).toContain('<UNTRUSTED label="memory">');
   });
 
 });
@@ -659,7 +659,7 @@ test("composePlanPrompt and composeWorkPrompt place a fenced memory block above 
   const memory = "Memory (rules fire for: widgets):\nRules:\n- [widgets] Never hot-patch the widget";
 
   const plan = composePlanPrompt({ ticket, knowledge, memory });
-  expect(plan).toContain("<memory>");
+  expect(plan).toContain('<UNTRUSTED label="memory">');
   expect(plan).toContain("Never hot-patch the widget");
   expect(plan.indexOf("Memory:")).toBeLessThan(plan.indexOf("Relevant knowledge:"));
   expect(composePlanPrompt({ ticket, knowledge })).toBe(composePlanPrompt({ ticket, knowledge, memory: "" }));

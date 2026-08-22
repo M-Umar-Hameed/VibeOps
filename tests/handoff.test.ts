@@ -3,7 +3,7 @@ import * as store from "../src/chat/store.js";
 import { setChatAgent, runTurn } from "../src/chat/turns.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
-import { latestHandoff } from "../src/services/handoff.js";
+import { latestHandoff, HANDOFF_RE } from "../src/services/handoff.js";
 import { app } from "../src/api/app.js";
 import { UNTRUSTED_CLAUSE } from "../src/relay/prompts.js";
 
@@ -56,5 +56,10 @@ describe("*handoff", () => {
     await runTurn(actor, sess.id, "*handoff anything");
     const msgs = await store.getMessages(sess.id);
     expect(msgs.at(-1)?.body).toMatch(/needs a project/i);
+  });
+
+  it("HANDOFF_RE matches *handoff (any case) but not *handoffs", () => {
+    expect(HANDOFF_RE.test("*handoffs go here")).toBe(false);
+    expect(HANDOFF_RE.test("*HandOff now")).toBe(true);
   });
 });

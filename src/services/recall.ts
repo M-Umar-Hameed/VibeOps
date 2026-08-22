@@ -54,15 +54,33 @@ export async function recall(
     ? await db.select().from(notes).where(and(inArray(notes.id, noteIds), isNull(notes.deletedAt)))
     : [];
   const byId = new Map(typed.map((n) => [n.id, n]));
+  const { decisions, knowledge } = partitionHits(hits, byId);
+  return { rules, decisions, knowledge, domains };
+}
+
+// A note that was chunked into multiple embeddings can surface as several
+// hits sharing one sourceRef; dedupe on note id so a chunked decision is
+// never pushed twice. Pure and exported so the dedup is testable without a
+// live embedder.
+export function partitionHits(
+  hits: KnowledgeHit[],
+  byId: Map<string, Note>,
+): { decisions: Note[]; knowledge: KnowledgeHit[] } {
   const decisions: Note[] = [];
   const knowledge: KnowledgeHit[] = [];
+  const seenDecisionIds = new Set<string>();
   for (const h of hits) {
     const n = h.sourceKind === "note" ? byId.get(h.sourceRef) : undefined;
-    if (n?.kind === "decision") { if (decisions.length < MAX_DECISIONS) decisions.push(n); continue; }
+    if (n?.kind === "decision") {
+      if (seenDecisionIds.has(h.sourceRef)) continue;
+      seenDecisionIds.add(h.sourceRef);
+      if (decisions.length < MAX_DECISIONS) decisions.push(n);
+      continue;
+    }
     if (n?.kind === "rule") continue; // rules fire by domain above, never by similarity
     if (knowledge.length < MAX_KNOWLEDGE) knowledge.push(h);
   }
-  return { rules, decisions, knowledge, domains };
+  return { decisions, knowledge };
 }
 
 function line(prefix: string, body: string): string {
@@ -89,6 +107,7 @@ export function formatRecall(r: Recall, maxChars = RECALL_MAX_CHARS): string {
   let out = render(d, k);
   while (out.length > maxChars && k.length) { k = k.slice(0, -1); out = render(d, k); }
   while (out.length > maxChars && d.length) { d = d.slice(0, -1); out = render(d, k); }
+  if (out === head) return ""; // the cap dropped every section: no bare header
   return out;
 }
 

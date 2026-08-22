@@ -3,7 +3,7 @@ import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
 import { saveNote, noteIndexText } from "../src/services/notes.js";
 import { FakeEmbedder } from "../src/knowledge/embedder.js";
-import { recall, formatRecall, recallBlock, domainsFor } from "../src/services/recall.js";
+import { recall, formatRecall, recallBlock, domainsFor, partitionHits } from "../src/services/recall.js";
 
 const emb = new FakeEmbedder(1024);
 const uniq = (p: string) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -102,6 +102,30 @@ test("a rule alone is never truncated, even past maxChars", () => {
   const out = formatRecall(r, 100);
   expect(out.length).toBeGreaterThan(100);
   expect(out).toContain("R".repeat(300));
+});
+
+test("partitionHits dedupes a decision that was chunked into multiple hits", () => {
+  const decision = { id: "note-1", kind: "decision", body: "chunked decision", domain: "x", rationale: null } as any;
+  const byId = new Map([["note-1", decision]]);
+  const hits = [
+    { sourceKind: "note", sourceRef: "note-1", content: "chunk 1", score: 0.9, createdAt: "2026-08-20T00:00:00Z", citation: "note-1" },
+    { sourceKind: "note", sourceRef: "note-1", content: "chunk 2", score: 0.8, createdAt: "2026-08-20T00:00:00Z", citation: "note-1" },
+  ] as any;
+  const { decisions } = partitionHits(hits, byId);
+  expect(decisions).toHaveLength(1);
+  expect(decisions[0]).toBe(decision);
+});
+
+test("formatRecall never emits a bare header when the cap drops every section", () => {
+  const r = {
+    domains: [],
+    rules: [],
+    decisions: [],
+    knowledge: [{ content: "K".repeat(50), sourceKind: "chat", score: 0.5, createdAt: "2026-08-20T00:00:00Z" }],
+  } as any;
+  const head = `Memory (rules fire for: global only):`;
+  const out = formatRecall(r, head.length + 5);
+  expect(out).toBe("");
 });
 
 test("recallBlock returns '' when nothing matches", async () => {

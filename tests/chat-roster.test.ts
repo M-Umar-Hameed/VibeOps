@@ -41,3 +41,21 @@ describe("chat roster", () => {
     expect(out.length).toBeLessThanOrEqual(CHAT_TRANSCRIPT_CAP);
   });
 });
+
+describe("http lanes in the roster", () => {
+  const httpConfig: RelayConfig = {
+    workdir: "/tmp",
+    agents: {
+      openrouter: { cmd: [], type: "http", roles: [], baseUrl: "https://openrouter.ai/api/v1", keySetting: "openrouterApiKey" },
+      "claude-sdk": { cmd: [], type: "sdk", roles: ["work"], models: [{ name: "sonnet", tier: "cheap", quality: 4 }] },
+    },
+  };
+
+  it("includes an http lane despite empty roles, never tool-capable, models deferred to the catalog", () => {
+    const roster = buildRoster(httpConfig);
+    const or = roster.find((r) => r.agent === "openrouter");
+    expect(or).toBeDefined();
+    expect(or!.toolCapable).toBe(false);
+    expect(or!.models).toEqual([]); // filled by the /chat/models route from the provider catalog
+  });
+});

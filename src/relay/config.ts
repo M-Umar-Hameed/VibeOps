@@ -5,7 +5,10 @@ import { substituteCmd } from "./invoke.js";
 
 export type ModelTier = "free" | "cheap" | "expensive";
 export type RelayModel = { name: string; tier: ModelTier; quality: number };
-export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk"; mcp?: boolean };
+// http lanes are chat-only model providers (e.g. OpenRouter): baseUrl is an
+// OpenAI-compatible API root, keySetting names the settings-table key holding
+// the user API key. cmd is unused for them.
+export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string };
 export type RelayConfig = {
   workdir: string; apiKey?: string; baseUrl?: string; pollMs?: number;
   agents: Record<string, RelayAgent>;
@@ -47,13 +50,26 @@ export function loadRelayConfig(path?: string): RelayConfig {
   }
   for (const [name, agent] of Object.entries(cfg.agents as Record<string, unknown>)) {
     const a = agent as Record<string, unknown>;
-    if (a.type !== undefined && a.type !== "cli" && a.type !== "sdk") {
-      throw new Error(`relay config agent "${name}" type must be "cli" or "sdk"`);
+    if (a.type !== undefined && a.type !== "cli" && a.type !== "sdk" && a.type !== "http") {
+      throw new Error(`relay config agent "${name}" type must be "cli", "sdk", or "http"`);
+    }
+    if (a.type === "http") {
+      if (typeof a.baseUrl !== "string" || !a.baseUrl.startsWith("https://")) {
+        throw new Error(`relay config agent "${name}" of type http needs an https baseUrl`);
+      }
+      if (typeof a.keySetting !== "string" || !a.keySetting) {
+        throw new Error(`relay config agent "${name}" of type http needs a keySetting naming the settings key that holds the API key`);
+      }
+      if (Array.isArray(a.roles) && a.roles.length > 0) {
+        // A chat/completions endpoint cannot edit files or run commands; letting
+        // it claim work/plan/review would wedge the forge queue.
+        throw new Error(`relay config agent "${name}" of type http cannot have pipeline roles`);
+      }
     }
     if (a.mcp !== undefined && typeof a.mcp !== "boolean") {
       throw new Error(`relay config agent "${name}" mcp must be a boolean`);
     }
-    if (a.type !== "sdk") {
+    if (a.type !== "sdk" && a.type !== "http") {
       if (!Array.isArray(a.cmd) || a.cmd.length === 0 || !a.cmd.every((c) => typeof c === "string")) {
         throw new Error(`relay config agent "${name}" must have a non-empty cmd string array`);
       }

@@ -5,14 +5,26 @@ import * as store from "../chat/store.js";
 import { isRunning, runTurn, getChatOutput } from "../chat/turns.js";
 import { loadRelayConfig } from "../relay/config.js";
 import { buildRoster } from "../chat/roster.js";
+import { fetchCatalog } from "../chat/catalog.js";
+import { getSetting } from "../services/settings.js";
 import { deleteChatDoc } from "../services/knowledge.js";
 
 type AppEnv = { Variables: { actor: Actor } };
 
 export function registerChatRoutes(app: Hono<AppEnv>): void {
-  app.get("/chat/models", requireAdmin, (c) => {
+  app.get("/chat/models", requireAdmin, async (c) => {
     try {
-      return c.json(buildRoster(loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG)));
+      const config = loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG);
+      const roster = buildRoster(config);
+      // http lanes: models come from the provider catalog, keyed by the saved
+      // API key. No key or provider down -> empty list, roster still serves.
+      for (const entry of roster) {
+        const def = config.agents[entry.agent];
+        if (def?.type !== "http" || !def.baseUrl || !def.keySetting) continue;
+        const key = await getSetting(def.keySetting);
+        if (key) entry.models = (await fetchCatalog(def.baseUrl, key)).map((id) => ({ name: id }));
+      }
+      return c.json(roster);
     } catch (e) {
       return c.json({ error: (e as Error).message }, 500);
     }

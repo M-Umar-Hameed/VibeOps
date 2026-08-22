@@ -15,7 +15,10 @@ export type RosterEntry = { agent: string; toolCapable: boolean; models: RosterM
 export function buildRoster(config: RelayConfig): RosterEntry[] {
   const roster: RosterEntry[] = [];
   for (const [name, agent] of Object.entries(config.agents)) {
-    if (!agent.roles?.length) continue;
+    // http lanes are chat-only, so they carry no pipeline roles; roles gate
+    // only the process lanes. Their models come from the provider catalog at
+    // request time, not relay.json.
+    if (agent.type !== "http" && !agent.roles?.length) continue;
     roster.push({
       agent: name,
       toolCapable: agent.type === "sdk" || agent.mcp === true,

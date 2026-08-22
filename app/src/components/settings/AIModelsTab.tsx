@@ -350,6 +350,25 @@ export function AIModelsTab() {
                 </div>
               }
             />
+
+            <div className="ml-2 pt-2">
+              <h3 className="text-xs font-code-sm uppercase tracking-widest text-on-surface-variant/50">Chat (used by VibeOps)</h3>
+              <p className="text-xs text-on-surface-variant/70 mt-1 max-w-3xl">
+                VibeOps chat calls OpenRouter directly with this key. Pick the openrouter lane in the chat model picker and its model catalog loads automatically. Chat-only: OpenRouter models cannot run pipeline stages or tools.
+              </p>
+            </div>
+            <ProviderCard
+              settingKey="openrouterApiKey"
+              name="OpenRouter"
+              subtitle="Any model, your key"
+              placeholder="sk-or-..."
+              borderColorClass="[#6467F2]/40"
+              icon={
+                <div className="w-12 h-12 bg-[#6467F2]/20 rounded-xl flex items-center justify-center">
+                  <span className="material-symbols-outlined text-2xl text-[#6467F2]">hub</span>
+                </div>
+              }
+            />
           </div>
         </div>
       ) : (

@@ -442,7 +442,7 @@ test("loadRelayConfig rejects an unknown agent type, naming the agent", () => {
     agents: { bad: { type: "grpc", roles: ["work"] } },
   }));
   try {
-    expect(() => loadRelayConfig(path)).toThrow(/agent "bad" type must be "cli" or "sdk"/);
+    expect(() => loadRelayConfig(path)).toThrow(/agent "bad" type must be "cli", "sdk", or "http"/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -640,3 +640,38 @@ test("loadRelayConfig rejects an agent with non-boolean mcp", () => {
   }
 });
 
+
+// http lanes: chat-only HTTP model providers (OpenRouter). No cmd to validate,
+// no pipeline roles - a chat/completions endpoint cannot edit files or run
+// commands, so letting it claim "work" would wedge the forge queue.
+test("loadRelayConfig accepts an http lane with baseUrl and keySetting", () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-cfg-"));
+  const path = join(dir, "relay.json");
+  writeFileSync(path, JSON.stringify({
+    workdir: dir,
+    agents: { openrouter: { type: "http", baseUrl: "https://openrouter.ai/api/v1", keySetting: "openrouterApiKey", roles: [] } },
+  }));
+  try {
+    const config = loadRelayConfig(path);
+    expect(config.agents.openrouter.type).toBe("http");
+    expect(config.agents.openrouter.baseUrl).toBe("https://openrouter.ai/api/v1");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("loadRelayConfig rejects http lanes with pipeline roles, bad baseUrl, or missing keySetting", () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-cfg-"));
+  const path = join(dir, "relay.json");
+  const write = (agent: object) => writeFileSync(path, JSON.stringify({ workdir: dir, agents: { or: agent } }));
+  try {
+    write({ type: "http", baseUrl: "https://x.ai/v1", keySetting: "k", roles: ["work"] });
+    expect(() => loadRelayConfig(path)).toThrow(/cannot have pipeline roles/);
+    write({ type: "http", baseUrl: "ftp://x.ai/v1", keySetting: "k", roles: [] });
+    expect(() => loadRelayConfig(path)).toThrow(/https/);
+    write({ type: "http", baseUrl: "https://x.ai/v1", roles: [] });
+    expect(() => loadRelayConfig(path)).toThrow(/keySetting/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

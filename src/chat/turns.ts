@@ -7,6 +7,7 @@ import { getSetting } from "../services/settings.js";
 import { upsertSourceDoc } from "../services/knowledge.js";
 import { getEmbedder } from "../knowledge/embedder.js";
 import { runAgent } from "../relay/invoke.js";
+import { runHttpTurn } from "./http-lane.js";
 import { loadRelayConfig, resolveCmd } from "../relay/config.js";
 import { parseModelRef, rollTranscript } from "./roster.js";
 
@@ -107,6 +108,23 @@ export async function runTurn(
     } else if (!agentDef) {
       res = { ok: false, text: `[chat: unknown agent "${agentName}" in relay config]` };
       onData(res.text);
+    } else if (agentDef.type === "http") {
+      // HTTP lane (OpenRouter): chat-only, no tools, transcript is the context.
+      const key = agentDef.keySetting ? await getSetting(agentDef.keySetting) : null;
+      if (!key) {
+        res = { ok: false, text: `[chat: no API key saved for "${agentName}". Add it in Settings (${agentDef.keySetting}).]` };
+        onData(res.text);
+      } else if (!modelName) {
+        res = { ok: false, text: `[chat: pick a model for "${agentName}" - it has no default.]` };
+        onData(res.text);
+      } else {
+        const transcript = rollTranscript(await store.getMessages(sessionId));
+        res = await runHttpTurn({
+          baseUrl: agentDef.baseUrl!, apiKey: key, model: modelName,
+          system: voice, transcript, onData,
+          timeoutMs: agentDef.timeoutMs,
+        });
+      }
     } else {
       // CLI lane: one-shot process. An mcp-wired lane reaches the shared MCP tools
       // through its own CLI MCP client config (one-time `claude mcp add --transport

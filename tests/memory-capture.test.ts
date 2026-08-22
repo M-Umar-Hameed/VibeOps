@@ -5,7 +5,7 @@ import { notes } from "../src/db/schema.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
 import { setSetting, deleteSetting } from "../src/services/settings.js";
-import { captureMemory, setMemoryExtractor, parseExtraction } from "../src/services/memory-capture.js";
+import { captureMemory, setMemoryExtractor, parseExtraction, reportTail } from "../src/services/memory-capture.js";
 import * as store from "../src/chat/store.js";
 import { setChatAgent, runTurn } from "../src/chat/turns.js";
 
@@ -21,6 +21,14 @@ describe("parseExtraction", () => {
     expect(parseExtraction("```json\n" + JSON.stringify(good) + "\n```")).toEqual(good);
     expect(parseExtraction("not json")).toBeNull();
     expect(parseExtraction(JSON.stringify({ decisions: "nope" }))).toBeNull();
+  });
+});
+
+describe("reportTail", () => {
+  it("slices from the last REPORT: marker, or the last 12k chars when absent", () => {
+    expect(reportTail("noise\nREPORT:\nfindings")).toBe("REPORT:\nfindings");
+    const noMarker = "x".repeat(20_000);
+    expect(reportTail(noMarker)).toBe(noMarker.slice(-12_000));
   });
 });
 

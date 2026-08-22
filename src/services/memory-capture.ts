@@ -31,6 +31,15 @@ const defaultExtractor: Extractor = async (text) => {
 let extractor: Extractor = defaultExtractor;
 export function setMemoryExtractor(fn: Extractor | null): void { extractor = fn ?? defaultExtractor; }
 
+// composeWorkPrompt tells the worker to end with a REPORT: section; the
+// transcript can run far longer than that, so take the tail from REPORT:
+// onward rather than the head, falling back to the last 12k chars when no
+// REPORT: marker is present.
+export function reportTail(output: string): string {
+  const reportStart = output.lastIndexOf("REPORT:");
+  return reportStart >= 0 ? output.slice(reportStart) : output.slice(-12_000);
+}
+
 export function parseExtraction(raw: string): Extracted | null {
   const body = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   let v: unknown;

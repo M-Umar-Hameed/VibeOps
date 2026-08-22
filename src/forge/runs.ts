@@ -28,7 +28,7 @@ import { ConflictError, StaleVersionError } from "../services/errors.js";
 import { logAgentUse, startAgentSession, endAgentSession } from "../services/usage.js";
 import { listActors } from "../services/actors.js";
 import { bump } from "../services/metrics.js";
-import { captureMemory } from "../services/memory-capture.js";
+import { captureMemory, reportTail } from "../services/memory-capture.js";
 import { desc, isNull, sum, eq, gte, lte, and, inArray } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { pidAlive } from "../db/lifecycle.js";
@@ -685,7 +685,7 @@ async function pipeline(
   }
   await forgeCommit(ticket.id, ticket.title);
   await addComment(actorId, ticket.id, redactSecrets(workRes.output), "report");
-  void captureMemory({ actorId, text: redactSecrets(workRes.output), projectId: ticket.projectId ?? undefined });
+  void captureMemory({ actorId, text: redactSecrets(reportTail(workRes.output)), projectId: ticket.projectId ?? undefined });
   ticket = await updateTicket(actorId, ticket.id, ticket.version, { status: "review" });
 
   // review — against the sandbox branch diff. On a rework the plan stage was

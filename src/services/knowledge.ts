@@ -169,9 +169,16 @@ export async function insertNoteEmbedding(noteId: string, body: string, embedder
   // earlier. Verify it is STILL the note's body inside the write transaction —
   // otherwise a slow sweep clobbers a fresh re-embed with a stale snapshot.
   return db.transaction(async (tx) => {
-    const [current] = await tx.select({ body: notes.body, deletedAt: notes.deletedAt, scope: notes.scope, refId: notes.refId })
-      .from(notes).where(eq(notes.id, noteId)).limit(1);
-    if (!current || current.deletedAt || current.body !== body) return false; // stale writer: no-op
+    const [current] = await tx.select({
+      body: notes.body, kind: notes.kind, rationale: notes.rationale,
+      deletedAt: notes.deletedAt, scope: notes.scope, refId: notes.refId,
+    }).from(notes).where(eq(notes.id, noteId)).limit(1);
+    // Mirrors notes.ts's noteIndexText (not imported: notes.ts already imports
+    // this module, so a back-import would cycle) — decisions embed body+rationale,
+    // so staleness must compare against that, not the raw body column.
+    const currentIndexText = current && current.kind === "decision" && current.rationale
+      ? `${current.body}\nRationale: ${current.rationale}` : current?.body;
+    if (!current || current.deletedAt || currentIndexText !== body) return false; // stale writer: no-op
     await tx.delete(embeddings)
       .where(and(eq(embeddings.sourceKind, "note"), eq(embeddings.sourceRef, noteId)));
     let noteProjectId: string | null = null;

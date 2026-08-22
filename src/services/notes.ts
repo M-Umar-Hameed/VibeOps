@@ -104,7 +104,7 @@ export async function updateNote(
   if (note.version === expectedVersion) return note; // no-op patch: nothing to re-embed
 
   try {
-    if (!await insertNoteEmbedding(note.id, note.body, embedder)) {
+    if (!await insertNoteEmbedding(note.id, noteIndexText(note), embedder)) {
       return note; // embedding skipped (stale/deleted); sweep will retry
     }
     const [indexed] = await db.update(notes).set({ indexed: true })

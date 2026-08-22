@@ -13,6 +13,7 @@ import { parseModelRef, rollTranscript } from "./roster.js";
 import { recallBlock } from "../services/recall.js";
 import { fenceUntrusted, UNTRUSTED_CLAUSE } from "../relay/prompts.js";
 import { captureMemory } from "../services/memory-capture.js";
+import { HANDOFF_RE, saveHandoff } from "../services/handoff.js";
 
 // Composed onto the chat voice clause for the tool-capable SDK lane only. States
 // what the connected tools can do and the act-grant rule, so the agent stops
@@ -78,6 +79,25 @@ export async function runTurn(
     const useModel = model ?? session.model;
 
     await store.appendMessage({ sessionId, role: "user", body: userBody });
+
+    // *handoff never reaches the model: it stores "where we left off" for the
+    // next session and replies with what it stored.
+    if (HANDOFF_RE.test(userBody)) {
+      let reply: string;
+      if (!session.projectId) {
+        reply = "[chat: *handoff needs a project: this session has none. Pick a project for the chat and retry.]";
+      } else {
+        const given = userBody.replace(HANDOFF_RE, "").trim();
+        const prior = (await store.getMessages(sessionId)).filter((m) => m.role === "assistant").at(-1)?.body ?? "";
+        const body = `${session.title ?? "Chat"}: ${given || prior || "(nothing to hand off)"}`;
+        const saved = await saveHandoff(actor.id, session.projectId, body);
+        reply = `Handoff saved (${saved.id.slice(0, 8)}):\n${body}`;
+      }
+      const b = live.get(sessionId)!;
+      b.output += reply;
+      await store.appendMessage({ sessionId, role: "assistant", body: reply });
+      return;
+    }
 
     const onData = (s: string) => {
       const b = live.get(sessionId)!;

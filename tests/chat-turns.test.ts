@@ -221,7 +221,11 @@ describe("chat turns", () => {
     // Assert on the actual string handed to agentImpl, not a helper in isolation.
     expect(seenPrompt).toContain(voice);
     expect(seenPrompt).toContain(CHAT_CAPABILITIES);
-    expect(seenPrompt).toBe(voice + CHAT_CAPABILITIES);
+    // ponytail: was exact equality (voice + CHAT_CAPABILITIES); speak-first memory
+    // (Task 3) can now inject a fenced memory block between them, so assert the
+    // relative order (voice first, capabilities last) instead of exact content.
+    expect(seenPrompt?.startsWith(voice)).toBe(true);
+    expect(seenPrompt?.endsWith(CHAT_CAPABILITIES)).toBe(true);
   });
 
   it("keeps the capability section out of other roles' voice", async () => {

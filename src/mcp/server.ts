@@ -43,6 +43,20 @@ export async function buildServer(apiKey: string) {
       content: [{ type: "text", text: JSON.stringify(await saveNote(actor.id, { body, scope, refId, title })) }],
     }));
 
+  server.registerTool("save_decision",
+    { description: "Record a decision with its rationale so it is recalled unasked in matching contexts.",
+      inputSchema: { text: z.string(), rationale: z.string(), domain: z.string().optional(), scope: z.enum(["global", "project", "ticket"]).default("global"), refId: z.string().optional() } },
+    async ({ text, rationale, domain, scope, refId }) => ({
+      content: [{ type: "text", text: JSON.stringify(await saveNote(actor.id, { body: text, rationale, domain, kind: "decision", scope, refId })) }],
+    }));
+
+  server.registerTool("save_rule",
+    { description: "Record a standing rule for a domain; it fires in every matching context.",
+      inputSchema: { text: z.string(), domain: z.string(), scope: z.enum(["global", "project", "ticket"]).default("global"), refId: z.string().optional() } },
+    async ({ text, domain, scope, refId }) => ({
+      content: [{ type: "text", text: JSON.stringify(await saveNote(actor.id, { body: text, domain, kind: "rule", scope, refId })) }],
+    }));
+
   server.registerTool("update_note",
     { inputSchema: { id: z.string(), expectedVersion: z.number(), title: z.string().optional(), body: z.string().optional() } },
     async ({ id, expectedVersion, ...patch }) => ({

@@ -6,6 +6,7 @@ import { exists, list, submitBatch, type ActionStep } from "../browser/channel.j
 import { validateSteps } from "../browser/validate.js";
 import { hasActGrant, noActGrantReason } from "../browser/grants.js";
 import { runMarks, marksAsText } from "../browser/marks-run.js";
+import { saveNote } from "../services/notes.js";
 import type { Actor } from "../db/schema.js";
 
 export type ToolCall = { name: string; input: unknown; summary: string; grantOrigin?: string };
@@ -93,6 +94,28 @@ export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: stri
           : "no tickets";
         rec("board_tickets", { status }, `${rows.length} ticket(s)`);
         return text(body);
+      },
+    ),
+    tool(
+      "save_decision",
+      "Record a decision and WHY it was made so future turns see it unasked. Scope defaults to this session's project.",
+      { text: z.string(), rationale: z.string(), domain: z.string().optional() },
+      async ({ text: body, rationale, domain }) => {
+        const scope = projectId ? "project" : "global";
+        const n = await saveNote(actor.id, { body, rationale, domain, kind: "decision", scope, refId: projectId });
+        rec("save_decision", { text: body, domain }, `saved ${n.id.slice(0, 8)}`);
+        return text(`decision saved (${scope}${domain ? `, domain ${n.domain}` : ""})`);
+      },
+    ),
+    tool(
+      "save_rule",
+      "Record a standing rule for a domain (e.g. 'payments'); it fires in every future turn whose project or #domain matches. Scope defaults to this session's project.",
+      { text: z.string(), domain: z.string() },
+      async ({ text: body, domain }) => {
+        const scope = projectId ? "project" : "global";
+        const n = await saveNote(actor.id, { body, domain, kind: "rule", scope, refId: projectId });
+        rec("save_rule", { text: body, domain }, `saved ${n.id.slice(0, 8)}`);
+        return text(`rule saved (${scope}, domain ${n.domain})`);
       },
     ),
     tool(

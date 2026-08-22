@@ -10,6 +10,8 @@ import { runAgent } from "../relay/invoke.js";
 import { runHttpTurn } from "./http-lane.js";
 import { loadRelayConfig, resolveCmd } from "../relay/config.js";
 import { parseModelRef, rollTranscript } from "./roster.js";
+import { recallBlock } from "../services/recall.js";
+import { fenceUntrusted } from "../relay/prompts.js";
 
 // Composed onto the chat voice clause for the tool-capable SDK lane only. States
 // what the connected tools can do and the act-grant rule, so the agent stops
@@ -82,6 +84,16 @@ export async function runTurn(
     };
     const voice = roleStyle("chat", await getSetting("agents.commProfile"));
 
+    // Speak-first memory: rules and decisions the model would otherwise have
+    // to remember to search for. Fail-open: a dead index must not block a turn.
+    let memory = "";
+    try {
+      memory = await recallBlock(userBody, { projectId: session.projectId ?? undefined });
+    } catch (e) {
+      console.warn(`chat: recall failed for ${sessionId}: ${(e as Error).message}`);
+    }
+    const sysBase = memory ? `${voice}\n${fenceUntrusted("memory", memory)}` : voice;
+
     const { agent: agentName, model: modelName } = parseModelRef(useModel);
     const config = agentName ? loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG) : undefined;
     const agentDef = agentName ? config!.agents[agentName] : undefined;
@@ -92,7 +104,7 @@ export async function runTurn(
     if (!agentName || agentDef?.type === "sdk") {
       // SDK lane: tool-capable, resumable. Legacy 'sonnet'/'opus' land here (no '::').
       const tools = buildChatTools(actor, calls, session.projectId ?? undefined);
-      const systemPrompt = voice + CHAT_CAPABILITIES;
+      const systemPrompt = sysBase + CHAT_CAPABILITIES;
       try {
         res = await agentImpl({
           userBody, tools, model: modelName, systemPrompt,
@@ -121,7 +133,7 @@ export async function runTurn(
         const transcript = rollTranscript(await store.getMessages(sessionId));
         res = await runHttpTurn({
           baseUrl: agentDef.baseUrl!, apiKey: key, model: modelName,
-          system: voice, transcript, onData,
+          system: sysBase, transcript, onData,
           timeoutMs: agentDef.timeoutMs,
         });
       }
@@ -133,7 +145,7 @@ export async function runTurn(
       // it has; an unwired lane gets voice only and makes no tool claims.
       const cliAgent = { ...agentDef, cmd: resolveCmd(agentDef, modelName || undefined) };
       const transcript = rollTranscript(await store.getMessages(sessionId));
-      const sys = agentDef.mcp ? `${voice}${CHAT_CAPABILITIES}` : voice;
+      const sys = agentDef.mcp ? `${sysBase}${CHAT_CAPABILITIES}` : sysBase;
       const prompt = sys ? `${sys}\n\n${transcript}` : transcript;
       const out = await runAgent(cliAgent, prompt, config!.workdir, onData);
       res = { ok: out.ok, text: out.output };

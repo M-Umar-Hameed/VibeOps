@@ -229,3 +229,23 @@ describe("chat turns", () => {
     expect(roleStyle("review", null)).not.toContain(CHAT_CAPABILITIES);
   });
 });
+
+  it("a turn that throws still leaves a visible assistant error message", async () => {
+    const { actor } = await createActor({ name: uniq("chat-throw"), kind: "human" });
+    const sess = await store.createSession("throw test");
+
+    setChatAgent(async () => {
+      throw new Error("model exploded");
+    });
+
+    // The route calls runTurn fire-and-forget with .catch(() => {}); the failure
+    // must be visible in the transcript, not swallowed into an empty chat.
+    await runTurn(actor, sess.id, "hello").catch(() => {});
+
+    const msgs = await store.getMessages(sess.id);
+    const assistant = msgs.filter((m) => m.role === "assistant");
+    expect(assistant.length).toBe(1);
+    expect(assistant[0].body).toMatch(/turn failed/);
+    expect(assistant[0].body).toContain("model exploded");
+    expect(isRunning(sess.id)).toBe(false);
+  });

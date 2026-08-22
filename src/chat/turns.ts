@@ -159,6 +159,14 @@ export async function runTurn(
     } catch (e) {
       console.warn(`chat transcript ingest failed for ${sessionId}: ${(e as Error).message}`);
     }
+  } catch (e) {
+    // The route calls runTurn fire-and-forget, so an exception here would
+    // otherwise vanish: no assistant message, chat just sits there looking
+    // ignored. Persist the failure where the user will actually see it.
+    const msg = `[chat: turn failed: ${(e as Error).message}]`;
+    const b = live.get(sessionId);
+    if (b) b.output += msg;
+    await store.appendMessage({ sessionId, role: "assistant", body: msg }).catch(() => {});
   } finally {
     const b = live.get(sessionId);
     if (b) b.status = "idle";

@@ -37,6 +37,10 @@ export function ChatScreen() {
   const [isSending, setIsSending] = useState(false);
   const [liveChunks, setLiveChunks] = useState<string[]>([]);
   const liveOutput = liveChunks.join("");
+  // True when the SERVER says a turn is running for this session. isSending
+  // alone dies on remount (app restart, session switch), leaving a running
+  // turn with no indicator - the original "is chat even working?" bug.
+  const [serverRunning, setServerRunning] = useState(false);
   const [error, setError] = useState("");
   const [sessionMenu, setSessionMenu] = useState<{ items: MenuItemSpec[]; x: number; y: number; label: string } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -69,26 +73,36 @@ export function ChatScreen() {
     if (detail?.session?.model) setModel(detail.session.model);
   }, [detail?.session?.model]);
 
+  useEffect(() => {
+    setLiveChunks([]);
+    nextOffsetRef.current = 0;
+    setServerRunning(false); // the probe below re-detects an in-flight turn
+  }, [selectedSessionId]);
+
   // Legacy 'sonnet'/'opus' (no '::') are the sdk lane and tool-capable.
   const selectedToolCapable =
     !model.includes("::") ||
     roster.some((r) => r.toolCapable && r.models.some((m) => `${r.agent}::${m.name}` === model));
 
-  // Poll for output while sending
+  // Poll output while a turn is active; probe once whenever a session is
+  // selected so a turn started before this mount is picked up too.
   useEffect(() => {
-    if (!isSending || !selectedSessionId) return;
-    let running = true;
+    if (!selectedSessionId) return;
+    let alive = true;
+    const active = isSending || serverRunning;
     const poll = async () => {
       try {
         const res = (await api.get(
           `/chat/sessions/${selectedSessionId}/output?after=${nextOffsetRef.current}`
         )) as { chunk: string; next: number; status: string };
-        if (!running) return;
+        if (!alive) return;
         if (res.chunk) {
           setLiveChunks((prev) => [...prev, res.chunk]);
         }
         nextOffsetRef.current = res.next;
-        if (res.status !== "running") {
+        const nowRunning = res.status === "running";
+        if (nowRunning !== serverRunning) setServerRunning(nowRunning);
+        if (!nowRunning && active) {
           setIsSending(false);
           setLiveChunks([]);
           nextOffsetRef.current = 0;
@@ -99,13 +113,14 @@ export function ChatScreen() {
         // ignore
       }
     };
-    const interval = setInterval(poll, 1000);
     poll();
+    if (!active) return; // one-shot probe; the setter re-arms the interval if running
+    const interval = setInterval(poll, 1000);
     return () => {
-      running = false;
+      alive = false;
       clearInterval(interval);
     };
-  }, [isSending, selectedSessionId, refetchDetail, queryClient]);
+  }, [isSending, serverRunning, selectedSessionId, refetchDetail, queryClient]);
 
   const handleNewChat = async () => {
     setError("");
@@ -336,7 +351,7 @@ export function ChatScreen() {
                   )}
                 </div>
               ))}
-              {isSending && !liveOutput && (
+              {(isSending || serverRunning) && !liveOutput && (
                 <div
                   data-testid="chat-pending"
                   className="mr-auto bg-surface-container-highest max-w-[90%] rounded-lg p-3 flex items-center gap-2 text-on-surface-variant"
@@ -368,16 +383,16 @@ export function ChatScreen() {
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder="Type a message..."
-                  disabled={isSending}
+                  disabled={isSending || serverRunning}
                   rows={2}
                   className="flex-1 bg-surface-container-highest text-on-surface rounded px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
                 />
                 <button
                   onClick={handleSend}
-                  disabled={isSending || !input.trim()}
+                  disabled={isSending || serverRunning || !input.trim()}
                   className="px-4 py-2 bg-primary text-on-primary rounded font-medium hover:opacity-90 disabled:opacity-50"
                 >
-                  {isSending ? "..." : "Send"}
+                  {isSending || serverRunning ? "..." : "Send"}
                 </button>
               </div>
             </div>

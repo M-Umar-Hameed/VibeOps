@@ -4,6 +4,7 @@ import { notes } from "../db/schema.js";
 import { saveNote } from "./notes.js";
 import { getSetting } from "./settings.js";
 import { runChatTurn } from "../chat/agent.js";
+import { fenceUntrusted, UNTRUSTED_CLAUSE } from "../relay/prompts.js";
 
 // Automatic memory capture (spec 2026-08-22-memory-design). Runs after a chat
 // turn or a forge work stage, never awaited by them. Everything here is
@@ -21,10 +22,21 @@ const EXTRACT_PROMPT = `You extract durable memory from a work transcript. Reply
 {"decisions":[{"text":"...","rationale":"...","domain":"..."}],"rules":[{"text":"...","domain":"..."}]}
 A decision is a choice that was made and why. A rule is a standing constraint stated as always/never. domain is one lowercase word for the area (e.g. payments, extension, tests). Return empty arrays when there is nothing durable. Never invent.`;
 
+// The transcript is untrusted: a user message inside it must not be able to
+// dictate what becomes permanent memory, so it is fenced and the extractor's
+// system prompt is told to treat fenced content as data, never instructions.
+export function buildExtractorRequest(text: string): { userBody: string; systemPrompt: string } {
+  return {
+    userBody: fenceUntrusted("transcript", text.slice(0, 12_000)),
+    systemPrompt: `${EXTRACT_PROMPT}\n${UNTRUSTED_CLAUSE}`,
+  };
+}
+
 // ponytail: haiku on the SDK lane is the cheapest thing already wired in. A
 // CLI or OpenRouter extractor is a later swap behind the same seam.
 const defaultExtractor: Extractor = async (text) => {
-  const res = await runChatTurn({ userBody: text.slice(0, 12_000), tools: [], model: "haiku", systemPrompt: EXTRACT_PROMPT });
+  const { userBody, systemPrompt } = buildExtractorRequest(text);
+  const res = await runChatTurn({ userBody, tools: [], model: "haiku", systemPrompt });
   return res.ok ? parseExtraction(res.text) : null;
 };
 

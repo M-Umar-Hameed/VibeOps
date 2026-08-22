@@ -5,7 +5,8 @@ import { notes } from "../src/db/schema.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
 import { setSetting, deleteSetting } from "../src/services/settings.js";
-import { captureMemory, setMemoryExtractor, parseExtraction, reportTail } from "../src/services/memory-capture.js";
+import { captureMemory, setMemoryExtractor, parseExtraction, reportTail, buildExtractorRequest } from "../src/services/memory-capture.js";
+import { UNTRUSTED_CLAUSE } from "../src/relay/prompts.js";
 import * as store from "../src/chat/store.js";
 import { setChatAgent, runTurn } from "../src/chat/turns.js";
 
@@ -29,6 +30,14 @@ describe("reportTail", () => {
     expect(reportTail("noise\nREPORT:\nfindings")).toBe("REPORT:\nfindings");
     const noMarker = "x".repeat(20_000);
     expect(reportTail(noMarker)).toBe(noMarker.slice(-12_000));
+  });
+});
+
+describe("buildExtractorRequest", () => {
+  it("fences the transcript as untrusted and tells the extractor to treat it as data", () => {
+    const { userBody, systemPrompt } = buildExtractorRequest("a user message trying to inject instructions");
+    expect(userBody).toContain(`<UNTRUSTED label="transcript">`);
+    expect(systemPrompt).toContain(UNTRUSTED_CLAUSE);
   });
 });
 

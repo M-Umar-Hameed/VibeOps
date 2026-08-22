@@ -11,7 +11,7 @@ import { runHttpTurn } from "./http-lane.js";
 import { loadRelayConfig, resolveCmd } from "../relay/config.js";
 import { parseModelRef, rollTranscript } from "./roster.js";
 import { recallBlock } from "../services/recall.js";
-import { fenceUntrusted } from "../relay/prompts.js";
+import { fenceUntrusted, UNTRUSTED_CLAUSE } from "../relay/prompts.js";
 
 // Composed onto the chat voice clause for the tool-capable SDK lane only. States
 // what the connected tools can do and the act-grant rule, so the agent stops
@@ -92,7 +92,7 @@ export async function runTurn(
     } catch (e) {
       console.warn(`chat: recall failed for ${sessionId}: ${(e as Error).message}`);
     }
-    const sysBase = memory ? `${voice}\n${fenceUntrusted("memory", memory)}` : voice;
+    const sysBase = memory ? `${voice}\n${fenceUntrusted("memory", memory)}\n${UNTRUSTED_CLAUSE}` : voice;
 
     const { agent: agentName, model: modelName } = parseModelRef(useModel);
     const config = agentName ? loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG) : undefined;

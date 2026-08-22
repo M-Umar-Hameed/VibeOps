@@ -11,6 +11,7 @@ import { eq } from "drizzle-orm";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildServer } from "../src/mcp/server.js";
+import { UNTRUSTED_CLAUSE } from "../src/relay/prompts.js";
 
 process.env.EMBED_PROVIDER = "fake";
 const uniq = (p: string) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -34,6 +35,7 @@ describe("chat memory injection", () => {
     // council-personas/forge-runs/prompt-injection/relay-unit tests). Asserting the
     // actual, correct fence here rather than changing fenceUntrusted's format.
     expect(seenSystem).toContain('<UNTRUSTED label="memory">');
+    expect(seenSystem).toContain(UNTRUSTED_CLAUSE);
   });
 
 });

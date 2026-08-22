@@ -5,9 +5,22 @@ import { NotFoundError, StaleVersionError } from "./errors.js";
 import { insertNoteEmbedding } from "./knowledge.js";
 import { getEmbedder, type Embedder } from "../knowledge/embedder.js";
 
+export type NoteKind = "note" | "decision" | "rule" | "handoff";
+export type NoteSource = "manual" | "auto";
+
+// What the embedding index sees. A decision's rationale must be searchable
+// ("why did we pick X"), a rule's is not a thing. Used by saveNote and the
+// re-index sweep so both paths embed the same text.
+export function noteIndexText(n: { body: string; kind: string; rationale: string | null }): string {
+  return n.kind === "decision" && n.rationale ? `${n.body}\nRationale: ${n.rationale}` : n.body;
+}
+
 export async function saveNote(
   actorId: string,
-  input: { body: string; scope: "global" | "project" | "ticket"; refId?: string; title?: string },
+  input: {
+    body: string; scope: "global" | "project" | "ticket"; refId?: string; title?: string;
+    kind?: NoteKind; domain?: string; rationale?: string; source?: NoteSource;
+  },
   embedder: Embedder = getEmbedder(),
 ): Promise<Note> {
   if (input.scope !== "global") {
@@ -20,13 +33,17 @@ export async function saveNote(
   const note = await db.transaction(async (tx) => {
     const [n] = await tx.insert(notes).values({
       actorId, body: input.body, scope: input.scope, refId: input.refId, title: input.title, indexed: false,
+      kind: input.kind ?? "note",
+      domain: input.domain ? input.domain.trim().toLowerCase() : null,
+      rationale: input.rationale ?? null,
+      source: input.source ?? "manual",
     }).returning();
     await tx.insert(events).values({ actorId, noteId: n.id, action: "note.saved" });
     return n;
   });
 
   try {
-    if (await insertNoteEmbedding(note.id, note.body, embedder)) {
+    if (await insertNoteEmbedding(note.id, noteIndexText(note), embedder)) {
       const [updated] = await db.update(notes)
         .set({ indexed: true }).where(eq(notes.id, note.id)).returning();
       return updated;
@@ -44,7 +61,7 @@ export async function sweepUnindexedNotes(embedder: Embedder = getEmbedder()): P
     try {
       // Flip only when the embedding actually wrote — a stale-body no-op must
       // leave indexed=false so a later sweep retries with fresh data.
-      if (await insertNoteEmbedding(n.id, n.body, embedder)) {
+      if (await insertNoteEmbedding(n.id, noteIndexText(n), embedder)) {
         await db.update(notes).set({ indexed: true }).where(eq(notes.id, n.id));
         done++;
       }

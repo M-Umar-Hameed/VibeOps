@@ -70,6 +70,13 @@ export const notes = pgTable("notes", {
   actorId: uuid("actor_id").notNull().references(() => actors.id),
   body: text("body").notNull(),
   title: text("title"),
+  // Typed memory (spec 2026-08-22-memory-design): plain text, not enums, so a
+  // new kind is a default-only migration. Values: note|decision|rule|handoff
+  // and manual|auto. domain is lowercased on write.
+  kind: text("kind").notNull().default("note"),
+  domain: text("domain"),
+  rationale: text("rationale"),
+  source: text("source").notNull().default("manual"),
   scope: noteScope("scope").notNull(),
   refId: uuid("ref_id"),
   indexed: boolean("indexed").notNull().default(false),

@@ -95,3 +95,22 @@ test("install-hooks.mjs adds both hooks once, backs up, and keeps unrelated hook
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("install-hooks.mjs refuses to touch a settings.json that is not valid JSON", () => {
+  const home = mkdtempSync(join(tmpdir(), "hooks-home-"));
+  const settingsDir = join(home, ".claude");
+  mkdirSync(settingsDir);
+  const settingsPath = join(settingsDir, "settings.json");
+  const bad = "{ not json";
+  writeFileSync(settingsPath, bad);
+  try {
+    const result = spawnSync(process.execPath, [join(ROOT, "scripts/install-hooks.mjs")], {
+      env: { ...process.env, VIBEOPS_HOOKS_HOME: home }, encoding: "utf8",
+    });
+    expect(result.status).toBe(1);
+    expect(readFileSync(settingsPath, "utf8")).toBe(bad);
+    expect(existsSync(join(settingsDir, "settings.json.bak-vibeops"))).toBe(false);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});

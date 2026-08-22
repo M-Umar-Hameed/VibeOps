@@ -20,7 +20,13 @@ const WANTED = [
 mkdirSync(settingsDir, { recursive: true });
 let settings = {};
 if (existsSync(settingsPath)) {
-  settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+  const raw = readFileSync(settingsPath, "utf-8");
+  try {
+    settings = JSON.parse(raw);
+  } catch {
+    process.stderr.write(`settings.json is not valid JSON, nothing changed: ${settingsPath}\n`);
+    process.exit(1);
+  }
   copyFileSync(settingsPath, join(settingsDir, "settings.json.bak-vibeops"));
 }
 settings.hooks ??= {};

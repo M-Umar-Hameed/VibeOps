@@ -9,6 +9,7 @@ import { getTicket, getTicketHistory, listTickets, searchTickets } from "../serv
 import { assertTicketId, sandboxExists } from "../forge/sandbox.js";
 import { saveNote, updateNote, deleteNote, listNotes, getNote } from "../services/notes.js";
 import { searchKnowledge, getKnowledgeSource, upsertSourceDoc, listSessionDocs, knowledgeGraph, indexRepoDocs } from "../services/knowledge.js";
+import { recallBlock } from "../services/recall.js";
 import { AuthError, ConflictError, ForbiddenError, NotFoundError, StaleVersionError } from "../services/errors.js";
 import { listProjects, createProject, updateProjectRepo, gitInitProject, getProjectSettings, setProjectSetting, scanFolder, importProjects, deleteProject } from "../services/projects.js";
 import { clearProjectKnowledge } from "../services/knowledge.js";
@@ -411,6 +412,19 @@ app.get("/prime", async (c) => {
     lines.push(`- [${h.sourceKind} ${h.score.toFixed(2)} ${h.createdAt.slice(0, 10)}] ${content}`);
   }
   return c.text(lines.join("\n").slice(0, 4000));
+});
+
+// Prompt-time memory for agent hooks (UserPromptSubmit): the block recall
+// builds for this prompt. Member-level like /prime.
+app.get("/recall", async (c) => {
+  const q = c.req.query("q") ?? "";
+  const projectId = c.req.query("project") || undefined;
+  try {
+    return c.text((await recallBlock(q, { projectId })).slice(0, 4000));
+  } catch (e) {
+    console.warn(`recall route failed: ${(e as Error).message}`);
+    return c.text("");
+  }
 });
 
 app.get("/settings/:key", requireAdmin, async (c) => c.json({ value: await getSetting(c.req.param("key")) }));

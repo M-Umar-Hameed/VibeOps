@@ -16,8 +16,8 @@ vi.mock("../src/browser/grants.js", () => ({
 import { buildChatTools, type ToolCall } from "../src/chat/tools.js";
 
 const actor = { id: "a1", name: "t", kind: "human", role: "admin" } as any;
-const getAct = (calls: ToolCall[]) =>
-  buildChatTools(actor, calls).find((t: any) => t.name === "browser_act") as any;
+const getAct = (calls: ToolCall[], sessionId?: string) =>
+  buildChatTools(actor, calls, undefined, sessionId).find((t: any) => t.name === "browser_act") as any;
 
 beforeEach(() => { submitBatch.mockReset(); hasActGrant.mockReset(); });
 
@@ -77,5 +77,28 @@ describe("browser_act", () => {
     );
     expect(res.content[0].text).toContain("origin mismatch");
     expect(calls.some((c) => c.summary.includes("refused"))).toBe(true);
+  });
+
+  it("with an allowOnce grant for the session, submits once then refuses the retry", async () => {
+    // Real hasActGrant/allowOnce, not the module-level mock: this proves the
+    // once-grant actually flows through the tool, not just a stubbed return.
+    const real = await vi.importActual<typeof import("../src/browser/grants.js")>("../src/browser/grants.js");
+    real.allowOnce("sess1", "https://github.com");
+    hasActGrant.mockImplementation((origin: string, opts?: any) => real.hasActGrant(origin, opts));
+    submitBatch.mockResolvedValue({ results: [{ ok: true }], snapshot: { origin: "https://github.com", nodes: [] } });
+    const calls: ToolCall[] = [];
+    const act = getAct(calls, "sess1");
+
+    const first = await act.handler(
+      { instanceId: "i1", targetOrigin: "https://github.com", steps: [{ verb: "click", ref: "ref1" }] }, {},
+    );
+    expect(submitBatch).toHaveBeenCalledTimes(1);
+    expect(first.content[0].text).not.toContain("refused");
+
+    const second = await act.handler(
+      { instanceId: "i1", targetOrigin: "https://github.com", steps: [{ verb: "click", ref: "ref1" }] }, {},
+    );
+    expect(submitBatch).toHaveBeenCalledTimes(1);
+    expect(second.content[0].text).toContain("refused");
   });
 });

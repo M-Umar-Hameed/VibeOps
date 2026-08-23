@@ -3,6 +3,7 @@ import { createActor } from "../src/services/actors.js";
 import { app } from "../src/api/app.js";
 import { BROWSER_TUNING } from "../src/browser/channel.js";
 import { setSetting, deleteSetting } from "../src/services/settings.js";
+import { hasActGrant } from "../src/browser/grants.js";
 
 const DEFAULTS = { ...BROWSER_TUNING };
 afterEach(async () => { Object.assign(BROWSER_TUNING, DEFAULTS); await deleteSetting("browserGrants"); });
@@ -294,6 +295,19 @@ test("POST /browser/grants is admin-only", async () => {
     method: "POST", headers: m, body: JSON.stringify({ origin: "https://github.com" }),
   });
   expect(res.status).toBe(403);
+});
+
+test("POST /browser/grants/once requires sessionId then grants a session-scoped one-shot", async () => {
+  const h = await adminHeaders();
+  const missing = await app.request("/browser/grants/once", {
+    method: "POST", headers: h, body: JSON.stringify({ origin: "https://github.com" }),
+  });
+  expect(missing.status).toBe(400);
+  const res = await app.request("/browser/grants/once", {
+    method: "POST", headers: h, body: JSON.stringify({ origin: "https://github.com", sessionId: "s1" }),
+  });
+  expect(res.status).toBe(200);
+  expect(await hasActGrant("https://github.com", { sessionId: "s1" })).toBe(true);
 });
 
 test("POST /browser/grants requires a non-empty origin", async () => {

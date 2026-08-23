@@ -2,7 +2,7 @@ import type { Hono } from "hono";
 import type { Actor } from "../db/schema.js";
 import { register, list, exists, nextBatch, submitResult, submitBatch, type BatchResult } from "../browser/channel.js";
 import { validateSteps } from "../browser/validate.js";
-import { hasActGrant, noActGrantReason, addActGrant } from "../browser/grants.js";
+import { hasActGrant, noActGrantReason, addActGrant, allowOnce } from "../browser/grants.js";
 import { requireAdmin } from "./auth.js";
 
 const MUTATING = new Set(["click", "type", "select", "press", "navigate", "clickAt", "newTab"]);
@@ -23,6 +23,18 @@ export function registerBrowserRoutes(app: Hono<AppEnv>): void {
       return c.json({ error: "origin required" }, 400);
     }
     await addActGrant(b.origin);
+    return c.json({ ok: true });
+  });
+
+  // Session-scoped, in-memory, single-use — "Allow once" in chat. Admin-only
+  // like the persistent grant route above.
+  app.post("/browser/grants/once", requireAdmin, async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const b = (body ?? {}) as { origin?: unknown; sessionId?: unknown };
+    if (typeof b.origin !== "string" || !b.origin.trim() || typeof b.sessionId !== "string" || !b.sessionId.trim()) {
+      return c.json({ error: "origin and sessionId required" }, 400);
+    }
+    allowOnce(b.sessionId, b.origin);
     return c.json({ ok: true });
   });
 

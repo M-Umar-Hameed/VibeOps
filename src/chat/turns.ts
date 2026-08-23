@@ -134,7 +134,7 @@ export async function runTurn(
 
     if (!agentName || agentDef?.type === "sdk") {
       // SDK lane: tool-capable, resumable. Legacy 'sonnet'/'opus' land here (no '::').
-      const tools = buildChatTools(actor, calls, session.projectId ?? undefined);
+      const tools = buildChatTools(actor, calls, session.projectId ?? undefined, sessionId);
       const systemPrompt = sysBase + CHAT_CAPABILITIES;
       try {
         res = await agentImpl({
@@ -170,7 +170,7 @@ export async function runTurn(
         const catalog = await fetchCatalog(agentDef.baseUrl!, key);
         const modelHasTools = catalog.find((m) => m.id === modelName)?.tools ?? true;
         const tools = modelHasTools
-          ? toHttpTools(buildChatTools(actor, calls, session.projectId ?? undefined))
+          ? toHttpTools(buildChatTools(actor, calls, session.projectId ?? undefined, sessionId))
           : undefined;
         res = await runHttpTurn({
           baseUrl: agentDef.baseUrl!, apiKey: key, model: modelName,

@@ -64,7 +64,7 @@ async function browserStep(
   return text(val);
 }
 
-export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: string) {
+export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: string, sessionId?: string) {
   const rec = (name: string, input: unknown, summary: string, grantOrigin?: string) => {
     calls.push({ name, input, summary, ...(grantOrigin ? { grantOrigin } : {}) });
   };
@@ -177,7 +177,7 @@ export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: stri
           rec("browser_act", { instanceId, targetOrigin }, `invalid: ${v.error}`);
           return text(`invalid steps: ${v.error}`);
         }
-        if (!(await hasActGrant(targetOrigin))) {
+        if (!(await hasActGrant(targetOrigin, { sessionId }))) {
           const reason = noActGrantReason(targetOrigin);
           // grantOrigin is the exact origin the server just refused (the value
           // hasActGrant checked). The chat Allow affordance grants THIS and only

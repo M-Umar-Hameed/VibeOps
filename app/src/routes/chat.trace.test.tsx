@@ -63,7 +63,7 @@ test("a turn with no tool calls renders no trace section", async () => {
   expect(screen.queryByTestId("tool-trace")).toBeNull();
 });
 
-test("a refused browser call renders its Allow affordance alongside the trace entry", async () => {
+test("a refused browser call renders the grant prompt alongside the trace entry", async () => {
   mockWith([{
     id: "m1", role: "assistant", body: "refused", createdAt: "2026-08-20T00:00:01Z",
     toolCalls: [{
@@ -76,7 +76,11 @@ test("a refused browser call renders its Allow affordance alongside the trace en
   fireEvent.click(await screen.findByText("Chat"));
 
   expect(await screen.findByText("browser_act")).toBeInTheDocument();
-  expect(await screen.findByRole("button", { name: "Allow browser actions on https://github.com" })).toBeInTheDocument();
+  // The refusal prompts once / always / deny; the origin shown is the server's.
+  expect(await screen.findByRole("button", { name: "Allow once" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Always allow" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Deny" })).toBeInTheDocument();
+  expect(screen.getByText(/https://github.com/)).toBeInTheDocument();
 });
 
 test("raw tool input is not rendered verbatim into the transcript", async () => {

@@ -51,6 +51,45 @@ describe("chat API", () => {
     expect(cli.models).toEqual([{ name: "flash" }]);
   });
 
+  it("GET /chat/models: an http lane with saved models lists exactly those, skipping the catalog fetch", async () => {
+    const cfgPath = join(mkdtempSync(join(tmpdir(), "chat-models-http-saved-")), "relay.json");
+    writeFileSync(cfgPath, JSON.stringify({
+      workdir: tmpdir(),
+      agents: {
+        openrouter: {
+          type: "http", roles: [], baseUrl: "https://openrouter.ai/api/v1", keySetting: "openrouterApiKey",
+          models: [{ name: "anthropic/claude-3.5-sonnet", tier: "cheap", quality: 4 }],
+        },
+      },
+    }));
+    process.env.VIBEOPS_RELAY_CONFIG = cfgPath;
+
+    const h = await adminHeaders();
+    const res = await app.request("/chat/models", { headers: h });
+    expect(res.status).toBe(200);
+    const roster = await res.json();
+    const or = roster.find((r: any) => r.agent === "openrouter");
+    expect(or.models).toEqual([{ name: "anthropic/claude-3.5-sonnet" }]);
+  });
+
+  it("GET /chat/models: an http lane without saved models and no key lists no models", async () => {
+    const cfgPath = join(mkdtempSync(join(tmpdir(), "chat-models-http-nokey-")), "relay.json");
+    writeFileSync(cfgPath, JSON.stringify({
+      workdir: tmpdir(),
+      agents: {
+        openrouter: { type: "http", roles: [], baseUrl: "https://openrouter.ai/api/v1", keySetting: "openrouterApiKey" },
+      },
+    }));
+    process.env.VIBEOPS_RELAY_CONFIG = cfgPath;
+
+    const h = await adminHeaders();
+    const res = await app.request("/chat/models", { headers: h });
+    expect(res.status).toBe(200);
+    const roster = await res.json();
+    const or = roster.find((r: any) => r.agent === "openrouter");
+    expect(or.models).toEqual([]);
+  });
+
   it("POST /chat/sessions creates a session", async () => {
     const h = await adminHeaders();
     const res = await app.request("/chat/sessions", {

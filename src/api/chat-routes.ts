@@ -21,6 +21,12 @@ export function registerChatRoutes(app: Hono<AppEnv>): void {
       for (const entry of roster) {
         const def = config.agents[entry.agent];
         if (def?.type !== "http" || !def.baseUrl || !def.keySetting) continue;
+        // Saved models are favourites the operator picked; skip the catalog fetch
+        // entirely when present.
+        if (def.models?.length) {
+          entry.models = def.models.map((m) => ({ name: m.name }));
+          continue;
+        }
         const key = await getSetting(def.keySetting);
         if (key) entry.models = (await fetchCatalog(def.baseUrl, key)).map((id) => ({ name: id }));
       }

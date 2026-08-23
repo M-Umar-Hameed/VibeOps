@@ -158,7 +158,7 @@ describe("forge API", () => {
     const res = await app.request("/forge/agents", { headers: h });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual([{ name: "fake", roles: ["plan", "work", "review"], models: [] }]);
+    expect(body).toEqual([{ name: "fake", roles: ["plan", "work", "review"], models: [], type: "cli" }]);
     expect(JSON.stringify(body)).not.toContain("cmd");
   });
 
@@ -463,7 +463,23 @@ describe("forge API", () => {
     expect(body).toEqual([{
       name: "fake", roles: ["plan", "work", "review"],
       models: [{ name: "fast", tier: "free", quality: 2 }, { name: "smart", tier: "expensive", quality: 5 }],
+      type: "cli",
     }]);
+  });
+
+  it("GET /forge/agents reports type \"http\" for an http lane", async () => {
+    writeFileSync(relayConfigPath, JSON.stringify({
+      workdir,
+      agents: {
+        fake: { cmd: [process.execPath, FAKE_AGENT, "{prompt}"], roles: ["plan", "work", "review"] },
+        openrouter: { type: "http", baseUrl: "https://openrouter.ai/api/v1", keySetting: "openrouterApiKey", roles: [] },
+      },
+    }));
+    const h = await adminHeaders();
+    const res = await app.request("/forge/agents", { headers: h });
+    const body = await res.json();
+    expect(body.find((a: any) => a.name === "fake").type).toBe("cli");
+    expect(body.find((a: any) => a.name === "openrouter").type).toBe("http");
   });
 
   it("POST /forge/pipeline returns 400 for a model unknown to the agent", async () => {
@@ -995,6 +1011,79 @@ it("PATCH /relay/agents/:name updates relay.json while keeping cmd untouched", a
   const agent = list.find((a: any) => a.name === "fake");
   expect(agent.roles).toEqual(["plan", "work"]);
   expect(agent.models).toEqual([{ name: "fast", tier: "free", quality: 2 }]);
+});
+
+it("PATCH /relay/agents/:name guards an http lane: pipeline roles are rejected, empty roles are accepted", async () => {
+  writeFileSync(relayConfigPath, JSON.stringify({
+    workdir,
+    agents: {
+      fake: { cmd: [process.execPath, FAKE_AGENT, "{prompt}"], roles: ["plan", "work", "review"] },
+      openrouter: { type: "http", baseUrl: "https://openrouter.ai/api/v1", keySetting: "openrouterApiKey", roles: [] },
+    },
+  }));
+  const h = await adminHeaders();
+  const { readFileSync } = await import("node:fs");
+  const before = JSON.parse(readFileSync(relayConfigPath, "utf-8"));
+
+  const withRole = await app.request("/relay/agents/openrouter", {
+    method: "PATCH", headers: h, body: JSON.stringify({ roles: ["plan"] }),
+  });
+  expect(withRole.status).toBe(400);
+  expect((await withRole.json()).error).toBe("http lanes are chat-only and cannot take pipeline roles");
+  expect(JSON.parse(readFileSync(relayConfigPath, "utf-8"))).toEqual(before); // relay.json unchanged
+
+  const emptyRoles = await app.request("/relay/agents/openrouter", {
+    method: "PATCH", headers: h, body: JSON.stringify({ roles: [] }),
+  });
+  expect(emptyRoles.status).toBe(200);
+
+  // Same empty roles array is still rejected for a normal (non-http) lane.
+  const cliEmptyRoles = await app.request("/relay/agents/fake", {
+    method: "PATCH", headers: h, body: JSON.stringify({ roles: [] }),
+  });
+  expect(cliEmptyRoles.status).toBe(400);
+});
+
+it("GET /relay/agents/:name/catalog returns catalog ids for an http lane; 400s a non-http lane", async () => {
+  const { createServer } = await import("node:http");
+  const { CATALOG_CACHE } = await import("../src/chat/catalog.js");
+  CATALOG_CACHE.clear();
+
+  const catalogServer = createServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json", Connection: "close" });
+    res.end(JSON.stringify({ data: [{ id: "a/b" }, { id: "c/d" }] }));
+  });
+  await new Promise<void>((r) => catalogServer.listen(0, "127.0.0.1", r));
+  const port = (catalogServer.address() as { port: number }).port;
+  // loadRelayConfig requires an https baseUrl for http lanes (the key travels in
+  // the Authorization header, never over plaintext) — so a local plaintext mock
+  // server cannot be wired in as a real relay.json baseUrl. Stub loadRelayConfig
+  // itself instead, same technique this file already uses for discardSandbox /
+  // indexRepoDocs, to exercise the route's real fetchCatalog network round trip.
+  const relayConfigModule = await import("../src/relay/config.js");
+  const loadSpy = vi.spyOn(relayConfigModule, "loadRelayConfig").mockReturnValue({
+    workdir,
+    agents: {
+      fake: { cmd: [process.execPath, FAKE_AGENT, "{prompt}"], roles: ["plan", "work", "review"] },
+      openrouter: { cmd: [], type: "http", baseUrl: `http://127.0.0.1:${port}/v1`, keySetting: "openrouterApiKey", roles: [] },
+    },
+  });
+
+  try {
+    const h = await adminHeaders();
+    await withSetting("openrouterApiKey", "sk-test", async () => {
+      const res = await app.request("/relay/agents/openrouter/catalog", { headers: h });
+      expect(res.status).toBe(200);
+      expect((await res.json()).models).toEqual(["a/b", "c/d"]);
+    });
+
+    const cliRes = await app.request("/relay/agents/fake/catalog", { headers: h });
+    expect(cliRes.status).toBe(400);
+    expect((await cliRes.json()).error).toBe("not an http lane");
+  } finally {
+    loadSpy.mockRestore();
+    catalogServer.close();
+  }
 });
 
 it("PATCH /relay/agents rejects prototype-polluting names", async () => {

@@ -21,6 +21,7 @@ import { addComment, listComments } from "../services/comments.js";
 import { listActors } from "../services/actors.js";
 import { ConflictError, NotFoundError } from "../services/errors.js";
 import { getSetting } from "../services/settings.js";
+import { fetchCatalog } from "../chat/catalog.js";
 import { requireAdmin } from "./auth.js";
 
 const ATTACH_MAX_BYTES = 10 * 1024 * 1024;
@@ -91,7 +92,7 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
 
   app.get("/forge/agents", requireAdmin, async (c) => {
     const config = forgeConfig();
-    return c.json(Object.entries(config.agents).map(([name, a]) => ({ name, roles: a.roles, models: a.models ?? [] })));
+    return c.json(Object.entries(config.agents).map(([name, a]) => ({ name, roles: a.roles, models: a.models ?? [], type: a.type ?? "cli" })));
   });
 
   app.get("/forge/skills", requireAdmin, async (c) => {
@@ -436,7 +437,7 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     if (Object.keys(extra).length > 0) return c.json({ error: "extra fields not allowed" }, 400);
 
     if (roles !== undefined) {
-      if (!Array.isArray(roles) || roles.length === 0) return c.json({ error: "roles must be a non-empty array" }, 400);
+      if (!Array.isArray(roles)) return c.json({ error: "roles must be a non-empty array" }, 400);
       const validRoles = ["plan", "work", "review"];
       if (!roles.every(r => validRoles.includes(r))) return c.json({ error: "invalid role" }, 400);
     }
@@ -472,11 +473,36 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
       return c.json({ error: "agent not found" }, 404);
     }
 
+    // http lanes are chat-only model providers: a chat/completions endpoint cannot
+    // edit files or run commands, so pipeline roles are rejected, but roles: []
+    // (the shape the Agents card always sends for a chat-only lane) is fine.
+    const isHttp = cfg.agents[name].type === "http";
+    if (roles !== undefined) {
+      if (isHttp) {
+        if (roles.length > 0) return c.json({ error: "http lanes are chat-only and cannot take pipeline roles" }, 400);
+      } else if (roles.length === 0) {
+        return c.json({ error: "roles must be a non-empty array" }, 400);
+      }
+    }
+
     if (roles !== undefined) cfg.agents[name].roles = roles;
     if (models !== undefined) cfg.agents[name].models = models;
 
     writeFileSync(configPath, JSON.stringify(cfg, null, 2), "utf-8");
 
     return c.json({ name, roles: cfg.agents[name].roles, models: cfg.agents[name].models ?? [] });
+  });
+
+  app.get("/relay/agents/:name/catalog", requireAdmin, async (c) => {
+    const name = c.req.param("name");
+    const config = forgeConfig();
+    const agent = config.agents[name];
+    if (!agent) return c.json({ error: "agent not found" }, 404);
+    if (agent.type !== "http" || !agent.baseUrl || !agent.keySetting) {
+      return c.json({ error: "not an http lane" }, 400);
+    }
+    const key = await getSetting(agent.keySetting);
+    if (!key) return c.json({ models: [], reason: "no api key saved" });
+    return c.json({ models: await fetchCatalog(agent.baseUrl, key) });
   });
 }

@@ -1,6 +1,7 @@
 // Chat-only HTTP lane: one turn against an OpenAI-compatible chat/completions
-// endpoint (OpenRouter). No tools, no resume - the rolled transcript is the
-// whole context, same contract as the CLI lanes.
+// endpoint (OpenRouter). No resume - the rolled transcript is the whole
+// context, same contract as the CLI lanes. Tool calling (below) is optional:
+// omit `tools` for the plain streaming path.
 // ponytail: fetch + hand-rolled SSE split; no openai dep for one endpoint.
 
 // Provider-neutral tool the http lane can call; the caller (turns.ts, via

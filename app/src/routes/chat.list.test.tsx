@@ -105,3 +105,28 @@ test("pending indicator appears while a turn is in flight and clears on settle",
   // Poll returns status "idle" -> turn settles -> indicator gone.
   await waitFor(() => expect(screen.queryByTestId("chat-pending")).not.toBeInTheDocument());
 });
+
+test("an http lane with one tool-capable and one plain model renders ' · tools' on exactly the first", async () => {
+  apiFetch.mockImplementation(async (path: string, opts: any) => {
+    if (path === "/chat/sessions" && opts.method === "GET") return [sess("s1", "Chat", "p1")];
+    if (path === "/chat/models") return [{
+      agent: "openrouter", toolCapable: false,
+      models: [
+        { name: "anthropic/claude-3.5-sonnet", toolCapable: true },
+        { name: "meta/llama-3", toolCapable: false },
+      ],
+    }];
+    if (path === "/chat/sessions/s1" && opts.method === "GET")
+      return { session: sess("s1", "Chat", "p1"), messages: [] };
+    if (path.startsWith("/chat/sessions/s1/output")) return { chunk: "", next: 0, status: "idle" };
+    return {};
+  });
+
+  render(wrap(<ChatScreen />));
+  await waitFor(() => expect(screen.getByText("Chat")).toBeInTheDocument());
+  fireEvent.click(screen.getByText("Chat"));
+
+  await waitFor(() => expect(screen.getByText("anthropic/claude-3.5-sonnet · tools")).toBeInTheDocument());
+  expect(screen.getByText("meta/llama-3")).toBeInTheDocument();
+  expect(screen.queryByText("meta/llama-3 · tools")).not.toBeInTheDocument();
+});

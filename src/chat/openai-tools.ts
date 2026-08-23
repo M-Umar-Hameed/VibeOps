@@ -4,6 +4,7 @@
 // actually uses (string/number/array/any/optional) - zod-to-json-schema is
 // not installed and zod/v4's toJSONSchema only accepts v4 schemas.
 import type { buildChatTools } from "./tools.js";
+import type { ToolDef } from "./http-lane.js";
 
 type SdkTool = ReturnType<typeof buildChatTools>[number];
 
@@ -37,5 +38,26 @@ export function toOpenAiTools(
       if ((schema as any)?._def?.typeName !== "ZodOptional") required.push(key);
     }
     return { name: t.name, description: t.description, parameters: { type: "object", properties, required } };
+  });
+}
+
+// Adapts SDK tools to the provider-neutral ToolDef the http lane's tool loop
+// runs. Every handler call still goes through the tool's own `rec(...)`, so
+// calls made over this path land in the same ToolCall trace as the SDK lane.
+export function toHttpTools(tools: SdkTool[]): ToolDef[] {
+  return toOpenAiTools(tools).map((schema, i) => {
+    const t = tools[i];
+    return {
+      name: schema.name,
+      description: schema.description,
+      parameters: schema.parameters,
+      run: async (args: unknown) => {
+        const result = await t.handler(args as any, {});
+        return result.content
+          .filter((c): c is { type: "text"; text: string } => c.type === "text")
+          .map((c) => c.text)
+          .join("\n");
+      },
+    };
   });
 }

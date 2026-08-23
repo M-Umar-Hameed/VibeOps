@@ -26,7 +26,8 @@ type SessionDetail = {
   messages: ChatMessage[];
 };
 
-type RosterEntry = { agent: string; toolCapable: boolean; models: { name: string }[] };
+type RosterModel = { name: string; toolCapable?: boolean };
+type RosterEntry = { agent: string; toolCapable: boolean; models: RosterModel[] };
 
 export function ChatScreen() {
   const queryClient = useQueryClient();
@@ -79,10 +80,12 @@ export function ChatScreen() {
     setServerRunning(false); // the probe below re-detects an in-flight turn
   }, [selectedSessionId]);
 
-  // Legacy 'sonnet'/'opus' (no '::') are the sdk lane and tool-capable.
+  // Legacy 'sonnet'/'opus' (no '::') are the sdk lane and tool-capable. Below
+  // that, tool capability is the lane's flag OR the selected model's own flag
+  // (http lanes are never lane-tool-capable, but individual catalog models can be).
   const selectedToolCapable =
     !model.includes("::") ||
-    roster.some((r) => r.toolCapable && r.models.some((m) => `${r.agent}::${m.name}` === model));
+    roster.some((r) => r.models.some((m) => `${r.agent}::${m.name}` === model && (r.toolCapable || m.toolCapable)));
 
   // Poll output while a turn is active; probe once whenever a session is
   // selected so a turn started before this mount is picked up too.
@@ -300,11 +303,14 @@ export function ChatScreen() {
                 )}
                 {roster.map((r) => (
                   <optgroup key={r.agent} label={r.toolCapable ? `${r.agent} · tools` : r.agent}>
-                    {r.models.map((m) => (
-                      <option key={`${r.agent}::${m.name}`} value={`${r.agent}::${m.name}`}>
-                        {m.name}{r.toolCapable ? " · tools" : ""}
-                      </option>
-                    ))}
+                    {r.models.map((m) => {
+                      const toolCapable = m.toolCapable ?? r.toolCapable;
+                      return (
+                        <option key={`${r.agent}::${m.name}`} value={`${r.agent}::${m.name}`}>
+                          {m.name}{toolCapable ? " · tools" : ""}
+                        </option>
+                      );
+                    })}
                   </optgroup>
                 ))}
               </select>

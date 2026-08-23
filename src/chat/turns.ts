@@ -8,6 +8,7 @@ import { upsertSourceDoc } from "../services/knowledge.js";
 import { getEmbedder } from "../knowledge/embedder.js";
 import { runAgent } from "../relay/invoke.js";
 import { runHttpTurn } from "./http-lane.js";
+import { toHttpTools } from "./openai-tools.js";
 import { loadRelayConfig, resolveCmd } from "../relay/config.js";
 import { parseModelRef, rollTranscript } from "./roster.js";
 import { recallBlock } from "../services/recall.js";
@@ -151,11 +152,18 @@ export async function runTurn(
         res = { ok: false, text: `[chat: pick a model for "${agentName}" - it has no default.]` };
         onData(res.text);
       } else {
+        // Same tools and capability clause as the SDK lane: OpenRouter models
+        // that support tool calling get the real thing, not a narrated one. A
+        // model without tool support gets a 4xx from the provider naming that
+        // (surfaced verbatim by runHttpTurn) rather than us pre-computing per-
+        // model support here.
         const transcript = rollTranscript(await store.getMessages(sessionId));
+        const tools = buildChatTools(actor, calls, session.projectId ?? undefined);
         res = await runHttpTurn({
           baseUrl: agentDef.baseUrl!, apiKey: key, model: modelName,
-          system: sysBase, transcript, onData,
+          system: sysBase + CHAT_CAPABILITIES, transcript, onData,
           timeoutMs: agentDef.timeoutMs,
+          tools: toHttpTools(tools),
         });
       }
     } else {

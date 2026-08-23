@@ -3,7 +3,12 @@ import { createServer, type Server } from "node:http";
 import { fetchCatalog, CATALOG_CACHE } from "../src/chat/catalog.js";
 
 let hits = 0;
-let payload: unknown = { data: [{ id: "deepseek/deepseek-chat" }, { id: "qwen/qwen-2.5" }] };
+let payload: unknown = {
+  data: [
+    { id: "deepseek/deepseek-chat", supported_parameters: ["tools"], architecture: { input_modalities: ["text"] } },
+    { id: "qwen/qwen-2.5", supported_parameters: [], architecture: { input_modalities: ["text", "image"] } },
+  ],
+};
 const server: Server = createServer((_req, res) => {
   hits++;
   res.writeHead(200, { "Content-Type": "application/json", Connection: "close" });
@@ -13,10 +18,13 @@ await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
 const BASE = `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`;
 afterAll(() => server.close());
 
-test("fetches model ids and caches per baseUrl", async () => {
+test("fetches model ids with tool/vision flags and caches per baseUrl", async () => {
   CATALOG_CACHE.clear();
   const first = await fetchCatalog(BASE, "k");
-  expect(first).toEqual(["deepseek/deepseek-chat", "qwen/qwen-2.5"]);
+  expect(first).toEqual([
+    { id: "deepseek/deepseek-chat", tools: true, vision: false },
+    { id: "qwen/qwen-2.5", tools: false, vision: true },
+  ]);
   const again = await fetchCatalog(BASE, "k");
   expect(again).toEqual(first);
   expect(hits).toBe(1); // second call served from cache

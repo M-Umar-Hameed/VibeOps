@@ -5,7 +5,7 @@ import type { RelayConfig } from "../relay/config.js";
 // oldest messages drop first once this ceiling is hit.
 export const CHAT_TRANSCRIPT_CAP = 24_000;
 
-export type RosterModel = { name: string };
+export type RosterModel = { name: string; toolCapable?: boolean };
 export type RosterEntry = { agent: string; toolCapable: boolean; models: RosterModel[] };
 
 // Every relay agent that holds any role, with its models. toolCapable is true for

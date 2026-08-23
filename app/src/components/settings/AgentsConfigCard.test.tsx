@@ -67,7 +67,7 @@ test("saving a chat-only agent PATCHes roles: [] and its models", async () => {
       return Promise.resolve([{ name: "openrouter", type: "http", roles: [], models: [] }]);
     }
     if (path === "/relay/agents/openrouter/catalog" && !opts) {
-      return Promise.resolve({ models: ["a/b"] });
+      return Promise.resolve({ models: [{ id: "a/b", tools: false, vision: false }] });
     }
     if (path === "/relay/agents/openrouter" && opts?.method === "PATCH") {
       patchCalls.push(opts.body);
@@ -94,7 +94,7 @@ test("a chat-only agent's model input offers catalog ids via a datalist", async 
       return Promise.resolve([{ name: "openrouter", type: "http", roles: [], models: [] }]);
     }
     if (path === "/relay/agents/openrouter/catalog" && !opts) {
-      return Promise.resolve({ models: ["a/b", "c/d"] });
+      return Promise.resolve({ models: [{ id: "a/b", tools: false, vision: false }, { id: "c/d", tools: true, vision: false }] });
     }
     return Promise.resolve({ value: "" });
   });

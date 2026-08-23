@@ -1097,7 +1097,10 @@ it("GET /relay/agents/:name/catalog returns catalog ids for an http lane; 400s a
     await withSetting("openrouterApiKey", "sk-test", async () => {
       const res = await app.request("/relay/agents/openrouter/catalog", { headers: h });
       expect(res.status).toBe(200);
-      expect((await res.json()).models).toEqual(["a/b", "c/d"]);
+      expect((await res.json()).models).toEqual([
+        { id: "a/b", tools: false, vision: false },
+        { id: "c/d", tools: false, vision: false },
+      ]);
     });
 
     const cliRes = await app.request("/relay/agents/fake/catalog", { headers: h });

@@ -142,7 +142,7 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
         <label className="text-xs text-on-surface-variant font-bold mb-2 block">Models</label>
         {chatOnly && (
           <datalist id={`catalog-${agent.name}`}>
-            {(catalogQuery.data?.models ?? []).map((id: string) => <option key={id} value={id} />)}
+            {(catalogQuery.data?.models ?? []).map((m: { id: string }) => <option key={m.id} value={m.id} />)}
           </datalist>
         )}
         {models.length > 0 ? (

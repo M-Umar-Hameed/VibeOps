@@ -17,18 +17,18 @@ export function registerChatRoutes(app: Hono<AppEnv>): void {
       const config = loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG);
       const roster = buildRoster(config);
       // http lanes: models come from the provider catalog, keyed by the saved
-      // API key. No key or provider down -> empty list, roster still serves.
+      // API key. No key or provider down -> models stay as buildRoster left them.
       for (const entry of roster) {
         const def = config.agents[entry.agent];
         if (def?.type !== "http" || !def.baseUrl || !def.keySetting) continue;
-        // Saved models are favourites the operator picked; skip the catalog fetch
-        // entirely when present.
-        if (def.models?.length) {
-          entry.models = def.models.map((m) => ({ name: m.name }));
-          continue;
-        }
         const key = await getSetting(def.keySetting);
-        if (key) entry.models = (await fetchCatalog(def.baseUrl, key)).map((id) => ({ name: id }));
+        if (!key) continue;
+        const catalog = await fetchCatalog(def.baseUrl, key);
+        // Saved models are favourites the operator picked; keep exactly those,
+        // just looking up each one's tool support in the catalog by id.
+        entry.models = def.models?.length
+          ? def.models.map((m) => ({ name: m.name, toolCapable: catalog.find((c) => c.id === m.name)?.tools ?? false }))
+          : catalog.map((m) => ({ name: m.id, toolCapable: m.tools }));
       }
       return c.json(roster);
     } catch (e) {

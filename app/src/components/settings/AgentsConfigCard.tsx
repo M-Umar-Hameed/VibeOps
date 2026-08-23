@@ -4,7 +4,7 @@ import { api } from "../../lib/api.js";
 import { modelOptionsForRole } from "../WorkOrderComposer.js";
 
 type AgentModel = { name: string; tier: string; quality: number };
-type AgentConfig = { name: string; roles: string[]; models: AgentModel[] };
+type AgentConfig = { name: string; roles: string[]; models: AgentModel[]; type?: "cli" | "sdk" | "http" };
 
 export function AgentsConfigCard() {
   const queryClient = useQueryClient();
@@ -44,6 +44,7 @@ export function AgentsConfigCard() {
 }
 
 function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: any }) {
+  const chatOnly = agent.type === "http";
   const [roles, setRoles] = useState(new Set(agent.roles));
   const [models, setModels] = useState<AgentModel[]>(agent.models ?? []);
   const [isDirty, setIsDirty] = useState(false);
@@ -55,12 +56,20 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
   }, [agent]);
 
   const patchMutation = useMutation({
-    mutationFn: (payload: { roles?: string[]; models?: AgentModel[] }) => 
+    mutationFn: (payload: { roles?: string[]; models?: AgentModel[] }) =>
       api.patch(`/relay/agents/${agent.name}`, payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["forge", "agents"] });
       setIsDirty(false);
     },
+  });
+
+  // Chat-only lanes (e.g. OpenRouter): models here become the picker's choices
+  // in chat, not the pipeline's. Fetched once per agent, cached by react-query.
+  const catalogQuery = useQuery({
+    queryKey: ["relay", "catalog", agent.name],
+    queryFn: () => api.get(`/relay/agents/${agent.name}/catalog`),
+    enabled: chatOnly,
   });
 
   const toggleRole = (r: string) => {
@@ -90,50 +99,62 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
   };
 
   const handleSave = () => {
-    patchMutation.mutate({ roles: Array.from(roles), models });
+    patchMutation.mutate(chatOnly ? { roles: [], models } : { roles: Array.from(roles), models });
   };
 
   return (
     <div className="flex flex-col border border-white/5 bg-surface-container-lowest/30 rounded-lg p-4">
       <div className="flex items-center justify-between mb-4">
         <h4 className="text-sm font-bold text-on-surface">{agent.name}</h4>
-        <button 
-          onClick={handleSave} 
-          disabled={!isDirty || patchMutation.isPending || roles.size === 0}
+        <button
+          onClick={handleSave}
+          disabled={!isDirty || patchMutation.isPending || (!chatOnly && roles.size === 0)}
           className="px-3 py-1 bg-primary text-on-primary text-xs rounded disabled:opacity-50"
         >
           {patchMutation.isPending ? "Saving..." : "Save"}
         </button>
       </div>
 
-      <div className="mb-4">
-        <label className="text-xs text-on-surface-variant font-bold mb-2 block">Roles</label>
-        <div className="flex gap-4">
-          {["plan", "work", "review"].map(r => (
-            <label key={r} className="flex items-center gap-2 cursor-pointer text-sm text-on-surface">
-              <input 
-                type="checkbox" 
-                checked={roles.has(r)} 
-                onChange={() => toggleRole(r)}
-                className="rounded border-white/20 bg-surface-container-highest"
-              />
-              {r}
-            </label>
-          ))}
+      {chatOnly ? (
+        <div className="mb-4 text-xs text-on-surface-variant">
+          Chat-only lane: models here become the openrouter choices in chat. Leave empty to offer the whole catalog.
         </div>
-      </div>
+      ) : (
+        <div className="mb-4">
+          <label className="text-xs text-on-surface-variant font-bold mb-2 block">Roles</label>
+          <div className="flex gap-4">
+            {["plan", "work", "review"].map(r => (
+              <label key={r} className="flex items-center gap-2 cursor-pointer text-sm text-on-surface">
+                <input
+                  type="checkbox"
+                  checked={roles.has(r)}
+                  onChange={() => toggleRole(r)}
+                  className="rounded border-white/20 bg-surface-container-highest"
+                />
+                {r}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div>
         <label className="text-xs text-on-surface-variant font-bold mb-2 block">Models</label>
+        {chatOnly && (
+          <datalist id={`catalog-${agent.name}`}>
+            {(catalogQuery.data?.models ?? []).map((id: string) => <option key={id} value={id} />)}
+          </datalist>
+        )}
         {models.length > 0 ? (
           <div className="space-y-2 mb-2">
             {models.map((m, idx) => (
               <div key={idx} className="flex gap-2 items-center">
-                <input 
-                  type="text" 
-                  value={m.name} 
+                <input
+                  type="text"
+                  value={m.name}
                   onChange={e => updateModel(idx, "name", e.target.value)}
-                  placeholder="Model name"
+                  placeholder={chatOnly ? "Type to search the catalog, or enter any model id" : "Model name"}
+                  list={chatOnly ? `catalog-${agent.name}` : undefined}
                   className="flex-1 bg-surface-container-highest border border-white/10 rounded px-2 py-1 text-sm text-on-surface focus:outline-none focus:border-primary"
                 />
                 <select 
@@ -164,12 +185,15 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
         ) : (
           <div className="text-xs text-on-surface-variant mb-2">No models configured.</div>
         )}
-        <button 
+        <button
           onClick={addModel}
           className="text-xs text-primary hover:underline flex items-center gap-1"
         >
           <span className="material-symbols-outlined text-[14px]">add</span> Add model
         </button>
+        {chatOnly && catalogQuery.data?.reason && (
+          <div className="text-xs text-on-surface-variant mt-1">{catalogQuery.data.reason}</div>
+        )}
       </div>
     </div>
   );

@@ -1,0 +1,41 @@
+// Converts the SDK chat tools (zod v3 raw-shape input) into OpenAI-compatible
+// function schemas for the http (OpenRouter) lane's tool-calling loop.
+// ponytail: hand-rolled for the small subset of zod kinds buildChatTools
+// actually uses (string/number/array/any/optional) - zod-to-json-schema is
+// not installed and zod/v4's toJSONSchema only accepts v4 schemas.
+import type { buildChatTools } from "./tools.js";
+
+type SdkTool = ReturnType<typeof buildChatTools>[number];
+
+function zodToJsonSchema(schema: any): unknown {
+  const def = schema?._def;
+  switch (def?.typeName) {
+    case "ZodOptional":
+      return zodToJsonSchema(def.innerType);
+    case "ZodString":
+      return { type: "string" };
+    case "ZodNumber":
+      return { type: "number" };
+    case "ZodArray":
+      return { type: "array", items: zodToJsonSchema(def.type) };
+    default:
+      // Unknown kind (incl. ZodAny) -> accept anything rather than throw.
+      return {};
+  }
+}
+
+export type OpenAiFunctionSchema = { type: "object"; properties: Record<string, unknown>; required: string[] };
+
+export function toOpenAiTools(
+  tools: SdkTool[],
+): { name: string; description: string; parameters: OpenAiFunctionSchema }[] {
+  return tools.map((t) => {
+    const properties: Record<string, unknown> = {};
+    const required: string[] = [];
+    for (const [key, schema] of Object.entries(t.inputSchema)) {
+      properties[key] = zodToJsonSchema(schema);
+      if ((schema as any)?._def?.typeName !== "ZodOptional") required.push(key);
+    }
+    return { name: t.name, description: t.description, parameters: { type: "object", properties, required } };
+  });
+}

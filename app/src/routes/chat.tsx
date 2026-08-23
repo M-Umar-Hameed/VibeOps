@@ -381,7 +381,7 @@ export function ChatScreen() {
               {error && (
                 <div className="mb-2 text-error text-sm">{error}</div>
               )}
-              {!selectedToolCapable && (detail?.messages?.length ?? 0) === 0 && (
+              {!selectedToolCapable && (
                 <div className="mb-2 text-xs text-on-surface-variant">
                   Tools (knowledge search, browser) are unavailable on this model.
                 </div>

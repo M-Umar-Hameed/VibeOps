@@ -40,7 +40,7 @@ vi.mock("../src/knowledge/embedder.js", () => ({
   getEmbedder: vi.fn(),
 }));
 
-import { runTurn, CHAT_CAPABILITIES } from "../src/chat/turns.js";
+import { runTurn, CHAT_CAPABILITIES, NO_TOOLS_CLAUSE } from "../src/chat/turns.js";
 
 const fakeActor: any = { id: "a1", name: "tester", role: "admin", kind: "human" };
 
@@ -70,5 +70,19 @@ describe("chat turns CLI lane prompt capability composition", () => {
     const promptArg = runAgentMock.mock.calls[0][1];
     expect(promptArg).not.toContain(CHAT_CAPABILITIES);
     expect(promptArg).toContain("user: hello world");
+  });
+
+  it("includes NO_TOOLS_CLAUSE for unwired CLI agent lane", async () => {
+    getSessionMock.mockResolvedValue({ id: "s3", model: "agy::default", projectId: null });
+    await runTurn(fakeActor, "s3", "hello world", "agy::default");
+    const promptArg = runAgentMock.mock.calls[0][1];
+    expect(promptArg).toContain(NO_TOOLS_CLAUSE);
+  });
+
+  it("omits NO_TOOLS_CLAUSE for mcp: true agent lane", async () => {
+    getSessionMock.mockResolvedValue({ id: "s4", model: "claude-cli::default", projectId: null });
+    await runTurn(fakeActor, "s4", "hello world", "claude-cli::default");
+    const promptArg = runAgentMock.mock.calls[0][1];
+    expect(promptArg).not.toContain(NO_TOOLS_CLAUSE);
   });
 });

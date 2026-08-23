@@ -29,6 +29,12 @@ Acting on a page, navigating, and opening a new tab all require an "act" grant f
 If an action is refused because a grant is missing, the refusal states the exact setting to add. Relay that refusal to the owner word for word; do not paraphrase it or substitute a limitation of your own. When you are unsure whether an action will be permitted, attempt it and report the actual result or refusal rather than declining up front.
 `;
 
+// Composed onto the voice clause for a CLI lane with no verified tool mechanism
+// (mcp !== true). Without this, an unwired lane's model has narrated actions
+// it cannot take (live incident: "taking a snapshot", "navigating to
+// zapier.com" on a lane with no tools at all).
+export const NO_TOOLS_CLAUSE = "\nThis lane has no tools. You cannot read pages, drive the browser, search the board, or save anything. Never say you are doing or have done such an action; say plainly that this model has no tools here and suggest a tool-capable model.";
+
 type AgentFn = (p: Parameters<typeof runChatTurn>[0]) => Promise<ChatTurnResult>;
 
 // ponytail: test seam only
@@ -174,7 +180,7 @@ export async function runTurn(
       // it has; an unwired lane gets voice only and makes no tool claims.
       const cliAgent = { ...agentDef, cmd: resolveCmd(agentDef, modelName || undefined) };
       const transcript = rollTranscript(await store.getMessages(sessionId));
-      const sys = agentDef.mcp ? `${sysBase}${CHAT_CAPABILITIES}` : sysBase;
+      const sys = agentDef.mcp ? `${sysBase}${CHAT_CAPABILITIES}` : `${sysBase}${NO_TOOLS_CLAUSE}`;
       const prompt = sys ? `${sys}\n\n${transcript}` : transcript;
       const out = await runAgent(cliAgent, prompt, config!.workdir, onData);
       res = { ok: out.ok, text: out.output };

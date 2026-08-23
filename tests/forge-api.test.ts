@@ -1013,6 +1013,29 @@ it("PATCH /relay/agents/:name updates relay.json while keeping cmd untouched", a
   expect(agent.models).toEqual([{ name: "fast", tier: "free", quality: 2 }]);
 });
 
+it("PATCH /relay/agents/:name with models: [] drops the models key instead of writing an empty array", async () => {
+  const h = await adminHeaders();
+  const { readFileSync } = await import("node:fs");
+  const { loadRelayConfig } = await import("../src/relay/config.js");
+
+  const seed = await app.request("/relay/agents/fake", {
+    method: "PATCH", headers: h,
+    body: JSON.stringify({ roles: ["plan"], models: [{ name: "fast", tier: "free", quality: 2 }] }),
+  });
+  expect(seed.status).toBe(200);
+  expect(JSON.parse(readFileSync(relayConfigPath, "utf-8")).agents.fake.models).toEqual([{ name: "fast", tier: "free", quality: 2 }]);
+
+  const res = await app.request("/relay/agents/fake", {
+    method: "PATCH", headers: h,
+    body: JSON.stringify({ roles: ["plan"], models: [] }),
+  });
+  expect(res.status).toBe(200);
+
+  const after = JSON.parse(readFileSync(relayConfigPath, "utf-8"));
+  expect(after.agents.fake).not.toHaveProperty("models");
+  expect(() => loadRelayConfig(relayConfigPath)).not.toThrow();
+});
+
 it("PATCH /relay/agents/:name guards an http lane: pipeline roles are rejected, empty roles are accepted", async () => {
   writeFileSync(relayConfigPath, JSON.stringify({
     workdir,

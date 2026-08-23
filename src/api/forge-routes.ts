@@ -486,7 +486,13 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     }
 
     if (roles !== undefined) cfg.agents[name].roles = roles;
-    if (models !== undefined) cfg.agents[name].models = models;
+    // loadRelayConfig rejects a present-but-empty models array on the next load
+    // (models must be a non-empty array if present) -- so an empty save must
+    // drop the key entirely, not write [].
+    if (models !== undefined) {
+      if (models.length === 0) delete cfg.agents[name].models;
+      else cfg.agents[name].models = models;
+    }
 
     writeFileSync(configPath, JSON.stringify(cfg, null, 2), "utf-8");
 

@@ -1,7 +1,7 @@
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type { Hono } from "hono";
 import type { Actor } from "../db/schema.js";
 import { loadRelayConfig } from "../relay/config.js";
@@ -35,9 +35,14 @@ function sniffImageExt(buf: Buffer): "png" | "jpg" | "gif" | "webp" | null {
   return null;
 }
 
-function attachmentsDir(): string {
+export function attachmentsDir(): string {
   return process.env.VIBEOPS_ATTACHMENTS_DIR ?? join(homedir(), ".vibeops", "attachments");
 }
+
+const ATTACHMENT_FILE_RE = /^[0-9a-f-]{36}\.(png|jpg|gif|webp)$/;
+const ATTACHMENT_CONTENT_TYPE: Record<string, string> = {
+  png: "image/png", jpg: "image/jpeg", gif: "image/gif", webp: "image/webp",
+};
 
 type AppEnv = { Variables: { actor: Actor } };
 
@@ -88,6 +93,17 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     // Forward-slash the path so the markdown link stays intact on Windows.
     const alt = ((typeof name === "string" ? name : "").replace(/[[\]()\r\n]/g, "").trim() || "attachment").slice(0, 80);
     return c.json({ path: abs, markdown: `![${alt}](${abs.replace(/\\/g, "/")})` }, 201);
+  });
+
+  app.get("/forge/attachments/:file", requireAdmin, async (c) => {
+    const file = c.req.param("file");
+    const m = ATTACHMENT_FILE_RE.exec(file);
+    if (!m) return c.notFound();
+    const dir = resolve(attachmentsDir());
+    const abs = resolve(dir, file);
+    if (!abs.startsWith(dir + sep) || !existsSync(abs)) return c.notFound();
+    c.header("Content-Type", ATTACHMENT_CONTENT_TYPE[m[1]]);
+    return c.body(readFileSync(abs));
   });
 
   app.get("/forge/agents", requireAdmin, async (c) => {

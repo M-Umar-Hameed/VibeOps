@@ -12,6 +12,10 @@ async function memberHeaders() {
   const { apiKey } = await createActor({ name: uniq("attach-actor"), kind: "human" });
   return { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
 }
+async function adminHeaders() {
+  const { apiKey } = await createActor({ name: uniq("attach-admin"), kind: "human", role: "admin" });
+  return { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+}
 // 1x1 transparent PNG
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
@@ -60,5 +64,35 @@ describe("POST /forge/attachments", () => {
       body: JSON.stringify({ dataBase64: PNG.toString("base64") }),
     });
     expect(res.status).toBe(401);
+  });
+});
+
+describe("GET /forge/attachments/:file", () => {
+  it("serves the uploaded bytes with the right content type", async () => {
+    const h = await adminHeaders();
+    const up = await app.request("/forge/attachments", {
+      method: "POST", headers: h,
+      body: JSON.stringify({ dataBase64: PNG.toString("base64"), name: "shot.png" }),
+    });
+    const { path } = await up.json();
+    const file = path.split(/[\\/]/).pop();
+
+    const res = await app.request(`/forge/attachments/${file}`, { headers: h });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    const bytes = Buffer.from(await res.arrayBuffer());
+    expect(bytes.equals(PNG)).toBe(true);
+  });
+
+  it("404s on a path-traversal attempt", async () => {
+    const h = await adminHeaders();
+    const res = await app.request("/forge/attachments/..%2Fx", { headers: h });
+    expect(res.status).toBe(404);
+  });
+
+  it("404s on a filename that isn't a uuid", async () => {
+    const h = await adminHeaders();
+    const res = await app.request("/forge/attachments/notauuid.png", { headers: h });
+    expect(res.status).toBe(404);
   });
 });

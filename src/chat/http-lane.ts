@@ -3,6 +3,15 @@
 // whole context, same contract as the CLI lanes.
 // ponytail: fetch + hand-rolled SSE split; no openai dep for one endpoint.
 
+// Provider-neutral tool the http lane can call; the caller (turns.ts, via
+// openai-tools.ts) adapts the SDK chat tools into this shape.
+export type ToolDef = {
+  name: string;
+  description: string;
+  parameters: object;
+  run: (args: unknown) => Promise<string>;
+};
+
 export type HttpTurnParams = {
   baseUrl: string;
   apiKey: string;
@@ -11,14 +20,82 @@ export type HttpTurnParams = {
   transcript: string;
   onData: (s: string) => void;
   timeoutMs?: number;
+  tools?: ToolDef[];
 };
 
 export type HttpTurnResult = { ok: boolean; text: string };
+
+const MAX_TOOL_ROUNDS = 8;
+
+// Non-streaming request/response loop used only when tools are attached: a
+// provider tool call requires a full JSON message (with tool_calls) to build
+// the next round's messages array, which SSE deltas don't give us.
+async function runToolLoop(p: HttpTurnParams, messages: any[]): Promise<HttpTurnResult> {
+  const tools = p.tools!;
+  const toolDefs = tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
+  let textSoFar = "";
+
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    let res: Response;
+    try {
+      res = await fetch(`${p.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${p.apiKey}` },
+        body: JSON.stringify({ model: p.model, stream: false, messages, tools: toolDefs }),
+        signal: AbortSignal.timeout(p.timeoutMs ?? 300_000),
+      });
+    } catch (e) {
+      const cause = (e as Error & { cause?: Error }).cause?.message;
+      return { ok: false, text: `[chat: request to ${p.baseUrl} failed: ${(e as Error).message}${cause ? ` (${cause})` : ""}]` };
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      let detail = body;
+      try { detail = JSON.parse(body)?.error?.message ?? body; } catch {}
+      return { ok: false, text: `[chat: provider returned ${res.status}: ${detail}]` };
+    }
+
+    const data = (await res.json()) as any;
+    const msg = data?.choices?.[0]?.message ?? {};
+    const toolCalls = msg.tool_calls;
+    if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
+      const text = typeof msg.content === "string" ? msg.content : "";
+      p.onData(text);
+      return { ok: true, text };
+    }
+
+    if (typeof msg.content === "string" && msg.content) textSoFar += msg.content;
+    messages.push({ role: "assistant", content: msg.content ?? null, tool_calls: toolCalls });
+    for (const call of toolCalls) {
+      const name = call.function?.name;
+      const tool = tools.find((t) => t.name === name);
+      let result: string;
+      if (!tool) {
+        result = `unknown tool ${name}`;
+      } else {
+        let args: unknown;
+        try {
+          args = JSON.parse(call.function?.arguments ?? "{}");
+        } catch (e) {
+          messages.push({ role: "tool", tool_call_id: call.id, content: `invalid arguments: ${(e as Error).message}` });
+          continue;
+        }
+        result = await tool.run(args);
+      }
+      messages.push({ role: "tool", tool_call_id: call.id, content: result });
+    }
+  }
+
+  return { ok: false, text: textSoFar + "\n[chat: tool loop exceeded 8 rounds]" };
+}
 
 export async function runHttpTurn(p: HttpTurnParams): Promise<HttpTurnResult> {
   const messages: { role: string; content: string }[] = [];
   if (p.system) messages.push({ role: "system", content: p.system });
   messages.push({ role: "user", content: p.transcript });
+
+  if (p.tools?.length) return runToolLoop(p, messages);
 
   let res: Response;
   try {

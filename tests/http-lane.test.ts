@@ -1,11 +1,15 @@
-import { afterAll, expect, test } from "vitest";
+import { afterAll, beforeEach, expect, test } from "vitest";
 import { createServer, type Server } from "node:http";
-import { runHttpTurn } from "../src/chat/http-lane.js";
+import { runHttpTurn, type ToolDef } from "../src/chat/http-lane.js";
 
 // Mock OpenAI-compatible endpoint. Each test points baseUrl at it and controls
-// the response via the handler set below.
+// the response via the handler set below. requestCount lets multi-round tests
+// script a different response per POST.
 let handler: (req: any, res: any, body: string) => void = () => {};
+let requestCount = 0;
+beforeEach(() => { requestCount = 0; });
 const server: Server = createServer((req, res) => {
+  requestCount++;
   let body = "";
   req.on("data", (c: Buffer) => (body += c));
   req.on("end", () => handler(req, res, body));
@@ -93,4 +97,99 @@ test("an SSE frame split across network chunks still parses", async () => {
     onData: () => {},
   });
   expect(res).toEqual({ ok: true, text: "whole" });
+});
+
+function json(res: any, status: number, body: unknown) {
+  res.writeHead(status, { "Content-Type": "application/json", Connection: "close" });
+  res.end(JSON.stringify(body));
+}
+
+function toolCallMsg(name: string, args: string, id = "call_1") {
+  return { choices: [{ message: { role: "assistant", tool_calls: [{ id, type: "function", function: { name, arguments: args } }] } }] };
+}
+
+const snapshotTool: ToolDef = {
+  name: "browser_snapshot",
+  description: "snapshot",
+  parameters: { type: "object", properties: {} },
+  run: async () => "SNAP",
+};
+
+test("tool round then answer: sends the tool result back and returns the final text", async () => {
+  let seenSecondBody: any = null;
+  handler = (_req, res, body) => {
+    if (requestCount === 1) {
+      json(res, 200, toolCallMsg("browser_snapshot", "{}"));
+    } else {
+      seenSecondBody = JSON.parse(body);
+      json(res, 200, { choices: [{ message: { role: "assistant", content: "done" } }] });
+    }
+  };
+  const got: string[] = [];
+  const res = await runHttpTurn({
+    baseUrl: BASE, apiKey: "k", model: "m", system: "", transcript: "user: snapshot",
+    onData: (s) => got.push(s), tools: [snapshotTool],
+  });
+  expect(res).toEqual({ ok: true, text: "done" });
+  expect(got.join("")).toBe("done");
+  const toolMsg = seenSecondBody.messages.find((m: any) => m.role === "tool");
+  expect(toolMsg).toBeDefined();
+  expect(toolMsg.content).toBe("SNAP");
+});
+
+test("an unknown tool name resolves to an 'unknown tool' result", async () => {
+  handler = (_req, res, body) => {
+    if (requestCount === 1) {
+      json(res, 200, toolCallMsg("no_such_tool", "{}"));
+    } else {
+      const parsed = JSON.parse(body);
+      const toolMsg = parsed.messages.find((m: any) => m.role === "tool");
+      json(res, 200, { choices: [{ message: { role: "assistant", content: toolMsg.content } }] });
+    }
+  };
+  const res = await runHttpTurn({
+    baseUrl: BASE, apiKey: "k", model: "m", system: "", transcript: "user: hi",
+    onData: () => {}, tools: [snapshotTool],
+  });
+  expect(res.ok).toBe(true);
+  expect(res.text).toMatch(/^unknown tool/);
+});
+
+test("bad JSON tool arguments resolve to an 'invalid arguments' result", async () => {
+  handler = (_req, res, body) => {
+    if (requestCount === 1) {
+      json(res, 200, toolCallMsg("browser_snapshot", "{not json"));
+    } else {
+      const parsed = JSON.parse(body);
+      const toolMsg = parsed.messages.find((m: any) => m.role === "tool");
+      json(res, 200, { choices: [{ message: { role: "assistant", content: toolMsg.content } }] });
+    }
+  };
+  const res = await runHttpTurn({
+    baseUrl: BASE, apiKey: "k", model: "m", system: "", transcript: "user: hi",
+    onData: () => {}, tools: [snapshotTool],
+  });
+  expect(res.ok).toBe(true);
+  expect(res.text).toMatch(/^invalid arguments/);
+});
+
+test("hitting the round cap stops after 8 requests and reports the overrun", async () => {
+  handler = (_req, res) => json(res, 200, toolCallMsg("browser_snapshot", "{}"));
+  const res = await runHttpTurn({
+    baseUrl: BASE, apiKey: "k", model: "m", system: "", transcript: "user: hi",
+    onData: () => {}, tools: [snapshotTool],
+  });
+  expect(res.ok).toBe(false);
+  expect(res.text).toContain("exceeded 8 rounds");
+  expect(requestCount).toBe(8);
+});
+
+test("a 400 naming missing tool support surfaces verbatim even with tools attached", async () => {
+  handler = (_req, res) => json(res, 400, { error: { message: "No endpoints found that support tool use" } });
+  const res = await runHttpTurn({
+    baseUrl: BASE, apiKey: "k", model: "m", system: "", transcript: "user: hi",
+    onData: () => {}, tools: [snapshotTool],
+  });
+  expect(res.ok).toBe(false);
+  expect(res.text).toContain("No endpoints found that support tool use");
 });

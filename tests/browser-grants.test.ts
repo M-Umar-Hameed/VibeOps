@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 vi.mock("../src/services/settings.js", () => ({ getSetting: vi.fn(), setSetting: vi.fn() }));
 import { getSetting, setSetting } from "../src/services/settings.js";
-import { hasActGrant, noActGrantReason, addActGrant } from "../src/browser/grants.js";
+import { hasActGrant, noActGrantReason, addActGrant, allowOnce, takeOnce, ONCE_TTL_MS } from "../src/browser/grants.js";
 
 const set = (v: string | null) => (getSetting as any).mockResolvedValue(v);
 
@@ -47,6 +47,36 @@ describe("addActGrant", () => {
     await addActGrant("https://github.com");
     const saved = (setSetting as any).mock.calls.at(-1)[1];
     expect(JSON.parse(saved)).toEqual([{ origin: "https://github.com", mode: "act" }]);
+  });
+});
+
+describe("allowOnce / hasActGrant one-shot", () => {
+  it("is consumed by the first hasActGrant call and gone on the second", async () => {
+    set(null);
+    allowOnce("s1", "https://github.com");
+    expect(await hasActGrant("https://github.com", { sessionId: "s1" })).toBe(true);
+    expect(await hasActGrant("https://github.com", { sessionId: "s1" })).toBe(false);
+  });
+  it("expires after ONCE_TTL_MS unused", () => {
+    const now = Date.now();
+    allowOnce("s1", "https://github.com", now);
+    expect(takeOnce("s1", "https://github.com", now + ONCE_TTL_MS + 1)).toBe(false);
+  });
+  it("is scoped to the session it was granted for", async () => {
+    set(null);
+    allowOnce("s1", "https://github.com");
+    expect(await hasActGrant("https://github.com", { sessionId: "s2" })).toBe(false);
+  });
+  it("origin is case-insensitive", async () => {
+    set(null);
+    allowOnce("s1", "https://GitHub.com");
+    expect(await hasActGrant("https://github.com", { sessionId: "s1" })).toBe(true);
+  });
+  it("a persistent grant does not consume a pending once", async () => {
+    set(JSON.stringify([{ origin: "https://github.com", mode: "act" }]));
+    allowOnce("s1", "https://github.com");
+    expect(await hasActGrant("https://github.com", { sessionId: "s1" })).toBe(true);
+    expect(await hasActGrant("https://github.com", { sessionId: "s1" })).toBe(true);
   });
 });
 

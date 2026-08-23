@@ -80,7 +80,7 @@ test("a refused browser call renders the grant prompt alongside the trace entry"
   expect(await screen.findByRole("button", { name: "Allow once" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Always allow" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Deny" })).toBeInTheDocument();
-  expect(screen.getByText(/https://github.com/)).toBeInTheDocument();
+  expect(screen.getByText("https://github.com", { exact: false })).toBeInTheDocument();
 });
 
 test("raw tool input is not rendered verbatim into the transcript", async () => {

@@ -9,6 +9,7 @@ import { getEmbedder } from "../knowledge/embedder.js";
 import { runAgent } from "../relay/invoke.js";
 import { runHttpTurn } from "./http-lane.js";
 import { toHttpTools } from "./openai-tools.js";
+import { fetchCatalog } from "./catalog.js";
 import { loadRelayConfig, resolveCmd } from "../relay/config.js";
 import { parseModelRef, rollTranscript } from "./roster.js";
 import { recallBlock } from "../services/recall.js";
@@ -158,18 +159,23 @@ export async function runTurn(
         res = { ok: false, text: `[chat: pick a model for "${agentName}" - it has no default.]` };
         onData(res.text);
       } else {
-        // Same tools and capability clause as the SDK lane: OpenRouter models
-        // that support tool calling get the real thing, not a narrated one. A
-        // model without tool support gets a 4xx from the provider naming that
-        // (surfaced verbatim by runHttpTurn) rather than us pre-computing per-
-        // model support here.
+        // Gate tools per model: a provider entry explicitly marked tools:false
+        // gets NO tools (streaming path, NO_TOOLS_CLAUSE) so it never narrates
+        // actions it silently can't take. Anything else - the entry says
+        // tools:true, or the model isn't in the catalog (catalog down/unknown
+        // id) - gets the real tools + CHAT_CAPABILITIES, same as the sdk lane.
         const transcript = rollTranscript(await store.getMessages(sessionId));
-        const tools = buildChatTools(actor, calls, session.projectId ?? undefined);
+        const catalog = await fetchCatalog(agentDef.baseUrl!, key);
+        const modelHasTools = catalog.find((m) => m.id === modelName)?.tools ?? true;
+        const tools = modelHasTools
+          ? toHttpTools(buildChatTools(actor, calls, session.projectId ?? undefined))
+          : undefined;
         res = await runHttpTurn({
           baseUrl: agentDef.baseUrl!, apiKey: key, model: modelName,
-          system: sysBase + CHAT_CAPABILITIES, transcript, onData,
+          system: sysBase + (modelHasTools ? CHAT_CAPABILITIES : NO_TOOLS_CLAUSE),
+          transcript, onData,
           timeoutMs: agentDef.timeoutMs,
-          tools: toHttpTools(tools),
+          tools,
         });
       }
     } else {

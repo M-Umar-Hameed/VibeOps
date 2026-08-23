@@ -175,13 +175,43 @@ test("bad JSON tool arguments resolve to an 'invalid arguments' result", async (
 
 test("hitting the round cap stops after 8 requests and reports the overrun", async () => {
   handler = (_req, res) => json(res, 200, toolCallMsg("browser_snapshot", "{}"));
+  const got: string[] = [];
   const res = await runHttpTurn({
     baseUrl: BASE, apiKey: "k", model: "m", system: "", transcript: "user: hi",
-    onData: () => {}, tools: [snapshotTool],
+    onData: (s) => got.push(s), tools: [snapshotTool],
   });
   expect(res.ok).toBe(false);
   expect(res.text).toContain("exceeded 8 rounds");
   expect(requestCount).toBe(8);
+  // onData gets the cap text too, like every other terminal path, so the
+  // live output buffer isn't left empty for a turn that failed this way.
+  expect(got.join("")).toContain("exceeded 8 rounds");
+});
+
+test("a tool whose run() throws yields a 'tool error:' result and the loop continues", async () => {
+  const throwingTool: ToolDef = {
+    name: "browser_snapshot",
+    description: "snapshot",
+    parameters: { type: "object", properties: {} },
+    run: async () => { throw new Error("boom"); },
+  };
+  let seenSecondBody: any = null;
+  handler = (_req, res, body) => {
+    if (requestCount === 1) {
+      json(res, 200, toolCallMsg("browser_snapshot", "{}"));
+    } else {
+      seenSecondBody = JSON.parse(body);
+      json(res, 200, { choices: [{ message: { role: "assistant", content: "done" } }] });
+    }
+  };
+  const res = await runHttpTurn({
+    baseUrl: BASE, apiKey: "k", model: "m", system: "", transcript: "user: hi",
+    onData: () => {}, tools: [throwingTool],
+  });
+  expect(res).toEqual({ ok: true, text: "done" });
+  const toolMsg = seenSecondBody.messages.find((m: any) => m.role === "tool");
+  expect(toolMsg.content).toMatch(/^tool error:/);
+  expect(toolMsg.content).toContain("boom");
 });
 
 test("a 400 naming missing tool support surfaces verbatim even with tools attached", async () => {

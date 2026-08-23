@@ -25,9 +25,15 @@ export function registerChatRoutes(app: Hono<AppEnv>): void {
         if (!key) continue;
         const catalog = await fetchCatalog(def.baseUrl, key);
         // Saved models are favourites the operator picked; keep exactly those,
-        // just looking up each one's tool support in the catalog by id.
+        // just looking up each one's tool support in the catalog by id. An
+        // empty catalog means the fetch itself failed (provider down) - leave
+        // toolCapable unset rather than asserting false, so the UI stays quiet
+        // about a fact it doesn't actually know instead of showing it wrong.
         entry.models = def.models?.length
-          ? def.models.map((m) => ({ name: m.name, toolCapable: catalog.find((c) => c.id === m.name)?.tools ?? false }))
+          ? def.models.map((m) => {
+              if (catalog.length === 0) return { name: m.name };
+              return { name: m.name, toolCapable: catalog.find((c) => c.id === m.name)?.tools ?? false };
+            })
           : catalog.map((m) => ({ name: m.id, toolCapable: m.tools }));
       }
       return c.json(roster);

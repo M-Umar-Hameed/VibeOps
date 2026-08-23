@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { toOpenAiTools } from "../src/chat/openai-tools.js";
+import { describe, it, expect, vi } from "vitest";
+import { z } from "zod";
+import { toOpenAiTools, toHttpTools } from "../src/chat/openai-tools.js";
 import { buildChatTools } from "../src/chat/tools.js";
 
 const fakeActor: any = { id: "a1", name: "tester", role: "admin", kind: "human" };
@@ -25,7 +26,7 @@ describe("toOpenAiTools", () => {
     expect(board.parameters.required).toEqual([]);
 
     const tabs = toOpenAiTools(tools).find((s) => s.name === "browser_tabs")!;
-    expect(tabs.parameters.properties.switchTo).toEqual({ type: "number" });
+    expect(tabs.parameters.properties.switchTo).toEqual({ type: "integer", minimum: 0 });
     expect(tabs.parameters.required).toEqual([]);
   });
 
@@ -41,5 +42,18 @@ describe("toOpenAiTools", () => {
     const dec = toOpenAiTools(tools).find((s) => s.name === "save_decision")!;
     expect(dec.parameters.required).toEqual(expect.arrayContaining(["text", "rationale"]));
     expect(dec.parameters.required).not.toContain("domain");
+  });
+});
+
+describe("toHttpTools", () => {
+  it("rejects a wrong-typed argument before the handler is called", async () => {
+    const handler = vi.fn(async () => ({ content: [{ type: "text" as const, text: "ok" }] }));
+    const fakeTool = { name: "t", description: "d", inputSchema: { n: z.number() }, handler } as any;
+    const [http] = toHttpTools([fakeTool]);
+
+    const result = await http.run({ n: "not a number" });
+
+    expect(result).toMatch(/^invalid arguments/);
+    expect(handler).not.toHaveBeenCalled();
   });
 });

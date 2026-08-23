@@ -79,16 +79,22 @@ async function runToolLoop(p: HttpTurnParams, messages: any[]): Promise<HttpTurn
         try {
           args = JSON.parse(call.function?.arguments ?? "{}");
         } catch (e) {
-          messages.push({ role: "tool", tool_call_id: call.id, content: `invalid arguments: ${(e as Error).message}` });
+          messages.push({ role: "tool", tool_call_id: call.id ?? "", content: `invalid arguments: ${(e as Error).message}` });
           continue;
         }
-        result = await tool.run(args);
+        try {
+          result = await tool.run(args);
+        } catch (e) {
+          result = `tool error: ${(e as Error).message}`;
+        }
       }
-      messages.push({ role: "tool", tool_call_id: call.id, content: result });
+      messages.push({ role: "tool", tool_call_id: call.id ?? "", content: result });
     }
   }
 
-  return { ok: false, text: textSoFar + "\n[chat: tool loop exceeded 8 rounds]" };
+  const capText = textSoFar + "\n[chat: tool loop exceeded 8 rounds]";
+  p.onData(capText);
+  return { ok: false, text: capText };
 }
 
 export async function runHttpTurn(p: HttpTurnParams): Promise<HttpTurnResult> {

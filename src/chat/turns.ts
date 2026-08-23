@@ -149,7 +149,7 @@ export async function runTurn(
       res = { ok: false, text: `[chat: unknown agent "${agentName}" in relay config]` };
       onData(res.text);
     } else if (agentDef.type === "http") {
-      // HTTP lane (OpenRouter): chat-only, no tools, transcript is the context.
+      // HTTP lane (OpenRouter): chat-only, transcript is the context, tools below.
       const key = agentDef.keySetting ? await getSetting(agentDef.keySetting) : null;
       if (!key) {
         res = { ok: false, text: `[chat: no API key saved for "${agentName}". Add it in Settings (${agentDef.keySetting}).]` };
@@ -177,7 +177,8 @@ export async function runTurn(
       // through its own CLI MCP client config (one-time `claude mcp add --transport
       // http vibeops <url>`; see docs/AGENT_CLIS.md), so no flags or secrets are
       // injected here. Surface CHAT_CAPABILITIES so a wired lane stops denying tools
-      // it has; an unwired lane gets voice only and makes no tool claims.
+      // it has; an unwired lane gets NO_TOOLS_CLAUSE so it stops narrating actions
+      // it cannot take.
       const cliAgent = { ...agentDef, cmd: resolveCmd(agentDef, modelName || undefined) };
       const transcript = rollTranscript(await store.getMessages(sessionId));
       const sys = agentDef.mcp ? `${sysBase}${CHAT_CAPABILITIES}` : `${sysBase}${NO_TOOLS_CLAUSE}`;

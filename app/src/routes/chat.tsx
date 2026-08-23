@@ -96,11 +96,14 @@ export function ChatScreen() {
           `/chat/sessions/${selectedSessionId}/output?after=${nextOffsetRef.current}`
         )) as { chunk: string; next: number; status: string };
         if (!alive) return;
-        if (res.chunk) {
+        const nowRunning = res.status === "running";
+        // The server keeps a finished turn's buffer around; appending it while
+        // idle painted a second, pulsing copy of the last reply next to the
+        // persisted one. Live chunks exist only while a turn is running.
+        if (res.chunk && nowRunning) {
           setLiveChunks((prev) => [...prev, res.chunk]);
         }
         nextOffsetRef.current = res.next;
-        const nowRunning = res.status === "running";
         if (nowRunning !== serverRunning) setServerRunning(nowRunning);
         if (!nowRunning && active) {
           setIsSending(false);

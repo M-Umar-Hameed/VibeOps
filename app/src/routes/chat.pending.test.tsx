@@ -72,3 +72,22 @@ test("when the server says idle, no indicator appears", async () => {
   await waitFor(() => expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining("/output"), expect.anything()));
   expect(screen.queryByTestId("chat-pending")).toBeNull();
 });
+
+// An idle session still reports its last reply in the live buffer; it must not
+// be painted as a second, pulsing bubble next to the persisted message.
+test("an idle session's leftover live buffer is not rendered as a live bubble", async () => {
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path === "/chat/sessions") return [sess];
+    if (path === "/chat/models") return [];
+    if (path === "/chat/sessions/s1") return { session: sess, messages: [{ id: "m1", role: "assistant", body: "persisted reply", createdAt: "2026-01-01T00:00:01Z" }] };
+    if (path.startsWith("/chat/sessions/s1/output")) return { chunk: "persisted reply", next: 15, status: "idle" };
+    return {};
+  });
+
+  render(wrap(<ChatScreen />));
+  await waitFor(() => expect(screen.getByText("Mine")).toBeInTheDocument());
+  fireEvent.click(screen.getByText("Mine"));
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining("/output"), expect.anything()));
+  await waitFor(() => expect(screen.getAllByText("persisted reply").length).toBe(1));
+  expect(document.querySelector(".animate-pulse")).toBeNull();
+});

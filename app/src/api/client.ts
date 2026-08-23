@@ -37,3 +37,15 @@ export async function apiFetch(
   if (res.status === 409) throw new StaleVersionError(msg);
   throw new ApiError(msg, res.status);
 }
+
+export async function apiFetchBlob(path: string): Promise<Blob> {
+  const { baseUrl, apiKey } = await settingsImpl();
+  let res: Response;
+  try {
+    res = await fetchImpl(`${baseUrl}${path}`, { headers: { Authorization: `Bearer ${apiKey}` } });
+  } catch (e) {
+    throw new ApiError(`cannot reach server: ${(e as Error).message}`, 0, true);
+  }
+  if (!res.ok) throw new ApiError(res.statusText, res.status);
+  return res.blob();
+}

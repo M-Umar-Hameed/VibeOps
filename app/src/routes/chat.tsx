@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api.js";
 import { Markdown } from "../components/Markdown.js";
 import { ContextMenu, type MenuItemSpec } from "../components/ContextMenu.js";
+import { useImageAttachments } from "../components/useImageAttachments.js";
 import { useProject } from "../context/project.js";
 
 type ChatSession = {
@@ -49,6 +50,7 @@ export function ChatScreen() {
   const [grantedOrigins, setGrantedOrigins] = useState<Set<string>>(new Set());
   const [grantingOrigin, setGrantingOrigin] = useState<string | null>(null);
   const nextOffsetRef = useRef(0);
+  const { attachments, attachError, fileInputRef, uploadFiles, removeAttachment, clear, markdown: attachmentMarkdown } = useImageAttachments();
 
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery<ChatSession[]>({
     queryKey: ["chat", "sessions"],
@@ -187,14 +189,15 @@ export function ChatScreen() {
   };
 
   const handleSend = async () => {
-    if (!selectedSessionId || !input.trim() || isSending) return;
+    if (!selectedSessionId || (!input.trim() && attachments.length === 0) || isSending) return;
     setError("");
     setIsSending(true);
     setLiveChunks([]);
     nextOffsetRef.current = 0;
+    const body = attachments.length ? `${input}\n\n${attachmentMarkdown()}` : input;
     try {
       const res = (await api.post(`/chat/sessions/${selectedSessionId}/messages`, {
-        body: input,
+        body,
         model,
       })) as { ok?: boolean; error?: string };
       if (res.error) {
@@ -203,6 +206,7 @@ export function ChatScreen() {
         return;
       }
       setInput("");
+      clear();
     } catch (e: any) {
       setError(e.message || "Failed to send message");
       setIsSending(false);
@@ -386,23 +390,60 @@ export function ChatScreen() {
                   Tools (knowledge search, browser) are unavailable on this model.
                 </div>
               )}
+              {attachments.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {attachments.map((a) => (
+                    <div key={a.id} className="relative">
+                      <img src={a.previewUrl} alt={a.name} className="w-12 h-12 object-cover rounded border border-white/10" />
+                      <button
+                        onClick={() => removeAttachment(a.id)}
+                        className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-error text-white text-[10px] leading-none flex items-center justify-center cursor-pointer"
+                        aria-label={`Remove ${a.name}`}
+                      >×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {attachError && <div className="mb-2 text-error text-xs">{attachError}</div>}
               <div className="flex gap-2">
                 <textarea
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
+                  onPaste={(e) => {
+                    const imgs = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
+                    if (imgs.length) { e.preventDefault(); uploadFiles(imgs); }
+                  }}
                   placeholder="Type a message..."
                   disabled={isSending || serverRunning}
                   rows={2}
                   className="flex-1 bg-surface-container-highest text-on-surface rounded px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
                 />
                 <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isSending || serverRunning}
+                  aria-label="Attach image"
+                  title="Attach image"
+                  className="px-3 py-2 rounded border border-white/10 hover:bg-white/5 text-on-surface-variant disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined text-lg">attach_file</span>
+                </button>
+                <button
                   onClick={handleSend}
-                  disabled={isSending || serverRunning || !input.trim()}
+                  disabled={isSending || serverRunning || (!input.trim() && attachments.length === 0)}
                   className="px-4 py-2 bg-primary text-on-primary rounded font-medium hover:opacity-90 disabled:opacity-50"
                 >
                   {isSending || serverRunning ? "..." : "Send"}
                 </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/gif,image/webp"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => { uploadFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }}
+                />
               </div>
             </div>
           </>

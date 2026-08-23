@@ -1,24 +1,45 @@
 import React from "react";
+import { AttachmentImage } from "./AttachmentImage.js";
+
+// A chat attachment's path (see forge-routes.ts) always sits under an
+// "attachments" dir and ends in "<uuid>.<ext>". Any other image link is
+// untrusted model output and must not load an arbitrary URL.
+const IMAGE_LINK_RE = /(!\[[^\]]*\]\([^)]+\))/g;
+const IMAGE_LINK_MATCH = /^!\[([^\]]*)\]\(([^)]+)\)$/;
+const ATTACHMENT_FILE_RE = /^[0-9a-f-]{36}\.(png|jpg|gif|webp)$/;
 
 // Renders untrusted model output as React elements only — no HTML parsing,
 // no dangerouslySetInnerHTML. Raw HTML in input stays literal text.
 function inlineNodes(text: string): React.ReactNode[] {
   const out: React.ReactNode[] = [];
   let key = 0;
-  for (const part of text.split(/(`[^`]+`)/g)) {
-    if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
-      out.push(
-        <code key={key++} className="font-mono text-code-sm bg-surface-container-highest px-1 rounded">
-          {part.slice(1, -1)}
-        </code>
-      );
+  for (const chunk of text.split(IMAGE_LINK_RE)) {
+    const img = IMAGE_LINK_MATCH.exec(chunk);
+    if (img) {
+      const [, alt, path] = img;
+      const file = path.split("/").pop() ?? "";
+      if (path.includes("/attachments/") && ATTACHMENT_FILE_RE.test(file)) {
+        out.push(<AttachmentImage key={key++} file={file} alt={alt} />);
+        continue;
+      }
+      out.push(<React.Fragment key={key++}>{chunk}</React.Fragment>);
       continue;
     }
-    part.split("**").forEach((seg, i) => {
-      if (!seg) return;
-      if (i % 2 === 1) out.push(<strong key={key++}>{seg}</strong>);
-      else out.push(<React.Fragment key={key++}>{seg}</React.Fragment>);
-    });
+    for (const part of chunk.split(/(`[^`]+`)/g)) {
+      if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
+        out.push(
+          <code key={key++} className="font-mono text-code-sm bg-surface-container-highest px-1 rounded">
+            {part.slice(1, -1)}
+          </code>
+        );
+        continue;
+      }
+      part.split("**").forEach((seg, i) => {
+        if (!seg) return;
+        if (i % 2 === 1) out.push(<strong key={key++}>{seg}</strong>);
+        else out.push(<React.Fragment key={key++}>{seg}</React.Fragment>);
+      });
+    }
   }
   return out;
 }

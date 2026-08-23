@@ -3,3 +3,4 @@ dist/
 dist-server/
 app/src-tauri/resources/
 .env
+dist-server-live/

@@ -54,6 +54,28 @@ test("streams deltas to onData and returns the joined text", async () => {
   expect(seenBody.messages[1].content).toContain("user: hi");
 });
 
+test("images are attached as image_url parts alongside the transcript text", async () => {
+  let seenBody: any = null;
+  handler = (_req, res, body) => {
+    seenBody = JSON.parse(body);
+    sse(res, [
+      `data: ${JSON.stringify({ choices: [{ delta: { content: "ok" } }] })}\n\n`,
+      "data: [DONE]\n\n",
+    ]);
+  };
+  const res = await runHttpTurn({
+    baseUrl: BASE, apiKey: "k", model: "m", system: "", transcript: "user: look at this",
+    onData: () => {},
+    images: [{ mediaType: "image/png", data: "aGVsbG8=" }],
+  });
+  expect(res.ok).toBe(true);
+  const userMsg = seenBody.messages.find((m: any) => m.role === "user");
+  expect(Array.isArray(userMsg.content)).toBe(true);
+  expect(userMsg.content[0]).toEqual({ type: "text", text: "user: look at this" });
+  expect(userMsg.content[1].type).toBe("image_url");
+  expect(userMsg.content[1].image_url.url).toMatch(/^data:image\/png;base64,aGVsbG8=$/);
+});
+
 test("a 401 surfaces as a readable failure naming the key setting", async () => {
   handler = (_req, res) => {
     res.writeHead(401, { "Content-Type": "application/json", Connection: "close" });
@@ -135,6 +157,25 @@ test("tool round then answer: sends the tool result back and returns the final t
   const toolMsg = seenSecondBody.messages.find((m: any) => m.role === "tool");
   expect(toolMsg).toBeDefined();
   expect(toolMsg.content).toBe("SNAP");
+});
+
+test("images travel into the tool loop's initial user message too", async () => {
+  let seenFirstBody: any = null;
+  handler = (_req, res, body) => {
+    if (requestCount === 1) {
+      seenFirstBody = JSON.parse(body);
+      json(res, 200, { choices: [{ message: { role: "assistant", content: "done" } }] });
+    }
+  };
+  const res = await runHttpTurn({
+    baseUrl: BASE, apiKey: "k", model: "m", system: "", transcript: "user: hi",
+    onData: () => {}, tools: [snapshotTool],
+    images: [{ mediaType: "image/png", data: "aGVsbG8=" }],
+  });
+  expect(res.ok).toBe(true);
+  const userMsg = seenFirstBody.messages.find((m: any) => m.role === "user");
+  expect(Array.isArray(userMsg.content)).toBe(true);
+  expect(userMsg.content[1].image_url.url).toMatch(/^data:image\/png;base64,aGVsbG8=$/);
 });
 
 test("an unknown tool name resolves to an 'unknown tool' result", async () => {

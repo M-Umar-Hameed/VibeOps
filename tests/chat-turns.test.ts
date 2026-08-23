@@ -66,6 +66,35 @@ describe("chat turns", () => {
     expect(updated?.sdkSessionId).toBe("sdk-session-1");
   });
 
+  it("passes extracted image attachments to the sdk agent", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "chat-turn-attach-"));
+    process.env.VIBEOPS_ATTACHMENTS_DIR = dir;
+    try {
+      const png = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+        "base64",
+      );
+      const abs = join(dir, "shot.png");
+      writeFileSync(abs, png);
+
+      const { actor } = await createActor({ name: uniq("chat-turn-img"), kind: "human" });
+      const sess = await store.createSession("img test");
+
+      let seenImages: any;
+      setChatAgent(async (params) => {
+        seenImages = params.images;
+        return { ok: true, text: "ok" };
+      });
+
+      await runTurn(actor, sess.id, `look at this\n\n![shot](${abs.replace(/\\/g, "/")})`);
+
+      expect(seenImages?.length).toBe(1);
+      expect(seenImages[0].mediaType).toBe("image/png");
+    } finally {
+      delete process.env.VIBEOPS_ATTACHMENTS_DIR;
+    }
+  });
+
   it("streams output via getChatOutput", async () => {
     const { actor } = await createActor({ name: uniq("chat-stream"), kind: "human" });
     const sess = await store.createSession("stream test");

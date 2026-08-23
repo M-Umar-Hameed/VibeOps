@@ -22,6 +22,7 @@ export type HttpTurnParams = {
   onData: (s: string) => void;
   timeoutMs?: number;
   tools?: ToolDef[];
+  images?: { mediaType: string; data: string }[];
 };
 
 export type HttpTurnResult = { ok: boolean; text: string };
@@ -98,9 +99,12 @@ async function runToolLoop(p: HttpTurnParams, messages: any[]): Promise<HttpTurn
 }
 
 export async function runHttpTurn(p: HttpTurnParams): Promise<HttpTurnResult> {
-  const messages: { role: string; content: string }[] = [];
+  const messages: { role: string; content: any }[] = [];
   if (p.system) messages.push({ role: "system", content: p.system });
-  messages.push({ role: "user", content: p.transcript });
+  const userContent = p.images?.length
+    ? [{ type: "text", text: p.transcript }, ...p.images.map((i) => ({ type: "image_url", image_url: { url: `data:${i.mediaType};base64,${i.data}` } }))]
+    : p.transcript;
+  messages.push({ role: "user", content: userContent });
 
   if (p.tools?.length) return runToolLoop(p, messages);
 

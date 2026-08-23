@@ -1,4 +1,5 @@
 import { runChatTurn, type ChatTurnResult } from "./agent.js";
+import { extractImageAttachments } from "./attachments.js";
 import { buildChatTools, type ToolCall } from "./tools.js";
 import * as store from "./store.js";
 import type { Actor } from "../db/schema.js";
@@ -111,6 +112,7 @@ export async function runTurn(
       const b = live.get(sessionId)!;
       b.output += s;
     };
+    const images = extractImageAttachments(userBody);
     const voice = roleStyle("chat", await getSetting("agents.commProfile"));
 
     // Speak-first memory: rules and decisions the model would otherwise have
@@ -136,12 +138,12 @@ export async function runTurn(
       const systemPrompt = sysBase + CHAT_CAPABILITIES;
       try {
         res = await agentImpl({
-          userBody, tools, model: modelName, systemPrompt,
+          userBody, tools, model: modelName, systemPrompt, images,
           resume: session.sdkSessionId ?? undefined, onData,
         });
       } catch (e) {
         // C3: stale resume -> one fresh retry
-        res = await agentImpl({ userBody, tools, model: modelName, systemPrompt, onData });
+        res = await agentImpl({ userBody, tools, model: modelName, systemPrompt, images, onData });
       }
       if (res.sessionId) {
         await store.updateSessionRuntime(sessionId, { sdkSessionId: res.sessionId });
@@ -175,7 +177,7 @@ export async function runTurn(
           system: sysBase + (modelHasTools ? CHAT_CAPABILITIES : NO_TOOLS_CLAUSE),
           transcript, onData,
           timeoutMs: agentDef.timeoutMs,
-          tools,
+          tools, images,
         });
       }
     } else {

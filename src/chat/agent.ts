@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { query, createSdkMcpServer, type SdkMcpToolDefinition } from "@anthropic-ai/claude-agent-sdk";
+import { query, createSdkMcpServer, type SdkMcpToolDefinition, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
 const OUTPUT_CAP = 100_000;
 
@@ -24,6 +24,7 @@ export async function runChatTurn(params: {
   model: string; // "sonnet" | "opus"
   systemPrompt?: string;
   resume?: string;
+  images?: { mediaType: string; data: string }[];
   onData?: (s: string) => void;
   onAbort?: (abort: () => void) => void;
 }): Promise<ChatTurnResult> {
@@ -35,6 +36,23 @@ export async function runChatTurn(params: {
 
   const controller = new AbortController();
   params.onAbort?.(() => controller.abort());
+
+  const images = params.images;
+  async function* withImages(): AsyncGenerator<SDKUserMessage> {
+    yield {
+      type: "user",
+      session_id: "",
+      parent_tool_use_id: null,
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text: params.userBody },
+          ...images!.map((i) => ({ type: "image" as const, source: { type: "base64" as const, media_type: i.mediaType, data: i.data } })),
+        ],
+      },
+    };
+  }
+  const prompt = images?.length ? withImages() : params.userBody;
 
   const server = createSdkMcpServer({ name: "chat", tools: params.tools });
   let text = "";
@@ -49,7 +67,7 @@ export async function runChatTurn(params: {
 
   try {
     const response = query({
-      prompt: params.userBody,
+      prompt,
       options: {
         tools: [], // no built-in tools — read-only operator chat
         mcpServers: { chat: server },

@@ -47,23 +47,85 @@ function mockApi() {
     if (path === "/chat/models" && opts?.method === "GET") return [];
     if (path === "/chat/sessions/s1" && opts?.method === "GET") return detail;
     if (path === "/browser/grants" && opts?.method === "POST") return { ok: true };
+    if (path === "/browser/grants/once" && opts?.method === "POST") return { ok: true };
+    if (path === "/chat/sessions/s1/messages" && opts?.method === "POST") return { ok: true };
     return {};
   });
 }
 
-test("Allow affordance offers the server-refused origin verbatim and grants exactly it", async () => {
-  mockApi();
+async function openChat() {
   render(<Wrap><ChatScreen /></Wrap>);
   fireEvent.click(await screen.findByText("Chat"));
+}
 
-  const btn = await screen.findByRole("button", { name: "Allow browser actions on https://github.com" });
-  // Prose said evil.com; the affordance never offers a model-authored origin.
+test("the refused origin offers Allow once, Always allow, Deny; never the model-authored origin", async () => {
+  mockApi();
+  await openChat();
+
+  expect(await screen.findByRole("button", { name: "Allow once" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Always allow" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Deny" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /evil\.com/ })).toBeNull();
+});
 
-  fireEvent.click(btn);
+test("Always allow grants persistently, then sends the always-continue message, then hides the buttons", async () => {
+  mockApi();
+  await openChat();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Always allow" }));
+
   await waitFor(() => {
-    const call = apiFetch.mock.calls.find(([p, o]) => p === "/browser/grants" && o?.method === "POST");
-    expect(call).toBeTruthy();
-    expect(call![1].body).toEqual({ origin: "https://github.com" });
+    const grant = apiFetch.mock.calls.find(([p, o]) => p === "/browser/grants" && o?.method === "POST");
+    expect(grant).toBeTruthy();
+    expect(grant![1].body).toEqual({ origin: "https://github.com" });
+  });
+  await waitFor(() => {
+    const msg = apiFetch.mock.calls.find(([p, o]) => p === "/chat/sessions/s1/messages" && o?.method === "POST");
+    expect(msg).toBeTruthy();
+    expect((msg![1].body as any).body).toBe("Allowed browser actions on https://github.com always. Continue.");
+  });
+  await waitFor(() => {
+    expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
+    expect(screen.getByText("Always allowed on https://github.com")).toBeInTheDocument();
+  });
+});
+
+test("Allow once posts the session-scoped once-grant, then sends the once-continue message", async () => {
+  mockApi();
+  await openChat();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Allow once" }));
+
+  await waitFor(() => {
+    const grant = apiFetch.mock.calls.find(([p, o]) => p === "/browser/grants/once" && o?.method === "POST");
+    expect(grant).toBeTruthy();
+    expect(grant![1].body).toEqual({ origin: "https://github.com", sessionId: "s1" });
+  });
+  await waitFor(() => {
+    const msg = apiFetch.mock.calls.find(([p, o]) => p === "/chat/sessions/s1/messages" && o?.method === "POST");
+    expect(msg).toBeTruthy();
+    expect((msg![1].body as any).body).toBe("Allowed browser actions on https://github.com once. Continue.");
+  });
+  await waitFor(() => {
+    expect(screen.getByText("Allowed once on https://github.com")).toBeInTheDocument();
+  });
+});
+
+test("Deny sends no grant request but sends the deny message, then hides the buttons", async () => {
+  mockApi();
+  await openChat();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Deny" }));
+
+  await waitFor(() => {
+    const msg = apiFetch.mock.calls.find(([p, o]) => p === "/chat/sessions/s1/messages" && o?.method === "POST");
+    expect(msg).toBeTruthy();
+    expect((msg![1].body as any).body).toBe("Denied browser actions on https://github.com. Do not retry it.");
+  });
+  expect(apiFetch.mock.calls.some(([p]) => p === "/browser/grants")).toBe(false);
+  expect(apiFetch.mock.calls.some(([p]) => p === "/browser/grants/once")).toBe(false);
+  await waitFor(() => {
+    expect(screen.queryByRole("button", { name: "Deny" })).toBeNull();
+    expect(screen.getByText("Denied on https://github.com")).toBeInTheDocument();
   });
 });

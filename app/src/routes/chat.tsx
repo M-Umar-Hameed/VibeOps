@@ -47,7 +47,7 @@ export function ChatScreen() {
   const [sessionMenu, setSessionMenu] = useState<{ items: MenuItemSpec[]; x: number; y: number; label: string } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
-  const [grantedOrigins, setGrantedOrigins] = useState<Set<string>>(new Set());
+  const [decidedOrigins, setDecidedOrigins] = useState<Map<string, "once" | "always" | "deny">>(new Map());
   const [grantingOrigin, setGrantingOrigin] = useState<string | null>(null);
   const nextOffsetRef = useRef(0);
   const { attachments, attachError, fileInputRef, uploadFiles, removeAttachment, clear, markdown: attachmentMarkdown } = useImageAttachments();
@@ -172,29 +172,14 @@ export function ChatScreen() {
       x, y, label: `Actions for ${s.title}`,
     });
 
-  // Origin comes verbatim from the tool-call refusal record (server-sourced), never
-  // from assistant prose — a page steering the agent cannot substitute an origin the
-  // user did not see. Explicit click only; no auto-approve, no remembered default.
-  const handleGrant = async (origin: string) => {
-    setError("");
-    setGrantingOrigin(origin);
-    try {
-      await api.post("/browser/grants", { origin });
-      setGrantedOrigins((s) => new Set(s).add(origin));
-    } catch (e: any) {
-      setError(e.message || "Failed to grant");
-    } finally {
-      setGrantingOrigin(null);
-    }
-  };
-
-  const handleSend = async () => {
-    if (!selectedSessionId || (!input.trim() && attachments.length === 0) || isSending) return;
+  // Sends a message body through the same path as typing it. Returns whether
+  // the send succeeded so callers can decide what to clear.
+  const sendMessage = async (body: string): Promise<boolean> => {
+    if (!selectedSessionId || isSending) return false;
     setError("");
     setIsSending(true);
     setLiveChunks([]);
     nextOffsetRef.current = 0;
-    const body = attachments.length ? `${input}\n\n${attachmentMarkdown()}` : input;
     try {
       const res = (await api.post(`/chat/sessions/${selectedSessionId}/messages`, {
         body,
@@ -203,13 +188,60 @@ export function ChatScreen() {
       if (res.error) {
         setError(res.error);
         setIsSending(false);
-        return;
+        return false;
       }
-      setInput("");
-      clear();
+      return true;
     } catch (e: any) {
       setError(e.message || "Failed to send message");
       setIsSending(false);
+      return false;
+    }
+  };
+
+  // Origin comes verbatim from the tool-call refusal record (server-sourced), never
+  // from assistant prose — a page steering the agent cannot substitute an origin the
+  // user did not see. Explicit click only; no auto-approve, no remembered default.
+  const handleAllowOnce = async (origin: string) => {
+    setError("");
+    setGrantingOrigin(origin);
+    try {
+      await api.post("/browser/grants/once", { origin, sessionId: selectedSessionId });
+    } catch (e: any) {
+      setError(e.message || "Failed to grant");
+      setGrantingOrigin(null);
+      return;
+    }
+    setGrantingOrigin(null);
+    setDecidedOrigins((m) => new Map(m).set(origin, "once"));
+    await sendMessage(`Allowed browser actions on ${origin} once. Continue.`);
+  };
+
+  const handleAlwaysAllow = async (origin: string) => {
+    setError("");
+    setGrantingOrigin(origin);
+    try {
+      await api.post("/browser/grants", { origin });
+    } catch (e: any) {
+      setError(e.message || "Failed to grant");
+      setGrantingOrigin(null);
+      return;
+    }
+    setGrantingOrigin(null);
+    setDecidedOrigins((m) => new Map(m).set(origin, "always"));
+    await sendMessage(`Allowed browser actions on ${origin} always. Continue.`);
+  };
+
+  const handleDeny = async (origin: string) => {
+    setDecidedOrigins((m) => new Map(m).set(origin, "deny"));
+    await sendMessage(`Denied browser actions on ${origin}. Do not retry it.`);
+  };
+
+  const handleSend = async () => {
+    if (!selectedSessionId || (!input.trim() && attachments.length === 0) || isSending) return;
+    const body = attachments.length ? `${input}\n\n${attachmentMarkdown()}` : input;
+    if (await sendMessage(body)) {
+      setInput("");
+      clear();
     }
   };
 
@@ -344,18 +376,36 @@ export function ChatScreen() {
                             <span className="font-mono">{tc.name}</span> — {tc.summary}
                           </div>
                           {tc.grantOrigin && (
-                            grantedOrigins.has(tc.grantOrigin) ? (
+                            decidedOrigins.has(tc.grantOrigin) ? (
                               <p className="mt-1 text-xs text-primary">
-                                Granted browser actions on {tc.grantOrigin}. Send again to retry.
+                                {decidedOrigins.get(tc.grantOrigin) === "once" && `Allowed once on ${tc.grantOrigin}`}
+                                {decidedOrigins.get(tc.grantOrigin) === "always" && `Always allowed on ${tc.grantOrigin}`}
+                                {decidedOrigins.get(tc.grantOrigin) === "deny" && `Denied on ${tc.grantOrigin}`}
                               </p>
                             ) : (
-                              <button
-                                onClick={() => handleGrant(tc.grantOrigin!)}
-                                disabled={grantingOrigin === tc.grantOrigin}
-                                className="mt-1 px-3 py-1 rounded bg-primary text-on-primary text-xs font-medium disabled:opacity-50"
-                              >
-                                Allow browser actions on {tc.grantOrigin}
-                              </button>
+                              <div className="mt-1 flex gap-2">
+                                <button
+                                  onClick={() => handleAllowOnce(tc.grantOrigin!)}
+                                  disabled={grantingOrigin === tc.grantOrigin || isSending || serverRunning}
+                                  className="px-3 py-1 rounded bg-primary text-on-primary text-xs font-medium disabled:opacity-50"
+                                >
+                                  Allow once
+                                </button>
+                                <button
+                                  onClick={() => handleAlwaysAllow(tc.grantOrigin!)}
+                                  disabled={grantingOrigin === tc.grantOrigin || isSending || serverRunning}
+                                  className="px-3 py-1 rounded bg-primary text-on-primary text-xs font-medium disabled:opacity-50"
+                                >
+                                  Always allow
+                                </button>
+                                <button
+                                  onClick={() => handleDeny(tc.grantOrigin!)}
+                                  disabled={grantingOrigin === tc.grantOrigin || isSending || serverRunning}
+                                  className="px-3 py-1 rounded bg-surface-container-highest text-on-surface text-xs font-medium disabled:opacity-50"
+                                >
+                                  Deny
+                                </button>
+                              </div>
                             )
                           )}
                         </div>

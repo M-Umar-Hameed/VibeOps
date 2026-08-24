@@ -43,6 +43,20 @@ test("GET /recall returns the memory block for the caller's query and project", 
   expect(body).toContain(UNTRUSTED_CLAUSE);
 });
 
+test("GET /prime fences knowledge hits, keeps the header outside the fence, and appends the clause once", async () => {
+  const { apiKey, actor } = await createActor({ name: uniq("prime-route"), kind: "agent" });
+  const project = await createProject({ key: uniq("k"), name: uniq("PrimeHooks") });
+  const content = `${uniq("finding")} the primer surfaces this note`;
+  await saveNote(actor.id, { body: content, scope: "project", refId: project.id });
+  const res = await app.request(`/prime?q=anything&project=${project.id}`, { headers: { Authorization: `Bearer ${apiKey}` } });
+  expect(res.status).toBe(200);
+  const body = await res.text();
+  expect(body).toContain(content);
+  expect(body).toContain(`<UNTRUSTED label="knowledge">`);
+  expect(body.indexOf('VibeOps primer for')).toBeLessThan(body.indexOf('<UNTRUSTED label="knowledge">'));
+  expect(body.split(UNTRUSTED_CLAUSE).length - 1).toBe(1);
+});
+
 test("recall-hook.mjs prints the server's block for the prompt on stdin, sends cwd from stdin, and nothing when the server is dead", async () => {
   let lastUrl = "";
   const srv = createServer((req, res) => {

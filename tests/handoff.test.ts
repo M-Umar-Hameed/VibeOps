@@ -6,6 +6,7 @@ import { createProject } from "../src/services/projects.js";
 import { latestHandoff, HANDOFF_RE } from "../src/services/handoff.js";
 import { app } from "../src/api/app.js";
 import { UNTRUSTED_CLAUSE } from "../src/relay/prompts.js";
+import { saveNote } from "../src/services/notes.js";
 
 process.env.EMBED_PROVIDER = "fake";
 const uniq = (p: string) => `${p}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -36,6 +37,25 @@ describe("*handoff", () => {
     expect(prime).toContain("Handoff (");
     expect(prime).toContain(UNTRUSTED_CLAUSE);
     expect(prime).toContain(marker);
+  });
+
+  it("carries the clause exactly once when both a handoff and knowledge hits are present", async () => {
+    const { actor, apiKey } = await createActor({ name: uniq("handoff-both"), kind: "human" });
+    const project = await createProject({ key: uniq("k"), name: uniq("HandoffBoth") });
+    const sess = await store.createSession("Extension work", "sonnet", project.id);
+    setChatAgent(async () => { return { ok: true, text: "should not run" }; });
+
+    const marker = uniq("left off");
+    await runTurn(actor, sess.id, `*handoff ${marker} at the alarm fix`);
+
+    const noteMarker = uniq("finding");
+    await saveNote(actor.id, { body: `${noteMarker} something useful`, scope: "project", refId: project.id });
+
+    const prime = await (await app.request(`/prime?q=anything&project=${project.id}`, { headers: { Authorization: `Bearer ${apiKey}` } })).text();
+    expect(prime).toContain(`<UNTRUSTED label="handoff">`);
+    expect(prime).toContain(`<UNTRUSTED label="knowledge">`);
+    expect(prime).toContain(noteMarker);
+    expect(prime.split(UNTRUSTED_CLAUSE).length - 1).toBe(1);
   });
 
   it("with no free text it hands off the last assistant message", async () => {

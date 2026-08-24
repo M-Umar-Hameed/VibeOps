@@ -434,19 +434,25 @@ app.get("/prime", async (c) => {
     ? `${fenceUntrusted("handoff", `Handoff (${handoff.createdAt.toISOString().slice(0, 10)}): ${handoff.body.replace(/\r?\n/g, " ").slice(0, 600)}`)}\n`
     : "";
   const hits = await searchKnowledge(q, { limit, projectId, caller: "route:prime" });
-  let text: string;
   if (!hits.length) {
-    text = lead + `VibeOps primer: no relevant knowledge for "${q}".`;
-  } else {
-    const lines = [`VibeOps primer for "${q}" (${hits.length} hits):`];
-    for (const h of hits) {
-      const content = h.content.replace(/\r?\n/g, " ").slice(0, 400);
-      lines.push(`- [${h.sourceKind} ${h.score.toFixed(2)} ${h.createdAt.slice(0, 10)}] ${content}`);
-    }
-    text = lead + lines.join("\n");
+    let text = lead + `VibeOps primer: no relevant knowledge for "${q}".`;
+    text = text.slice(0, 4000);
+    if (lead) text += UNTRUSTED_CLAUSE;
+    return c.text(text);
   }
-  text = text.slice(0, 4000);
-  if (lead) text += UNTRUSTED_CLAUSE;
+  const header = `VibeOps primer for "${q}" (${hits.length} hits):`;
+  let hitLines = hits.map((h) => {
+    const content = h.content.replace(/\r?\n/g, " ").slice(0, 400);
+    return `- [${h.sourceKind} ${h.score.toFixed(2)} ${h.createdAt.slice(0, 10)}] ${content}`;
+  });
+  // Cap total length by trimming whole hit lines from the end (never slicing
+  // the final string), so the closing fence tag and clause always survive.
+  const build = () => `${lead}${header}\n${fenceUntrusted("knowledge", hitLines.join("\n"))}${UNTRUSTED_CLAUSE}`;
+  let text = build();
+  while (text.length > 4000 && hitLines.length > 1) {
+    hitLines = hitLines.slice(0, -1);
+    text = build();
+  }
   return c.text(text);
 });
 

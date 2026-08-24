@@ -316,6 +316,8 @@ test("a completed streaming turn with zero characters falls back to the readable
     baseUrl: BASE, apiKey: "k", model: "m", system: "", transcript: "user: hi",
     onData: (s) => got.push(s),
   });
-  expect(res).toEqual({ ok: true, text: "[no text reply from the model; its tool calls are shown above]" });
-  expect(got.join("")).toBe("[no text reply from the model; its tool calls are shown above]");
+  // Streaming never has tools attached, so this uses its own wording -- there's
+  // no "shown above" to point to, unlike the tool-loop's empty-reply fallback.
+  expect(res).toEqual({ ok: true, text: "[the model returned an empty reply]" });
+  expect(got.join("")).toBe("[the model returned an empty reply]");
 });

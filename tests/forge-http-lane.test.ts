@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, expect, test } from "vitest";
 import { createServer, type Server } from "node:http";
 import { runHttpAgent } from "../src/relay/http-agent.js";
+import { runAgent } from "../src/relay/dispatch.js";
 import { withSetting } from "./helpers/settings.js";
 import type { RelayAgent } from "../src/relay/config.js";
 
@@ -74,4 +75,10 @@ test("a request that exceeds the agent's timeout fails with a readable message",
   );
   expect(res.ok).toBe(false);
   expect(res.output).toContain(BASE);
+});
+
+test("dispatch.ts: an http lane with no model resolved fails readably, without a request", async () => {
+  const res = await runAgent(agent, "prompt", "/workdir");
+  expect(res).toEqual({ ok: false, output: "[forge: no model saved for this http lane; save at least one model on the lane]" });
+  expect(requestCount).toBe(0);
 });

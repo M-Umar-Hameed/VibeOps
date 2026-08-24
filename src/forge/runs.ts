@@ -214,9 +214,13 @@ function composite(pick: Pick): string {
 }
 
 // Inverse of composite(): the model half, or undefined for a bare agent name.
-// Only the sdk lane needs this; cli agents get the model via resolveCmd.
+// Only the sdk/http lanes need this; cli agents get the model via resolveCmd.
+// Split on the FIRST colon only -- an OpenRouter id like
+// "meta-llama/llama-3.1-8b-instruct:free" has a colon of its own, and
+// split(":")[1] would truncate it, silently requesting a different model.
 function modelOf(composited: string): string | undefined {
-  return composited.split(":")[1];
+  const i = composited.indexOf(":");
+  return i === -1 ? undefined : composited.slice(i + 1);
 }
 
 // "agent:model" (or bare "agent") from a forge.defaultModel.<role> setting.

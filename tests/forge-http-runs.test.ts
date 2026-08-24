@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createServer, type Server } from "node:http";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -158,5 +158,29 @@ describe("forge http lane (integration through runs.ts)", () => {
       await awaitRun(runId);
       expect(getRunOutput(runId, 0)?.status).toBe("rejected");
     });
+  });
+
+  it("a colon-suffixed model id (e.g. an OpenRouter free variant) reaches runHttpAgent unmodified", async () => {
+    // modelOf() in runs.ts extracts the model half of the "agent:model" composite
+    // string it stores on the run; a model id that itself contains a colon (the
+    // OpenRouter ":free" suffix convention) must not be truncated there.
+    const httpAgentModule = await import("../src/relay/http-agent.js");
+    const spy = vi.spyOn(httpAgentModule, "runHttpAgent").mockResolvedValue({ ok: true, output: "1. do it" });
+    const modelId = "meta-llama/llama-3.1-8b-instruct:free";
+    try {
+      const { actorId, ticket } = await seedTicket("HTTP colon-suffixed model id");
+      const config = relayConfig(["work", "review"], "work,review-pass", "plan");
+      config.agents.openrouter.models = [{ name: modelId, tier: "free", quality: 3 }];
+
+      const { runId } = await startPipeline(actorId, config, {
+        ticketId: ticket.id, planAgent: "openrouter", planModel: modelId, workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+
+      expect(getRunOutput(runId, 0)?.status).toBe("passed");
+      expect(spy).toHaveBeenCalledWith(expect.anything(), expect.any(String), modelId, expect.anything());
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

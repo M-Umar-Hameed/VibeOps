@@ -31,6 +31,8 @@ const MAX_TOOL_ROUNDS = 8;
 
 // A blank assistant bubble reads as a hang, not a finished (if silent) turn.
 const NO_TEXT_REPLY = "[no text reply from the model; its tool calls are shown above]";
+// Streaming path never has tools attached, so nothing was "shown above".
+const EMPTY_STREAM_REPLY = "[the model returned an empty reply]";
 
 // Non-streaming request/response loop used only when tools are attached: a
 // provider tool call requires a full JSON message (with tool_calls) to build
@@ -153,7 +155,7 @@ export async function runHttpTurn(p: HttpTurnParams): Promise<HttpTurnResult> {
           if (!line.startsWith("data: ")) continue;
           const data = line.slice(6);
           if (data === "[DONE]") {
-            if (!text) { p.onData(NO_TEXT_REPLY); return { ok: true, text: NO_TEXT_REPLY }; }
+            if (!text) { p.onData(EMPTY_STREAM_REPLY); return { ok: true, text: EMPTY_STREAM_REPLY }; }
             return { ok: true, text };
           }
           try {

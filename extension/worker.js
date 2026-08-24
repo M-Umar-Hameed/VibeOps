@@ -131,8 +131,12 @@ async function poll() {
     await executeBatch(batch);
     poll();
   } catch (err) {
-    console.error("[worker] Poll network error:", err);
-    setTimeout(poll, nextBackoff());
+    // A dropped long-poll (server restart, laptop sleep) is routine: back off
+    // and reconnect. An aborted poll is the relink path, not a failure.
+    if (err && err.name === "AbortError") { poll(); return; }
+    const wait = nextBackoff();
+    console.warn(`[worker] VibeOps server unreachable (${err && err.message ? err.message : err}); retrying in ${wait / 1000}s`);
+    setTimeout(poll, wait);
   }
 }
 

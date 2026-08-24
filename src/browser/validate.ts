@@ -32,7 +32,7 @@ export function validateSteps(
     }
     const s = step as Record<string, unknown>;
     if (typeof s.verb !== "string" || !(s.verb in SHAPES)) {
-      return { ok: false, error: `unknown verb: ${String(s.verb)}` };
+      return { ok: false, error: `there is no browser action called "${String(s.verb)}" - use one of: click, type, select, press, snapshot, screenshot, read, navigate, clickAt, tabs, newTab, switchTab` };
     }
     const shape = SHAPES[s.verb];
     const allowed = new Set(["verb", ...Object.keys(shape)]);

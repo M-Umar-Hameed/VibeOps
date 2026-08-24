@@ -178,7 +178,7 @@ async function executeBatch(batch) {
         break;
       }
       const tabId = tabs[0].id;
-      const [{ result }] = await chrome.scripting.executeScript({
+      const [{ result } = {}] = await chrome.scripting.executeScript({
         target: { tabId },
         func: async (steps, grant, targetOrigin) => {
           const { executeSteps } = await import(chrome.runtime.getURL("execute.js"));
@@ -188,6 +188,14 @@ async function executeBatch(batch) {
       });
       // screenshot cannot run in the page: captureVisibleTab is a worker-only API,
       // so execute.js leaves its slot as an unknown-verb error and we fill it here.
+      if (!result) {
+        // A navigate inside the segment tears down the injected context and
+        // executeScript resolves with no result. Report it; never crash into
+        // the catch with a bare TypeError.
+        results[seg.start] = { ok: false, error: "the page navigated away before the remaining steps could run - take a fresh snapshot and retry them" };
+        failed = true;
+        continue;
+      }
       for (let i = 0; i < seg.steps.length; i++) {
         const r = seg.steps[i]?.verb === "screenshot" ? await captureScreenshot() : result.results[i];
         if (r === undefined) break; // execute.js stopped early

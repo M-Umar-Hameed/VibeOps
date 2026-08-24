@@ -66,13 +66,13 @@ export async function executeSteps(doc, steps, grant, targetOrigin) {
     } else if (step.verb === "read") {
       const el = refMap.get(step.ref);
       if (!el) {
-        result = { ok: false, error: "unknown ref" };
+        result = { ok: false, error: "that element reference is stale - take a fresh snapshot and use its refs" };
       } else {
         const text = (el.textContent || "").trim();
         result = { ok: true, value: text };
       }
     } else {
-      result = { ok: false, error: `unknown verb: ${step.verb}` };
+      result = { ok: false, error: `this extension build does not support the action "${step.verb}" - update the extension from the latest release` };
     }
 
     results.push(result);
@@ -139,7 +139,7 @@ function runMutation(doc, refMap, step) {
     return { ok: true };
   }
   const el = refMap.get(step.ref);
-  if (!el) return { ok: false, error: "unknown ref" };
+  if (!el) return { ok: false, error: "that element reference is stale - take a fresh snapshot and use its refs" };
   if (step.verb === "click") {
     el.click();
     return { ok: true };
@@ -155,5 +155,5 @@ function runMutation(doc, refMap, step) {
     el.dispatchEvent(new view.Event("change", { bubbles: true }));
     return { ok: true };
   }
-  return { ok: false, error: `unknown verb: ${step.verb}` };
+  return { ok: false, error: `this extension build does not support the action "${step.verb}" - update the extension from the latest release` };
 }

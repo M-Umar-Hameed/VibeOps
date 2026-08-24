@@ -1,4 +1,5 @@
 import { afterAll, expect, test } from "vitest";
+import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { PG_BASE } from "../src/runtime/slice.js";
@@ -54,14 +55,22 @@ test("a tracked database behind the migration folder is brought current", async 
   const sql = await freshDb();
   try {
     await ensureSharedSchema(sql); // full provision (tracked)
-    // Simulate one migration behind: drop 0021's column, then forget its
-    // bookkeeping row (created_at = 0021's journal `when`).
-    await sql`ALTER TABLE forge_runs DROP COLUMN proc_started_at`;
-    await sql`DELETE FROM drizzle.__drizzle_migrations WHERE created_at = ${1787164615564}`;
+    // Simulate one migration behind by undoing the journal's LAST entry: drizzle
+    // only replays migrations newer than the latest recorded row, so deleting
+    // any earlier row proves nothing (that is how this test rotted when 0022
+    // landed while it still hardcoded 0021). When a new migration lands, update
+    // BEHIND_COLUMN to a column that migration adds - the `when` comes from the
+    // journal so it never goes stale.
+    const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf-8"));
+    const last = journal.entries[journal.entries.length - 1];
+    const BEHIND_TABLE = "notes";      // 0022_memory_kinds
+    const BEHIND_COLUMN = "kind";      // 0022_memory_kinds
+    await sql`ALTER TABLE ${sql(BEHIND_TABLE)} DROP COLUMN ${sql(BEHIND_COLUMN)}`;
+    await sql`DELETE FROM drizzle.__drizzle_migrations WHERE created_at = ${last.when}`;
     await ensureSharedSchema(sql);
     const [col] = await sql`SELECT EXISTS (
       SELECT 1 FROM information_schema.columns
-      WHERE table_name = 'forge_runs' AND column_name = 'proc_started_at'
+      WHERE table_name = ${BEHIND_TABLE} AND column_name = ${BEHIND_COLUMN}
     ) AS ok`;
     expect(col.ok).toBe(true);
   } finally {

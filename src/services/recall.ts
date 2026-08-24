@@ -17,11 +17,24 @@ const MAX_DECISIONS = 5;
 const MAX_KNOWLEDGE = 5;
 export const RECALL_MAX_CHARS = 2400;
 
+// Twin of projects.ts's kebab() — not imported to avoid dragging the db
+// into recall.ts for one string helper.
+function kebab(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
 // The project name is a domain by default so project-scoped rules with a
 // matching domain fire without anyone tagging the prompt; #tokens opt in more.
+// Multi-word names ("Payments App") also emit a kebab slug, since no
+// one-word rule domain would ever match the raw lowercased phrase.
 export function domainsFor(query: string, projectName?: string | null): string[] {
   const out: string[] = [];
-  if (projectName) out.push(projectName.trim().toLowerCase());
+  if (projectName) {
+    const raw = projectName.trim().toLowerCase();
+    out.push(raw);
+    const slug = kebab(projectName);
+    if (slug && slug !== raw) out.push(slug);
+  }
   for (const m of query.matchAll(/#([a-z0-9][a-z0-9_-]*)/gi)) {
     const d = m[1].toLowerCase();
     if (!out.includes(d)) out.push(d);

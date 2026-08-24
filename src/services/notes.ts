@@ -4,16 +4,12 @@ import { notes, events, tickets, projects, embeddings, type Note } from "../db/s
 import { NotFoundError, StaleVersionError } from "./errors.js";
 import { insertNoteEmbedding } from "./knowledge.js";
 import { getEmbedder, type Embedder } from "../knowledge/embedder.js";
+export { noteIndexText } from "./note-index-text.js";
+import { noteIndexText } from "./note-index-text.js";
 
 export type NoteKind = "note" | "decision" | "rule" | "handoff";
 export type NoteSource = "manual" | "auto";
-
-// What the embedding index sees. A decision's rationale must be searchable
-// ("why did we pick X"), a rule's is not a thing. Used by saveNote and the
-// re-index sweep so both paths embed the same text.
-export function noteIndexText(n: { body: string; kind: string; rationale: string | null }): string {
-  return n.kind === "decision" && n.rationale ? `${n.body}\nRationale: ${n.rationale}` : n.body;
-}
+const NOTE_KINDS: readonly NoteKind[] = ["note", "decision", "rule", "handoff"];
 
 export async function saveNote(
   actorId: string,
@@ -74,18 +70,24 @@ export async function updateNote(
   actorId: string,
   id: string,
   expectedVersion: number,
-  patch: { title?: string; body?: string },
+  patch: { title?: string; body?: string; kind?: NoteKind; domain?: string | null; rationale?: string },
   embedder: Embedder = getEmbedder(),
 ): Promise<Note> {
+  if (patch.kind !== undefined && !NOTE_KINDS.includes(patch.kind)) {
+    throw new Error(`invalid note kind: ${patch.kind}; must be one of ${NOTE_KINDS.join(", ")}`);
+  }
+
   const note = await db.transaction(async (tx) => {
     const [current] = await tx.select().from(notes).where(eq(notes.id, id)).limit(1);
     if (!current || current.deletedAt) throw new NotFoundError(`note ${id}`);
     if (current.version !== expectedVersion) throw new StaleVersionError(expectedVersion, current.version);
 
-    const ALLOWED = ["title", "body"] as const;
-    const clean = Object.fromEntries(
+    const ALLOWED = ["title", "body", "kind", "domain", "rationale"] as const;
+    const clean: Record<string, unknown> = Object.fromEntries(
       Object.entries(patch).filter(([k, v]) => (ALLOWED as readonly string[]).includes(k) && v !== undefined),
     );
+    // Same normalisation as saveNote: trimmed/lowercased, null clears it.
+    if ("domain" in clean) clean.domain = clean.domain ? String(clean.domain).trim().toLowerCase() : null;
     if (Object.keys(clean).length === 0) return current;
     const changes: Record<string, { from: unknown; to: unknown }> = {};
     for (const [k, v] of Object.entries(clean)) {

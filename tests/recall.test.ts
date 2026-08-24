@@ -16,8 +16,12 @@ async function fixture() {
 }
 
 test("domainsFor lowercases the project name and picks up #domain tokens", () => {
-  expect(domainsFor("fix the #Billing flow", "Payments App")).toEqual(["payments app", "billing"]);
+  expect(domainsFor("fix the #Billing flow", "Payments App")).toEqual(["payments app", "payments-app", "billing"]);
   expect(domainsFor("plain question", null)).toEqual([]);
+});
+
+test("domainsFor also emits a kebab slug of a multi-word project name", () => {
+  expect(domainsFor("x", "Payments App")).toEqual(["payments app", "payments-app"]);
 });
 
 test("rules fire by domain match or null domain, never by similarity", async () => {

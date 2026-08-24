@@ -58,7 +58,11 @@ export async function buildServer(apiKey: string) {
     }));
 
   server.registerTool("update_note",
-    { inputSchema: { id: z.string(), expectedVersion: z.number(), title: z.string().optional(), body: z.string().optional() } },
+    { inputSchema: {
+      id: z.string(), expectedVersion: z.number(), title: z.string().optional(), body: z.string().optional(),
+      kind: z.enum(["note", "decision", "rule", "handoff"]).optional(),
+      domain: z.string().nullable().optional(), rationale: z.string().optional(),
+    } },
     async ({ id, expectedVersion, ...patch }) => ({
       content: [{ type: "text", text: JSON.stringify(await updateNote(actor.id, id, expectedVersion, patch)) }],
     }));

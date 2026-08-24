@@ -14,6 +14,7 @@ import { getEmbedder, type Embedder } from "../knowledge/embedder.js";
 import { redactSecrets } from "../forge/redact.js";
 import { logKnowledgeQuery } from "./usage.js";
 import { bump } from "../services/metrics.js";
+import { noteIndexText } from "./note-index-text.js";
 
 // vault sourceRef is either a legacy absolute path (global vault) or
 // "<projectId>:<relPosix>" for a project vault; map the latter back to disk.
@@ -173,11 +174,9 @@ export async function insertNoteEmbedding(noteId: string, body: string, embedder
       body: notes.body, kind: notes.kind, rationale: notes.rationale,
       deletedAt: notes.deletedAt, scope: notes.scope, refId: notes.refId,
     }).from(notes).where(eq(notes.id, noteId)).limit(1);
-    // Mirrors notes.ts's noteIndexText (not imported: notes.ts already imports
-    // this module, so a back-import would cycle) — decisions embed body+rationale,
-    // so staleness must compare against that, not the raw body column.
-    const currentIndexText = current && current.kind === "decision" && current.rationale
-      ? `${current.body}\nRationale: ${current.rationale}` : current?.body;
+    // Compare against noteIndexText's output (decisions embed body+rationale),
+    // not the raw body column, so a stale writer is detected correctly.
+    const currentIndexText = current ? noteIndexText(current) : undefined;
     if (!current || current.deletedAt || currentIndexText !== body) return false; // stale writer: no-op
     await tx.delete(embeddings)
       .where(and(eq(embeddings.sourceKind, "note"), eq(embeddings.sourceRef, noteId)));

@@ -92,6 +92,7 @@ async function runToolLoop(p: HttpTurnParams, messages: any[]): Promise<HttpTurn
           continue;
         }
         try {
+          p.onData(`[${name}] running...\n`);
           result = await tool.run(args);
         } catch (e) {
           result = `tool error: ${(e as Error).message}`;

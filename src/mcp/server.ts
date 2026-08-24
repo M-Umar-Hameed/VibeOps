@@ -10,6 +10,7 @@ import { fetchDocs } from "../knowledge/docs.js";
 import { exists, list, submitBatch, type ActionStep } from "../browser/channel.js";
 import { validateSteps } from "../browser/validate.js";
 import { hasActGrant, noActGrantReason } from "../browser/grants.js";
+import { humanizeBrowserError } from "../browser/refusal.js";
 import { runMarks, marksAsText } from "../browser/marks-run.js";
 export async function buildServer(apiKey: string) {
   const actor = await resolveActor(apiKey);
@@ -123,7 +124,7 @@ export async function buildServer(apiKey: string) {
     if (!result) return "browser batch timed out (no extension response in 30s)";
     const failed = result.results.find((r) => !r.ok);
     const s = failed ?? result.results[result.results.length - 1];
-    if (!s?.ok) return `browser refused: ${s?.error ?? "unknown error"}`;
+    if (!s?.ok) return `browser refused: ${humanizeBrowserError(s?.error)}`;
     return typeof s.value === "string" ? s.value : JSON.stringify(result.snapshot ?? s.value ?? "").slice(0, 4000);
   };
 
@@ -149,7 +150,7 @@ export async function buildServer(apiKey: string) {
       const { id, err } = resolveInstance(instanceId);
       if (!id) return { content: [{ type: "text", text: err! }] };
       const run = await runMarks(id);
-      if (!run.ok) return { content: [{ type: "text", text: `browser refused: ${run.error}` }] };
+      if (!run.ok) return { content: [{ type: "text", text: `browser refused: ${humanizeBrowserError(run.error)}` }] };
       const refs = run.marks.map((m) => `${m.mark}=${m.ref}`).join(" ");
       return { content: [{ type: "text", text: `${marksAsText(run.marks, run.imagePath)}
 
@@ -173,7 +174,7 @@ refs: ${refs}` }] };
       const result = await submitBatch(id, id, v.steps as ActionStep[], { grant: "act", targetOrigin });
       if (!result) return { content: [{ type: "text", text: "browser batch timed out (no extension response in 30s)" }] };
       const failed = result.results.find((r) => !r.ok);
-      if (failed) return { content: [{ type: "text", text: `browser refused: ${failed.error ?? "unknown error"}` }] };
+      if (failed) return { content: [{ type: "text", text: `browser refused: ${humanizeBrowserError(failed.error)}` }] };
       return { content: [{ type: "text", text: JSON.stringify(result.snapshot ?? "").slice(0, 4000) }] };
     });
 

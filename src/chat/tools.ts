@@ -5,6 +5,7 @@ import { listTickets } from "../services/history.js";
 import { exists, list, submitBatch, type ActionStep } from "../browser/channel.js";
 import { validateSteps } from "../browser/validate.js";
 import { hasActGrant, noActGrantReason } from "../browser/grants.js";
+import { humanizeBrowserError } from "../browser/refusal.js";
 import { runMarks, marksAsText } from "../browser/marks-run.js";
 import { saveNote } from "../services/notes.js";
 import type { Actor } from "../db/schema.js";
@@ -48,14 +49,14 @@ async function browserStep(
   const result = await submitBatch(instanceId, instanceId, steps);
   if (!result) {
     rec(name, { instanceId }, "timeout");
-    return text("browser batch timed out (no extension response in 30s)");
+    return text(`browser refused: ${humanizeBrowserError("batch timed out")}`);
   }
   // First failure wins; otherwise the LAST step is the answer (switchTab then
   // tabs returns the list after the switch).
   const step = result.results.find((r) => !r.ok) ?? result.results[result.results.length - 1];
   if (!step?.ok) {
     rec(name, { instanceId }, `refused: ${step?.error ?? "unknown"}`);
-    return text(`browser refused: ${step?.error ?? "unknown error"}`);
+    return text(`browser refused: ${humanizeBrowserError(step?.error)}`);
   }
   rec(name, { instanceId }, "ok");
   const val = typeof step.value === "string"
@@ -153,7 +154,7 @@ export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: stri
         const run = await runMarks(instanceId);
         if (!run.ok) {
           rec("browser_marks", { instanceId }, `failed: ${run.error}`);
-          return text(`browser refused: ${run.error}`);
+          return text(`browser refused: ${humanizeBrowserError(run.error)}`);
         }
         rec("browser_marks", { instanceId }, `ok: ${run.marks.length} marks`);
         // Mark -> ref mapping is returned so the caller can act; the ref it acts
@@ -188,12 +189,12 @@ export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: stri
         const result = await submitBatch(instanceId, instanceId, v.steps as ActionStep[], { grant: "act", targetOrigin });
         if (!result) {
           rec("browser_act", { instanceId, targetOrigin }, "timeout");
-          return text("browser batch timed out (no extension response in 30s)");
+          return text(`browser refused: ${humanizeBrowserError("batch timed out")}`);
         }
         const failed = result.results.find((r) => !r.ok);
         if (failed) {
           rec("browser_act", { instanceId, targetOrigin }, `refused: ${failed.error ?? "unknown"}`);
-          return text(`browser refused: ${failed.error ?? "unknown error"}`);
+          return text(`browser refused: ${humanizeBrowserError(failed.error)}`);
         }
         rec("browser_act", { instanceId, targetOrigin }, "ok");
         return text(JSON.stringify(result.snapshot ?? "").slice(0, 4000));

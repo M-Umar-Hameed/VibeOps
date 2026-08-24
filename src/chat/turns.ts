@@ -17,6 +17,7 @@ import { recallBlock } from "../services/recall.js";
 import { fenceUntrusted, UNTRUSTED_CLAUSE } from "../relay/prompts.js";
 import { captureMemory } from "../services/memory-capture.js";
 import { HANDOFF_RE, saveHandoff } from "../services/handoff.js";
+import { drainRefusals } from "../browser/pending-grants.js";
 
 // Composed onto the chat voice clause for the tool-capable SDK lane only. States
 // what the connected tools can do and the act-grant rule, so the agent stops
@@ -28,7 +29,7 @@ Your tools connect you to this app's own surfaces. With a linked browser extensi
 
 Acting on a page, navigating, and opening a new tab all require an "act" grant for the target origin, and for navigation or a new tab the grant must cover the DESTINATION origin. Whether a grant exists is decided server-side, not by you.
 
-If an action is refused because a grant is missing, the refusal states the exact setting to add. Relay that refusal to the owner word for word; do not paraphrase it or substitute a limitation of your own. When you are unsure whether an action will be permitted, attempt it and report the actual result or refusal rather than declining up front.
+If an action is refused because a grant is missing, the refusal states the exact setting to add. Relay that refusal to the owner word for word; do not paraphrase it or substitute a limitation of your own. When you are unsure whether an action will be permitted, attempt it and report the actual result or refusal rather than declining up front. After a grant refusal the owner sees Allow once / Always allow / Deny buttons under your reply; tell them to use those buttons rather than editing settings by hand.
 
 Talk to the owner in plain language: what you did, what happened, what they can do next. Never explain protocol internals - verbs, step objects, dispatchers, builds, JSON - unless they ask. When a tool result tells the owner to change a Chrome setting or update the extension, pass that instruction on as written and stop there.
 `;
@@ -193,8 +194,21 @@ export async function runTurn(
       const transcript = rollTranscript(await store.getMessages(sessionId));
       const sys = agentDef.mcp ? `${sysBase}${CHAT_CAPABILITIES}` : `${sysBase}${NO_TOOLS_CLAUSE}`;
       const prompt = sys ? `${sys}\n\n${transcript}` : transcript;
+      const turnStart = Date.now();
       const out = await runAgent(cliAgent, prompt, config!.workdir, onData);
       res = { ok: out.ok, text: out.output };
+
+      // The CLI agent reaches MCP tools through its own client, so runAgent never
+      // sees grant refusals the server issued. Drain what it recorded for this
+      // actor during the turn and surface it the same way the SDK lane's
+      // buildChatTools does, so the owner gets the Allow prompt here too.
+      // De-dupe by origin so retries within one turn produce a single prompt.
+      const seen = new Set<string>();
+      for (const r of drainRefusals(actor.id, turnStart)) {
+        if (seen.has(r.origin)) continue;
+        seen.add(r.origin);
+        calls.push({ name: "browser_act", input: { targetOrigin: r.origin }, summary: `refused: ${r.reason}`, grantOrigin: r.origin });
+      }
     }
 
     await store.appendMessage({

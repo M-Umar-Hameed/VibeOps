@@ -41,6 +41,7 @@ vi.mock("../src/knowledge/embedder.js", () => ({
 }));
 
 import { runTurn, CHAT_CAPABILITIES, NO_TOOLS_CLAUSE } from "../src/chat/turns.js";
+import { recordRefusal } from "../src/browser/pending-grants.js";
 
 const fakeActor: any = { id: "a1", name: "tester", role: "admin", kind: "human" };
 
@@ -84,5 +85,24 @@ describe("chat turns CLI lane prompt capability composition", () => {
     await runTurn(fakeActor, "s4", "hello world", "claude-cli::default");
     const promptArg = runAgentMock.mock.calls[0][1];
     expect(promptArg).not.toContain(NO_TOOLS_CLAUSE);
+  });
+
+  it("drains a grant refusal recorded mid-turn into the assistant message's toolCalls", async () => {
+    getSessionMock.mockResolvedValue({ id: "s5", model: "claude-cli::default", projectId: null });
+    // The fake CLI agent fixture cannot call back into the MCP server, so
+    // simulate the server recording a refusal while the turn is in flight:
+    // let runAgent take longer than the recordRefusal delay below.
+    runAgentMock.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve({ ok: true, output: "agent reply" }), 150)),
+    );
+    const turnPromise = runTurn(fakeActor, "s5", "hello world", "claude-cli::default");
+    await new Promise((r) => setTimeout(r, 50));
+    recordRefusal(fakeActor.id, "https://x.test", "reason");
+    await turnPromise;
+
+    const saved = appendMessageMock.mock.calls.find((c: any[]) => c[0].role === "assistant")?.[0];
+    expect(saved.toolCalls).toEqual([
+      { name: "browser_act", input: { targetOrigin: "https://x.test" }, summary: "refused: reason", grantOrigin: "https://x.test" },
+    ]);
   });
 });

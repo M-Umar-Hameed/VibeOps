@@ -9,7 +9,8 @@ function formatKnowledge(knowledge: KnowledgeItem[]): string {
 }
 
 export function fenceUntrusted(label: string, text: string): string {
-  return `<UNTRUSTED label="${label}">\n${text}\n</UNTRUSTED>`;
+  const safe = text.replace(/<\s*\/\s*UNTRUSTED/gi, "<\\/UNTRUSTED");
+  return `<UNTRUSTED label="${label}">\n${safe}\n</UNTRUSTED>`;
 }
 
 export const UNTRUSTED_CLAUSE =

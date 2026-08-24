@@ -300,13 +300,13 @@ test("a null content final message after a tool round also falls back to the pla
   expect(res.text).toBe("[no text reply from the model; its tool calls are shown above]");
 });
 
-test("an empty final message with NO prior tool round returns empty text unchanged", async () => {
+test("an empty final message with NO prior tool round gets the empty-reply placeholder", async () => {
   handler = (_req, res) => json(res, 200, { choices: [{ message: { role: "assistant", content: "" } }] });
   const res = await runHttpTurn({
     baseUrl: BASE, apiKey: "k", model: "m", system: "", transcript: "user: hi",
     onData: () => {}, tools: [snapshotTool],
   });
-  expect(res).toEqual({ ok: true, text: "" });
+  expect(res).toEqual({ ok: true, text: "[the model returned an empty reply]" });
 });
 
 test("a completed streaming turn with zero characters falls back to the readable placeholder", async () => {
@@ -342,4 +342,45 @@ test("the tool loop streams a progress line per tool call while it grinds", asyn
   // Progress line first, final text last: the user watches the loop instead of a blank Working pane.
   expect(stream).toContain("[browser_snapshot]");
   expect(stream.indexOf("[browser_snapshot]")).toBeLessThan(stream.indexOf("done"));
+});
+
+test("a zero-round empty reply stores a placeholder, never a blank message", async () => {
+  handler = (_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json", Connection: "close" });
+    res.end(JSON.stringify({ choices: [{ message: { content: "" } }] }));
+  };
+  const res = await runHttpTurn({
+    baseUrl: BASE, apiKey: "k", model: "m", system: "", transcript: "user: hi", onData: () => {},
+    tools: [{ name: "t", description: "d", parameters: { type: "object", properties: {} }, run: async () => "x" }],
+  });
+  expect(res.ok).toBe(true);
+  expect(res.text).toBe("[the model returned an empty reply]");
+});
+
+test("a 200 carrying only an error object is surfaced, not stored as blank", async () => {
+  handler = (_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json", Connection: "close" });
+    res.end(JSON.stringify({ error: { message: "Provider returned error", code: 429 } }));
+  };
+  const got: string[] = [];
+  const res = await runHttpTurn({
+    baseUrl: BASE, apiKey: "k", model: "m", system: "", transcript: "user: hi", onData: (s) => got.push(s),
+    tools: [{ name: "t", description: "d", parameters: { type: "object", properties: {} }, run: async () => "x" }],
+  });
+  expect(res.ok).toBe(false);
+  expect(res.text).toContain("Provider returned error");
+  expect(got.join("")).toContain("Provider returned error");
+});
+
+test("the loop announces each provider request so a slow first call is visible", async () => {
+  handler = (_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json", Connection: "close" });
+    res.end(JSON.stringify({ choices: [{ message: { content: "hi" } }] }));
+  };
+  const got: string[] = [];
+  await runHttpTurn({
+    baseUrl: BASE, apiKey: "k", model: "m", system: "", transcript: "user: hi", onData: (s) => got.push(s),
+    tools: [{ name: "t", description: "d", parameters: { type: "object", properties: {} }, run: async () => "x" }],
+  });
+  expect(got[0]).toContain("[model] thinking");
 });

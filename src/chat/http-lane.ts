@@ -44,6 +44,7 @@ async function runToolLoop(p: HttpTurnParams, messages: any[]): Promise<HttpTurn
   let ranToolRound = false;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    p.onData("[model] thinking...\n"); // every request, so a slow first call is visible too
     let res: Response;
     try {
       res = await fetch(`${p.baseUrl}/chat/completions`, {
@@ -65,11 +66,21 @@ async function runToolLoop(p: HttpTurnParams, messages: any[]): Promise<HttpTurn
     }
 
     const data = (await res.json()) as any;
+    // Some providers answer 200 with an error object and no choices (rate
+    // limits, upstream failures). Surface it instead of storing a blank reply.
+    if (data?.error && !data?.choices?.length) {
+      const detail = typeof data.error === "string" ? data.error : data.error.message ?? JSON.stringify(data.error);
+      const text = `[chat: provider returned an error: ${detail}]`;
+      p.onData(text);
+      return { ok: false, text };
+    }
     const msg = data?.choices?.[0]?.message ?? {};
     const toolCalls = msg.tool_calls;
     if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
       const text = typeof msg.content === "string" ? msg.content : "";
-      const final = !text && ranToolRound ? NO_TEXT_REPLY : text;
+      // Never store a blank reply: with tool rounds the trace explains it,
+      // without them the placeholder says the model sent nothing.
+      const final = text || (ranToolRound ? NO_TEXT_REPLY : EMPTY_STREAM_REPLY);
       p.onData(final);
       return { ok: true, text: final };
     }

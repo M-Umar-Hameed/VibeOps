@@ -11,6 +11,7 @@ import { exists, list, submitBatch, type ActionStep } from "../browser/channel.j
 import { validateSteps } from "../browser/validate.js";
 import { hasActGrant, noActGrantReason } from "../browser/grants.js";
 import { humanizeBrowserError } from "../browser/refusal.js";
+import { recordRefusal } from "../browser/pending-grants.js";
 import { runMarks, marksAsText } from "../browser/marks-run.js";
 export async function buildServer(apiKey: string) {
   const actor = await resolveActor(apiKey);
@@ -169,7 +170,9 @@ refs: ${refs}` }] };
       // server-side against browserGrants; the model-supplied targetOrigin is the
       // exact value checked and the value granted, never widened. MUTATION-TEST TARGET.
       if (!(await hasActGrant(targetOrigin))) {
-        return { content: [{ type: "text", text: `browser refused: ${noActGrantReason(targetOrigin)}` }] };
+        const reason = noActGrantReason(targetOrigin);
+        recordRefusal(actor.id, targetOrigin, reason);
+        return { content: [{ type: "text", text: `browser refused: ${reason}` }] };
       }
       const result = await submitBatch(id, id, v.steps as ActionStep[], { grant: "act", targetOrigin });
       if (!result) return { content: [{ type: "text", text: "browser batch timed out (no extension response in 30s)" }] };

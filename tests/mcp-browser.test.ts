@@ -18,17 +18,18 @@ vi.mock("../src/browser/grants.js", async (orig) => ({
 import { createActor } from "../src/services/actors.js";
 import { buildServer } from "../src/mcp/server.js";
 import { noActGrantReason } from "../src/browser/grants.js";
+import { drainRefusals } from "../src/browser/pending-grants.js";
 import { buildChatTools, type ToolCall } from "../src/chat/tools.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 async function connectedClient() {
-  const { apiKey } = await createActor({ name: `mcpbrowser-${Math.random()}`, kind: "agent" });
+  const { actor, apiKey } = await createActor({ name: `mcpbrowser-${Math.random()}`, kind: "agent" });
   const server = await buildServer(apiKey);
   const [c, s] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "t", version: "0.0.0" });
   await Promise.all([server.connect(s), client.connect(c)]);
-  return { client };
+  return { client, actor };
 }
 
 beforeEach(() => { submitBatch.mockReset(); hasActGrant.mockReset(); });
@@ -58,6 +59,20 @@ describe("MCP browser verbs", () => {
     const act = buildChatTools({ id: "a1", name: "t", kind: "human", role: "admin" } as any, calls).find((t: any) => t.name === "browser_act") as any;
     const chatRes = await act.handler({ instanceId: "i1", targetOrigin: "https://github.com", steps: [{ verb: "click", ref: "ref1" }] }, {});
     expect(chatRes.content[0].text).toBe(text);
+    await client.close();
+  });
+
+  it("records the refusal in the pending-grants ledger for the CLI lane to drain", async () => {
+    hasActGrant.mockResolvedValue(false);
+    const { client, actor } = await connectedClient();
+    await client.callTool({
+      name: "browser_act",
+      arguments: { instanceId: "i1", targetOrigin: "https://github.com", steps: [{ verb: "click", ref: "ref1" }] },
+    });
+    const drained = drainRefusals(actor.id, 0);
+    expect(drained).toHaveLength(1);
+    expect(drained[0].origin).toBe("https://github.com");
+    expect(drained[0].reason).toBe(noActGrantReason("https://github.com"));
     await client.close();
   });
 

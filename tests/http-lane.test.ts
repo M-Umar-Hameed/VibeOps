@@ -153,7 +153,7 @@ test("tool round then answer: sends the tool result back and returns the final t
     onData: (s) => got.push(s), tools: [snapshotTool],
   });
   expect(res).toEqual({ ok: true, text: "done" });
-  expect(got.join("")).toBe("done");
+  expect(got.join("").endsWith("done")).toBe(true); // progress lines may precede
   const toolMsg = seenSecondBody.messages.find((m: any) => m.role === "tool");
   expect(toolMsg).toBeDefined();
   expect(toolMsg.content).toBe("SNAP");
@@ -282,7 +282,7 @@ test("an empty final message after a tool round falls back to a readable placeho
     onData: (s) => got.push(s), tools: [snapshotTool],
   });
   expect(res).toEqual({ ok: true, text: "[no text reply from the model; its tool calls are shown above]" });
-  expect(got.join("")).toBe("[no text reply from the model; its tool calls are shown above]");
+  expect(got.join("").endsWith("[no text reply from the model; its tool calls are shown above]")).toBe(true); // progress lines may precede
 });
 
 test("a null content final message after a tool round also falls back to the placeholder", async () => {
@@ -320,4 +320,26 @@ test("a completed streaming turn with zero characters falls back to the readable
   // no "shown above" to point to, unlike the tool-loop's empty-reply fallback.
   expect(res).toEqual({ ok: true, text: "[the model returned an empty reply]" });
   expect(got.join("")).toBe("[the model returned an empty reply]");
+});
+
+test("the tool loop streams a progress line per tool call while it grinds", async () => {
+  handler = (_req, res, _body) => {
+    res.writeHead(200, { "Content-Type": "application/json", Connection: "close" });
+    if (requestCount === 1) {
+      res.end(JSON.stringify({ choices: [{ message: { tool_calls: [{ id: "c1", type: "function", function: { name: "browser_snapshot", arguments: "{}" } }] } }] }));
+    } else {
+      res.end(JSON.stringify({ choices: [{ message: { content: "done" } }] }));
+    }
+  };
+  const got: string[] = [];
+  const res = await runHttpTurn({
+    baseUrl: BASE, apiKey: "k", model: "m", system: "", transcript: "user: hi",
+    onData: (s) => got.push(s),
+    tools: [{ name: "browser_snapshot", description: "d", parameters: { type: "object", properties: {} }, run: async () => "SNAP RESULT" }],
+  });
+  expect(res).toEqual({ ok: true, text: "done" });
+  const stream = got.join("");
+  // Progress line first, final text last: the user watches the loop instead of a blank Working pane.
+  expect(stream).toContain("[browser_snapshot]");
+  expect(stream.indexOf("[browser_snapshot]")).toBeLessThan(stream.indexOf("done"));
 });

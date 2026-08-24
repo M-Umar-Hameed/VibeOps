@@ -97,6 +97,11 @@ async function runToolLoop(p: HttpTurnParams, messages: any[]): Promise<HttpTurn
           result = `tool error: ${(e as Error).message}`;
         }
       }
+      // Stream a progress line per call: a tool loop can grind for minutes
+      // (browser batches wait up to 45s), and a silent Working pane reads as a
+      // hang. The persisted final answer replaces these lines after the turn.
+      const summary = result.replace(/\s+/g, " ").slice(0, 120);
+      p.onData(`[${call.function?.name ?? "tool"}] ${summary}\n`);
       messages.push({ role: "tool", tool_call_id: call.id ?? "", content: result });
     }
   }

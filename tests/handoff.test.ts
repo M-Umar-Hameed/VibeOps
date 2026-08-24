@@ -49,9 +49,13 @@ describe("*handoff", () => {
     await runTurn(actor, sess.id, `*handoff ${marker} at the alarm fix`);
 
     const noteMarker = uniq("finding");
-    await saveNote(actor.id, { body: `${noteMarker} something useful`, scope: "project", refId: project.id });
+    const noteBody = `${noteMarker} something useful`;
+    await saveNote(actor.id, { body: noteBody, scope: "project", refId: project.id });
 
-    const prime = await (await app.request(`/prime?q=anything&project=${project.id}`, { headers: { Authorization: `Bearer ${apiKey}` } })).text();
+    // Query with the note's exact indexed text: FakeEmbedder has no semantic
+    // locality, so only a distance-0 exact match ranks deterministically on the
+    // shared table (same reasoning as the recall similarity tests).
+    const prime = await (await app.request(`/prime?q=${encodeURIComponent(noteBody)}&project=${project.id}`, { headers: { Authorization: `Bearer ${apiKey}` } })).text();
     expect(prime).toContain(`<UNTRUSTED label="handoff">`);
     expect(prime).toContain(`<UNTRUSTED label="knowledge">`);
     expect(prime).toContain(noteMarker);

@@ -42,7 +42,7 @@ test("changing a role default persists via PATCH", async () => {
   );
 });
 
-test("a chat-only (http) agent renders no role checkboxes and the chat-only note", async () => {
+test("a chat-only (http) agent shows exactly the plan and review role checkboxes and the updated note", async () => {
   apiFetch.mockReset().mockImplementation((path: string, opts?: any) => {
     if (path === "/forge/agents" && !opts) {
       return Promise.resolve([{ name: "openrouter", type: "http", roles: [], models: [] }]);
@@ -54,13 +54,17 @@ test("a chat-only (http) agent renders no role checkboxes and the chat-only note
   });
   render(wrap(<AgentsConfigCard />));
   await waitFor(() => screen.getByText("openrouter"));
-  expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+  const checkboxes = screen.getAllByRole("checkbox");
+  expect(checkboxes).toHaveLength(2);
+  expect(screen.getByRole("checkbox", { name: "plan" })).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "review" })).toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: "work" })).not.toBeInTheDocument();
   expect(screen.getByText(
-    "Chat-only lane: models here become the openrouter choices in chat. Leave empty to offer the whole catalog.",
+    "Chat and text-only pipeline stages (plan, review). The work stage needs an execution harness, so it stays off for this lane.",
   )).toBeInTheDocument();
 });
 
-test("saving a chat-only agent PATCHes roles: [] and its models", async () => {
+test("saving a chat-only agent with plan ticked PATCHes roles: ['plan'] and its models", async () => {
   const patchCalls: any[] = [];
   apiFetch.mockReset().mockImplementation((path: string, opts?: any) => {
     if (path === "/forge/agents" && !opts) {
@@ -80,10 +84,11 @@ test("saving a chat-only agent PATCHes roles: [] and its models", async () => {
   fireEvent.click(screen.getByText("Add model"));
   const nameInput = screen.getByPlaceholderText("Type to search the catalog, or enter any model id");
   fireEvent.change(nameInput, { target: { value: "anthropic/claude-3.5-sonnet" } });
+  fireEvent.click(screen.getAllByRole("checkbox")[0]); // "plan"
   fireEvent.click(screen.getByText("Save"));
   await waitFor(() => expect(patchCalls).toHaveLength(1));
   expect(patchCalls[0]).toEqual({
-    roles: [],
+    roles: ["plan"],
     models: [{ name: "anthropic/claude-3.5-sonnet", tier: "cheap", quality: 3 }],
   });
 });

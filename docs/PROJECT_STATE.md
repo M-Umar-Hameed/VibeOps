@@ -30,7 +30,7 @@ Phases 1 to 4 were the original plan (ticket engine, knowledge/RAG, desktop app,
 
 **Forge pipeline.** Plan -> sandboxed work in a git worktree -> checks (typecheck, tests) -> protected-path policy -> adversarial review -> human promote. Sandbox-escape sentinel restores any bytes written outside the worktree; deps-leak guard; mutation gate; file-set gate (files outside the plan's declared set block automatically); budget caps; run survival across sidecar restarts (pid plus process start time identity; reattach on boot); stall sweep; review chunking for oversized diffs; lessons clause on plan prompts (A/B-tested, deliberately absent on work prompts).
 
-**Agent relay.** `~/.vibeops/relay.json` declares lanes: `cli` (any command with `{prompt}`/`{model}` placeholders), `sdk` (Claude Agent SDK, tool-capable), and since 2026-08-22 `http` (OpenAI-compatible endpoints, chat-only). Live lanes today: claude, claude-sdk, agy (Gemini), kimi, openrouter; codex declared but not installed. Model router with verification levels (parsed model banners where the CLI prints one, best-effort otherwise). Agent doctor checks binaries and sign-in state.
+**Agent relay.** `~/.vibeops/relay.json` declares lanes: `cli` (any command with `{prompt}`/`{model}` placeholders), `sdk` (Claude Agent SDK, tool-capable), and since 2026-08-22 `http` (OpenAI-compatible endpoints, chat plus the plan/review pipeline stages; work is excluded). Live lanes today: claude, claude-sdk, agy (Gemini), kimi, openrouter; codex declared but not installed. Model router with verification levels (parsed model banners where the CLI prints one, best-effort otherwise). Agent doctor checks binaries and sign-in state.
 
 **Council.** Multi-persona intake that interrogates an idea before it becomes a ticket, with awaiting-answers rounds and a chairman spec.
 
@@ -62,7 +62,7 @@ Known limits worth stating plainly:
 
 - Auto-captured rules are written by a model and read by shell-capable agents with no review surface yet. The extractor input is fenced and bounded, but the trust model is "member-level can write memory".
 - The code-graph half of basemode (tree-sitter map injected before a file is touched) was deferred on purpose; only the memory half is built.
-- OpenRouter is chat-only: no tools, no pipeline roles. Pipeline roles need an agent harness that can edit files, which a chat-completions endpoint cannot.
+- OpenRouter can run the plan and review pipeline stages (text-in/text-out, served by a chat completion), but not work: that needs an agent harness that can edit files, which a chat-completions endpoint cannot provide.
 - Full desktop control (S2-B style) was rejected by the owner; the browser extension is the automation surface.
 - Docker-only tests cannot run in a Docker-less session; a green embedded lane plus the fixed failure set is the accepted signal.
 

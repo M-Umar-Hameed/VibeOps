@@ -354,7 +354,7 @@ export function AIModelsTab() {
             <div className="ml-2 pt-2">
               <h3 className="text-xs font-code-sm uppercase tracking-widest text-on-surface-variant/50">Chat (used by VibeOps)</h3>
               <p className="text-xs text-on-surface-variant/70 mt-1 max-w-3xl">
-                VibeOps chat calls OpenRouter directly with this key. Pick the openrouter lane in the chat model picker and its model catalog loads automatically. Chat-only: OpenRouter models cannot run pipeline stages or tools.
+                VibeOps chat calls OpenRouter directly with this key. Pick the openrouter lane in the chat model picker and its model catalog loads automatically. Chat, tools on tool-capable models, and the plan/review pipeline stages. The work stage still needs an agent CLI.
               </p>
             </div>
             <ProviderCard

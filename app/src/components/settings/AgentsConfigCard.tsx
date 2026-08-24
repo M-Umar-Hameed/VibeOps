@@ -99,7 +99,7 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
   };
 
   const handleSave = () => {
-    patchMutation.mutate(chatOnly ? { roles: [], models } : { roles: Array.from(roles), models });
+    patchMutation.mutate({ roles: Array.from(roles), models });
   };
 
   return (
@@ -116,8 +116,24 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
       </div>
 
       {chatOnly ? (
-        <div className="mb-4 text-xs text-on-surface-variant">
-          Chat-only lane: models here become the openrouter choices in chat. Leave empty to offer the whole catalog.
+        <div className="mb-4">
+          <div className="text-xs text-on-surface-variant mb-2">
+            Chat and text-only pipeline stages (plan, review). The work stage needs an execution harness, so it stays off for this lane.
+          </div>
+          <label className="text-xs text-on-surface-variant font-bold mb-2 block">Roles</label>
+          <div className="flex gap-4">
+            {["plan", "review"].map(r => (
+              <label key={r} className="flex items-center gap-2 cursor-pointer text-sm text-on-surface">
+                <input
+                  type="checkbox"
+                  checked={roles.has(r)}
+                  onChange={() => toggleRole(r)}
+                  className="rounded border-white/20 bg-surface-container-highest"
+                />
+                {r}
+              </label>
+            ))}
+          </div>
         </div>
       ) : (
         <div className="mb-4">

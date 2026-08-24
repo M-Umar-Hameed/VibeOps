@@ -64,6 +64,8 @@ export async function addActGrant(origin: string): Promise<void> {
 }
 
 export function noActGrantReason(origin: string): string {
-  return `no act grant for ${origin} — add {"origin":"${origin}","mode":"act"} to browserGrants in Settings > Local Node`;
+  // Read by humans in the chat transcript and by agents relaying it verbatim,
+  // so it names both remedies: the inline prompt and the settings switch.
+  return `Browser actions on ${origin} are not allowed yet. Approve the Allow prompt in this chat, or enable it under Settings > Local Node > Browser grants (origin ${origin}, mode act).`;
 }
 

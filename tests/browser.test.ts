@@ -385,7 +385,7 @@ test("clickAt requires the same act grant as any other mutating verb", async () 
   });
   expect(res.status).toBe(403);
   const body = await res.json() as { error: string };
-  expect(body.error).toContain("no act grant for https://example.com");
+  expect(body.error).toContain("not allowed yet");
 });
 
 test("a stale instance is refused batches outright, not offered them to time out", async () => {

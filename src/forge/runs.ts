@@ -414,7 +414,9 @@ export async function startPipeline(
     work: { ...getAgent(config, workPick.agent, "work") },
     review: { ...getAgent(config, reviewPick.agent, "review") },
   };
-  const resolveIfCli = (a: RelayAgent, m?: string) => a.type === "sdk" ? (a.cmd ?? []) : resolveCmd(a, m);
+  // sdk/http agents carry no cmd to substitute a model into -- sdk gets its model
+  // via the dispatch model param below, http via runHttpAgent's model argument.
+  const resolveIfCli = (a: RelayAgent, m?: string) => (a.type === "sdk" || a.type === "http") ? (a.cmd ?? []) : resolveCmd(a, m);
   agents.plan.cmd = resolveIfCli(agents.plan, planPick.model);
   agents.work.cmd = resolveIfCli(agents.work, workPick.model);
   agents.review.cmd = resolveIfCli(agents.review, reviewPick.model);
@@ -560,7 +562,7 @@ async function pipeline(
     const res = await track(actorId, ticket.id, "plan", run.agents.plan, planPrompt.length, () => runAgent(
       agents.plan, planPrompt, workdir, onData,
       (child) => recordSpawn(run, child),
-      undefined, undefined, run.logPath,
+      undefined, modelOf(run.agents.plan), run.logPath,
     ));
     run.child = undefined;
     if (run.stopped) return settle(run, "stopped");
@@ -807,7 +809,7 @@ async function reviewStage(
       reviewPrompt,
       workdir, onData,
       (child) => recordSpawn(run, child),
-      undefined, undefined, run.logPath,
+      undefined, modelOf(run.agents.review), run.logPath,
     ));
     reviewResults.push(res);
   }

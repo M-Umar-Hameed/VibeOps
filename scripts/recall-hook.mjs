@@ -6,6 +6,9 @@ import { join } from "node:path";
 // we print is injected as context. Must never break a session: every failure
 // prints nothing and exits 0, same contract as prime.mjs.
 try {
+  // On a TTY there is no piped prompt to read, so reading stdin would block
+  // forever; without a prompt there is nothing to recall, so exit quietly.
+  if (process.stdin.isTTY) process.exit(0);
   const credsPath = process.env.VIBEOPS_CREDENTIALS ?? join(homedir(), ".vibeops", "credentials.json");
   const { baseUrl, apiKey } = JSON.parse(readFileSync(credsPath, "utf-8"));
   const input = JSON.parse(readFileSync(0, "utf-8"));

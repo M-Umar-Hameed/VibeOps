@@ -19,9 +19,9 @@ const ROOT = resolve(import.meta.dirname, "..");
 // spawnSync blocks the parent's event loop, so it cannot be used to invoke a
 // script that fetches back into an http.Server running in this same process
 // (the server would never get to accept the request). Async spawn instead.
-function runHook(env: NodeJS.ProcessEnv, input: string): Promise<{ status: number | null; stdout: string }> {
+function runHook(env: NodeJS.ProcessEnv, input: string, script = "scripts/recall-hook.mjs"): Promise<{ status: number | null; stdout: string }> {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(process.execPath, [join(ROOT, "scripts/recall-hook.mjs")], { env });
+    const child = spawn(process.execPath, [join(ROOT, script)], { env });
     let stdout = "";
     child.stdout.on("data", (d) => { stdout += d; });
     child.on("error", reject);
@@ -87,6 +87,41 @@ test("recall-hook.mjs prints the server's block for the prompt on stdin, sends c
   }
 });
 
+test("prime.mjs prints the server's block, sends cwd and q, and nothing on empty stdin or a dead server", async () => {
+  let lastUrl = "";
+  const srv = createServer((req, res) => {
+    lastUrl = req.url!;
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("PRIME BLOCK");
+  });
+  await new Promise<void>((resolve) => srv.listen(0, "127.0.0.1", resolve));
+  const port = (srv.address() as { port: number }).port;
+  const dir = mkdtempSync(join(tmpdir(), "hook-"));
+  const creds = join(dir, "credentials.json");
+  writeFileSync(creds, JSON.stringify({ baseUrl: `http://127.0.0.1:${port}`, apiKey: "k" }));
+  try {
+    const ok = await runHook({ ...process.env, VIBEOPS_CREDENTIALS: creds }, JSON.stringify({ cwd: "E:/some/dir" }), "scripts/prime.mjs");
+    expect(ok.status).toBe(0);
+    expect(ok.stdout).toBe("PRIME BLOCK");
+    const okParams = new URL(lastUrl, "http://x").searchParams;
+    expect(okParams.get("cwd")).toBe("E:/some/dir");
+    expect(okParams.has("q")).toBe(true);
+
+    const empty = await runHook({ ...process.env, VIBEOPS_CREDENTIALS: creds }, "", "scripts/prime.mjs");
+    expect(empty.status).toBe(0);
+    expect(empty.stdout).toBe("PRIME BLOCK");
+    expect(new URL(lastUrl, "http://x").searchParams.has("cwd")).toBe(false);
+
+    writeFileSync(creds, JSON.stringify({ baseUrl: "http://127.0.0.1:1", apiKey: "k" }));
+    const dead = await runHook({ ...process.env, VIBEOPS_CREDENTIALS: creds }, JSON.stringify({ cwd: "E:/x" }), "scripts/prime.mjs");
+    expect(dead.status).toBe(0);
+    expect(dead.stdout).toBe("");
+  } finally {
+    srv.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("GET /recall resolves the project from cwd against repoPath; explicit ?project= wins", async () => {
   const { apiKey, actor } = await createActor({ name: uniq("recall-cwd"), kind: "agent" });
   const project = await createProject({ key: uniq("k"), name: uniq("CwdProj") });
@@ -106,6 +141,20 @@ test("GET /recall resolves the project from cwd against repoPath; explicit ?proj
     { headers: { Authorization: `Bearer ${apiKey}` } },
   );
   expect(await outOfScope.text()).not.toContain(rule);
+});
+
+test("GET /recall matches cwd against repoPath through repeated path separators", async () => {
+  const { apiKey, actor } = await createActor({ name: uniq("recall-sep"), kind: "agent" });
+  const project = await createProject({ key: uniq("k"), name: uniq("SepProj") });
+  await db.update(projects).set({ repoPath: "E:/Github/tickets" }).where(eq(projects.id, project.id));
+  const rule = `${uniq("rule")} separator-normalised rule`;
+  await saveNote(actor.id, { body: rule, scope: "project", refId: project.id, kind: "rule" });
+
+  const res = await app.request(
+    `/recall?q=anything&cwd=${encodeURIComponent("E:\\Github\\\\tickets\\sub")}`,
+    { headers: { Authorization: `Bearer ${apiKey}` } },
+  );
+  expect(await res.text()).toContain(rule);
 });
 
 test("install-hooks.mjs adds both hooks once, backs up, and keeps unrelated hooks", () => {

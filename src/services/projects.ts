@@ -37,7 +37,7 @@ function assertSafePath(value: string): void {
 // app's platform), a false-positive risk only for two differently-cased dirs
 // on a case-sensitive filesystem. Upgrade to a real fs.realpath compare if
 // that ever bites.
-function normalizePath(p: string): string {
+export function normalizePath(p: string): string {
   return p.replace(/[\\/]+/g, "/").replace(/\/$/, "").toLowerCase();
 }
 

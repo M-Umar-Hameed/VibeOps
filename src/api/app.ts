@@ -13,7 +13,7 @@ import { recallBlock } from "../services/recall.js";
 import { fenceUntrusted, UNTRUSTED_CLAUSE } from "../relay/prompts.js";
 import { latestHandoff } from "../services/handoff.js";
 import { AuthError, ConflictError, ForbiddenError, NotFoundError, StaleVersionError } from "../services/errors.js";
-import { listProjects, createProject, updateProjectRepo, gitInitProject, getProjectSettings, setProjectSetting, scanFolder, importProjects, deleteProject } from "../services/projects.js";
+import { listProjects, createProject, updateProjectRepo, gitInitProject, getProjectSettings, setProjectSetting, scanFolder, importProjects, deleteProject, normalizePath } from "../services/projects.js";
 import { clearProjectKnowledge } from "../services/knowledge.js";
 import { activeRunForProject, activeStageForTicket } from "../forge/runs.js";
 import { syncProject } from "../sync/run.js";
@@ -408,13 +408,12 @@ async function resolveHookProject(c: { req: { query(k: string): string | undefin
   if (explicit) return explicit;
   const cwd = c.req.query("cwd");
   if (!cwd) return null;
-  const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const target = norm(cwd);
+  const target = normalizePath(cwd);
   const rows = await db.select({ id: projects.id, repoPath: projects.repoPath }).from(projects);
   let best: { id: string; len: number } | null = null;
   for (const r of rows) {
     if (!r.repoPath) continue;
-    const rp = norm(r.repoPath);
+    const rp = normalizePath(r.repoPath);
     if (target === rp || target.startsWith(rp + "/")) {
       if (!best || rp.length > best.len) best = { id: r.id, len: rp.length };
     }

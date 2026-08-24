@@ -490,12 +490,15 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     }
 
     // http lanes are chat-only model providers: a chat/completions endpoint cannot
-    // edit files or run commands, so pipeline roles are rejected, but roles: []
-    // (the shape the Agents card always sends for a chat-only lane) is fine.
+    // edit files or run commands, so the work role is rejected. plan/review are
+    // text-in/text-out and fine; roles: [] (the shape the Agents card always
+    // sends for a chat-only lane) is fine too.
     const isHttp = cfg.agents[name].type === "http";
     if (roles !== undefined) {
       if (isHttp) {
-        if (roles.length > 0) return c.json({ error: "http lanes are chat-only and cannot take pipeline roles" }, 400);
+        if (roles.includes("work")) {
+          return c.json({ error: `relay config agent "${name}" of type http cannot take the work role: a chat completion cannot edit files or run commands` }, 400);
+        }
       } else if (roles.length === 0) {
         return c.json({ error: "roles must be a non-empty array" }, 400);
       }

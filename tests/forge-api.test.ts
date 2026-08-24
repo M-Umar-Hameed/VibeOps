@@ -1036,7 +1036,7 @@ it("PATCH /relay/agents/:name with models: [] drops the models key instead of wr
   expect(() => loadRelayConfig(relayConfigPath)).not.toThrow();
 });
 
-it("PATCH /relay/agents/:name guards an http lane: pipeline roles are rejected, empty roles are accepted", async () => {
+it("PATCH /relay/agents/:name guards an http lane: work is rejected, plan/review and empty roles are accepted", async () => {
   writeFileSync(relayConfigPath, JSON.stringify({
     workdir,
     agents: {
@@ -1048,12 +1048,20 @@ it("PATCH /relay/agents/:name guards an http lane: pipeline roles are rejected, 
   const { readFileSync } = await import("node:fs");
   const before = JSON.parse(readFileSync(relayConfigPath, "utf-8"));
 
-  const withRole = await app.request("/relay/agents/openrouter", {
-    method: "PATCH", headers: h, body: JSON.stringify({ roles: ["plan"] }),
+  const withWork = await app.request("/relay/agents/openrouter", {
+    method: "PATCH", headers: h, body: JSON.stringify({ roles: ["work"] }),
   });
-  expect(withRole.status).toBe(400);
-  expect((await withRole.json()).error).toBe("http lanes are chat-only and cannot take pipeline roles");
+  expect(withWork.status).toBe(400);
+  expect((await withWork.json()).error).toBe(
+    'relay config agent "openrouter" of type http cannot take the work role: a chat completion cannot edit files or run commands',
+  );
   expect(JSON.parse(readFileSync(relayConfigPath, "utf-8"))).toEqual(before); // relay.json unchanged
+
+  const withPlanReview = await app.request("/relay/agents/openrouter", {
+    method: "PATCH", headers: h, body: JSON.stringify({ roles: ["plan", "review"] }),
+  });
+  expect(withPlanReview.status).toBe(200);
+  expect(JSON.parse(readFileSync(relayConfigPath, "utf-8")).agents.openrouter.roles).toEqual(["plan", "review"]);
 
   const emptyRoles = await app.request("/relay/agents/openrouter", {
     method: "PATCH", headers: h, body: JSON.stringify({ roles: [] }),

@@ -60,10 +60,11 @@ export function loadRelayConfig(path?: string): RelayConfig {
       if (typeof a.keySetting !== "string" || !a.keySetting) {
         throw new Error(`relay config agent "${name}" of type http needs a keySetting naming the settings key that holds the API key`);
       }
-      if (Array.isArray(a.roles) && a.roles.length > 0) {
+      if (Array.isArray(a.roles) && a.roles.includes("work")) {
         // A chat/completions endpoint cannot edit files or run commands; letting
-        // it claim work/plan/review would wedge the forge queue.
-        throw new Error(`relay config agent "${name}" of type http cannot have pipeline roles`);
+        // it claim work would wedge the forge queue. plan/review are text-in/
+        // text-out, so a chat completion can serve them.
+        throw new Error(`relay config agent "${name}" of type http cannot take the work role: a chat completion cannot edit files or run commands`);
       }
     }
     if (a.mcp !== undefined && typeof a.mcp !== "boolean") {

@@ -58,21 +58,26 @@ test("a tracked database behind the migration folder is brought current", async 
     // Simulate one migration behind by undoing the journal's LAST entry: drizzle
     // only replays migrations newer than the latest recorded row, so deleting
     // any earlier row proves nothing (that is how this test rotted when 0022
-    // landed while it still hardcoded 0021). When a new migration lands, update
-    // BEHIND_COLUMN to a column that migration adds - the `when` comes from the
-    // journal so it never goes stale.
+    // landed while it still hardcoded 0021). The columns to drop are read from
+    // the migration's own SQL, so a future column-adding migration needs no
+    // edit here; a migration that does more than ADD COLUMN needs a new fixture.
     const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf-8"));
     const last = journal.entries[journal.entries.length - 1];
-    const BEHIND_TABLE = "notes";      // 0022_memory_kinds
-    const BEHIND_COLUMN = "kind";      // 0022_memory_kinds
-    await sql`ALTER TABLE ${sql(BEHIND_TABLE)} DROP COLUMN ${sql(BEHIND_COLUMN)}`;
+    const migrationSql = readFileSync(`drizzle/${last.tag}.sql`, "utf-8");
+    const added = [...migrationSql.matchAll(/ALTER TABLE "(\w+)" ADD COLUMN "(\w+)"/g)].map((m) => ({ table: m[1], column: m[2] }));
+    expect(added.length).toBeGreaterThan(0);
+    for (const { table, column } of added.slice().reverse()) {
+      await sql`ALTER TABLE ${sql(table)} DROP COLUMN ${sql(column)}`;
+    }
     await sql`DELETE FROM drizzle.__drizzle_migrations WHERE created_at = ${last.when}`;
     await ensureSharedSchema(sql);
-    const [col] = await sql`SELECT EXISTS (
-      SELECT 1 FROM information_schema.columns
-      WHERE table_name = ${BEHIND_TABLE} AND column_name = ${BEHIND_COLUMN}
-    ) AS ok`;
-    expect(col.ok).toBe(true);
+    for (const { table, column } of added) {
+      const [col] = await sql`SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = ${table} AND column_name = ${column}
+      ) AS ok`;
+      expect(col.ok).toBe(true);
+    }
   } finally {
     await sql.end();
   }

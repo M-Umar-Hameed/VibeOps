@@ -1219,6 +1219,28 @@ describe("model verification", () => {
     const run = runs.find((r) => r.id === runId);
     expect(run?.modelVerified).toBe(true);
   });
+
+  it("keeps a colon-suffixed model id (e.g. an OpenRouter :free variant) intact through verification", async () => {
+    const { actorId, ticket } = await seedTicket("Colon-suffixed model match path");
+    setScript("plan-match-colon,work,review-pass", true);
+
+    const config = relayConfig();
+    config.agents.fake.models = [...config.agents.fake.models!, { name: "a/b:free", tier: "free", quality: 2 }];
+
+    const { runId } = await startPipeline(actorId, config, {
+      ticketId: ticket.id, planAgent: "fake", planModel: "a/b:free", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    // Had requestedModel been truncated at the first colon ("a/b"), this would
+    // mismatch against the fixture's full "a/b:free" marker.
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).not.toContain("WARNING: Model routing mismatch");
+
+    const runs = await listRunsWithHistory();
+    const run = runs.find((r) => r.id === runId);
+    expect(run?.modelVerified).toBe(true);
+  });
 });
 
 

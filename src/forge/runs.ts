@@ -231,7 +231,10 @@ function parsePair(value: string): Pick {
 }
 
 function applyVerification(res: { ok: boolean; output: string }, compositeName: string, run: Run, config: RelayConfig): void {
-  const [agentName, requestedModel] = compositeName.split(":");
+  // parsePair splits on the first colon only -- a colon-suffixed model id
+  // (e.g. an OpenRouter "a/b:free" id) must reach verifyModel intact, not
+  // truncated at its own colon.
+  const { agent: agentName, model: requestedModel } = parsePair(compositeName);
   // Match on the actual BINARY, not the relay.json key — users key agents
   // freely ("fable", "agy-gemini"), the CLI's output format follows the exe.
   // sdk agents legitimately carry no cmd (config validation skips it for them),

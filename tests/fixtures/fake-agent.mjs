@@ -38,6 +38,9 @@ const OUTPUTS = {
   "analyzer": "analysis done\nPROPOSAL:\n{\"decision\":\"propose\",\"kind\":\"grep-diff\",\"pattern\":\"MARKER-LESSON-42\"}",
   "plan-mismatch": "1. do the thing\n[FAKE-MODEL: wrong-model]",
   "plan-match": "1. do the thing\n[FAKE-MODEL: fast]",
+  // Colon-suffixed model id (e.g. an OpenRouter ":free" variant) -- proves
+  // verification compares against the full id, not truncated at its own colon.
+  "plan-match-colon": "1. do the thing\n[FAKE-MODEL: a/b:free]",
 };
 
 function selectMode() {

@@ -264,3 +264,58 @@ test("a 400 naming missing tool support surfaces verbatim even with tools attach
   expect(res.ok).toBe(false);
   expect(res.text).toContain("No endpoints found that support tool use");
 });
+
+test("an empty final message after a tool round falls back to a readable placeholder instead of a blank bubble", async () => {
+  handler = (_req, res, body) => {
+    if (requestCount === 1) {
+      json(res, 200, toolCallMsg("browser_snapshot", "{}"));
+    } else {
+      const parsed = JSON.parse(body);
+      const toolMsg = parsed.messages.find((m: any) => m.role === "tool");
+      expect(toolMsg.content).toBe("SNAP");
+      json(res, 200, { choices: [{ message: { role: "assistant", content: "" } }] });
+    }
+  };
+  const got: string[] = [];
+  const res = await runHttpTurn({
+    baseUrl: BASE, apiKey: "k", model: "m", system: "", transcript: "user: snapshot",
+    onData: (s) => got.push(s), tools: [snapshotTool],
+  });
+  expect(res).toEqual({ ok: true, text: "[no text reply from the model; its tool calls are shown above]" });
+  expect(got.join("")).toBe("[no text reply from the model; its tool calls are shown above]");
+});
+
+test("a null content final message after a tool round also falls back to the placeholder", async () => {
+  handler = (_req, res) => {
+    if (requestCount === 1) {
+      json(res, 200, toolCallMsg("browser_snapshot", "{}"));
+    } else {
+      json(res, 200, { choices: [{ message: { role: "assistant", content: null } }] });
+    }
+  };
+  const res = await runHttpTurn({
+    baseUrl: BASE, apiKey: "k", model: "m", system: "", transcript: "user: snapshot",
+    onData: () => {}, tools: [snapshotTool],
+  });
+  expect(res.text).toBe("[no text reply from the model; its tool calls are shown above]");
+});
+
+test("an empty final message with NO prior tool round returns empty text unchanged", async () => {
+  handler = (_req, res) => json(res, 200, { choices: [{ message: { role: "assistant", content: "" } }] });
+  const res = await runHttpTurn({
+    baseUrl: BASE, apiKey: "k", model: "m", system: "", transcript: "user: hi",
+    onData: () => {}, tools: [snapshotTool],
+  });
+  expect(res).toEqual({ ok: true, text: "" });
+});
+
+test("a completed streaming turn with zero characters falls back to the readable placeholder", async () => {
+  handler = (_req, res) => sse(res, ["data: [DONE]\n\n"]);
+  const got: string[] = [];
+  const res = await runHttpTurn({
+    baseUrl: BASE, apiKey: "k", model: "m", system: "", transcript: "user: hi",
+    onData: (s) => got.push(s),
+  });
+  expect(res).toEqual({ ok: true, text: "[no text reply from the model; its tool calls are shown above]" });
+  expect(got.join("")).toBe("[no text reply from the model; its tool calls are shown above]");
+});

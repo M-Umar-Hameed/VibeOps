@@ -29,6 +29,9 @@ export type HttpTurnResult = { ok: boolean; text: string };
 
 const MAX_TOOL_ROUNDS = 8;
 
+// A blank assistant bubble reads as a hang, not a finished (if silent) turn.
+const NO_TEXT_REPLY = "[no text reply from the model; its tool calls are shown above]";
+
 // Non-streaming request/response loop used only when tools are attached: a
 // provider tool call requires a full JSON message (with tool_calls) to build
 // the next round's messages array, which SSE deltas don't give us.
@@ -36,6 +39,7 @@ async function runToolLoop(p: HttpTurnParams, messages: any[]): Promise<HttpTurn
   const tools = p.tools!;
   const toolDefs = tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
   let textSoFar = "";
+  let ranToolRound = false;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     let res: Response;
@@ -63,10 +67,12 @@ async function runToolLoop(p: HttpTurnParams, messages: any[]): Promise<HttpTurn
     const toolCalls = msg.tool_calls;
     if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
       const text = typeof msg.content === "string" ? msg.content : "";
-      p.onData(text);
-      return { ok: true, text };
+      const final = !text && ranToolRound ? NO_TEXT_REPLY : text;
+      p.onData(final);
+      return { ok: true, text: final };
     }
 
+    ranToolRound = true;
     if (typeof msg.content === "string" && msg.content) textSoFar += msg.content;
     messages.push({ role: "assistant", content: msg.content ?? null, tool_calls: toolCalls });
     for (const call of toolCalls) {
@@ -146,7 +152,10 @@ export async function runHttpTurn(p: HttpTurnParams): Promise<HttpTurnResult> {
         for (const line of frame.split("\n")) {
           if (!line.startsWith("data: ")) continue;
           const data = line.slice(6);
-          if (data === "[DONE]") return { ok: true, text };
+          if (data === "[DONE]") {
+            if (!text) { p.onData(NO_TEXT_REPLY); return { ok: true, text: NO_TEXT_REPLY }; }
+            return { ok: true, text };
+          }
           try {
             const delta = JSON.parse(data)?.choices?.[0]?.delta?.content;
             if (typeof delta === "string" && delta) { text += delta; p.onData(delta); }

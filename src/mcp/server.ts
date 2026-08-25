@@ -11,7 +11,7 @@ import { exists, list, submitBatch, type ActionStep } from "../browser/channel.j
 import { validateSteps } from "../browser/validate.js";
 import { hasActGrant, noActGrantReason } from "../browser/grants.js";
 import { humanizeBrowserError } from "../browser/refusal.js";
-import { recordRefusal } from "../browser/pending-grants.js";
+import { recordBrowserCall } from "../browser/pending-grants.js";
 import { runMarks, marksAsText } from "../browser/marks-run.js";
 export async function buildServer(apiKey: string) {
   const actor = await resolveActor(apiKey);
@@ -117,32 +117,41 @@ export async function buildServer(apiKey: string) {
   };
 
   // Read-tier steps only; the LAST step's result is what the caller gets (e.g.
-  // switchTab then tabs returns the tab list after the switch).
-  const readOnly = async (instanceId: string | undefined, ...steps: ActionStep[]): Promise<string> => {
+  // switchTab then tabs returns the tab list after the switch). Every call that
+  // reaches a live browser records one ledger entry so a CLI-lane turn (whose
+  // MCP client the server never sees inline) can surface the same trace.
+  const readOnly = async (name: string, instanceId: string | undefined, ...steps: ActionStep[]): Promise<string> => {
     const { id, err } = resolveInstance(instanceId);
     if (!id) return err!;
     const result = await submitBatch(id, id, steps);
-    if (!result) return "browser batch timed out (no extension response in 30s)";
+    if (!result) {
+      recordBrowserCall(actor.id, { name, summary: "timeout" });
+      return "browser batch timed out (no extension response in 30s)";
+    }
     const failed = result.results.find((r) => !r.ok);
     const s = failed ?? result.results[result.results.length - 1];
-    if (!s?.ok) return `browser refused: ${humanizeBrowserError(s?.error)}`;
+    if (!s?.ok) {
+      recordBrowserCall(actor.id, { name, summary: `refused: ${humanizeBrowserError(s?.error)}` });
+      return `browser refused: ${humanizeBrowserError(s?.error)}`;
+    }
+    recordBrowserCall(actor.id, { name, summary: "ok" });
     return typeof s.value === "string" ? s.value : JSON.stringify(result.snapshot ?? s.value ?? "").slice(0, 4000);
   };
 
   server.registerTool("browser_snapshot",
     { description: "Snapshot the connected browser (read-only). instanceId optional when one browser is connected.",
       inputSchema: { instanceId: z.string().optional() } },
-    async ({ instanceId }) => ({ content: [{ type: "text", text: await readOnly(instanceId, { verb: "snapshot" }) }] }));
+    async ({ instanceId }) => ({ content: [{ type: "text", text: await readOnly("browser_snapshot", instanceId, { verb: "snapshot" }) }] }));
 
   server.registerTool("browser_tabs",
     { description: "List the open browser tabs (id, url, title, active), optionally switching to one first by tabId (read-only; page actions then apply to the active tab). To open a URL in a NEW tab use browser_act with a newTab step.",
       inputSchema: { instanceId: z.string().optional(), switchTo: z.number().int().nonnegative().optional() } },
-    async ({ instanceId, switchTo }) => ({ content: [{ type: "text", text: await readOnly(instanceId, ...(switchTo === undefined ? [{ verb: "tabs" } as const] : [{ verb: "switchTab", tabId: switchTo } as const, { verb: "tabs" } as const])) }] }));
+    async ({ instanceId, switchTo }) => ({ content: [{ type: "text", text: await readOnly("browser_tabs", instanceId, ...(switchTo === undefined ? [{ verb: "tabs" } as const] : [{ verb: "switchTab", tabId: switchTo } as const, { verb: "tabs" } as const])) }] }));
 
   server.registerTool("browser_read",
     { description: "Read an element by ref (read-only). instanceId optional when one browser is connected.",
       inputSchema: { instanceId: z.string().optional(), ref: z.string() } },
-    async ({ instanceId, ref }) => ({ content: [{ type: "text", text: await readOnly(instanceId, { verb: "read", ref }) }] }));
+    async ({ instanceId, ref }) => ({ content: [{ type: "text", text: await readOnly("browser_read", instanceId, { verb: "read", ref }) }] }));
 
   server.registerTool("browser_marks",
     { description: "Screenshot the connected browser with numbered boxes over every interactive element; returns the mark table as text plus a file path to the annotated PNG. Choose a target by MARK NUMBER and act on its ref with browser_act. Works without vision: each mark lists its role and name.",
@@ -151,7 +160,11 @@ export async function buildServer(apiKey: string) {
       const { id, err } = resolveInstance(instanceId);
       if (!id) return { content: [{ type: "text", text: err! }] };
       const run = await runMarks(id);
-      if (!run.ok) return { content: [{ type: "text", text: `browser refused: ${humanizeBrowserError(run.error)}` }] };
+      if (!run.ok) {
+        recordBrowserCall(actor.id, { name: "browser_marks", summary: `refused: ${humanizeBrowserError(run.error)}` });
+        return { content: [{ type: "text", text: `browser refused: ${humanizeBrowserError(run.error)}` }] };
+      }
+      recordBrowserCall(actor.id, { name: "browser_marks", summary: `ok: ${run.marks.length} marks` });
       const refs = run.marks.map((m) => `${m.mark}=${m.ref}`).join(" ");
       return { content: [{ type: "text", text: `${marksAsText(run.marks, run.imagePath)}
 
@@ -171,13 +184,20 @@ refs: ${refs}` }] };
       // exact value checked and the value granted, never widened. MUTATION-TEST TARGET.
       if (!(await hasActGrant(targetOrigin))) {
         const reason = noActGrantReason(targetOrigin);
-        recordRefusal(actor.id, targetOrigin, reason);
+        recordBrowserCall(actor.id, { name: "browser_act", summary: `refused: ${humanizeBrowserError(reason)}`, grantOrigin: targetOrigin });
         return { content: [{ type: "text", text: `browser refused: ${reason}` }] };
       }
       const result = await submitBatch(id, id, v.steps as ActionStep[], { grant: "act", targetOrigin });
-      if (!result) return { content: [{ type: "text", text: "browser batch timed out (no extension response in 30s)" }] };
+      if (!result) {
+        recordBrowserCall(actor.id, { name: "browser_act", summary: "timeout" });
+        return { content: [{ type: "text", text: "browser batch timed out (no extension response in 30s)" }] };
+      }
       const failed = result.results.find((r) => !r.ok);
-      if (failed) return { content: [{ type: "text", text: `browser refused: ${humanizeBrowserError(failed.error)}` }] };
+      if (failed) {
+        recordBrowserCall(actor.id, { name: "browser_act", summary: `refused: ${humanizeBrowserError(failed.error)}` });
+        return { content: [{ type: "text", text: `browser refused: ${humanizeBrowserError(failed.error)}` }] };
+      }
+      recordBrowserCall(actor.id, { name: "browser_act", summary: "ok" });
       return { content: [{ type: "text", text: JSON.stringify(result.snapshot ?? "").slice(0, 4000) }] };
     });
 

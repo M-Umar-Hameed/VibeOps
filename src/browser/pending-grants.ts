@@ -1,23 +1,28 @@
-// Grant refusals issued by the MCP server, so a chat turn that ran a CLI agent
-// can show the owner the same Allow prompt the SDK lane gets. In memory only;
+// Per-actor ledger of every MCP browser tool call, so a CLI-lane turn (which
+// reaches these tools through its own MCP client, invisible to the server)
+// can surface the same trace the SDK lane builds inline. In memory only;
 // entries older than TTL are dropped on read.
-export type Refusal = { actorId: string; origin: string; reason: string; at: number };
+export type BrowserCall = { actorId: string; name: string; summary: string; grantOrigin?: string; at: number };
 const TTL_MS = 30 * 60 * 1000;
-const refusals: Refusal[] = [];
+const calls: BrowserCall[] = [];
 
-export function recordRefusal(actorId: string, origin: string, reason: string, now = Date.now()): void {
-  refusals.push({ actorId, origin, reason, at: now });
+export function recordBrowserCall(
+  actorId: string,
+  entry: { name: string; summary: string; grantOrigin?: string },
+  now = Date.now(),
+): void {
+  calls.push({ actorId, ...entry, at: now });
 }
 
-// Returns and removes this actor's refusals recorded at or after `since`.
-export function drainRefusals(actorId: string, since: number, now = Date.now()): Refusal[] {
-  const keep: Refusal[] = [];
-  const out: Refusal[] = [];
-  for (const r of refusals) {
-    if (now - r.at > TTL_MS) continue;
-    if (r.actorId === actorId && r.at >= since) out.push(r); else keep.push(r);
+// Returns and removes this actor's calls recorded at or after `since`, in call order.
+export function drainBrowserCalls(actorId: string, since: number, now = Date.now()): BrowserCall[] {
+  const keep: BrowserCall[] = [];
+  const out: BrowserCall[] = [];
+  for (const c of calls) {
+    if (now - c.at > TTL_MS) continue;
+    if (c.actorId === actorId && c.at >= since) out.push(c); else keep.push(c);
   }
-  refusals.length = 0;
-  refusals.push(...keep);
+  calls.length = 0;
+  calls.push(...keep);
   return out;
 }

@@ -18,7 +18,7 @@ vi.mock("../src/browser/grants.js", async (orig) => ({
 import { createActor } from "../src/services/actors.js";
 import { buildServer } from "../src/mcp/server.js";
 import { noActGrantReason } from "../src/browser/grants.js";
-import { drainRefusals } from "../src/browser/pending-grants.js";
+import { drainBrowserCalls } from "../src/browser/pending-grants.js";
 import { buildChatTools, type ToolCall } from "../src/chat/tools.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -69,10 +69,28 @@ describe("MCP browser verbs", () => {
       name: "browser_act",
       arguments: { instanceId: "i1", targetOrigin: "https://github.com", steps: [{ verb: "click", ref: "ref1" }] },
     });
-    const drained = drainRefusals(actor.id, 0);
+    const drained = drainBrowserCalls(actor.id, 0);
     expect(drained).toHaveLength(1);
-    expect(drained[0].origin).toBe("https://github.com");
-    expect(drained[0].reason).toBe(noActGrantReason("https://github.com"));
+    expect(drained[0].name).toBe("browser_act");
+    expect(drained[0].grantOrigin).toBe("https://github.com");
+    expect(drained[0].summary).toBe(`refused: ${noActGrantReason("https://github.com")}`);
+    await client.close();
+  });
+
+  it("records a successful snapshot and a refused act in call order", async () => {
+    hasActGrant.mockResolvedValue(false);
+    submitBatch.mockResolvedValue({ results: [{ ok: true }], snapshot: { origin: "https://github.com", nodes: [] } });
+    const { client, actor } = await connectedClient();
+    await client.callTool({ name: "browser_snapshot", arguments: { instanceId: "i1" } });
+    await client.callTool({
+      name: "browser_act",
+      arguments: { instanceId: "i1", targetOrigin: "https://github.com", steps: [{ verb: "click", ref: "ref1" }] },
+    });
+    const drained = drainBrowserCalls(actor.id, 0);
+    expect(drained.map((c) => ({ name: c.name, summary: c.summary }))).toEqual([
+      { name: "browser_snapshot", summary: "ok" },
+      { name: "browser_act", summary: `refused: ${noActGrantReason("https://github.com")}` },
+    ]);
     await client.close();
   });
 

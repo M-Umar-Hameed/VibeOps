@@ -17,7 +17,7 @@ import { recallBlock } from "../services/recall.js";
 import { fenceUntrusted, UNTRUSTED_CLAUSE } from "../relay/prompts.js";
 import { captureMemory } from "../services/memory-capture.js";
 import { HANDOFF_RE, saveHandoff } from "../services/handoff.js";
-import { drainRefusals } from "../browser/pending-grants.js";
+import { drainBrowserCalls } from "../browser/pending-grants.js";
 
 // Composed onto the chat voice clause for the tool-capable SDK lane only. States
 // what the connected tools can do and the act-grant rule, so the agent stops
@@ -199,15 +199,24 @@ export async function runTurn(
       res = { ok: out.ok, text: out.output };
 
       // The CLI agent reaches MCP tools through its own client, so runAgent never
-      // sees grant refusals the server issued. Drain what it recorded for this
+      // sees the browser calls it made. Drain what the server recorded for this
       // actor during the turn and surface it the same way the SDK lane's
-      // buildChatTools does, so the owner gets the Allow prompt here too.
-      // De-dupe by origin so retries within one turn produce a single prompt.
+      // buildChatTools does, so the owner sees the full trace - and gets the
+      // Allow prompt for a missing grant - here too. De-dupe grant prompts by
+      // origin so retries within one turn produce a single prompt; other calls
+      // are appended as-is, in order.
       const seen = new Set<string>();
-      for (const r of drainRefusals(actor.id, turnStart)) {
-        if (seen.has(r.origin)) continue;
-        seen.add(r.origin);
-        calls.push({ name: "browser_act", input: { targetOrigin: r.origin }, summary: `refused: ${r.reason}`, grantOrigin: r.origin });
+      for (const c of drainBrowserCalls(actor.id, turnStart)) {
+        if (c.grantOrigin) {
+          if (seen.has(c.grantOrigin)) continue;
+          seen.add(c.grantOrigin);
+        }
+        calls.push({
+          name: c.name,
+          input: c.grantOrigin ? { targetOrigin: c.grantOrigin } : {},
+          summary: c.summary,
+          ...(c.grantOrigin ? { grantOrigin: c.grantOrigin } : {}),
+        });
       }
     }
 

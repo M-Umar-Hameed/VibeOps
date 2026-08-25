@@ -99,7 +99,7 @@ export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: stri
     ),
     tool(
       "save_decision",
-      "Record a decision and WHY it was made so future turns see it unasked. Scope defaults to this session's project.",
+      "Record a decision and WHY it was made so future turns see it unasked. Scope defaults to this session's project. Only for choices or constraints the owner stated. Never record a tool limitation, a failure, a missing permission, or your own inability - those are transient.",
       { text: z.string(), rationale: z.string(), domain: z.string().optional() },
       async ({ text: body, rationale, domain }) => {
         const scope = projectId ? "project" : "global";
@@ -110,7 +110,7 @@ export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: stri
     ),
     tool(
       "save_rule",
-      "Record a standing rule for a domain (e.g. 'payments'); it fires in every future turn whose project or #domain matches. Scope defaults to this session's project.",
+      "Record a standing rule for a domain (e.g. 'payments'); it fires in every future turn whose project or #domain matches. Scope defaults to this session's project. Only for choices or constraints the owner stated. Never record a tool limitation, a failure, a missing permission, or your own inability - those are transient.",
       { text: z.string(), domain: z.string() },
       async ({ text: body, domain }) => {
         const scope = projectId ? "project" : "global";

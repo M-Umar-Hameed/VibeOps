@@ -59,7 +59,7 @@ export async function recall(
     : eq(notes.scope, "global");
   const domainMatch = domains.length ? or(isNull(notes.domain), inArray(notes.domain, domains)) : isNull(notes.domain);
   const rules = await db.select().from(notes)
-    .where(and(eq(notes.kind, "rule"), isNull(notes.deletedAt), scope, domainMatch))
+    .where(and(eq(notes.kind, "rule"), eq(notes.source, "manual"), isNull(notes.deletedAt), scope, domainMatch))
     .orderBy(desc(notes.createdAt)).limit(MAX_RULES);
 
   const hits = await searchKnowledge(query, { limit: opts.limit ?? 10, projectId: opts.projectId ?? undefined, caller: "recall" }, embedder);

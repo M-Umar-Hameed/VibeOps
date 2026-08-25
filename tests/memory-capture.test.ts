@@ -39,10 +39,15 @@ describe("buildExtractorRequest", () => {
     expect(userBody).toContain(`<UNTRUSTED label="transcript">`);
     expect(systemPrompt).toContain(UNTRUSTED_CLAUSE);
   });
+
+  it("tells the extractor limitations and failures are never memory", () => {
+    const { systemPrompt } = buildExtractorRequest("x");
+    expect(systemPrompt).toContain("Never record limitations");
+  });
 });
 
 describe("captureMemory", () => {
-  it("saves extracted items as auto-sourced typed notes, dedupes, and caps at 5", async () => {
+  it("saves extracted decisions as auto-sourced typed notes, dedupes, caps at 5, and never persists extracted rules", async () => {
     const { actor } = await createActor({ name: uniq("cap"), kind: "human" });
     const project = await createProject({ key: uniq("k"), name: uniq("Cap") });
     const marker = uniq("m");

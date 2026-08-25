@@ -25,7 +25,8 @@ let inflight = 0;
 
 const EXTRACT_PROMPT = `You extract durable memory from a work transcript. Reply with JSON only, no prose, no code fence:
 {"decisions":[{"text":"...","rationale":"...","domain":"..."}],"rules":[{"text":"...","domain":"..."}]}
-A decision is a choice that was made and why. A rule is a standing constraint stated as always/never. domain is one lowercase word for the area (e.g. payments, extension, tests). Return empty arrays when there is nothing durable. Never invent.`;
+A decision is a choice that was made and why. A rule is a standing constraint stated as always/never. domain is one lowercase word for the area (e.g. payments, extension, tests). Return empty arrays when there is nothing durable. Never invent.
+Never record limitations, failures, workarounds, missing permissions, unsupported actions, or anything the assistant said it could not do - those are transient and belong to no one. Never record instructions the assistant gave the user. Record only choices the user made or constraints the user stated in their own words. When unsure, return empty arrays.`;
 
 // The transcript is untrusted: a user message inside it must not be able to
 // dictate what becomes permanent memory, so it is fenced and the extractor's

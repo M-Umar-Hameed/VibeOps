@@ -46,14 +46,14 @@ export async function buildServer(apiKey: string) {
     }));
 
   server.registerTool("save_decision",
-    { description: "Record a decision with its rationale so it is recalled unasked in matching contexts.",
+    { description: "Record a decision with its rationale so it is recalled unasked in matching contexts. Only for choices or constraints the owner stated. Never record a tool limitation, a failure, a missing permission, or your own inability - those are transient.",
       inputSchema: { text: z.string(), rationale: z.string(), domain: z.string().optional(), scope: z.enum(["global", "project", "ticket"]).default("global"), refId: z.string().optional() } },
     async ({ text, rationale, domain, scope, refId }) => ({
       content: [{ type: "text", text: JSON.stringify(await saveNote(actor.id, { body: text, rationale, domain, kind: "decision", scope, refId })) }],
     }));
 
   server.registerTool("save_rule",
-    { description: "Record a standing rule for a domain; it fires in every matching context.",
+    { description: "Record a standing rule for a domain; it fires in every matching context. Only for choices or constraints the owner stated. Never record a tool limitation, a failure, a missing permission, or your own inability - those are transient.",
       inputSchema: { text: z.string(), domain: z.string(), scope: z.enum(["global", "project", "ticket"]).default("global"), refId: z.string().optional() } },
     async ({ text, domain, scope, refId }) => ({
       content: [{ type: "text", text: JSON.stringify(await saveNote(actor.id, { body: text, domain, kind: "rule", scope, refId })) }],

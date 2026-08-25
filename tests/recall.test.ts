@@ -38,6 +38,18 @@ test("rules fire by domain match or null domain, never by similarity", async () 
   expect(bodies).not.toContain(`${marker} billing rule`);
 });
 
+test("an auto-sourced rule never fires; a manual one does", async () => {
+  const { actor, project } = await fixture();
+  const marker = uniq("rule-src");
+  await saveNote(actor.id, { body: `${marker} manual rule`, scope: "project", refId: project.id, kind: "rule", domain: "payments", source: "manual" }, emb);
+  await saveNote(actor.id, { body: `${marker} auto rule`, scope: "project", refId: project.id, kind: "rule", domain: "payments", source: "auto" }, emb);
+
+  const r = await recall("something unrelated", { projectId: project.id, domains: ["payments"] }, emb);
+  const bodies = r.rules.map((n) => n.body);
+  expect(bodies).toContain(`${marker} manual rule`);
+  expect(bodies).not.toContain(`${marker} auto rule`);
+});
+
 test("decisions come back by similarity with rationale; other hits land in knowledge", async () => {
   const { actor, project } = await fixture();
   const marker = uniq("dec");

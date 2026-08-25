@@ -94,7 +94,14 @@ async function exists(kind: string, scope: string, refId: string | undefined, te
   return rows.length > 0;
 }
 
-export async function captureMemory(input: { actorId: string; text: string; projectId?: string | null }): Promise<number> {
+// A turn whose tools failed is the model explaining itself, not deciding
+// anything - never let that reach the extractor.
+const FAILURE_PREFIXES = ["refused", "timeout", "invalid", "no instance", "tool error", "failed"];
+
+export async function captureMemory(input: {
+  actorId: string; text: string; projectId?: string | null; toolCalls?: { summary: string }[];
+}): Promise<number> {
+  if (input.toolCalls?.some((c) => FAILURE_PREFIXES.some((p) => c.summary.startsWith(p)))) return 0;
   // A full slot returns 0 immediately (no warn) rather than queuing — the
   // caller never awaits this, so backpressure has nowhere useful to go.
   if (inflight >= MAX_INFLIGHT) return 0;
@@ -105,10 +112,12 @@ export async function captureMemory(input: { actorId: string; text: string; proj
     if (!got) return 0;
     const scope = input.projectId ? "project" : "global";
     const refId = input.projectId ?? undefined;
-    const items = [
-      ...got.decisions.map((d) => ({ kind: "decision" as const, body: d.text, rationale: d.rationale, domain: d.domain })),
-      ...got.rules.map((r) => ({ kind: "rule" as const, body: r.text, rationale: undefined, domain: r.domain })),
-    ].slice(0, MAX_ITEMS);
+    // Rules fire deterministically with no ranking and are the highest-blast-radius
+    // memory; a decision the owner did not state is not a rule, so extracted rules
+    // are dropped entirely and never persisted.
+    const items = got.decisions
+      .map((d) => ({ kind: "decision" as const, body: d.text, rationale: d.rationale, domain: d.domain }))
+      .slice(0, MAX_ITEMS);
     let saved = 0;
     for (const it of items) {
       if (await exists(it.kind, scope, refId, it.body)) continue;

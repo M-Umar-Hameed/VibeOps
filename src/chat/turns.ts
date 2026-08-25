@@ -234,6 +234,7 @@ export async function runTurn(
       actorId: actor.id,
       text: `user: ${userBody}\n\nassistant: ${res.text}`,
       projectId: session.projectId ?? undefined,
+      toolCalls: calls,
     });
 
     // Fold the completed conversation into the knowledge index so later turns and

@@ -51,10 +51,12 @@ describe("captureMemory", () => {
       rules: [{ text: `${marker} rule A`, domain: "ops" }, { text: `${marker} rule B`, domain: "ops" }, { text: `${marker} rule C`, domain: "ops" }],
     }));
     const saved = await captureMemory({ actorId: actor.id, text: "irrelevant", projectId: project.id });
-    expect(saved).toBe(5);
+    expect(saved).toBe(4);
     const rows = await db.select().from(notes).where(and(eq(notes.refId, project.id), eq(notes.source, "auto")));
-    expect(rows.length).toBe(5);
-    expect(rows.every((r) => r.domain === "ops")).toBe(true);
+    expect(rows.length).toBe(4);
+    expect(rows.every((r) => r.kind === "decision" && r.domain === "ops")).toBe(true);
+    const ruleRows = await db.select().from(notes).where(eq(notes.body, `${marker} rule A`));
+    expect(ruleRows.length).toBe(0);
 
     const again = await captureMemory({ actorId: actor.id, text: "irrelevant", projectId: project.id });
     expect(again).toBe(0); // every item already exists
@@ -68,6 +70,23 @@ describe("captureMemory", () => {
     await deleteSetting("memory.autoCapture");
     setMemoryExtractor(async () => { throw new Error("model down"); });
     expect(await captureMemory({ actorId: actor.id, text: "x" })).toBe(0);
+  });
+
+  it("skips a turn with a failed tool call without invoking the extractor, and proceeds when calls are ok", async () => {
+    const { actor } = await createActor({ name: uniq("cap-fail"), kind: "human" });
+    let calls = 0;
+    setMemoryExtractor(async () => { calls++; return { decisions: [], rules: [] }; });
+
+    const failing = await captureMemory({
+      actorId: actor.id, text: "x",
+      toolCalls: [{ summary: "saved abcd1234" }, { summary: "refused: no grant" }],
+    });
+    expect(failing).toBe(0);
+    expect(calls).toBe(0);
+
+    const ok = await captureMemory({ actorId: actor.id, text: "x", toolCalls: [{ summary: "saved abcd1234" }] });
+    expect(ok).toBe(0); // extractor returned nothing, but it was invoked
+    expect(calls).toBe(1);
   });
 
   it("caps concurrent extractions; a full slot short-circuits without calling the extractor, and drains once released", async () => {
@@ -99,9 +118,9 @@ describe("chat turn capture", () => {
     const { actor } = await createActor({ name: uniq("turn-cap"), kind: "human" });
     const project = await createProject({ key: uniq("k"), name: uniq("TurnCap") });
     const sess = await store.createSession("cap", "sonnet", project.id);
-    const marker = uniq("turn-rule");
+    const marker = uniq("turn-decision");
     let seen = "";
-    setMemoryExtractor(async (text) => { seen = text; return { decisions: [], rules: [{ text: marker, domain: "chat" }] }; });
+    setMemoryExtractor(async (text) => { seen = text; return { decisions: [{ text: marker, rationale: "we said so", domain: "chat" }], rules: [] }; });
     setChatAgent(async () => ({ ok: true, text: "we decided to always lint" }));
     await runTurn(actor, sess.id, "should we lint?");
     const msgs = await store.getMessages(sess.id);
@@ -112,7 +131,7 @@ describe("chat turn capture", () => {
       [row] = await db.select().from(notes).where(eq(notes.body, marker));
       if (!row) await new Promise((r) => setTimeout(r, 50));
     }
-    expect(row?.kind).toBe("rule");
+    expect(row?.kind).toBe("decision");
     expect(row?.source).toBe("auto");
     expect(seen).toContain("should we lint?");
     expect(seen).toContain("we decided to always lint");

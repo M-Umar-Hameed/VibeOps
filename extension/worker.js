@@ -145,23 +145,50 @@ async function poll() {
 // truncated — a half image is worse than a named failure.
 const MAX_SCREENSHOT_B64 = 8 * 1024 * 1024;
 
-async function captureScreenshot() {
+async function captureScreenshot(windowId) {
   try {
-    const dataUrl = await chrome.tabs.captureVisibleTab({ format: "png" });
+    const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: "png" });
     const b64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
     if (b64.length > MAX_SCREENSHOT_B64) {
       return { ok: false, error: `screenshot too large (${b64.length} > ${MAX_SCREENSHOT_B64})` };
     }
     return { ok: true, value: b64 };
   } catch (err) {
+    if (/minimi[sz]ed/i.test(String(err))) {
+      return { ok: false, error: "the VibeOps window is not visible - restore it to take a screenshot" };
+    }
     return { ok: false, error: `screenshot failed: ${String(err)}` };
   }
 }
 
+// Every batch runs in a dedicated VibeOps window, never the owner's own tabs
+// (own window would hijack whatever the owner is looking at, and can't run on
+// new-tab/chrome:// pages). chrome.storage.session survives worker restarts
+// and is cleared with the browser - correct lifetime for "this run's window".
+// If the window or its recorded tab is gone (owner closed it), a fresh one is
+// created; runTabStep updates the recorded tab as newTab/switchTab change it.
+async function agentTab() {
+  const { agentWindowId, agentTabId } = await chrome.storage.session.get(["agentWindowId", "agentTabId"]);
+  if (agentWindowId != null && agentTabId != null) {
+    try {
+      await chrome.windows.get(agentWindowId);
+      const tab = await chrome.tabs.get(agentTabId);
+      if (tab.windowId === agentWindowId) return tab;
+    } catch {
+      // window or tab gone; fall through to create a fresh one
+    }
+  }
+  const win = await chrome.windows.create({ url: "about:blank", focused: false, type: "normal" });
+  const tabs = win.tabs && win.tabs.length ? win.tabs : await chrome.tabs.query({ windowId: win.id });
+  const tab = tabs[0];
+  await chrome.storage.session.set({ agentWindowId: win.id, agentTabId: tab.id });
+  return tab;
+}
+
 // Tab verbs (tabs/newTab/switchTab) need chrome.tabs, so the batch is split
-// into segments: page segments inject into whichever tab is active when they
-// run, tab verbs run here in between. Results go back in original order and
-// the batch stops at the first failure, same as execute.js does within a page.
+// into segments: page segments inject into the agent tab, tab verbs run here
+// in between. Results go back in original order and the batch stops at the
+// first failure, same as execute.js does within a page.
 async function executeBatch(batch) {
   const results = new Array(batch.steps.length);
   let snapshot = { instanceId, origin: "", identity: null, nodes: [] };
@@ -169,19 +196,22 @@ async function executeBatch(batch) {
     let failed = false;
     for (const seg of splitSegments(batch.steps)) {
       if (failed) break;
+      const tab = await agentTab();
       if (seg.kind === "tab") {
-        const r = await runTabStep(seg.step, batch.grant ?? null, batch.targetOrigin ?? null);
+        const r = await runTabStep(seg.step, batch.grant ?? null, batch.targetOrigin ?? null, tab.windowId);
         results[seg.start] = r;
         if (!r.ok) failed = true;
         continue;
       }
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tabs.length) {
-        results[seg.start] = { ok: false, error: "no active tab" };
+      // about:blank (the freshly created window) cannot run injected scripts
+      // either, so a never-navigated agent window fails a page segment here
+      // rather than crashing into executeScript on an unscriptable page.
+      if (!tab.url || tab.url.startsWith("chrome://") || tab.url.startsWith("about:")) {
+        results[seg.start] = { ok: false, error: "the agent window has no page yet - navigate to a URL first" };
         failed = true;
         break;
       }
-      const tabId = tabs[0].id;
+      const tabId = tab.id;
       const [{ result } = {}] = await chrome.scripting.executeScript({
         target: { tabId },
         func: async (steps, grant, targetOrigin) => {
@@ -201,7 +231,7 @@ async function executeBatch(batch) {
         continue;
       }
       for (let i = 0; i < seg.steps.length; i++) {
-        const r = seg.steps[i]?.verb === "screenshot" ? await captureScreenshot() : result.results[i];
+        const r = seg.steps[i]?.verb === "screenshot" ? await captureScreenshot(tab.windowId) : result.results[i];
         if (r === undefined) break; // execute.js stopped early
         results[seg.start + i] = r;
         if (!r.ok) failed = true;
@@ -234,18 +264,22 @@ function waitForTabLoad(tabId) {
   });
 }
 
-async function runTabStep(step, grant, targetOrigin) {
+async function runTabStep(step, grant, targetOrigin, windowId) {
   if (step.verb === "tabs") {
-    const tabs = await chrome.tabs.query({ currentWindow: true });
+    const tabs = await chrome.tabs.query({ windowId });
     return { ok: true, value: JSON.stringify(tabs.map((t) => ({ id: t.id, url: t.url, title: t.title, active: t.active }))) };
   }
   if (step.verb === "switchTab") {
+    let tab;
     try {
-      await chrome.tabs.update(step.tabId, { active: true });
-      return { ok: true };
+      tab = await chrome.tabs.get(step.tabId);
     } catch (err) {
       return { ok: false, error: `no tab ${step.tabId}: ${String(err)}` };
     }
+    if (tab.windowId !== windowId) return { ok: false, error: "that tab is not in the VibeOps window" };
+    await chrome.tabs.update(step.tabId, { active: true });
+    await chrome.storage.session.set({ agentTabId: step.tabId });
+    return { ok: true };
   }
   if (step.verb === "newTab") {
     // Mirrors navigate: mutating, and the grant must cover the DESTINATION origin.
@@ -253,9 +287,10 @@ async function runTabStep(step, grant, targetOrigin) {
     try { dest = new URL(step.url).origin; } catch { dest = null; }
     if (grant !== "act") return { ok: false, error: `no act grant for ${dest ?? step.url}` };
     if (dest !== targetOrigin) return { ok: false, error: `origin mismatch: newTab ${dest} != granted ${targetOrigin}` };
-    const tab = await chrome.tabs.create({ url: step.url, active: true });
+    const tab = await chrome.tabs.create({ windowId, url: step.url, active: true });
     const loaded = await waitForTabLoad(tab.id);
     if (!loaded) return { ok: false, error: "new tab did not finish loading" };
+    await chrome.storage.session.set({ agentTabId: tab.id });
     return { ok: true, value: String(tab.id) };
   }
   return { ok: false, error: `unknown tab verb: ${step.verb}` };

@@ -32,6 +32,8 @@ Acting on a page, navigating, and opening a new tab all require an "act" grant f
 If an action is refused because a grant is missing, the refusal states the exact setting to add. Relay that refusal to the owner word for word; do not paraphrase it or substitute a limitation of your own. When you are unsure whether an action will be permitted, attempt it and report the actual result or refusal rather than declining up front. After a grant refusal the owner sees Allow once / Always allow / Deny buttons under your reply; tell them to use those buttons rather than editing settings by hand.
 
 Talk to the owner in plain language: what you did, what happened, what they can do next. Never explain protocol internals - verbs, step objects, dispatchers, builds, JSON - unless they ask. When a tool result tells the owner to change a Chrome setting or update the extension, pass that instruction on as written and stop there.
+
+Never say you are navigating, clicking, typing or opening anything unless a tool result in this same turn confirms it happened; if you did not call a tool, say plainly that you did not act. The browser actions run in a separate VibeOps window, never in the owner's own tabs.
 `;
 
 // Composed onto the voice clause for a CLI lane with no verified tool mechanism

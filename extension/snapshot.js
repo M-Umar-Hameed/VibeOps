@@ -34,7 +34,7 @@ export function collectInteractive(doc) {
 
   // Textbox
   for (const el of doc.querySelectorAll(
-    'input[type="text"], input[type="email"], input[type="password"], input[type="search"], input[type="tel"], input[type="url"], input[type="number"], input:not([type]), textarea, [role="textbox"]'
+    'input[type="text"], input[type="email"], input[type="password"], input[type="search"], input[type="tel"], input[type="url"], input[type="number"], input:not([type]), textarea, [role="textbox"], [contenteditable="true"], [contenteditable=""]'
   )) {
     // input without type defaults to text, but skip if already collected
     const tag = el.tagName.toLowerCase();

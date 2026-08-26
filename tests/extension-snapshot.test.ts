@@ -187,3 +187,9 @@ describe("T1: rects and viewport metadata", () => {
     expect(snap.nodes[0].rect).toEqual({ x: 110, y: 220, w: 30, h: 40 });
   });
 });
+
+it("a contenteditable editor is collected as a textbox even without role", () => {
+  const doc = new JSDOM('<div id="ed" contenteditable="true"></div>').window.document;
+  const items = collectInteractive(doc);
+  expect(items.some((i: any) => i.role === "textbox" && i.element.id === "ed")).toBe(true);
+});

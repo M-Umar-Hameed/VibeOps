@@ -109,12 +109,32 @@ function navigateAndWait(doc, url) {
 
 // Refs come only from the snapshot map (1.5): verbs act on refs, never on
 // selectors derived from page text.
+const KEY_CODES = { Enter: 13, Tab: 9, Escape: 27, Backspace: 8, ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39, " ": 32 };
+function keyCodeNumber(key) {
+  if (KEY_CODES[key] !== undefined) return KEY_CODES[key];
+  return key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0;
+}
+function keyCodeName(key) {
+  if (key === " ") return "Space";
+  return key.length === 1 && /[a-z]/i.test(key) ? `Key${key.toUpperCase()}` : key;
+}
+
 function runMutation(doc, refMap, step) {
   const view = doc.defaultView;
   if (step.verb === "press") {
     const el = doc.activeElement || doc.body;
-    el.dispatchEvent(new view.KeyboardEvent("keydown", { key: step.key, bubbles: true }));
-    el.dispatchEvent(new view.KeyboardEvent("keyup", { key: step.key, bubbles: true }));
+    // Real key sequence: frameworks check code/keyCode and listen on keypress,
+    // and a bare keydown with only key set is ignored by rich editors (Gemini
+    // never submitted). Enter on a plain form field also submits the form
+    // unless a handler took the default.
+    const init = { key: step.key, code: keyCodeName(step.key), keyCode: keyCodeNumber(step.key), which: keyCodeNumber(step.key), bubbles: true, cancelable: true };
+    const down = new view.KeyboardEvent("keydown", init);
+    const notPrevented = el.dispatchEvent(down);
+    el.dispatchEvent(new view.KeyboardEvent("keypress", init));
+    el.dispatchEvent(new view.KeyboardEvent("keyup", init));
+    if (notPrevented && step.key === "Enter" && el.form && typeof el.form.requestSubmit === "function" && el.tagName === "INPUT") {
+      el.form.requestSubmit();
+    }
     return { ok: true };
   }
   // clickAt is the last resort for surfaces the accessibility tree cannot see
@@ -145,6 +165,18 @@ function runMutation(doc, refMap, step) {
     return { ok: true };
   }
   if (step.verb === "type") {
+    if (el.isContentEditable || el.getAttribute("contenteditable") !== null) {
+      // Rich editors have no .value: focus, then insert text the way a keyboard
+      // would so the editor's own input handling sees it.
+      el.focus();
+      let inserted = false;
+      try { inserted = doc.execCommand && doc.execCommand("insertText", false, step.text); } catch { inserted = false; }
+      if (!inserted) {
+        el.textContent = step.text;
+        el.dispatchEvent(new view.InputEvent("input", { bubbles: true, inputType: "insertText", data: step.text }));
+      }
+      return { ok: true };
+    }
     el.value = step.text;
     el.dispatchEvent(new view.Event("input", { bubbles: true }));
     el.dispatchEvent(new view.Event("change", { bubbles: true }));

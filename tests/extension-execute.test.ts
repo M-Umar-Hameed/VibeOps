@@ -146,3 +146,49 @@ describe("executeSteps", () => {
     expect(result.results[0].value).toBe("spaced");
   });
 });
+
+describe("rich editors and real key events", () => {
+  it("type into a contenteditable editor inserts the text and fires input", async () => {
+    const doc = domAt('<div id="ed" contenteditable="true" role="textbox"></div>', "https://github.com");
+    const seen: string[] = [];
+    doc.getElementById("ed")!.addEventListener("input", (e: any) => seen.push(e.inputType ?? "input"));
+    const result = (await executeSteps(doc, [{ verb: "type", ref: "ref1", text: "what is vibeops" }], "act", "https://github.com")) as any;
+    expect(result.results[0]).toEqual({ ok: true });
+    expect(doc.getElementById("ed")!.textContent).toBe("what is vibeops");
+    expect(seen.length).toBeGreaterThan(0);
+  });
+
+  it("press dispatches keydown, keypress and keyup with code and keyCode on the focused element", async () => {
+    const doc = domAt('<div id="ed" contenteditable="true" role="textbox"></div>', "https://github.com");
+    const ed = doc.getElementById("ed") as any;
+    ed.focus();
+    const events: any[] = [];
+    for (const t of ["keydown", "keypress", "keyup"]) ed.addEventListener(t, (e: any) => events.push({ t, key: e.key, code: e.code, keyCode: e.keyCode }));
+    const result = (await executeSteps(doc, [{ verb: "press", key: "Enter" }], "act", "https://github.com")) as any;
+    expect(result.results[0]).toEqual({ ok: true });
+    expect(events.map((e) => e.t)).toEqual(["keydown", "keypress", "keyup"]);
+    expect(events[0]).toMatchObject({ key: "Enter", code: "Enter", keyCode: 13 });
+  });
+
+  it("press Enter inside a form input submits the form when nobody prevents it", async () => {
+    const doc = domAt('<form id="f"><input id="q" type="text" /></form>', "https://github.com");
+    const form = doc.getElementById("f") as any;
+    let submitted = 0;
+    form.requestSubmit = () => { submitted++; };
+    (doc.getElementById("q") as any).focus();
+    await executeSteps(doc, [{ verb: "press", key: "Enter" }], "act", "https://github.com");
+    expect(submitted).toBe(1);
+  });
+
+  it("press Enter does not submit when a handler prevents the keydown", async () => {
+    const doc = domAt('<form id="f"><input id="q" type="text" /></form>', "https://github.com");
+    const form = doc.getElementById("f") as any;
+    let submitted = 0;
+    form.requestSubmit = () => { submitted++; };
+    const q = doc.getElementById("q") as any;
+    q.addEventListener("keydown", (e: any) => e.preventDefault());
+    q.focus();
+    await executeSteps(doc, [{ verb: "press", key: "Enter" }], "act", "https://github.com");
+    expect(submitted).toBe(0);
+  });
+});

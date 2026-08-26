@@ -69,7 +69,7 @@ describe("MCP browser verbs", () => {
       name: "browser_act",
       arguments: { instanceId: "i1", targetOrigin: "https://github.com", steps: [{ verb: "click", ref: "ref1" }] },
     });
-    const drained = drainBrowserCalls(actor.id, 0);
+    const drained = drainBrowserCalls({ actorId: actor.id, since: 0 });
     expect(drained).toHaveLength(1);
     expect(drained[0].name).toBe("browser_act");
     expect(drained[0].grantOrigin).toBe("https://github.com");
@@ -86,7 +86,7 @@ describe("MCP browser verbs", () => {
       name: "browser_act",
       arguments: { instanceId: "i1", targetOrigin: "https://github.com", steps: [{ verb: "click", ref: "ref1" }] },
     });
-    const drained = drainBrowserCalls(actor.id, 0);
+    const drained = drainBrowserCalls({ actorId: actor.id, since: 0 });
     expect(drained.map((c) => ({ name: c.name, summary: c.summary }))).toEqual([
       { name: "browser_snapshot", summary: "ok" },
       { name: "browser_act", summary: `refused: ${noActGrantReason("https://github.com")}` },

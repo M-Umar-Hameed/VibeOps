@@ -91,14 +91,18 @@ describe("chat turns CLI lane prompt capability composition", () => {
     getSessionMock.mockResolvedValue({ id: "s5", model: "claude-cli::default", projectId: null });
     // The fake CLI agent fixture cannot call back into the MCP server, so
     // simulate the server recording calls while the turn is in flight: let
-    // runAgent take longer than the recordBrowserCall delay below.
+    // runAgent take longer than the recordBrowserCall delay below. Record
+    // under a different actor id than the turn's actor - simulating the
+    // credentials-key MCP caller - to prove the drain now matches on the
+    // running chat turn's session, not the actor.
+    const cliCallerActorId = "b2c3d4e5-f6a7-4890-9bcd-ef1234567890";
     runAgentMock.mockImplementation(
       () => new Promise((resolve) => setTimeout(() => resolve({ ok: true, output: "agent reply" }), 150)),
     );
     const turnPromise = runTurn(fakeActor, "s5", "hello world", "claude-cli::default");
     await new Promise((r) => setTimeout(r, 50));
-    recordBrowserCall(fakeActor.id, { name: "browser_snapshot", summary: "ok" });
-    recordBrowserCall(fakeActor.id, { name: "browser_act", summary: "refused: reason", grantOrigin: "https://x.test" });
+    recordBrowserCall(cliCallerActorId, { name: "browser_snapshot", summary: "ok" });
+    recordBrowserCall(cliCallerActorId, { name: "browser_act", summary: "refused: reason", grantOrigin: "https://x.test" });
     await turnPromise;
 
     const saved = appendMessageMock.mock.calls.find((c: any[]) => c[0].role === "assistant")?.[0];

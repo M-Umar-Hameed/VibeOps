@@ -17,7 +17,7 @@ import { recallBlock } from "../services/recall.js";
 import { fenceUntrusted, UNTRUSTED_CLAUSE } from "../relay/prompts.js";
 import { captureMemory } from "../services/memory-capture.js";
 import { HANDOFF_RE, saveHandoff } from "../services/handoff.js";
-import { drainBrowserCalls } from "../browser/pending-grants.js";
+import { beginCliTurn, endCliTurn, drainBrowserCalls } from "../browser/pending-grants.js";
 
 // Composed onto the chat voice clause for the tool-capable SDK lane only. States
 // what the connected tools can do and the act-grant rule, so the agent stops
@@ -197,18 +197,31 @@ export async function runTurn(
       const sys = agentDef.mcp ? `${sysBase}${CHAT_CAPABILITIES}` : `${sysBase}${NO_TOOLS_CLAUSE}`;
       const prompt = sys ? `${sys}\n\n${transcript}` : transcript;
       const turnStart = Date.now();
-      const out = await runAgent(cliAgent, prompt, config!.workdir, onData);
+      beginCliTurn(sessionId);
+      let out;
+      try {
+        out = await runAgent(cliAgent, prompt, config!.workdir, onData);
+      } finally {
+        endCliTurn(sessionId);
+      }
       res = { ok: out.ok, text: out.output };
 
       // The CLI agent reaches MCP tools through its own client, so runAgent never
       // sees the browser calls it made. Drain what the server recorded for this
-      // actor during the turn and surface it the same way the SDK lane's
-      // buildChatTools does, so the owner sees the full trace - and gets the
-      // Allow prompt for a missing grant - here too. De-dupe grant prompts by
-      // origin so retries within one turn produce a single prompt; other calls
-      // are appended as-is, in order.
+      // turn's session - the CLI agent may hit MCP as a different actor (e.g.
+      // its credentials key) than the chat turn's actor, so keying by session
+      // is what makes the drain match. Fall back to the actor/since drain for
+      // calls recorded with no CLI turn active. Surface it the same way the
+      // SDK lane's buildChatTools does, so the owner sees the full trace - and
+      // gets the Allow prompt for a missing grant - here too. De-dupe grant
+      // prompts by origin so retries within one turn produce a single prompt;
+      // other calls are appended as-is, in order.
+      const drained = [
+        ...drainBrowserCalls({ sessionId }),
+        ...drainBrowserCalls({ actorId: actor.id, since: turnStart }),
+      ].sort((a, b) => a.at - b.at);
       const seen = new Set<string>();
-      for (const c of drainBrowserCalls(actor.id, turnStart)) {
+      for (const c of drained) {
         if (c.grantOrigin) {
           if (seen.has(c.grantOrigin)) continue;
           seen.add(c.grantOrigin);

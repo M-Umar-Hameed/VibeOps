@@ -1,40 +1,44 @@
 import { describe, it, expect } from "vitest";
-import { recordBrowserCall, drainBrowserCalls } from "../src/browser/pending-grants.js";
+import { recordBrowserCall, drainBrowserCalls, beginCliTurn, endCliTurn } from "../src/browser/pending-grants.js";
 
 describe("pending-grants", () => {
-  it("drains an actor's calls since a timestamp, leaving other actors' untouched", () => {
-    recordBrowserCall("A", { name: "browser_snapshot", summary: "ok" }, 100);
-    recordBrowserCall("A", { name: "browser_act", summary: "refused: no grant", grantOrigin: "https://b.test" }, 200);
-    recordBrowserCall("B", { name: "browser_snapshot", summary: "ok" }, 150);
-
-    const drained = drainBrowserCalls("A", 0, 1000);
-    expect(drained).toEqual([
-      { actorId: "A", name: "browser_snapshot", summary: "ok", at: 100 },
-      { actorId: "A", name: "browser_act", summary: "refused: no grant", grantOrigin: "https://b.test", at: 200 },
+  it("stamps a call recorded during a CLI turn with that turn's session id, drainable regardless of actor", () => {
+    beginCliTurn("s1");
+    recordBrowserCall("some-other-actor", { name: "browser_snapshot", summary: "ok" }, 100);
+    expect(drainBrowserCalls({ sessionId: "s1" }, 1000)).toEqual([
+      { actorId: "some-other-actor", name: "browser_snapshot", summary: "ok", at: 100, sessionId: "s1" },
     ]);
+    endCliTurn("s1");
+  });
 
-    // A second drain of A is empty; B's call is still there.
-    expect(drainBrowserCalls("A", 0, 1000)).toEqual([]);
-    expect(drainBrowserCalls("B", 0, 1000)).toEqual([
-      { actorId: "B", name: "browser_snapshot", summary: "ok", at: 150 },
+  it("stamps sessionId: null once the CLI turn has ended", () => {
+    beginCliTurn("s1");
+    endCliTurn("s1");
+    recordBrowserCall("actor", { name: "browser_snapshot", summary: "ok" }, 100);
+    expect(drainBrowserCalls({ actorId: "actor", since: 0 }, 1000)).toEqual([
+      { actorId: "actor", name: "browser_snapshot", summary: "ok", at: 100, sessionId: null },
     ]);
+  });
+
+  it("routes calls to the most recently begun turn, falling back to the prior turn once it ends", () => {
+    beginCliTurn("s1");
+    beginCliTurn("s2");
+    recordBrowserCall("actor", { name: "browser_snapshot", summary: "to s2" }, 100);
+    endCliTurn("s2");
+    recordBrowserCall("actor", { name: "browser_snapshot", summary: "to s1" }, 200);
+
+    expect(drainBrowserCalls({ sessionId: "s2" }, 1000)).toEqual([
+      { actorId: "actor", name: "browser_snapshot", summary: "to s2", at: 100, sessionId: "s2" },
+    ]);
+    expect(drainBrowserCalls({ sessionId: "s1" }, 1000)).toEqual([
+      { actorId: "actor", name: "browser_snapshot", summary: "to s1", at: 200, sessionId: "s1" },
+    ]);
+    endCliTurn("s1");
   });
 
   it("drops a call older than the TTL", () => {
-    recordBrowserCall("A", { name: "browser_snapshot", summary: "ok" }, 0);
+    recordBrowserCall("actor", { name: "browser_snapshot", summary: "ok" }, 0);
     const now = 30 * 60 * 1000 + 1;
-    expect(drainBrowserCalls("A", 0, now)).toEqual([]);
-  });
-
-  it("since excludes earlier entries", () => {
-    recordBrowserCall("A", { name: "browser_snapshot", summary: "ok" }, 100);
-    recordBrowserCall("A", { name: "browser_snapshot", summary: "ok" }, 500);
-    expect(drainBrowserCalls("A", 300, 1000)).toEqual([
-      { actorId: "A", name: "browser_snapshot", summary: "ok", at: 500 },
-    ]);
-    // The earlier entry is still pending (since excluded it, not TTL).
-    expect(drainBrowserCalls("A", 0, 1000)).toEqual([
-      { actorId: "A", name: "browser_snapshot", summary: "ok", at: 100 },
-    ]);
+    expect(drainBrowserCalls({ actorId: "actor", since: 0 }, now)).toEqual([]);
   });
 });

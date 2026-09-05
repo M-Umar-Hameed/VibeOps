@@ -1,6 +1,6 @@
 # VibeOps — what it is, what we set out to build, where it stands
 
-Last updated 2026-09-05 at commit `d47f0f4` (989 commits since 2026-07-07). This is the one document to read first. It says what the app is for, what the intended scope was, what has actually shipped, and what is still open. Detailed architecture lives in `VibeOps.md`; per-feature designs live in `docs/superpowers/specs/`; the end-user walkthrough is `docs/USER_GUIDE.md`.
+Last updated 2026-09-05 at commit `ead0101` (989 commits since 2026-07-07). This is the one document to read first. It says what the app is for, what the intended scope was, what has actually shipped, and what is still open. Detailed architecture lives in `VibeOps.md`; per-feature designs live in `docs/superpowers/specs/`; the end-user walkthrough is `docs/USER_GUIDE.md`.
 
 ## What the app is
 
@@ -45,7 +45,7 @@ Phases 1 to 4 were the original plan (ticket engine, knowledge/RAG, desktop app,
 ## What we have achieved, by the numbers
 
 - 938 commits over 47 days; published releases v0.1.2 through v0.1.6 (v0.1.6 tag predates the latest chat, tab and memory work; next release is 0.1.7).
-- Server suite: 996 tests, 973 passing on the embedded lane; the 8 failures are the fixed set that needs a real Postgres (global-setup, relay-pipeline, sidecar-payload, forge-resume, one vector-dim test) and pass when Docker is up. App suite: 223 passing. Extension e2e: 5 checks in real Chrome.
+- Server suite: 187 files on the embedded lane, 175 passing files; the 5 failing files are the fixed Docker-only set (global-setup, relay-pipeline, sidecar-payload, forge-resume, one vector-dim test) and pass when Docker is up. App suite: 245 passing. Extension e2e: 5 checks in real Chrome.
 - 31 design specs under `docs/superpowers/specs/`, each implemented through the forge or, where the pipeline was too slow for the slice, directly with the same review discipline.
 - The board is the record: every incident this project hit (stalled runs, orphaned agents, corrupted embedded DB, release mismatches, extension disconnects, silent chat failures) exists as a ticket with its diagnosis and fix.
 
@@ -53,11 +53,9 @@ Phases 1 to 4 were the original plan (ticket engine, knowledge/RAG, desktop app,
 
 Tracked on the board, all under the VibeOps project:
 
-- `ec60336d` (high) - closed work orders vanish from the Forge screen and their run history is capped at the newest 20 runs board-wide. In the pipeline as of 2026-09-05: closed group on the Forge list, `/forge/runs?ticketId=` uncapped per ticket, Open in Forge from the ticket page.
-- `137789e4` - the installer cannot replace node.exe while a detached sidecar holds it; needs a shutdown route the installer calls.
-- `c98f7617` - lanes declared with mcp:true but no MCP server registered look tool-capable and are not; doctor check, one-click agy registration, honest no-tools prompt.
 - `1421c63f` - owner's future plan: customer notification automation.
 
+Closed on 2026-09-05, all through the forge (plan claude, work agy, review claude): `ec60336d` closed work orders reachable on the Forge screen with per-ticket run history; `137789e4` installer shuts the sidecar down through `POST /system/shutdown` before replacing node.exe; `c98f7617` doctor detects an mcp:true lane with no MCP server registered; `ef1a2bb5` installed skills reach every pipeline lane (the planner sees the catalogue and names up to three, work and review receive their full text). Also landed directly: every child process the sidecar spawns is hidden on Windows (console windows no longer flash and steal focus), and a curated skill pack (seven superpowers skills, frontend-design, mcp-builder) ships in `vibeops-pack` behind a root `.claude-plugin/marketplace.json`, installable from Settings > Plugins.
 Process flaws found in the 2026-09-05 audit of the 200 closed tickets, and what changed:
 
 - Reviewers raised syntax or JSX-balance findings by counting hunks in the diff (12 tickets carried a finding later shown false). The review prompt now requires CHECKS output or a quoted compiler run for any compile-class finding.

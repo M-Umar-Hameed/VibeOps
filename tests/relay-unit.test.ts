@@ -734,3 +734,42 @@ test("composePlanPrompt and composeWorkPrompt place a fenced memory block above 
   expect(composeWorkPrompt({ ticket, plan: "do it", knowledge, workdir: "/w" }))
     .toBe(composeWorkPrompt({ ticket, plan: "do it", knowledge, workdir: "/w", memory: "" }));
 });
+
+test("composePlanPrompt with skillIndex includes the index and the Skills instruction; absent leaves it unchanged", () => {
+  const prompt = composePlanPrompt({
+    ticket: { title: "Fix the widget" }, knowledge: [],
+    skillIndex: "Available skills:\n- demo: a demo skill",
+  });
+  expect(prompt).toContain("Available skills:");
+  expect(prompt).toContain("- demo: a demo skill");
+  expect(prompt).toContain('End the plan with one line "Skills:');
+  const base = composePlanPrompt({ ticket: { title: "T" }, knowledge: [] });
+  expect(composePlanPrompt({ ticket: { title: "T" }, knowledge: [], skillIndex: "" })).toBe(base);
+  expect(base).not.toContain("Available skills:");
+});
+
+test("composeWorkPrompt with skills includes the bodies; absent leaves it unchanged", () => {
+  const prompt = composeWorkPrompt({
+    ticket: { title: "T" }, plan: "1. do", knowledge: [], workdir: "/w",
+    skills: "\n### Skill: demo\nBODY-MARKER\n",
+  });
+  expect(prompt).toContain("Skills to follow (installed by the operator");
+  expect(prompt).toContain("### Skill: demo");
+  expect(prompt).toContain("BODY-MARKER");
+  const base = composeWorkPrompt({ ticket: { title: "T" }, plan: "1. do", knowledge: [], workdir: "/w" });
+  expect(composeWorkPrompt({ ticket: { title: "T" }, plan: "1. do", knowledge: [], workdir: "/w", skills: "" })).toBe(base);
+  expect(base).not.toContain("Skills to follow");
+});
+
+test("composeReviewPrompt with skills includes the bodies; absent leaves it unchanged", () => {
+  const prompt = composeReviewPrompt({
+    ticket: { title: "T" }, plan: "1. do", report: "REPORT: x", diff: "diff",
+    skills: "\n### Skill: demo\nBODY-MARKER\n",
+  });
+  expect(prompt).toContain("Skills to follow (installed by the operator");
+  expect(prompt).toContain("BODY-MARKER");
+  const base = composeReviewPrompt({ ticket: { title: "T" }, plan: "1. do", report: "REPORT: x", diff: "diff" });
+  expect(composeReviewPrompt({ ticket: { title: "T" }, plan: "1. do", report: "REPORT: x", diff: "diff", skills: "" })).toBe(base);
+  expect(base).not.toContain("Skills to follow");
+});
+

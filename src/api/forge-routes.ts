@@ -11,6 +11,7 @@ import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkd
 import {
   sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash, sandboxActivity, sandboxWorkingDiff
 } from "../forge/sandbox.js";
+import { listSkillDir } from "../forge/skills.js";
 import { indexRepoDocs } from "../services/knowledge.js";
 import { pickAgents } from "../forge/router.js";
 import { runAgent } from "../relay/invoke.js";
@@ -48,16 +49,6 @@ type AppEnv = { Variables: { actor: Actor } };
 
 function forgeConfig() {
   return loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG);
-}
-
-function listSkillDir(dir: string): string[] {
-  try {
-    return readdirSync(dir, { withFileTypes: true })
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name);
-  } catch {
-    return [];
-  }
 }
 
 // The promote gate is a security control: only ADMIN-authored review comments

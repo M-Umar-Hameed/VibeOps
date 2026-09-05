@@ -92,7 +92,7 @@ async function cloneOrRefresh(url: string, dir: string): Promise<void> {
   if (clone.code !== 0) throw new Error(`git clone failed: ${clone.out.trim()}`);
 }
 
-function readSkillMeta(skillMdPath: string, fallbackName: string): { name: string; description: string } {
+export function readSkillMeta(skillMdPath: string, fallbackName: string): { name: string; description: string } {
   const text = readFileSync(skillMdPath, "utf-8");
   const frontmatter = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   const block = frontmatter?.[1] ?? "";

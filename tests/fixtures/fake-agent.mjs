@@ -25,6 +25,7 @@ const OUTPUTS = {
   // vitest.config.ts is for protected-path tests; run*-output.txt for concurrency tests.
   // readme.md is for the re-index test.
   plan: "1. do the thing\nFiles: forge-made.txt, src/feature.ts, vitest.config.ts, run1-output.txt, run2-output.txt, readme.md",
+  "plan-skills": "1. do the thing\nFiles: forge-made.txt, src/feature.ts, vitest.config.ts, run1-output.txt, run2-output.txt, readme.md\nSkills: demo",
   work: "did it\nREPORT: changed x",
   "review-pass": "looks good\nVERDICT: PASS",
   "review-fail": "broken\nVERDICT: FAIL\n- fix y",
@@ -67,6 +68,13 @@ function selectMode() {
 }
 
 let mode = selectMode();
+
+// Test hook: record the WORK-stage prompt this child received (argv[2]; the
+// forge-api config delivers via {prompt}). Lets a test assert an attached skill
+// body reached the worker. Mode-gated so plan/review invocations don't overwrite it.
+if (process.env.FAKE_PROMPT_OUT && mode === "work") {
+  writeFileSync(process.env.FAKE_PROMPT_OUT, prompt);
+}
 
 if (mode === "persona" || mode === "believer" || mode === "investor" || mode === "skeptic") {
   if (prompt.includes("optimist")) mode = "believer";

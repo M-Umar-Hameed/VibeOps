@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { basename, extname } from "node:path";
+import { basename, extname, join } from "node:path";
 import { homedir } from "node:os";
 import { promisify } from "node:util";
 import { readClaudeAccount, readCodexAccount } from "../system/agents.js";
@@ -28,10 +28,87 @@ const AUTH_READERS: Record<string, (homeDir: string) => boolean> = {
   codex: (homeDir) => readCodexAccount(homeDir).connected,
 };
 
+// claude/kimi: no reliable local file (scope-dependent), so ask the CLI.
+async function cliMcpListHasVibeops(cmd0: string): Promise<boolean> {
+  const isWindowsScript = process.platform === "win32" && (cmd0.toLowerCase().endsWith(".cmd") || cmd0.toLowerCase().endsWith(".bat"));
+  const { stdout } = await execFileAsync(cmd0, ["mcp", "list"], { timeout: PROBE_TIMEOUT_MS, windowsHide: true, shell: isWindowsScript });
+  return /vibeops/i.test(stdout);
+}
+
+// agy/gemini persist mcpServers to a known settings file -- read it directly
+// (same file the one-click install writes; catches hand-registration too).
+function settingsHasVibeops(homeDir: string, rel: string[]): boolean {
+  const p = join(homeDir, ...rel);
+  if (!existsSync(p)) return false;
+  try {
+    const j = JSON.parse(readFileSync(p, "utf-8")) as { mcpServers?: unknown };
+    return !!j.mcpServers && typeof j.mcpServers === "object" && !Array.isArray(j.mcpServers) && "vibeops" in (j.mcpServers as object);
+  } catch { return false; }
+}
+
+// ponytail: matches "vibeops" in list output / a present mcpServers.vibeops key;
+// a differently-named server pointing at the same URL reads as unregistered.
+const MCP_CHECKS: Record<string, (homeDir: string, cmd0: string) => Promise<boolean>> = {
+  claude: (_h, cmd0) => cliMcpListHasVibeops(cmd0),
+  kimi: (_h, cmd0) => cliMcpListHasVibeops(cmd0),
+  agy: (h) => Promise.resolve(settingsHasVibeops(h, [".gemini", "antigravity-cli", "settings.json"])),
+  gemini: (h) => Promise.resolve(settingsHasVibeops(h, [".gemini", "settings.json"])),
+};
+
+// ponytail: <key> placeholder -- doctor has no API key; UI links /mcp/install
+// or the user pastes their key. Exact per-CLI syntax from docs/AGENT_CLIS.md.
+const MCP_ADD: Record<string, (url: string) => string> = {
+  claude: (url) => `claude mcp add --transport http vibeops ${url} --header "Authorization: Bearer <key>"`,
+  kimi: (url) => `kimi mcp add --transport http vibeops ${url} --header "Authorization: Bearer <key>"`,
+  agy: (url) => `agy mcp add --header "Authorization: Bearer <key>" vibeops ${url}`,
+  gemini: () => `add vibeops to ~/.gemini/settings.json mcpServers, or POST /mcp/install {"client":"gemini"}`,
+};
+
+const mcpCache = new Map<string, { value: McpRegStatus | undefined; expiresAt: number }>();
+
+async function computeMcp(agent: RelayConfig["agents"][string], cmd0: string, homeDir: string): Promise<McpRegStatus | undefined> {
+  if (agent.mcp !== true) return undefined;
+  const bin = binBasename(cmd0);
+  const check = MCP_CHECKS[bin];
+  if (!check) return undefined; // uncheckable CLI -> never flag
+  const registered = await check(homeDir, cmd0).catch(() => false);
+  const url = `http://127.0.0.1:${process.env.PORT ?? 8787}/mcp`;
+  return { registered, addCommand: MCP_ADD[bin](url) };
+}
+
+async function mcpRegStatus(
+  agent: RelayConfig["agents"][string], name: string, cmd0: string,
+  homeDir: string, now: number, fresh?: boolean,
+): Promise<McpRegStatus | undefined> {
+  const key = cacheKey(name, cmd0);
+  const c = mcpCache.get(key);
+  if (!fresh && c && c.expiresAt > now) return c.value;
+  const value = await computeMcp(agent, cmd0, homeDir);
+  mcpCache.set(key, { value, expiresAt: now + CACHE_TTL_MS });
+  return value;
+}
+
+// Registration-only lookup for the chat CLI-lane prompt gate. Shares mcpCache
+// with runDoctor; never triggers the --version probe. Undefined = not
+// applicable (no cmd, mcp!=true) or uncheckable CLI -> caller trusts the flag.
+export async function mcpRegistration(
+  config: RelayConfig, agentName: string, opts: { homeDir?: string; fresh?: boolean } = {},
+): Promise<McpRegStatus | undefined> {
+  const agent = config.agents[agentName];
+  const cmd0 = agent?.cmd?.[0];
+  if (!agent || !cmd0) return undefined;
+  return mcpRegStatus(agent, agentName, cmd0, opts.homeDir ?? homedir(), Date.now(), opts.fresh);
+}
+
 export type ProbeStatus = { ok: boolean; error?: string; spawnFailed?: boolean };
 export type AuthStatus = { known: boolean; connected: boolean | null };
+export type McpRegStatus = { registered: boolean; addCommand: string };
 export type AgentDoctorStatus = {
   name: string; binary: string; probe: ProbeStatus; auth: AuthStatus; lastChecked: string;
+  // Present only for a lane with mcp:true whose CLI basename is checkable
+  // (claude, kimi, agy, gemini). Omitted otherwise -- never flag what we
+  // cannot verify.
+  mcp?: McpRegStatus;
 };
 
 function binBasename(cmd0: string): string {
@@ -40,7 +117,7 @@ function binBasename(cmd0: string): string {
   return ext ? b.slice(0, -ext.length) : b;
 }
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 // Never touches agent.cmd's real template (which carries {prompt}/{promptFile}/
 // {model}) -- only cmd0 plus a static, per-basename --version-style arg vector.
@@ -100,6 +177,7 @@ export async function runDoctor(
     const probe = await probeBinary(cmd0);
     const status: AgentDoctorStatus = {
       name, binary: binBasename(cmd0), probe, auth: checkAuth(cmd0, homeDir),
+      mcp: await mcpRegStatus(config.agents[name], name, cmd0, homeDir, now, opts.fresh),
       lastChecked: new Date(now).toISOString(),
     };
     cache.set(cacheKey(name, cmd0), { status, expiresAt: now + CACHE_TTL_MS });

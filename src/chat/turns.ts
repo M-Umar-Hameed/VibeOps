@@ -12,6 +12,7 @@ import { runHttpTurn } from "./http-lane.js";
 import { toHttpTools } from "./openai-tools.js";
 import { fetchCatalog } from "./catalog.js";
 import { loadRelayConfig, resolveCmd } from "../relay/config.js";
+import { mcpRegistration } from "../relay/doctor.js";
 import { parseModelRef, rollTranscript } from "./roster.js";
 import { recallBlock } from "../services/recall.js";
 import { fenceUntrusted, UNTRUSTED_CLAUSE } from "../relay/prompts.js";
@@ -188,14 +189,24 @@ export async function runTurn(
     } else {
       // CLI lane: one-shot process. An mcp-wired lane reaches the shared MCP tools
       // through its own CLI MCP client config (one-time `claude mcp add --transport
-      // http vibeops <url>`; see docs/AGENT_CLIS.md), so no flags or secrets are
-      // injected here. Surface CHAT_CAPABILITIES so a wired lane stops denying tools
-      // it has; an unwired lane gets NO_TOOLS_CLAUSE so it stops narrating actions
-      // it cannot take.
+      // http vibeops <url>`; see docs/AGENT_CLIS.md). But a lane that DECLARES
+      // mcp:true with NO vibeops server registered has silently no tools (live
+      // incident 2026-08-26: agy mcp:true, `agy mcp list` empty). Consult the
+      // doctor's registration check: only a registered -- or uncheckable -- mcp
+      // lane gets CHAT_CAPABILITIES; a declared-but-unregistered lane gets
+      // NO_TOOLS_CLAUSE plus a user-facing notice, so the model never claims
+      // tools it lacks.
+      const reg = agentDef.mcp === true ? await mcpRegistration(config!, agentName) : undefined;
+      const unregistered = reg?.registered === false;
+      const wired = agentDef.mcp === true && !unregistered;
       const cliAgent = { ...agentDef, cmd: resolveCmd(agentDef, modelName || undefined) };
       const transcript = rollTranscript(await store.getMessages(sessionId));
-      const sys = agentDef.mcp ? `${sysBase}${CHAT_CAPABILITIES}` : `${sysBase}${NO_TOOLS_CLAUSE}`;
+      const sys = wired ? `${sysBase}${CHAT_CAPABILITIES}` : `${sysBase}${NO_TOOLS_CLAUSE}`;
       const prompt = sys ? `${sys}\n\n${transcript}` : transcript;
+      const notice = unregistered
+        ? `[chat: lane "${agentName}" declares mcp:true but no vibeops MCP server is registered for its CLI, so this model has no tools. Register with: ${reg!.addCommand}]\n`
+        : "";
+      if (notice) onData(notice);
       const turnStart = Date.now();
       beginCliTurn(sessionId);
       let out;
@@ -204,7 +215,7 @@ export async function runTurn(
       } finally {
         endCliTurn(sessionId);
       }
-      res = { ok: out.ok, text: out.output };
+      res = { ok: out.ok, text: notice + out.output };
 
       // The CLI agent reaches MCP tools through its own client, so runAgent never
       // sees the browser calls it made. Drain what the server recorded for this

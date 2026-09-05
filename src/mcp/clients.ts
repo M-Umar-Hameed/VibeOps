@@ -11,6 +11,12 @@ const CLIENTS = {
     rel: [".gemini", "settings.json"],
     entry: (url: string, key: string) => ({ httpUrl: url, headers: { Authorization: `Bearer ${key}` } }),
   },
+  // ponytail: Antigravity is Gemini-family; assume the same httpUrl entry shape.
+  // `agy mcp add` persists mcpServers here (docs/AGENT_CLIS.md, ticket 2026-08-26).
+  agy: {
+    rel: [".gemini", "antigravity-cli", "settings.json"],
+    entry: (url: string, key: string) => ({ httpUrl: url, headers: { Authorization: `Bearer ${key}` } }),
+  },
 } as const;
 export type InstallableClient = keyof typeof CLIENTS;
 export const INSTALLABLE_CLIENTS = Object.keys(CLIENTS) as InstallableClient[];
@@ -24,6 +30,7 @@ export function buildMcpConfig(url: string, apiKey: string) {
     },
     cursor: { path: path("cursor"), snippet: { mcpServers: { vibeops: CLIENTS.cursor.entry(url, apiKey) } } },
     gemini: { path: path("gemini"), snippet: { mcpServers: { vibeops: CLIENTS.gemini.entry(url, apiKey) } } },
+    agy: { path: path("agy"), snippet: { mcpServers: { vibeops: CLIENTS.agy.entry(url, apiKey) } } },
   };
 }
 

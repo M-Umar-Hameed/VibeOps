@@ -19,6 +19,9 @@ describe("buildMcpConfig", () => {
       { mcpServers: { vibeops: { httpUrl: URL, headers: { Authorization: `Bearer ${KEY}` } } } });
     expect(c.cursor.path.replace(/\\/g, "/")).toContain(".cursor/mcp.json");
     expect(c.gemini.path.replace(/\\/g, "/")).toContain(".gemini/settings.json");
+    expect(c.agy.snippet).toEqual(
+      { mcpServers: { vibeops: { httpUrl: URL, headers: { Authorization: `Bearer ${KEY}` } } } });
+    expect(c.agy.path.replace(/\\/g, "/")).toContain(".gemini/antigravity-cli/settings.json");
   });
 });
 
@@ -106,5 +109,26 @@ describe("installClientConfig", () => {
     expect(r2.backedUp).toBe(true);
     const backupAfterSecond = JSON.parse(readFileSync(p + ".vibeops-backup", "utf-8"));
     expect(backupAfterSecond).toEqual(original); // Should still match original
+  });
+
+  it("creates a fresh agy config at the antigravity-cli settings path", () => {
+    const home = mkdtempSync(join(tmpdir(), "vibeops-mcp-"));
+    const r = installClientConfig("agy", URL, KEY, home);
+    expect(r.path.replace(/\\/g, "/")).toContain(".gemini/antigravity-cli/settings.json");
+    const written = JSON.parse(readFileSync(r.path, "utf-8"));
+    expect(written.mcpServers.vibeops.httpUrl).toBe(URL);
+  });
+
+  it("merges agy into an existing antigravity settings file, preserving unrelated keys", () => {
+    const home = mkdtempSync(join(tmpdir(), "vibeops-mcp-"));
+    mkdirSync(join(home, ".gemini", "antigravity-cli"), { recursive: true });
+    const p = join(home, ".gemini", "antigravity-cli", "settings.json");
+    writeFileSync(p, JSON.stringify({ editor: "vim", mcpServers: { other: { httpUrl: "y" } } }));
+    const r = installClientConfig("agy", URL, KEY, home);
+    expect(r.backedUp).toBe(true);
+    const written = JSON.parse(readFileSync(r.path, "utf-8"));
+    expect(written.editor).toBe("vim");
+    expect(written.mcpServers.other.httpUrl).toBe("y");
+    expect(written.mcpServers.vibeops.httpUrl).toBe(URL);
   });
 });

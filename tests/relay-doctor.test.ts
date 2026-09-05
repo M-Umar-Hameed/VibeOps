@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -124,4 +124,58 @@ test("pipelineStartWarnings/pipelineStartBlockingError read the cache only, neve
 
   expect(pipelineStartWarnings(cfg, ["never-checked-agent"])).toEqual([]);
   expect(pipelineStartBlockingError(cfg, ["never-checked-agent"])).toBeNull();
+});
+
+test("runDoctor: mcp:true agy lane with registered settings reports registered", async () => {
+  const name = uniq("agy-reg");
+  const home = mkTmp("doctor-agy-");
+  mkdirSync(join(home, ".gemini", "antigravity-cli"), { recursive: true });
+  writeFileSync(join(home, ".gemini", "antigravity-cli", "settings.json"),
+    JSON.stringify({ mcpServers: { vibeops: { httpUrl: "http://x/mcp" } } }));
+  const cfg: RelayConfig = { workdir: tmpdir(), agents: { [name]: { cmd: ["agy"], roles: ["work"], mcp: true } } };
+  const [s] = await runDoctor(cfg, { homeDir: home, fresh: true });
+  expect(s.mcp?.registered).toBe(true);
+  expect(s.mcp?.addCommand).toContain("agy mcp add");
+});
+
+test("runDoctor: mcp:true agy lane with no settings reports unregistered + add command", async () => {
+  const name = uniq("agy-unreg");
+  const home = mkTmp("doctor-agy2-");
+  const cfg: RelayConfig = { workdir: tmpdir(), agents: { [name]: { cmd: ["agy"], roles: ["work"], mcp: true } } };
+  const [s] = await runDoctor(cfg, { homeDir: home, fresh: true });
+  expect(s.mcp?.registered).toBe(false);
+  expect(s.mcp?.addCommand).toContain("agy mcp add");
+});
+
+test("runDoctor: mcp:true gemini lane reads ~/.gemini/settings.json", async () => {
+  const name = uniq("gem-reg");
+  const home = mkTmp("doctor-gem-");
+  mkdirSync(join(home, ".gemini"), { recursive: true });
+  writeFileSync(join(home, ".gemini", "settings.json"),
+    JSON.stringify({ mcpServers: { vibeops: { httpUrl: "http://x/mcp" } } }));
+  const cfg: RelayConfig = { workdir: tmpdir(), agents: { [name]: { cmd: ["gemini"], roles: ["work"], mcp: true } } };
+  const [s] = await runDoctor(cfg, { homeDir: home, fresh: true });
+  expect(s.mcp?.registered).toBe(true);
+});
+
+test("runDoctor: mcp:true claude lane with no CLI present reports unregistered", async () => {
+  const name = uniq("claude-unreg");
+  const home = mkTmp("doctor-cl-");
+  const cfg: RelayConfig = { workdir: tmpdir(), agents: { [name]: { cmd: [join(home, "claude")], roles: ["plan"], mcp: true } } };
+  const [s] = await runDoctor(cfg, { homeDir: home, fresh: true });
+  expect(s.mcp?.registered).toBe(false);
+  expect(s.mcp?.addCommand).toContain("claude mcp add");
+});
+
+test("runDoctor: uncheckable basename with mcp:true is not flagged", async () => {
+  const name = uniq("unknown-mcp");
+  const cfg: RelayConfig = { workdir: tmpdir(), agents: { [name]: { cmd: [EXIT0], roles: ["plan"], mcp: true } } };
+  const [s] = await runDoctor(cfg, { fresh: true });
+  expect(s.mcp).toBeUndefined();
+});
+
+test("runDoctor: lane without mcp has no mcp field", async () => {
+  const name = uniq("no-mcp");
+  const [s] = await runDoctor(configWith(name, EXIT0), { fresh: true });
+  expect(s.mcp).toBeUndefined();
 });

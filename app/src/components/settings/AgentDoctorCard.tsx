@@ -5,6 +5,7 @@ type DoctorStatus = {
   name: string; binary: string;
   probe: { ok: boolean; error?: string };
   auth: { known: boolean; connected: boolean | null };
+  mcp?: { registered: boolean; addCommand: string };
   lastChecked: string;
 };
 
@@ -30,7 +31,8 @@ const GENERIC_CONNECT = {
 };
 
 function dotColor(s: DoctorStatus): string {
-  return s.probe.ok ? "bg-green-500" : "bg-red-500";
+  if (!s.probe.ok || s.mcp?.registered === false) return "bg-red-500";
+  return "bg-green-500";
 }
 
 function authLabel(s: DoctorStatus): string {
@@ -92,6 +94,7 @@ export function AgentDoctorCard() {
                   <div className="text-right text-xs text-on-surface-variant">
                     <div>{authLabel(s)}</div>
                     {!s.probe.ok && <div className="text-error">{s.probe.error}</div>}
+                    {s.mcp?.registered === false && <div className="text-error">MCP not registered</div>}
                   </div>
                 </div>
                 <details className="mt-2 text-xs">
@@ -99,6 +102,12 @@ export function AgentDoctorCard() {
                   <div className="mt-1 text-on-surface-variant">
                     {copy.command && <code className="block bg-background rounded px-2 py-1 mb-1">{copy.command}</code>}
                     <p>{copy.note}</p>
+                    {s.mcp?.registered === false && (
+                      <>
+                        <p className="mt-1">This lane declares mcp:true but no vibeops MCP server is registered. Register it:</p>
+                        <code className="block bg-background rounded px-2 py-1 mt-1">{s.mcp.addCommand}</code>
+                      </>
+                    )}
                   </div>
                 </details>
               </div>

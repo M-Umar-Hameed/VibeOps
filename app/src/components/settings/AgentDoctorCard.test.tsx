@@ -50,3 +50,32 @@ test("lists agent health and lets the user re-run checks", async () => {
   await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/forge/doctor?fresh=true"));
   await waitFor(() => expect(screen.getByText("renamed")).toBeInTheDocument());
 });
+
+test("shows a red dot and register command for an unregistered mcp lane", async () => {
+  apiFetch.mockImplementation((path: string) => {
+    if (path === "/forge/doctor") return Promise.resolve([
+      {
+        name: "agy",
+        binary: "agy",
+        probe: { ok: true },
+        auth: { known: false, connected: null },
+        mcp: { registered: false, addCommand: 'agy mcp add --header "Authorization: Bearer <key>" vibeops http://127.0.0.1:8787/mcp' },
+        lastChecked: "2026-07-18T00:00:00.000Z",
+      },
+    ]);
+    return Promise.resolve([]);
+  });
+
+  const { container } = render(wrap(<AgentDoctorCard />));
+  await waitFor(() => expect(screen.getByText("agy")).toBeInTheDocument());
+
+  const dot = container.querySelector(".bg-red-500");
+  expect(dot).toBeInTheDocument();
+
+  expect(screen.getByText("MCP not registered")).toBeInTheDocument();
+
+  const detailsSummary = screen.getByText("How to connect");
+  fireEvent.click(detailsSummary);
+
+  expect(screen.getByText(/agy mcp add/i)).toBeInTheDocument();
+});

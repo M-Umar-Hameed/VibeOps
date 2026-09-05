@@ -11,8 +11,10 @@ vi.mock("../api/tickets.js", () => ({ tickets: {
 vi.mock("../api/comments.js", () => ({ comments: { list: vi.fn(async () => []), add: vi.fn() } }));
 vi.mock("../api/history.js", () => ({ history: { get: vi.fn(async () => []) } }));
 vi.mock("../api/actors.js", () => ({ actors: { list: vi.fn(async () => []) } }));
+vi.mock("@tanstack/react-router", () => ({ Link: (p: any) => <a onClick={p.onClick}>{p.children}</a> }));
 
 import { DetailScreen } from "./detail.js";
+import { SELECTED_TICKET_KEY } from "./forge/types.js";
 const wrap = (ui: any) => <QueryClientProvider client={new QueryClient()}>{ui}</QueryClientProvider>;
 
 test("Changing status auto-saves with expectedVersion; a 409 shows the banner and keeps the edit", async () => {
@@ -25,4 +27,12 @@ test("Changing status auto-saves with expectedVersion; a 409 shows the banner an
   await waitFor(() => expect(screen.getByText(/changed elsewhere/)).toBeInTheDocument());
   // edit preserved:
   expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("closed");
+});
+
+test("Open in Forge writes SELECTED_TICKET_KEY", async () => {
+  localStorage.clear();
+  render(wrap(<DetailScreen id="t1" />));
+  await waitFor(() => screen.getByText("T"));
+  fireEvent.click(screen.getByText("Open in Forge"));
+  expect(localStorage.getItem(SELECTED_TICKET_KEY)).toBe("t1");
 });

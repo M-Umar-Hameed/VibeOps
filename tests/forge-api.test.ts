@@ -1,9 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
+import { db } from "../src/db/client.js";
+import { forgeRuns } from "../src/db/schema.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
 import { createTicket, updateTicket } from "../src/services/tickets.js";
@@ -1234,3 +1237,26 @@ it("boot reconcile does NOT touch a review ticket whose last run failed", async 
       await awaitRun(runId);
     }
   }, 15000);
+
+  it("GET /forge/runs?ticketId filters to that ticket and returns >20; no ticketId caps at 20", async () => {
+    const h = await adminHeaders();
+    const a = await seedTicket();
+    const b = await seedTicket();
+    const now = Date.now();
+    const mkRow = (ticketId: string, i: number) => ({
+      id: randomUUID(),
+      ticketId, status: "passed", stage: "review",
+      planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      startedAt: new Date(now - i * 1000),
+    });
+    await db.insert(forgeRuns).values(Array.from({ length: 25 }, (_, i) => mkRow(a.id, i)));
+    await db.insert(forgeRuns).values([mkRow(b.id, 0)]);
+
+    const scoped = await (await app.request(`/forge/runs?ticketId=${a.id}`, { headers: h })).json();
+    expect(scoped.every((r: { ticketId: string }) => r.ticketId === a.id)).toBe(true);
+    expect(scoped.length).toBeGreaterThan(20);
+    expect(scoped.length).toBe(25);
+
+    const unscoped = await (await app.request("/forge/runs", { headers: h })).json();
+    expect(unscoped.filter((r: { persisted?: boolean }) => r.persisted).length).toBeLessThanOrEqual(20);
+  });

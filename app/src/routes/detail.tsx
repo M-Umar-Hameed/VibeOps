@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { tickets } from "../api/tickets.js";
 import { comments } from "../api/comments.js";
@@ -11,6 +12,7 @@ import { Avatar } from "../components/Avatar.js";
 import { AuditTimeline } from "../components/AuditTimeline.js";
 import { CommentList } from "../components/CommentList.js";
 import { SpecEditor } from "../components/SpecEditor.js";
+import { SELECTED_TICKET_KEY } from "./forge/types.js";
 
 export function DetailScreen({ id }: { id: string }) {
   const qc = useQueryClient();
@@ -135,6 +137,13 @@ export function DetailScreen({ id }: { id: string }) {
                 <option className="bg-surface text-on-surface" value="in_progress">IN_PROGRESS</option>
                 <option className="bg-surface text-on-surface" value="closed">CLOSED</option>
               </select>
+              <Link
+                to="/forge"
+                onClick={() => localStorage.setItem(SELECTED_TICKET_KEY, id)}
+                className="px-2 py-0.5 rounded font-code-sm text-[10px] uppercase tracking-wider bg-primary/20 text-primary hover:bg-primary/30 border border-primary/30 cursor-pointer transition-colors"
+              >
+                Open in Forge
+              </Link>
             </div>
           </div>
           <div>

@@ -40,7 +40,7 @@ function runOne(
 ): Promise<CheckResult> {
   return new Promise((resolve) => {
     // shell:true — commands are operator-authored strings like "npm run typecheck".
-    const child = spawn(command, { cwd, shell: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, { cwd, shell: true, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     onSpawn?.(child);
     let out = "";
     let timedOut = false;

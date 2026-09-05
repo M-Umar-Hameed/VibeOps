@@ -304,7 +304,7 @@ app.get("/actors", async (c) => c.json(await listActors()));
 app.get("/git/identity", (c) => {
   try {
     const workdir = loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG).workdir;
-    const name = execFileSync("git", ["config", "user.name"], { cwd: workdir, encoding: "utf-8" }).trim();
+    const name = execFileSync("git", ["config", "user.name"], { cwd: workdir, encoding: "utf-8", windowsHide: true }).trim();
     return c.json({ name: name || null });
   } catch {
     return c.json({ name: null });

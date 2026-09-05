@@ -36,7 +36,7 @@ export function killTree(child: ChildProcess): Promise<void> {
   // Already dead: "exit" will never fire again, so awaiting it would hang.
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
   if (process.platform === "win32") {
-    spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"]);
+    spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
   } else {
     child.kill("SIGKILL");
   }
@@ -56,7 +56,7 @@ export function killTree(child: ChildProcess): Promise<void> {
 export async function killPidTree(pid: number, timeoutMs = KILL_TIMEOUT_MS): Promise<void> {
   if (!pidAlive(pid)) return;
   if (process.platform === "win32") {
-    spawn("taskkill", ["/pid", String(pid), "/T", "/F"]);
+    spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
   } else {
     try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
   }
@@ -130,7 +130,7 @@ export async function runAgent(
       // otherwise block reading an open stdin.
       const child = outFd !== undefined
         ? spawn(cmd0, rest, { cwd: workdir, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", outFd, outFd], detached: true, windowsHide: true })
-        : spawn(cmd0, rest, { cwd: workdir, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", "pipe", "pipe"] });
+        : spawn(cmd0, rest, { cwd: workdir, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", "pipe", "pipe"], windowsHide: true });
       // Detached child must not keep the parent's event loop alive; the run still
       // awaits its exit via the listeners below (unref drops only the keep-alive
       // ref, not the handlers). This is what lets an API restart leave the child

@@ -1224,12 +1224,12 @@ function readLinuxStart(pid: number): string | null {
   }
 }
 function readPsLstart(pid: number): string | null {
-  const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf-8" });
+  const r = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf-8", windowsHide: true });
   const out = r.stdout?.trim();
   return out ? out : null;
 }
 function readWinStart(pid: number): string | null {
-  const r = spawnSync("powershell", ["-NoProfile", "-Command", `(Get-Process -Id ${pid}).StartTime.Ticks`], { encoding: "utf-8" });
+  const r = spawnSync("powershell", ["-NoProfile", "-Command", `(Get-Process -Id ${pid}).StartTime.Ticks`], { encoding: "utf-8", windowsHide: true });
   const out = r.stdout?.trim();
   return out && /^\d+$/.test(out) ? out : null;
 }

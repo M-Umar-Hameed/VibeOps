@@ -71,7 +71,7 @@ function validateMarketplaceUrl(url: string): void {
 // Arg-vector git, mirrors src/forge/sandbox.ts's spawn pattern.
 function git(cwd: string, ...args: string[]): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
-    const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     let out = "";
     const cap = (d: Buffer) => { if (out.length < DIFF_CAP) out += d.toString("utf-8"); };
     child.stdout?.on("data", cap);

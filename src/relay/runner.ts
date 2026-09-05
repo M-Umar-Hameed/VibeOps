@@ -28,7 +28,7 @@ function latestByKind(comments: Comment[], kind: string): Comment | undefined {
 
 function gitDiff(workdir: string): Promise<string> {
   return new Promise((resolve) => {
-    const child = spawn("git", ["diff"], { cwd: workdir });
+    const child = spawn("git", ["diff"], { cwd: workdir, windowsHide: true });
     let out = "";
     child.stdout?.on("data", (d: Buffer) => {
       if (out.length < DIFF_CAP) out += d.toString("utf-8");

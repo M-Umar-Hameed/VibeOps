@@ -94,7 +94,7 @@ export async function projectWorkdir(projectId: string): Promise<string | null> 
 // Arg-vector git, never shell — mirrors forge/sandbox.ts's helper.
 function gitInit(cwd: string): Promise<{ code: number; out: string }> {
   return new Promise((res) => {
-    const child = spawn("git", ["init", "-b", "main"], { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("git", ["init", "-b", "main"], { cwd, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     let out = "";
     child.stdout?.on("data", (d) => { out += d.toString("utf-8"); });
     child.stderr?.on("data", (d) => { out += d.toString("utf-8"); });

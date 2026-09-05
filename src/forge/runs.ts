@@ -9,6 +9,7 @@ import { resolveCmd, loadRelayConfig, type RelayConfig, type RelayAgent } from "
 import { pipelineStartWarnings, pipelineStartBlockingError } from "../relay/doctor.js";
 import { roleStyle } from "../relay/style.js";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted } from "../relay/prompts.js";
+import { listSkills, formatSkillIndex, formatSkillBodies, parseOperatorSkills, parsePlanSkills, type SkillMeta } from "./skills.js";
 import { recallBlock } from "../services/recall.js";
 import { chunkReviewDiff, mergeReviewVerdicts } from "./review-chunks.js";
 import { killTree, killPidTree, type AgentResult } from "../relay/invoke.js";
@@ -514,6 +515,25 @@ async function pipeline(
   const onData = (c: string) => append(run, c);
   let ticket = await getTicket(run.ticketId);
 
+  // Skills catalogue for this run's workdir. listSkills is internally defensive
+  // (missing dirs -> []), but a read failure must never fail the run: warn + attach
+  // nothing. Text is trusted (admin-installed), so it is not UNTRUSTED-fenced.
+  let catalogue: SkillMeta[] = [];
+  try { catalogue = listSkills(workdir); }
+  catch (e) { console.warn(`forge: skills read failed: ${(e as Error).message}`); }
+  const knownSkillNames = catalogue.map((s) => s.name);
+  // operator "/name" tokens first, then the planner's "Skills:" line; deduped, cap 3.
+  const selectSkills = (plan: string): { names: string[]; bodies: string } => {
+    const picked: string[] = [];
+    for (const n of [...parseOperatorSkills(extraPrompt ?? "", knownSkillNames), ...parsePlanSkills(plan, knownSkillNames)]) {
+      if (!picked.includes(n) && picked.length < 3) picked.push(n);
+    }
+    const skills = picked
+      .map((n) => catalogue.find((s) => s.name.toLowerCase() === n))
+      .filter((s): s is SkillMeta => !!s);
+    return { names: skills.map((s) => s.name), bodies: formatSkillBodies(skills) };
+  };
+
   // Resume straight to review: skip plan+work, read existing comments for plan/report
   if (resumeStage === "review") {
     run.stage = "review";
@@ -526,7 +546,9 @@ async function pipeline(
     // that add scope start recurring.
     const sandbox = await ensureSandbox(workdir, ticket.id);
     append(run, `\n=== FORGE resume: straight to review (existing sandbox) ===\n`);
-    return reviewStage(run, actorId, agents.review, workdir, sandbox, ticket, plan, report, styleSetting, config);
+    const resumeSkills = selectSkills(plan);
+    if (resumeSkills.names.length) append(run, `\nforge: skills attached: ${resumeSkills.names.join(", ")}\n`);
+    return reviewStage(run, actorId, agents.review, workdir, sandbox, ticket, plan, report, styleSetting, config, undefined, resumeSkills.bodies);
   }
 
   const allComments = await listComments(ticket.id);
@@ -565,7 +587,7 @@ async function pipeline(
     append(run, `=== FORGE plan (${run.agents.plan}) ===\n`);
     const knowledge = await getKnowledgeSafe(ticket.title, ticket.projectId);
     const memory = await getMemorySafe(ticket.title, ticket.projectId);
-    const planPrompt = composePlanPrompt({ ticket, knowledge, memory }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra;
+    const planPrompt = composePlanPrompt({ ticket, knowledge, memory, skillIndex: formatSkillIndex(catalogue) }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra;
     const res = await track(actorId, ticket.id, "plan", run.agents.plan, planPrompt.length, () => runAgent(
       agents.plan, planPrompt, workdir, onData,
       (child) => recordSpawn(run, child),
@@ -595,6 +617,9 @@ async function pipeline(
     plan = prior?.body ?? "";
   }
 
+  const selectedSkills = selectSkills(plan);
+  if (selectedSkills.names.length) append(run, `\nforge: skills attached: ${selectedSkills.names.join(", ")}\n`);
+
   // work — claim, then run inside the sandbox
   enterStage(run, "work");
   append(run, `\n=== FORGE work (${run.agents.work}) ===\n`);
@@ -607,7 +632,7 @@ async function pipeline(
   // the same mistakes (live-hit on the first dogfood ticket).
   const lastReview = [...(await listComments(ticket.id))].reverse().find((c) => c.kind === "review");
   const findings = lastReview ? `\n\nPrevious review findings (address ALL of these):\n${fenceUntrusted("prior-review-findings", lastReview.body)}` : "";
-  const workPrompt = composeWorkPrompt({ ticket, plan, knowledge, workdir: sandbox, memory })
+  const workPrompt = composeWorkPrompt({ ticket, plan, knowledge, workdir: sandbox, memory, skills: selectedSkills.bodies })
     // No lessons clause here: A/B'd 2026-08-12 (docs/findings/2026-08-12-lessons-clause-ab.md).
     // On work prompts the doc measured inert - identical output on a control task, same
     // defect rate on a task its own "test isolation" line targets. Most of its lines
@@ -702,7 +727,7 @@ async function pipeline(
   // that plan are not reflected in it; pass them to the reviewer as authoritative
   // amendments so supervisor-requested scope is not flagged as scope creep.
   const amendments = !planRegenerated && kept.length ? redactSecrets(commentsText) : undefined;
-  return reviewStage(run, actorId, agents.review, workdir, sandbox, ticket, plan, workRes.output, styleSetting, config, amendments);
+  return reviewStage(run, actorId, agents.review, workdir, sandbox, ticket, plan, workRes.output, styleSetting, config, amendments, selectedSkills.bodies);
 }
 
 function settle(run: Run, status: Status): void {
@@ -722,7 +747,7 @@ function settle(run: Run, status: Status): void {
 async function reviewStage(
   run: Run, actorId: string, reviewAgent: RelayAgent, workdir: string,
   sandbox: string, ticket: Ticket, plan: string, reportOutput: string,
-  styleSetting: string, config: RelayConfig, amendments?: string,
+  styleSetting: string, config: RelayConfig, amendments?: string, skills?: string,
 ): Promise<void> {
   enterStage(run, "review");
   append(run, `\n=== FORGE review (${run.agents.review}) ===\n`);
@@ -810,7 +835,7 @@ async function reviewStage(
   const reviewResults: AgentResult[] = [];
   for (const chunk of chunks) {
     if (run.stopped) { run.child = undefined; return settle(run, "stopped"); }
-    const reviewPrompt = composeReviewPrompt({ ticket, plan, report: reportOutput, diff: chunk.payload, operatorNotes: run.operatorNotes, protectedViolation: protectedFinding, amendments, gate: gate.report || undefined, citations: gate.citations || undefined }) + roleStyle("review", styleSetting);
+    const reviewPrompt = composeReviewPrompt({ ticket, plan, report: reportOutput, diff: chunk.payload, operatorNotes: run.operatorNotes, protectedViolation: protectedFinding, amendments, gate: gate.report || undefined, citations: gate.citations || undefined, skills }) + roleStyle("review", styleSetting);
     const res = await track(actorId, ticket.id, "review", run.agents.review, reviewPrompt.length, () => runAgent(
       reviewAgent,
       reviewPrompt,

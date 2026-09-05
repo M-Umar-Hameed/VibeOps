@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -84,6 +84,7 @@ afterEach(async () => {
   delete process.env.FAKE_WRITE;
   delete process.env.FAKE_WRITE_PATH;
   delete process.env.FAKE_WRITE_STRAY;
+  delete process.env.FAKE_PROMPT_OUT;
   // Deregister any worktree a stopped/undiscarded run left behind BEFORE removing the
   // base repo. On Windows, rmSync of the base while a worktree is still registered in
   // its .git EPERMs. git worktree remove also deletes the sandbox working dir.
@@ -1260,3 +1261,34 @@ it("boot reconcile does NOT touch a review ticket whose last run failed", async 
     const unscoped = await (await app.request("/forge/runs", { headers: h })).json();
     expect(unscoped.filter((r: { persisted?: boolean }) => r.persisted).length).toBeLessThanOrEqual(20);
   });
+
+  it("attaches an installed skill body to the work prompt when the plan names it", async () => {
+    const h = await adminHeaders();
+    const t = await seedTicket();
+
+    // The plan runs in this repo's workdir; forge-runs resolves the ticket's project
+    // workdir, so install the demo skill under the seedTicket project's workdir.
+    // seedTicket has no project workdir set -> forge falls back to config.workdir (= workdir).
+    const skillDir = join(workdir, ".claude", "skills", "demo");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"),
+      "---\nname: demo\ndescription: demo skill for the forge skills test\n---\nDEMO-SKILL-BODY-MARKER: follow this instruction.\n");
+
+    const promptOut = join(mkdtempSync(join(tmpdir(), "forge-api-prompt-")), "work-prompt.txt");
+    process.env.FAKE_PROMPT_OUT = promptOut;
+    setScript("plan-skills,work,review-pass", true); // write=true -> work writes forge-made.txt (in the declared Files set)
+
+    const startRes = await app.request("/forge/pipeline", {
+      method: "POST", headers: h,
+      body: JSON.stringify({ ticketId: t.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+    });
+    const { runId } = await startRes.json();
+    await pollUntilDone(h, runId);
+
+    const captured = readFileSync(promptOut, "utf-8");
+    expect(captured).toContain("Skills to follow (installed by the operator");
+    expect(captured).toContain("### Skill: demo");
+    expect(captured).toContain("DEMO-SKILL-BODY-MARKER");
+    rmSync(dirname(promptOut), { recursive: true, force: true });
+  });
+

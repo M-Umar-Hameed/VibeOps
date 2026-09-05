@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const runAgentMock = vi.fn();
 const getSessionMock = vi.fn();
@@ -8,6 +8,11 @@ const appendMessageMock = vi.fn();
 vi.mock("../src/relay/invoke.js", () => ({
   runAgent: (...args: any[]) => runAgentMock(...args),
   substituteCmd: (cmd: string[]) => cmd,
+}));
+
+const mcpRegMock = vi.fn();
+vi.mock("../src/relay/doctor.js", () => ({
+  mcpRegistration: (...args: any[]) => mcpRegMock(...args),
 }));
 
 vi.mock("../src/relay/config.js", () => ({
@@ -47,6 +52,7 @@ const fakeActor: any = { id: "a1", name: "tester", role: "admin", kind: "human" 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mcpRegMock.mockResolvedValue({ registered: true, addCommand: "agy mcp add ..." });
   runAgentMock.mockResolvedValue({ ok: true, output: "agent reply" });
   getMessagesMock.mockResolvedValue([
     { role: "user", body: "hello world" },
@@ -110,5 +116,30 @@ describe("chat turns CLI lane prompt capability composition", () => {
       { name: "browser_snapshot", input: {}, summary: "ok" },
       { name: "browser_act", input: { targetOrigin: "https://x.test" }, summary: "refused: reason", grantOrigin: "https://x.test" },
     ]);
+  });
+
+  it("injects NO_TOOLS_CLAUSE (not CHAT_CAPABILITIES) when mcp:true lane is unregistered", async () => {
+    mcpRegMock.mockResolvedValue({ registered: false, addCommand: "agy mcp add --header \"Authorization: Bearer <key>\" vibeops http://127.0.0.1:8787/mcp" });
+    getSessionMock.mockResolvedValue({ id: "s6", model: "claude-cli::default", projectId: null });
+    await runTurn(fakeActor, "s6", "hello world", "claude-cli::default");
+    const promptArg = runAgentMock.mock.calls[0][1];
+    expect(promptArg).toContain(NO_TOOLS_CLAUSE);
+    expect(promptArg).not.toContain(CHAT_CAPABILITIES);
+  });
+
+  it("prepends a tools-unavailable notice with the add command to the stored reply", async () => {
+    mcpRegMock.mockResolvedValue({ registered: false, addCommand: "agy mcp add vibeops http://127.0.0.1:8787/mcp" });
+    getSessionMock.mockResolvedValue({ id: "s7", model: "claude-cli::default", projectId: null });
+    await runTurn(fakeActor, "s7", "hello world", "claude-cli::default");
+    const saved = appendMessageMock.mock.calls.find((c: any[]) => c[0].role === "assistant")?.[0];
+    expect(saved.body).toContain("no vibeops MCP server is registered");
+    expect(saved.body).toContain("agy mcp add vibeops");
+    expect(saved.body).toContain("agent reply");
+  });
+
+  it("does not call mcpRegistration for a lane without mcp", async () => {
+    getSessionMock.mockResolvedValue({ id: "s8", model: "agy::default", projectId: null });
+    await runTurn(fakeActor, "s8", "hello world", "agy::default");
+    expect(mcpRegMock).not.toHaveBeenCalled();
   });
 });

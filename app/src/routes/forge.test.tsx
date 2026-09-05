@@ -222,7 +222,7 @@ test("reattaches to a running run on ticket select: resumes polling and renders 
     if (path === "/forge/agents") return [];
     if (path === "/forge/skills") return [];
     if (path.includes("/sandbox")) return { exists: false };
-    if (path === "/forge/runs") return [
+    if (path.split("?")[0] === "/forge/runs") return [
       { id: "run123", ticketId: "t1", status: "running", stage: "work", startedAt: "2026-07-18T00:00:00Z" },
     ];
     if (path === "/forge/runs/run123/output?after=0") {
@@ -250,7 +250,7 @@ test("shows final console + verdict state for a recently settled run instead of 
     if (path === "/forge/agents") return [];
     if (path === "/forge/skills") return [];
     if (path === "/forge/tickets/t1/sandbox") return { exists: true, branch: "forge/t1", lastVerdict: "pass" };
-    if (path === "/forge/runs") return [
+    if (path.split("?")[0] === "/forge/runs") return [
       { id: "run456", ticketId: "t1", status: "passed", stage: "review", startedAt: "2026-07-18T00:00:00Z" },
     ];
     if (path === "/forge/runs/run456/output?after=0") {
@@ -278,7 +278,7 @@ test("shows an unavailable note when the settled run's output buffer 404s after 
     if (path === "/forge/agents") return [];
     if (path === "/forge/skills") return [];
     if (path === "/forge/tickets/t1/sandbox") return { exists: true, branch: "forge/t1", lastVerdict: "fail" };
-    if (path === "/forge/runs") return [
+    if (path.split("?")[0] === "/forge/runs") return [
       { id: "run789", ticketId: "t1", status: "failed", stage: "review", startedAt: "2026-07-18T00:00:00Z" },
     ];
     if (path === "/forge/runs/run789/output?after=0") throw new NotFoundError("run not found");
@@ -305,7 +305,7 @@ test("no runs for ticket -> pristine start state, no console, buttons enabled", 
     ];
     if (path === "/forge/skills") return [];
     if (path.includes("/sandbox")) return { exists: false };
-    if (path === "/forge/runs") return [];
+    if (path.split("?")[0] === "/forge/runs") return [];
     return {};
   });
 
@@ -519,7 +519,7 @@ test("status select disabled while a run is active for the ticket", async () => 
     if (path === "/forge/agents") return [];
     if (path === "/forge/skills") return [];
     if (path.includes("/sandbox")) return { exists: false };
-    if (path === "/forge/runs") return [{ id: "run123", ticketId: "t1", status: "running", startedAt: "2026-01-01T00:00:00Z" }];
+    if (path.split("?")[0] === "/forge/runs") return [{ id: "run123", ticketId: "t1", status: "running", startedAt: "2026-01-01T00:00:00Z" }];
     return {};
   });
 
@@ -570,7 +570,7 @@ const composerMocks = (pipelineImpl?: (init: any) => any) => {
     if (path === "/forge/agents") return [];
     if (path === "/forge/skills") return [];
     if (path === "/actors") return [];
-    if (path === "/forge/runs") return [];
+    if (path.split("?")[0] === "/forge/runs") return [];
     if (path.includes("/sandbox")) return { exists: false };
     if (path.includes("/comments")) return [];
     if (path === "/forge/pipeline") return pipelineImpl ? pipelineImpl(init) : { runId: "run123", doctorWarnings: [] };
@@ -657,7 +657,7 @@ test("Run History row shows effort badge when the run record has one", async () 
     if (path === "/forge/skills") return [];
     if (path.includes("/sandbox")) return { exists: false };
     if (path.includes("/comments")) return [];
-    if (path === "/forge/runs") return [
+    if (path.split("?")[0] === "/forge/runs") return [
       { id: "run456", ticketId: "t1", status: "passed", stage: "review", startedAt: "2026-07-18T00:00:00Z", effort: "max" },
     ];
     if (path.includes("/output")) return { chunk: "", next: 0, stage: "review", status: "passed" };
@@ -677,7 +677,7 @@ test("Run History row shows the per-stage duration breakdown for a settled run",
     if (path === "/forge/skills") return [];
     if (path.includes("/sandbox")) return { exists: false };
     if (path.includes("/comments")) return [];
-    if (path === "/forge/runs") return [
+    if (path.split("?")[0] === "/forge/runs") return [
       {
         id: "run456", ticketId: "t1", status: "passed", stage: "review", startedAt: "2026-07-18T00:00:00Z",
         stageDurationsMs: { plan: 420_000, work: 600_000, checks: 120_000, review: 300_000 },
@@ -746,7 +746,7 @@ test("stage change during a run triggers exactly one tickets refetch; same stage
       { name: "ReviewGPT", roles: ["review"] },
     ];
     if (path === "/forge/skills") return [];
-    if (path === "/forge/runs") return [];
+    if (path.split("?")[0] === "/forge/runs") return [];
     if (path.includes("/sandbox")) return { exists: false };
     if (path === "/forge/pipeline") return { runId: "run123" };
     if (path.includes("/output")) {
@@ -782,7 +782,7 @@ test("restores stored ticket selection on mount and renders its run history", as
     if (path === "/tickets") return [{ id: "t1", title: "My Ticket", status: "in_progress" }];
     if (path === "/forge/agents") return [];
     if (path === "/forge/skills") return [];
-    if (path === "/forge/runs") return [
+    if (path.split("?")[0] === "/forge/runs") return [
       { id: "run777", ticketId: "t1", status: "passed", stage: "review", startedAt: "2024-01-01T00:00:00Z", agents: {} },
     ];
     if (path.includes("/output")) return { chunk: "", next: 0, stage: "review", status: "passed" };
@@ -851,7 +851,7 @@ test("in-flight runs strip shows count, ticket titles, and cost note", async () 
       { name: "ReviewGPT", roles: ["review"] },
     ];
     if (path === "/forge/skills") return [];
-    if (path === "/forge/runs") return [
+    if (path.split("?")[0] === "/forge/runs") return [
       { id: "run1", ticketId: "t1", status: "running", stage: "work", startedAt: "2026-07-18T00:00:00Z" },
       { id: "run2", ticketId: "t2", status: "running", stage: "review", startedAt: "2026-07-18T00:01:00Z" },
     ];
@@ -880,7 +880,7 @@ test("running work stage: primary view shows stage, elapsed, and file count, no 
     if (path === "/forge/skills") return [];
     if (path === "/actors") return [];
     if (path === "/forge/doctor") return [];
-    if (path === "/forge/runs") return [
+    if (path.split("?")[0] === "/forge/runs") return [
       { id: "run1", ticketId: "t1", status: "running", stage: "work", startedAt: "2026-07-18T00:00:00Z" },
     ];
     if (path === "/forge/runs/run1/output?after=0")
@@ -914,7 +914,7 @@ test("raw output is reachable behind Show details and is complete", async () => 
     if (path === "/forge/skills") return [];
     if (path === "/actors") return [];
     if (path === "/forge/doctor") return [];
-    if (path === "/forge/runs") return [
+    if (path.split("?")[0] === "/forge/runs") return [
       { id: "run1", ticketId: "t1", status: "running", stage: "work", startedAt: "2026-07-18T00:00:00Z" },
     ];
     if (path === "/forge/runs/run1/output?after=0") return { chunk: RAW, next: RAW.length, stage: "work", status: "running" };
@@ -939,7 +939,7 @@ test("failed stage renders a plain-language failure line", async () => {
     if (path === "/forge/skills") return [];
     if (path === "/actors") return [];
     if (path === "/forge/doctor") return [];
-    if (path === "/forge/runs") return [
+    if (path.split("?")[0] === "/forge/runs") return [
       { id: "run1", ticketId: "t1", status: "failed", stage: "work", startedAt: "2026-07-18T00:00:00Z" },
     ];
     if (path === "/forge/runs/run1/output?after=0") return { chunk: "worker failed", next: 12, stage: "work", status: "failed" };
@@ -962,7 +962,7 @@ test("rejected run shows the reason and Continue triggers rework", async () => {
     if (path === "/forge/doctor") return [];
     if (path.includes("/sandbox/activity")) return { stage: "review", files: [] };
     if (path.includes("/sandbox")) return { exists: true, branch: "forge/t1", lastVerdict: "fail" };
-    if (path === "/forge/runs") return [{
+    if (path.split("?")[0] === "/forge/runs") return [{
       id: "runR", ticketId: "t1", status: "rejected", stage: "review",
       agents: { plan: "a", work: "b", review: "c" }, startedAt: new Date().toISOString(),
       finishedAt: new Date().toISOString(), rejectionReason: "The widget crashes on empty input.",

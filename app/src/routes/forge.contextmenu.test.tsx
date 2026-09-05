@@ -42,7 +42,7 @@ test("Running run: Stop is enabled, Retry is disabled, Stop calls stop endpoint 
     if (path === "/forge/tickets/t1/sandbox") return { exists: true };
     if (path === "/forge/recovery") return { interrupted: [] };
     if (path === "/tickets/t1/comments") return [];
-    if (path === "/forge/runs") return [
+    if (path.split("?")[0] === "/forge/runs") return [
       { id: "run_a", ticketId: "t1", status: "running", stage: "work", startedAt: "2026-01-01T00:00:00Z", agents: {} }
     ];
     if (path.startsWith("/forge/runs/run_a/output")) return { chunk: "output", next: 6, stage: "work", status: "running" };
@@ -94,7 +94,7 @@ test("Settled + resumable run: Resume is enabled and calls resume endpoint, no d
     if (path === "/forge/recovery") return {
       interrupted: [{ ticketId: "t1", resumable: true, reason: "" }]
     };
-    if (path === "/forge/runs") return [
+    if (path.split("?")[0] === "/forge/runs") return [
       { id: "run_b", ticketId: "t1", status: "failed", stage: "work", startedAt: "2026-01-01T00:00:00Z", agents: {} }
     ];
     if (path.startsWith("/forge/runs/run_b/output")) return { chunk: "failed log", next: 10, stage: "work", status: "failed" };
@@ -137,7 +137,7 @@ test("Settled + not resumable run: Resume is disabled with reason", async () => 
     if (path === "/forge/recovery") return {
       interrupted: [{ ticketId: "t1", resumable: false, reason: "no sandbox for this run" }]
     };
-    if (path === "/forge/runs") return [
+    if (path.split("?")[0] === "/forge/runs") return [
       { id: "run_c", ticketId: "t1", status: "failed", stage: "work", startedAt: "2026-01-01T00:00:00Z", agents: {} }
     ];
     if (path.startsWith("/forge/runs/run_c/output")) return { chunk: "failed log", next: 10, stage: "work", status: "failed" };
@@ -167,7 +167,7 @@ test("Retry from settled run: opens confirm and posts fresh pipeline, no discard
     if (path === "/forge/tickets/t1/sandbox") return { exists: false };
     if (path === "/tickets/t1/comments") return [];
     if (path === "/forge/recovery") return { interrupted: [] };
-    if (path === "/forge/runs") return [
+    if (path.split("?")[0] === "/forge/runs") return [
       { id: "run_d", ticketId: "t1", status: "stopped", stage: "work", startedAt: "2026-01-01T00:00:00Z", agents: {} }
     ];
     if (path.startsWith("/forge/runs/run_d/output")) return { chunk: "stopped log", next: 10, stage: "work", status: "stopped" };

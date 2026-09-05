@@ -73,11 +73,7 @@ export function ForgeScreen() {
 
   const runsQ = useQuery({
     queryKey: ["forge", "runs", selectedTicket?.id],
-    queryFn: async () => {
-      const res = await api.get(`/forge/runs?ticketId=${encodeURIComponent(selectedTicket!.id)}`);
-      if (Array.isArray(res)) return res;
-      return await api.get("/forge/runs");
-    },
+    queryFn: () => api.get(`/forge/runs?ticketId=${encodeURIComponent(selectedTicket!.id)}`),
     enabled: !!selectedTicket,
   });
   const ticketRuns = useMemo(() => {

@@ -35,7 +35,7 @@ beforeEach(() => {
   apiFetch.mockImplementation(async (path: string) => {
     if (path === "/tickets") return [{ id: "t1", title: "My Ticket", status: "open" }];
     if (path === "/forge/recovery") return { interrupted: [] };
-    if (path === "/forge/runs") return [];
+    if (path.split("?")[0] === "/forge/runs") return [];
     if (path === "/forge/agents" || path === "/forge/skills" || path === "/actors" || path === "/forge/doctor") return [];
     return {};
   });

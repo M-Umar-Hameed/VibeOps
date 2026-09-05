@@ -49,7 +49,7 @@ test("a run settling under the selected ticket re-enables the policy waiver", as
     if (path === "/forge/tickets/t1/sandbox") {
       return { exists: true, branch: "forge/t1", lastVerdict: "fail", protectedViolation: [".github/workflows/release-build.yml"] };
     }
-    if (path === "/forge/runs") {
+    if (path.split("?")[0] === "/forge/runs") {
       return [{ id: "run_a", ticketId: "t1", status: "running", stage: "review", startedAt: "2026-01-01T00:00:00Z", agents: {} }];
     }
     if (path.startsWith("/forge/runs/run_a/output")) {

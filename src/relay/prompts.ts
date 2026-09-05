@@ -27,6 +27,8 @@ export function composePlanPrompt(
     memory ? `\nMemory:\n${fenceUntrusted("memory", memory)}` : "",
     `\nRelevant knowledge:\n${fenceUntrusted("knowledge", formatKnowledge(knowledge))}`,
     `\nWrite an implementation plan for this ticket, with concrete acceptance criteria.`,
+    `Follow the repository's CLAUDE.md and AGENTS.md and any guideline document they name for the paths you touch. ` +
+    `Every number in the plan (test counts, line numbers, baselines, sizes) must come from something you ran or read in this session; write "unmeasured" instead of guessing.`,
     UNTRUSTED_CLAUSE,
   ].filter(Boolean).join("\n");
 }
@@ -98,6 +100,8 @@ export function composeReviewPrompt(
         `${fenceUntrusted("citations", citations)}`
       : "",
     `\nReview whether the diff satisfies the plan's acceptance criteria.`,
+    `A compile, syntax, type or JSX-balance finding needs evidence: either the CHECKS output above or a compiler or typechecker you ran yourself, quoted. ` +
+    `Do not raise one from counting braces or hunks in the diff text.`,
     // Reviewers run in the base repo, NOT the worker's isolated sandbox; a
     // reviewer that checks its own filesystem sees a clean tree and falsely
     // FAILs real work (live incident). The diff text above is the evidence.

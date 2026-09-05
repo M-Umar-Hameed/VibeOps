@@ -22,6 +22,7 @@ test("composePlanPrompt includes ticket title and knowledge", () => {
   });
   expect(prompt).toContain("Fix the widget");
   expect(prompt).toContain("widgets are fiddly");
+  expect(prompt).toContain('write "unmeasured" instead of guessing');
 });
 
 test("composeWorkPrompt includes plan and the mandatory REPORT instruction", () => {
@@ -48,6 +49,7 @@ test("composeReviewPrompt includes plan, report, diff, and the mandatory VERDICT
   expect(prompt).toContain("diff --git a/gear.ts");
   expect(prompt).toContain("VERDICT: PASS");
   expect(prompt).toContain("VERDICT: FAIL");
+  expect(prompt).toContain("Do not raise one from counting braces or hunks");
 });
 
 test("composeReviewPrompt with amendments marks supervisor scope as requested, keeps the out-of-scope guard", () => {

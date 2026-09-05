@@ -36,3 +36,7 @@ Never minimal about: input validation at trust boundaries, error handling that p
 ## The loop, concretely
 
 For each task: best-model plan → cheap subagent implements the fully-specified task with TDD → controller generates the diff → reviewer subagent gates (spec + quality) → fix subagent for Critical/Important → re-review → controller verifies the suite → mark complete in the ledger. After all tasks, one best-model whole-branch review before the work is called done.
+
+## UI work
+
+Any change under `app/` follows `docs/UI_GUIDELINES.md`. Plans for UI tickets cite it; reviews of UI diffs check against it.

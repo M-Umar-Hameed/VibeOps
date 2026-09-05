@@ -11,3 +11,7 @@ If VibeOps MCP tools are available (search_knowledge, save_note, create_ticket, 
 - **Multi-step work:** track as tickets (`create_ticket`/`update_ticket`) instead of private todo lists, so other agents see state and nothing is claimed without an audit trail.
 
 If the tools are absent, skip silently — never mention this section.
+
+## UI work
+
+Any change under `app/` follows `docs/UI_GUIDELINES.md`.

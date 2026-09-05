@@ -1,6 +1,6 @@
 # VibeOps — what it is, what we set out to build, where it stands
 
-Last updated 2026-08-22 at commit `4b042b3` (938 commits since 2026-07-07). This is the one document to read first. It says what the app is for, what the intended scope was, what has actually shipped, and what is still open. Detailed architecture lives in `VibeOps.md`; per-feature designs live in `docs/superpowers/specs/`; the end-user walkthrough is `docs/USER_GUIDE.md`.
+Last updated 2026-09-05 at commit `d47f0f4` (989 commits since 2026-07-07). This is the one document to read first. It says what the app is for, what the intended scope was, what has actually shipped, and what is still open. Detailed architecture lives in `VibeOps.md`; per-feature designs live in `docs/superpowers/specs/`; the end-user walkthrough is `docs/USER_GUIDE.md`.
 
 ## What the app is
 
@@ -53,11 +53,17 @@ Phases 1 to 4 were the original plan (ticket engine, knowledge/RAG, desktop app,
 
 Tracked on the board, all under the VibeOps project:
 
-- `712b13d8` (high) — `/prime` still returns knowledge-hit lines unfenced and only appends the untrusted-data clause when a handoff exists; `fenceUntrusted` does not escape a closing tag inside a payload. Do this before leaving memory auto-capture on by default.
-- `36f00249` — hook scripts block on an idle TTY stdin; no test for `prime.mjs`; cwd project matching should reuse the project path normaliser.
-- `81c1cd2a` — memory polish: move `noteIndexText` out of the import cycle, slug multi-word project names into domains, let `updateNote` patch kind/domain/rationale, a review surface for auto-captured notes.
-- `1421c63f` — owner's future plan: customer notification automation.
+- `ec60336d` (high) - closed work orders vanish from the Forge screen and their run history is capped at the newest 20 runs board-wide. In the pipeline as of 2026-09-05: closed group on the Forge list, `/forge/runs?ticketId=` uncapped per ticket, Open in Forge from the ticket page.
+- `137789e4` - the installer cannot replace node.exe while a detached sidecar holds it; needs a shutdown route the installer calls.
+- `c98f7617` - lanes declared with mcp:true but no MCP server registered look tool-capable and are not; doctor check, one-click agy registration, honest no-tools prompt.
+- `1421c63f` - owner's future plan: customer notification automation.
 
+Process flaws found in the 2026-09-05 audit of the 200 closed tickets, and what changed:
+
+- Reviewers raised syntax or JSX-balance findings by counting hunks in the diff (12 tickets carried a finding later shown false). The review prompt now requires CHECKS output or a quoted compiler run for any compile-class finding.
+- Planners stated numbers they had not measured (baseline test counts, line numbers). The plan prompt now requires every number to come from something run or read in the session, else the word unmeasured.
+- Worker tool failures (headless permission auto-deny, ENAMETOOLONG, a broken command line) produced empty diffs that still consumed a review round in 19 tickets; those spawn paths were fixed in July, and an empty diff is still failed by the reviewer rather than short-circuited (20 tests depend on a non-writing worker reaching review).
+- No UI guideline existed anywhere, so UI tickets took two to three rounds to converge on the app's own conventions. `docs/UI_GUIDELINES.md` now states them and CLAUDE.md/AGENTS.md point every agent at it for `app/` work.
 Known limits worth stating plainly:
 
 - Auto-captured rules are written by a model and read by shell-capable agents with no review surface yet. The extractor input is fenced and bounded, but the trust model is "member-level can write memory".

@@ -111,3 +111,19 @@ test.skipIf(process.platform === "win32")(
   expect(existsSync(join(dir, "postmaster.pid"))).toBe(false);
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("installShutdown registers an HTTP shutdown handler", async () => {
+  const { setShutdownHandler, isShutdownWired, requestShutdown, installShutdown } =
+    await import("../src/api/shutdown.js");
+  setShutdownHandler(undefined);
+  expect(isShutdownWired()).toBe(false);
+  const serverClose = vi.fn((cb: () => void) => cb());
+  const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+  installShutdown({ close: serverClose } as never, async () => {}, false);
+  expect(isShutdownWired()).toBe(true);
+  requestShutdown("test");
+  await new Promise((r) => setTimeout(r, 20));
+  expect(serverClose).toHaveBeenCalledTimes(1);
+  expect(exit).toHaveBeenCalledWith(0);
+  exit.mockRestore();
+});

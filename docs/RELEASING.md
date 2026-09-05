@@ -34,3 +34,6 @@ To distribute a signed and notarized app with auto-update support, the owner nee
 
 ## Windows Installer Notes
 The NSIS installer automatically closes any running `VibeOps.exe` and `node.exe` sidecar from the install directory before installing over an existing install — no manual close needed.
+
+Updating over a running install first calls `POST /system/shutdown` (admin), which checkpoints the embedded database and exits the sidecar cleanly before the installer overwrites `node.exe` — avoiding both the file-in-use error and a mid-write force-kill. **This interrupts any in-flight forge run.** On next launch those runs are marked interrupted (not auto-resumed); resume them manually from the Forge screen.
+

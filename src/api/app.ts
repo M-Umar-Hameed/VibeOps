@@ -32,6 +32,7 @@ import { db } from "../db/client.js";
 import { projects, type Actor } from "../db/schema.js";
 import { registerMcpRoutes } from "./mcp-routes.js";
 import { registerForgeRoutes, lastVerdict } from "./forge-routes.js";
+import { requestShutdown, isShutdownWired } from "./shutdown.js";
 import { registerSkillsRoutes } from "./skills-routes.js";
 import { registerCouncilRoutes } from "./council-routes.js";
 import { registerExportRoutes } from "./export-routes.js";
@@ -510,6 +511,15 @@ app.get("/system/topology", async (c) => c.json(await getSystemTopology()));
 app.get("/system/ai-usage", async (c) => c.json(await getAiUsage()));
 app.get("/system/knowledge-usage", async (c) => c.json(await getKnowledgeUsage()));
 app.get("/system/metrics-lite", requireAdmin, (c) => c.json(snapshot()));
+// Graceful remote stop for the desktop updater: checkpoints the embedded DB and
+// exits so the NSIS installer overwrites node.exe without a force-kill (which
+// corrupts the DB) or a file-in-use error. Ack first, exit on the next tick so
+// this response flushes before the socket closes. 503 when no server is wired.
+app.post("/system/shutdown", requireAdmin, (c) => {
+  if (!isShutdownWired()) return c.json({ error: "shutdown unavailable" }, 503);
+  setTimeout(() => requestShutdown("http shutdown"), 50);
+  return c.json({ ok: true });
+});
 app.get("/system/agents", requireAdmin, async (c) => {
   const { getAgents } = await import("../system/agents.js");
   const n = Number(c.req.query("sinceDays"));

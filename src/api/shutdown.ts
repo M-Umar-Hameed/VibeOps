@@ -41,6 +41,22 @@ export function makeShutdown(server: ServerType, closeDb: () => Promise<void>, o
   };
 }
 
+// HTTP-triggered shutdown: the POST /system/shutdown route (admin-only) reaches
+// the same graceful path signals/stdin-EOF use, but the route exists at import
+// time while server+closeDb only exist after boot. installShutdown registers the
+// live handler here; the route calls requestShutdown.
+let shutdownHandler: ((reason: string) => Promise<void>) | undefined;
+export function setShutdownHandler(fn: ((reason: string) => Promise<void>) | undefined): void {
+  shutdownHandler = fn;
+}
+// False when no server is wired (unit tests, pre-boot) so the route answers 503.
+export function isShutdownWired(): boolean {
+  return shutdownHandler !== undefined;
+}
+export function requestShutdown(reason: string): void {
+  void shutdownHandler?.(reason);
+}
+
 // Returns true if stdin is a real pipe (from Tauri), false if /dev/null or NUL
 // (when spawned with stdio: "ignore" or no stdin). /dev/null is a character device;
 // a pipe is not.
@@ -60,6 +76,7 @@ export function installShutdown(
   server: ServerType, closeDb: () => Promise<void>, embedded: boolean, onBeforeClose?: () => Promise<void>,
 ): void {
   const shutdown = makeShutdown(server, closeDb, onBeforeClose);
+  setShutdownHandler(shutdown);
   process.once("SIGINT", () => void shutdown("SIGINT"));
   process.once("SIGTERM", () => void shutdown("SIGTERM"));
   if (embedded && stdinIsPipe()) {

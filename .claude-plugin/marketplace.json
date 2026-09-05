@@ -1,0 +1,11 @@
+{
+  "name": "vibeops",
+  "owner": { "name": "VibeOps" },
+  "plugins": [
+    {
+      "name": "vibeops",
+      "source": "./vibeops-pack/plugins/vibeops",
+      "description": "VibeOps workflow skills plus a curated set of engineering skills (TDD, debugging, planning, verification, code review, frontend design, MCP building)"
+    }
+  ]
+}

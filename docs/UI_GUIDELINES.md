@@ -37,3 +37,7 @@ Every behaviour change ships with a test in the screen's existing `*.test.tsx`, 
 ## What not to do
 
 No new screens or routes for a feature that fits an existing pane. No new shared component until a second consumer exists. No refactor of neighbouring code in the same change. No `setTimeout` to wait for the DOM (the repo has a test that forbids it). No `localStorage` keys besides the ones exported from a `types.ts`.
+
+## Aesthetics
+
+For visual direction beyond these mechanics (hierarchy, spacing rhythm, typography choices, avoiding templated defaults) follow the `frontend-design` skill shipped in `vibeops-pack/plugins/vibeops/skills/frontend-design/SKILL.md`; install it from Settings > Plugins so every lane gets it.

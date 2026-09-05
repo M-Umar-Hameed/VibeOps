@@ -37,6 +37,15 @@ export function ForgeScreen() {
   const tickets = ticketsQ.data ?? [];
   const ticketsError = ticketsQ.error ? ((ticketsQ.error as any).message || "Failed to load tickets") : "";
 
+  const closedQ = useQuery({
+    queryKey: ["forge", "closed", activeProjectId],
+    queryFn: async () =>
+      await api.get(`/tickets?status=closed&limit=50${activeProjectId ? `&projectId=${encodeURIComponent(activeProjectId)}` : ""}`) as Ticket[],
+    refetchInterval: false,
+    staleTime: 30000,
+  });
+  const closedTickets = Array.isArray(closedQ.data) ? closedQ.data : [];
+
   const agentsQ = useQuery({ queryKey: ["forge", "agents"], queryFn: () => api.get("/forge/agents") as Promise<Agent[]>, staleTime: Infinity });
   const workDefaultQ = useQuery({
     queryKey: ["settings", "forge.defaultModel.work"],
@@ -64,7 +73,11 @@ export function ForgeScreen() {
 
   const runsQ = useQuery({
     queryKey: ["forge", "runs", selectedTicket?.id],
-    queryFn: () => api.get("/forge/runs"),
+    queryFn: async () => {
+      const res = await api.get(`/forge/runs?ticketId=${encodeURIComponent(selectedTicket!.id)}`);
+      if (Array.isArray(res)) return res;
+      return await api.get("/forge/runs");
+    },
     enabled: !!selectedTicket,
   });
   const ticketRuns = useMemo(() => {
@@ -94,9 +107,10 @@ export function ForgeScreen() {
   }, [selectedTicket?.id]);
 
   useEffect(() => {
-    if (!ticketsQ.isSuccess) return;
+    if (!ticketsQ.isSuccess || !closedQ.isSuccess) return;
+    const inEither = (tid: string) => tickets.some(t => t.id === tid) || closedTickets.some(t => t.id === tid);
     if (selectedTicket) {
-      if (!tickets.some(t => t.id === selectedTicket.id)) {
+      if (!inEither(selectedTicket.id)) {
         setSelectedTicket(null);
         localStorage.removeItem(SELECTED_TICKET_KEY);
       }
@@ -104,10 +118,10 @@ export function ForgeScreen() {
     }
     const saved = localStorage.getItem(SELECTED_TICKET_KEY);
     if (!saved) return;
-    const found = tickets.find(t => t.id === saved);
+    const found = tickets.find(t => t.id === saved) ?? closedTickets.find(t => t.id === saved);
     if (found) setSelectedTicket(found);
     else localStorage.removeItem(SELECTED_TICKET_KEY);
-  }, [ticketsQ.data, ticketsQ.isSuccess, selectedTicket]);
+  }, [ticketsQ.data, ticketsQ.isSuccess, closedQ.data, closedQ.isSuccess, selectedTicket]);
 
   const handleSelectTicket = useCallback((t: Ticket) => setSelectedTicket(t), []);
   const handleTicketCreated = useCallback((t: Ticket) => setSelectedTicket(t), []);
@@ -122,6 +136,7 @@ export function ForgeScreen() {
         activeProjectId={activeProjectId} agents={agents} workDefaultModel={workDefaultQ.data ?? ""}
         planAgent={planAgent} workAgent={workAgent} reviewAgent={reviewAgent}
         onSelectTicket={handleSelectTicket} onTicketCreated={handleTicketCreated} ticketsError={ticketsError}
+        closedTickets={closedTickets}
       />
 
       <div className="flex-1 flex flex-col overflow-y-auto bg-surface-container-lowest">

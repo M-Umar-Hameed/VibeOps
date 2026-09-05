@@ -16,6 +16,7 @@ type TicketListPaneProps = {
   onSelectTicket: (t: Ticket) => void;
   onTicketCreated: (t: Ticket) => void;
   ticketsError: string;
+  closedTickets?: Ticket[];
 };
 
 export const TicketListPane = memo(function TicketListPane({
@@ -30,10 +31,13 @@ export const TicketListPane = memo(function TicketListPane({
   onSelectTicket,
   onTicketCreated,
   ticketsError,
+  closedTickets = [],
 }: TicketListPaneProps) {
   const queryClient = useQueryClient();
   const [cleaningSandboxes, setCleaningSandboxes] = useState(false);
   const [cleanupNote, setCleanupNote] = useState("");
+  const [closedExpanded, setClosedExpanded] = useState(false);
+  const [closedFilter, setClosedFilter] = useState("");
 
   const handleCleanupSandboxes = async () => {
     setCleaningSandboxes(true);
@@ -130,6 +134,39 @@ export const TicketListPane = memo(function TicketListPane({
             </div>
           </div>
         ))}
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={() => setClosedExpanded(v => !v)}
+            className="flex items-center gap-1 w-full"
+          >
+            <h3 className="font-code-label text-code-label text-on-surface-variant uppercase tracking-widest">CLOSED ({closedTickets.length})</h3>
+            <span className="material-symbols-outlined text-base text-on-surface-variant">{closedExpanded ? "expand_less" : "expand_more"}</span>
+          </button>
+          {closedExpanded && (
+            <div className="space-y-2">
+              <input
+                aria-label="Filter closed work orders"
+                placeholder="Filter by title"
+                value={closedFilter}
+                onChange={(e) => setClosedFilter(e.target.value)}
+                className="w-full bg-surface-container-lowest border border-white/10 rounded px-2 py-1 text-sm text-on-surface outline-none focus:border-primary-fixed-dim"
+              />
+              {closedTickets.filter(t => t.title.toLowerCase().includes(closedFilter.toLowerCase())).map(t => (
+                <div
+                  key={t.id}
+                  onClick={() => onSelectTicket(t)}
+                  className={`p-3 rounded border transition-colors cursor-pointer ${selectedTicketId === t.id ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim text-primary' : 'bg-surface-container-lowest border-white/5 text-on-surface hover:border-white/20'}`}
+                >
+                  <div className="text-sm font-medium truncate">{t.title}</div>
+                </div>
+              ))}
+              {closedTickets.filter(t => t.title.toLowerCase().includes(closedFilter.toLowerCase())).length === 0 && (
+                <div className="text-xs text-on-surface-variant/50 italic">None</div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

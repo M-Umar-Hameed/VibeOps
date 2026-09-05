@@ -1,4 +1,4 @@
-import { and, asc, eq, ilike, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { tickets, events, type Ticket, type Event } from "../db/schema.js";
 import { NotFoundError } from "./errors.js";
@@ -21,6 +21,7 @@ export async function listTickets(
   if (filter.projectId) conds.push(eq(tickets.projectId, filter.projectId));
   if (filter.status) conds.push(sql`${tickets.status} = ${filter.status}`);
   if (conds.length) q = q.where(and(...conds));
+  q = q.orderBy(desc(tickets.updatedAt));
   if (filter.limit) q = q.limit(filter.limit);
   return q;
 }

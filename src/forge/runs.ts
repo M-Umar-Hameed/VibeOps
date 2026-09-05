@@ -127,8 +127,8 @@ const runs = new Map<string, Run>();
 export type RunSummary = Omit<Run, "output" | "child" | "checksChild" | "abort" | "stopped" | "done" | "persisted" | "pid" | "logPath" | "runToken" | "procStartedAt" | "lastLogSize" | "lastLogGrowthAt">;
 
 function summarize(r: Run): RunSummary {
-  const { output, child, checksChild, abort, stopped, done, pid, logPath, runToken, procStartedAt, lastLogSize, lastLogGrowthAt, ...rest } = r;
-  void output; void child; void checksChild; void abort; void stopped; void done; void pid; void logPath; void runToken; void procStartedAt; void lastLogSize; void lastLogGrowthAt;
+  const { output, child, checksChild, abort, stopped, done, persisted, pid, logPath, runToken, procStartedAt, lastLogSize, lastLogGrowthAt, ...rest } = r;
+  void output; void child; void checksChild; void abort; void stopped; void done; void persisted; void pid; void logPath; void runToken; void procStartedAt; void lastLogSize; void lastLogGrowthAt;
   return rest;
 }
 
@@ -1048,14 +1048,18 @@ async function deriveStageDurations(
 export type RunListItem = RunSummary & { persisted?: boolean; modelVerified?: boolean | "unknown"; rejectionReason?: string; stageDurationsMs?: StageDurationsMs };
 
 const HISTORY_LIMIT = 20;
+const TICKET_HISTORY_LIMIT = 200;
 const LIST_CAP = 40;
 
 // Live runs plus recent persisted history, for the UI after a server restart
 // (live is authoritative for anything still in memory; DB fills the rest).
-export async function listRunsWithHistory(): Promise<RunListItem[]> {
-  const live = listRuns();
+export async function listRunsWithHistory(ticketId?: string): Promise<RunListItem[]> {
+  const live = ticketId ? listRuns().filter((r) => r.ticketId === ticketId) : listRuns();
   const liveIds = new Set(live.map((r) => r.id));
-  const rows = await db.select().from(forgeRuns).orderBy(desc(forgeRuns.startedAt)).limit(HISTORY_LIMIT);
+  const base = db.select().from(forgeRuns).$dynamic();
+  const rows = await (ticketId ? base.where(eq(forgeRuns.ticketId, ticketId)) : base)
+    .orderBy(desc(forgeRuns.startedAt))
+    .limit(ticketId ? TICKET_HISTORY_LIMIT : HISTORY_LIMIT);
   const persisted: RunListItem[] = rows
     .filter((r) => !liveIds.has(r.id))
     .map((r) => ({
@@ -1069,7 +1073,7 @@ export async function listRunsWithHistory(): Promise<RunListItem[]> {
     }));
   const list: RunListItem[] = [...live, ...persisted]
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
-    .slice(0, LIST_CAP);
+    .slice(0, ticketId ? TICKET_HISTORY_LIMIT : LIST_CAP);
 
   const enrichPromises = list.map(async (item) => {
     item.modelVerified = await computeVerificationStatus(item.ticketId, {

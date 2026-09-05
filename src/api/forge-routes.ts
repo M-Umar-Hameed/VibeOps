@@ -158,7 +158,7 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     }
   });
 
-  app.get("/forge/runs", requireAdmin, async (c) => c.json(await listRunsWithHistory()));
+  app.get("/forge/runs", requireAdmin, async (c) => c.json(await listRunsWithHistory(c.req.query("ticketId") || undefined)));
 
   app.get("/forge/recovery", requireAdmin, async (c) => {
     return c.json({ interrupted: await listInterruptedRuns(forgeConfig()) });

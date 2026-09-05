@@ -985,3 +985,71 @@ test("rejected run shows the reason and Continue triggers rework", async () => {
   ));
 });
 
+test("Closed section shows count and lists titles when expanded", async () => {
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path.includes("status=closed")) return [{ id: "c1", title: "Old Order", status: "closed" }];
+    if (path.startsWith("/tickets")) return [];
+    if (path === "/forge/agents") return [];
+    if (path === "/forge/skills") return [];
+    return {};
+  });
+  render(wrap(<ForgeScreen />));
+  await waitFor(() => expect(screen.getByText("CLOSED (1)")).toBeInTheDocument());
+  expect(screen.queryByText("Old Order")).toBeNull();
+  fireEvent.click(screen.getByText("CLOSED (1)"));
+  await waitFor(() => expect(screen.getByText("Old Order")).toBeInTheDocument());
+});
+
+test("Closed filter narrows by title", async () => {
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path.includes("status=closed")) return [
+      { id: "c1", title: "Alpha Order", status: "closed" },
+      { id: "c2", title: "Beta Order", status: "closed" },
+    ];
+    if (path.startsWith("/tickets")) return [];
+    if (path === "/forge/agents") return [];
+    if (path === "/forge/skills") return [];
+    return {};
+  });
+  render(wrap(<ForgeScreen />));
+  await waitFor(() => screen.getByText("CLOSED (2)"));
+  fireEvent.click(screen.getByText("CLOSED (2)"));
+  fireEvent.change(screen.getByLabelText("Filter closed work orders"), { target: { value: "alpha" } });
+  await waitFor(() => expect(screen.getByText("Alpha Order")).toBeInTheDocument());
+  expect(screen.queryByText("Beta Order")).toBeNull();
+});
+
+test("Selecting a closed row loads its run history", async () => {
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path.includes("status=closed")) return [{ id: "c1", title: "Old Order", status: "closed" }];
+    if (path.startsWith("/forge/runs")) return [{ id: "run-abc123de", ticketId: "c1", status: "passed", stage: "review", agents: { plan: "fake", work: "fake", review: "fake" }, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString() }];
+    if (path.startsWith("/tickets")) return [];
+    if (path.includes("/sandbox")) return { exists: false };
+    if (path === "/forge/agents") return [];
+    if (path === "/forge/skills") return [];
+    return {};
+  });
+  render(wrap(<ForgeScreen />));
+  await waitFor(() => screen.getByText("CLOSED (1)"));
+  fireEvent.click(screen.getByText("CLOSED (1)"));
+  fireEvent.click(await screen.findByText("Old Order"));
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/forge/runs?ticketId=c1"));
+  await waitFor(() => expect(screen.getByText(/run-abc1|Run run-abc1/)).toBeInTheDocument());
+});
+
+test("A saved closed ticket id restores the selection", async () => {
+  localStorage.setItem("vibeops.forgeSelectedTicketId", "c1");
+  apiFetch.mockImplementation(async (path: string) => {
+    if (path.includes("status=closed")) return [{ id: "c1", title: "Old Order", status: "closed" }];
+    if (path.startsWith("/forge/runs")) return [];
+    if (path.startsWith("/tickets")) return [];
+    if (path.includes("/sandbox")) return { exists: false };
+    if (path === "/forge/agents") return [];
+    if (path === "/forge/skills") return [];
+    return {};
+  });
+  render(wrap(<ForgeScreen />));
+  await waitFor(() => expect(screen.getByText("Pipeline Settings")).toBeInTheDocument());
+});
+
+

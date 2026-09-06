@@ -4,7 +4,7 @@ import { basename, dirname, join } from "node:path";
 // Rolling known-good copies of the embedded data dir. Siblings named
 // `<data>.good-<ts>`; keep the last N, prune older. Replaces the retired
 // failure-time `.broken-<ts>` copy (which grew unbounded).
-export const KEEP_SNAPSHOTS = 3;
+export const KEEP_SNAPSHOTS = 1;
 
 function prefix(dataDir: string): string {
   return `${basename(dataDir)}.good-`;

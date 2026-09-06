@@ -35,6 +35,13 @@ test("runner fails fast with an actionable line when Postgres down and fallback 
 // resolve to the SHARED stack from every worktree, so the remediation text must
 // never hand that command out as the fix. Both halves are asserted together:
 // dropping either one reintroduces a defect that cost hours to diagnose.
+test("the runner sends every temp dir the suite creates into one root it removes afterwards", () => {
+  const lane = readFileSync(new URL("../scripts/test-lane.mjs", import.meta.url), "utf-8");
+  expect(lane).toMatch(/TMPDIR: tmpRoot, TEMP: tmpRoot, TMP: tmpRoot/);
+  expect(lane).toContain("rmSync(tmpRoot");
+  expect(lane).not.toContain('mkdtempSync(join(tmpdir(), "vibeops-embedded-"))');
+});
+
 test("the shared test stack is pinned and no remediation tells you to destroy it", () => {
   const compose = readFileSync("docker-compose.yml", "utf-8");
   expect(compose).toMatch(/^name: tickets$/m);

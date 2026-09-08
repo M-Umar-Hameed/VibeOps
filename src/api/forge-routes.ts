@@ -5,6 +5,7 @@ import { join, resolve, sep } from "node:path";
 import type { Hono } from "hono";
 import type { Actor } from "../db/schema.js";
 import { loadRelayConfig } from "../relay/config.js";
+import { relayConfigPath } from "../relay/bootstrap-config.js";
 import { runDoctor } from "../relay/doctor.js";
 import { parseVerdict } from "../relay/prompts.js";
 import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, latestRunStatus, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes } from "../forge/runs.js";
@@ -113,8 +114,18 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
 
   app.get("/forge/doctor", requireAdmin, async (c) => {
     const fresh = c.req.query("fresh") === "true";
-    const statuses = await runDoctor(forgeConfig(), { fresh });
-    return c.json(statuses);
+    // No relay.json yet is an empty list, not a failure. A config that exists
+    // but is unreadable returns its real parse/validation message: this is the
+    // user's own local file, and a generic "internal error" tells them nothing
+    // about what to fix.
+    if (!existsSync(relayConfigPath())) return c.json([]);
+    let config;
+    try {
+      config = forgeConfig();
+    } catch (e) {
+      return c.json({ error: (e as Error).message }, 400);
+    }
+    return c.json(await runDoctor(config, { fresh }));
   });
 
   app.post("/forge/pipeline", requireAdmin, async (c) => {

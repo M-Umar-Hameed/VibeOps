@@ -1,4 +1,5 @@
 import { serve } from "@hono/node-server";
+import { existsSync } from "node:fs";
 import { app } from "./app.js";
 import { isEmbedded, closeDb, embeddedDbError, embeddedDbLockError, db } from "../db/client.js";
 import { runBootstrap } from "../bootstrap.js";
@@ -109,4 +110,19 @@ async function bootNormally() {
   });
   const { installShutdown } = await import("./shutdown.js");
   installShutdown(server, closeDb, isEmbedded, runLogicalExport);
+
+  // A fresh install has no relay.json, and its only other writer is the
+  // first-run wizard -- which never appears once a project exists, leaving the
+  // Forge with no lanes and no way to get any. Detect once here instead, after
+  // serve so the CLI probes never delay startup.
+  const { relayConfigPath, bootstrapRelayConfig } = await import("../relay/bootstrap-config.js");
+  if (!existsSync(relayConfigPath())) {
+    void bootstrapRelayConfig()
+      .then(({ added }) => console.log(
+        added.length
+          ? `relay: detected ${added.join(", ")} -> ${relayConfigPath()}`
+          : `relay: no agent CLIs detected; configure ${relayConfigPath()} by hand`,
+      ))
+      .catch((e) => console.warn(`relay auto-detect failed: ${(e as Error).message}`));
+  }
 }

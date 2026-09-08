@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api.js";
 
@@ -42,18 +43,34 @@ function authLabel(s: DoctorStatus): string {
 
 export function AgentDoctorCard() {
   const queryClient = useQueryClient();
+  const [actionError, setActionError] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  const { data, isFetching } = useQuery({
+  const { data, isFetching, isLoading, error } = useQuery({
     queryKey: ["forge", "doctor"],
     queryFn: () => api.get("/forge/doctor") as Promise<DoctorStatus[]>,
   });
 
+  // Re-detect before re-probing: a CLI installed after setup is not in
+  // relay.json yet, so probing the file alone would keep reporting nothing.
+  // The bootstrap only ever adds names, so a lane the user configured by hand
+  // is left as they wrote it.
   const runChecks = async () => {
-    const fresh = await api.get("/forge/doctor?fresh=true") as DoctorStatus[];
-    queryClient.setQueryData(["forge", "doctor"], fresh);
+    setActionError("");
+    setBusy(true);
+    try {
+      await api.post("/relay/bootstrap");
+      const fresh = await api.get("/forge/doctor?fresh=true") as DoctorStatus[];
+      queryClient.setQueryData(["forge", "doctor"], fresh);
+    } catch (e: any) {
+      setActionError(e.message || "Check failed");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const statuses = Array.isArray(data) ? data : [];
+  const failure = actionError || (error ? (error as Error).message : "");
 
   return (
     <div className="glass-card rounded-xl border border-white/10 p-6 flex flex-col gap-4">
@@ -70,16 +87,28 @@ export function AgentDoctorCard() {
         </div>
         <button
           onClick={runChecks}
-          disabled={isFetching}
+          disabled={isFetching || busy}
           className="px-4 py-2 rounded bg-surface-container-highest hover:bg-white/10 text-on-surface text-xs font-bold uppercase tracking-widest transition-all disabled:opacity-50 cursor-pointer"
         >
           Run checks
         </button>
       </div>
 
+      {failure && (
+        <div className="border border-error/50 bg-error-container/20 rounded-lg px-4 py-3 text-error font-code-sm text-sm">
+          {failure}
+        </div>
+      )}
+
       <div className="space-y-2">
         {statuses.length === 0 ? (
-          <div className="text-on-surface-variant font-code-sm text-sm">No relay agents configured.</div>
+          <div className="text-on-surface-variant font-code-sm text-sm">
+            {isLoading
+              ? "Checking this machine for agent CLIs..."
+              : failure
+                ? "Agent list unavailable."
+                : "No agent CLIs detected on this machine. Install one (Claude Code, Codex, Antigravity), then press Run checks."}
+          </div>
         ) : (
           statuses.map(s => {
             const copy = CONNECT_COPY[s.binary] ?? GENERIC_CONNECT;

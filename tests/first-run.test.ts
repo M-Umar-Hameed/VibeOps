@@ -60,9 +60,10 @@ test("first-run endpoint and relay/bootstrap", async () => {
   expect(cfg.agents.claude).toBeDefined();
   expect(cfg.agents.antigravity).toBeUndefined();
 
-  // 409 if file exists
+  // Re-running merges rather than failing: it is the only path a user has to
+  // pick up a CLI installed after setup.
   res = await app.request("/relay/bootstrap", { method: "POST", headers: h });
-  expect(res.status).toBe(409);
+  expect(res.status).toBe(200);
 
   // after relay.json exists, firstRun should be false
   res = await app.request("/system/first-run", { headers: h });
@@ -84,4 +85,31 @@ test("relay/bootstrap omits the sdk lane when there are no Claude credentials", 
   expect((await app.request("/relay/bootstrap", { method: "POST", headers: h })).status).toBe(200);
   const cfg = JSON.parse(fs.readFileSync(path.join(tempHome, "relay.json"), "utf-8"));
   expect(cfg.agents["claude-sdk"]).toBeUndefined();
+});
+
+test("relay/bootstrap leaves a hand-configured agent exactly as written", async () => {
+  const h = { Authorization: `Bearer ${apiKey}` };
+  const relayPath = path.join(tempHome, "relay.json");
+  const mine = { cmd: ["my-own-claude"], roles: ["work"] };
+  fs.writeFileSync(relayPath, JSON.stringify({ workdir: tempHome, agents: { claude: mine } }));
+
+  expect((await app.request("/relay/bootstrap", { method: "POST", headers: h })).status).toBe(200);
+
+  const cfg = JSON.parse(fs.readFileSync(relayPath, "utf-8"));
+  expect(cfg.agents.claude).toEqual(mine);
+  expect(cfg.workdir).toBe(tempHome);
+});
+
+test("forge/doctor is empty without a relay.json and names the problem when one is broken", async () => {
+  const h = { Authorization: `Bearer ${apiKey}` };
+  const relayPath = path.join(tempHome, "relay.json");
+
+  let res = await app.request("/forge/doctor", { headers: h });
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual([]);
+
+  fs.writeFileSync(relayPath, "{ not json");
+  res = await app.request("/forge/doctor", { headers: h });
+  expect(res.status).toBe(400);
+  expect((await res.json()).error).toContain("not valid JSON");
 });

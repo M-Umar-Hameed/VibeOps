@@ -536,45 +536,9 @@ app.get("/system/first-run", async (c) => {
 });
 
 app.post("/relay/bootstrap", requireAdmin, async (c) => {
-  const { existsSync, writeFileSync } = await import("node:fs");
-  const { homedir } = await import("node:os");
-  const { join } = await import("node:path");
-  const relayPath = process.env.VIBEOPS_RELAY_CONFIG ?? join(homedir(), ".vibeops", "relay.json");
-  
-  if (existsSync(relayPath)) return c.json({ error: "relay.json already exists" }, 409);
-
-  const templates: Record<string, any> = {
-    claude: { cmd: ["claude", "-p", "{promptFile}"], roles: ["plan", "review"] },
-    agy: { cmd: ["agy", "exec", "-C", "{workdir}", "{prompt}"], roles: ["work", "plan"] },
-    agy_local: { cmd: [join(homedir(), "AppData", "Local", "agy", "bin", "agy.exe"), "exec", "-C", "{workdir}", "{prompt}"], roles: ["work", "plan"] },
-    codex: { cmd: ["codex", "exec", "-C", "{workdir}", "{prompt}"], roles: ["work"] },
-    gemini: { cmd: ["gemini", "prompt", "--", "{prompt}"], roles: ["plan", "review"] }
-  };
-
-  const { runDoctor } = await import("../relay/doctor.js");
-  const mockConfig = { workdir: join(homedir(), ".vibeops", "sandbox"), agents: templates };
-  const statuses = await runDoctor(mockConfig as any, { fresh: true });
-
-  const passedAgents: Record<string, any> = {};
-  for (const s of statuses) {
-    if (s.probe.ok) {
-      if (s.name === "agy" || s.name === "agy_local") {
-        if (!passedAgents.agy) passedAgents.agy = templates[s.name];
-      } else {
-        passedAgents[s.name] = templates[s.name];
-      }
-    }
-  }
-
-  // The SDK lane spawns no binary, so a machine where every CLI probe failed
-  // (a fresh install with no CLIs on PATH) still gets a working work lane from
-  // the Claude Code login that is already on this machine.
-  const { hasCredentials } = await import("../relay/invoke-sdk.js");
-  if (hasCredentials()) passedAgents["claude-sdk"] = { type: "sdk", roles: ["work"] };
-
-  const newConfig = { workdir: join(homedir(), ".vibeops", "sandbox"), agents: passedAgents };
-  writeFileSync(relayPath, JSON.stringify(newConfig, null, 2), "utf-8");
-  return c.json({ config: newConfig });
+  const { bootstrapRelayConfig } = await import("../relay/bootstrap-config.js");
+  const { config, added } = await bootstrapRelayConfig();
+  return c.json({ config, added });
 });
 
 registerMcpRoutes(app);

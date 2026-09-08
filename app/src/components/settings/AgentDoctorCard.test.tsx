@@ -79,3 +79,28 @@ test("shows a red dot and register command for an unregistered mcp lane", async 
 
   expect(screen.getByText(/agy mcp add/i)).toBeInTheDocument();
 });
+
+test("surfaces a doctor failure instead of claiming there are no agents", async () => {
+  apiFetch.mockRejectedValue(new Error("relay config at C:/x/relay.json is not valid JSON"));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(<QueryClientProvider client={client}><AgentDoctorCard /></QueryClientProvider>);
+
+  await waitFor(() => expect(screen.getByText(/is not valid JSON/)).toBeInTheDocument());
+  expect(screen.queryByText(/No agent CLIs detected/)).not.toBeInTheDocument();
+});
+
+test("Run checks re-detects first, and shows why when that fails", async () => {
+  apiFetch.mockImplementation((path: string) =>
+    path === "/forge/doctor" ? Promise.resolve([]) : Promise.reject(new Error("forbidden")));
+
+  render(wrap(<AgentDoctorCard />));
+  await waitFor(() => expect(screen.getByText(/No agent CLIs detected/)).toBeInTheDocument());
+
+  const button = screen.getByRole("button", { name: /run checks/i });
+  await waitFor(() => expect(button).not.toBeDisabled());
+  fireEvent.click(button);
+
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/relay/bootstrap", expect.objectContaining({ method: "POST" })));
+  await waitFor(() => expect(screen.getByText("forbidden")).toBeInTheDocument());
+});

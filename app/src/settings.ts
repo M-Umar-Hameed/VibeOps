@@ -31,6 +31,16 @@ export async function getSettings(): Promise<Settings> {
   const store = await load(FILE, { autoSave: false, defaults: {} });
   const baseUrl = (await store.get<string>("baseUrl")) ?? "http://localhost:8787";
   const apiKey = (await store.get<string>("apiKey")) ?? "";
+  // The sidecar writes credentials.json part-way through its first boot, long
+  // after the webview has loaded. Re-check on every read with no key, or a
+  // first launch that lost the race 401s forever with no way back.
+  if (!apiKey) {
+    const found = await detectLocalNode();
+    if (found) {
+      await saveSettings(found);
+      return found;
+    }
+  }
   return { baseUrl, apiKey };
 }
 

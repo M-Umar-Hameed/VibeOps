@@ -3,7 +3,7 @@ import { afterEach, expect, test, vi } from "vitest";
 const { load } = vi.hoisted(() => ({ load: vi.fn() }));
 vi.mock("@tauri-apps/plugin-store", () => ({ load }));
 
-import { getSettings, saveSettings } from "./settings.js";
+import { getSettings, saveSettings, setReadTextFileImpl } from "./settings.js";
 
 const INTERNALS = "__TAURI_INTERNALS__";
 
@@ -53,4 +53,27 @@ test("saveSettings writes through the plugin store when Tauri bridge present", a
   expect(store.set).toHaveBeenCalledWith("baseUrl", "http://y");
   expect(store.set).toHaveBeenCalledWith("apiKey", "kk");
   expect(store.save).toHaveBeenCalledTimes(1);
+});
+
+test("getSettings picks up the sidecar credentials file when the store has no key", async () => {
+  (window as any)[INTERNALS] = {};
+  const store = {
+    get: vi.fn(async (k: string) => (k === "baseUrl" ? "http://localhost:8787" : "")),
+    set: vi.fn(),
+    save: vi.fn(),
+  };
+  load.mockResolvedValue(store);
+  const creds = { baseUrl: "http://localhost:8787", apiKey: "k".repeat(48) };
+  setReadTextFileImpl(async () => JSON.stringify(creds));
+  expect(await getSettings()).toEqual(creds);
+  expect(store.set).toHaveBeenCalledWith("apiKey", creds.apiKey);
+});
+
+test("getSettings returns the empty key when no credentials file exists yet", async () => {
+  (window as any)[INTERNALS] = {};
+  const store = { get: vi.fn(async () => ""), set: vi.fn(), save: vi.fn() };
+  load.mockResolvedValue(store);
+  setReadTextFileImpl(async () => { throw new Error("missing"); });
+  expect((await getSettings()).apiKey).toBe("");
+  expect(store.set).not.toHaveBeenCalled();
 });

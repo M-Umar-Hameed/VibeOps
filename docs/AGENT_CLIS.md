@@ -147,6 +147,10 @@ unrestricted; other tools are denied and logged as
 
 To fall back, change `"type"` to `"cli"` (with a `cmd`) or remove the agent.
 
+First-run setup writes this lane for you as `claude-sdk` whenever a Claude Code
+login is present on the machine, so a fresh install has a work lane even when no
+agent CLI is on `PATH`.
+
 ---
 
 ## Sandbox containment

@@ -35,6 +35,11 @@ vi.mock("../src/relay/doctor.js", () => ({
   ]
 }));
 
+// The SDK lane is gated on a real Claude Code login, which the CI box may or
+// may not have; both states are asserted below by flipping this.
+let sdkCredentials = true;
+vi.mock("../src/relay/invoke-sdk.js", () => ({ hasCredentials: () => sdkCredentials }));
+
 test("first-run endpoint and relay/bootstrap", async () => {
   const h = { Authorization: `Bearer ${apiKey}` };
 
@@ -63,4 +68,20 @@ test("first-run endpoint and relay/bootstrap", async () => {
   res = await app.request("/system/first-run", { headers: h });
   data = await res.json();
   expect(data.firstRun).toBe(false);
+});
+
+test("relay/bootstrap adds the sdk work lane when Claude credentials exist", async () => {
+  const h = { Authorization: `Bearer ${apiKey}` };
+  sdkCredentials = true;
+  expect((await app.request("/relay/bootstrap", { method: "POST", headers: h })).status).toBe(200);
+  const cfg = JSON.parse(fs.readFileSync(path.join(tempHome, "relay.json"), "utf-8"));
+  expect(cfg.agents["claude-sdk"]).toEqual({ type: "sdk", roles: ["work"] });
+});
+
+test("relay/bootstrap omits the sdk lane when there are no Claude credentials", async () => {
+  const h = { Authorization: `Bearer ${apiKey}` };
+  sdkCredentials = false;
+  expect((await app.request("/relay/bootstrap", { method: "POST", headers: h })).status).toBe(200);
+  const cfg = JSON.parse(fs.readFileSync(path.join(tempHome, "relay.json"), "utf-8"));
+  expect(cfg.agents["claude-sdk"]).toBeUndefined();
 });

@@ -3,6 +3,7 @@ import { basename, extname, join } from "node:path";
 import { homedir } from "node:os";
 import { promisify } from "node:util";
 import { readClaudeAccount, readCodexAccount } from "../system/agents.js";
+import { winCommand } from "./win-bin.js";
 import type { RelayConfig } from "./config.js";
 
 const execFileAsync = promisify(execFile);
@@ -30,8 +31,8 @@ const AUTH_READERS: Record<string, (homeDir: string) => boolean> = {
 
 // claude/kimi: no reliable local file (scope-dependent), so ask the CLI.
 async function cliMcpListHasVibeops(cmd0: string): Promise<boolean> {
-  const isWindowsScript = process.platform === "win32" && (cmd0.toLowerCase().endsWith(".cmd") || cmd0.toLowerCase().endsWith(".bat"));
-  const { stdout } = await execFileAsync(cmd0, ["mcp", "list"], { timeout: PROBE_TIMEOUT_MS, windowsHide: true, shell: isWindowsScript });
+  const { file, args, verbatim } = winCommand(cmd0, ["mcp", "list"]);
+  const { stdout } = await execFileAsync(file, args, { timeout: PROBE_TIMEOUT_MS, windowsHide: true, windowsVerbatimArguments: verbatim });
   return /vibeops/i.test(stdout);
 }
 
@@ -128,10 +129,10 @@ async function probeBinary(cmd0: string): Promise<ProbeStatus> {
     return { ok: false, error: "spawn ENOENT", spawnFailed: true };
   }
   const bin = binBasename(cmd0);
-  const args = PROBE_ARGS[bin] ?? DEFAULT_PROBE_ARGS;
+  const probeArgs = PROBE_ARGS[bin] ?? DEFAULT_PROBE_ARGS;
   try {
-    const isWindowsScript = process.platform === "win32" && (cmd0.toLowerCase().endsWith(".cmd") || cmd0.toLowerCase().endsWith(".bat"));
-    await execFileAsync(cmd0, args, { timeout: PROBE_TIMEOUT_MS, windowsHide: true, shell: isWindowsScript });
+    const { file, args, verbatim } = winCommand(cmd0, probeArgs);
+    await execFileAsync(file, args, { timeout: PROBE_TIMEOUT_MS, windowsHide: true, windowsVerbatimArguments: verbatim });
     return { ok: true };
   } catch (e) {
     const err = e as NodeJS.ErrnoException & { stderr?: string };

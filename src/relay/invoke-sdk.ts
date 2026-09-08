@@ -51,7 +51,7 @@ export function checkToolPermission(
 
 // ponytail: env token OR the CLI login file. macOS Keychain-only logins aren't
 // file-checkable here and fall through to the SDK auth error at run time.
-function hasCredentials(): boolean {
+export function hasCredentials(): boolean {
   if (process.env.CLAUDE_CODE_OAUTH_TOKEN) return true;
   return existsSync(path.join(homedir(), ".claude", ".credentials.json"));
 }

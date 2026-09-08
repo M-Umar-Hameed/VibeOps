@@ -566,6 +566,12 @@ app.post("/relay/bootstrap", requireAdmin, async (c) => {
     }
   }
 
+  // The SDK lane spawns no binary, so a machine where every CLI probe failed
+  // (a fresh install with no CLIs on PATH) still gets a working work lane from
+  // the Claude Code login that is already on this machine.
+  const { hasCredentials } = await import("../relay/invoke-sdk.js");
+  if (hasCredentials()) passedAgents["claude-sdk"] = { type: "sdk", roles: ["work"] };
+
   const newConfig = { workdir: join(homedir(), ".vibeops", "sandbox"), agents: passedAgents };
   writeFileSync(relayPath, JSON.stringify(newConfig, null, 2), "utf-8");
   return c.json({ config: newConfig });

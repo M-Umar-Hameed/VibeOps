@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import type { RelayAgent } from "./config.js";
 import { pidAlive } from "../db/lifecycle.js";
+import { winCommand } from "./win-bin.js";
 
 const OUTPUT_CAP = 100_000;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
@@ -128,9 +129,10 @@ export async function runAgent(
     return await new Promise((resolve) => {
       // stdin ignored unless piping the prompt: headless CLIs (codex exec)
       // otherwise block reading an open stdin.
+      const { file, args, verbatim } = winCommand(cmd0, rest);
       const child = outFd !== undefined
-        ? spawn(cmd0, rest, { cwd: workdir, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", outFd, outFd], detached: true, windowsHide: true })
-        : spawn(cmd0, rest, { cwd: workdir, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", "pipe", "pipe"], windowsHide: true });
+        ? spawn(file, args, { cwd: workdir, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", outFd, outFd], detached: true, windowsHide: true, windowsVerbatimArguments: verbatim })
+        : spawn(file, args, { cwd: workdir, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", "pipe", "pipe"], windowsHide: true, windowsVerbatimArguments: verbatim });
       // Detached child must not keep the parent's event loop alive; the run still
       // awaits its exit via the listeners below (unref drops only the keep-alive
       // ref, not the handlers). This is what lets an API restart leave the child

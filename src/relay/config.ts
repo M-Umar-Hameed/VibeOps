@@ -41,6 +41,14 @@ export function loadRelayConfig(path?: string): RelayConfig {
   } catch (e) {
     throw new Error(`relay config at ${configPath} is not valid JSON: ${(e as Error).message}`);
   }
+  return validateRelayConfig(parsed, configPath);
+}
+
+// Split out of loadRelayConfig so the writers can check a config against the
+// exact rules the reader enforces, instead of keeping a second copy of them in
+// sync by hand -- a drifted copy is what let the Agents card write an sdk lane
+// with plan/review roles and make the whole file unloadable.
+export function validateRelayConfig(parsed: unknown, configPath: string): RelayConfig {
   const cfg = parsed as Record<string, unknown>;
   if (!cfg || typeof cfg !== "object" || typeof cfg.workdir !== "string" || !cfg.workdir) {
     throw new Error(`relay config at ${configPath} must include a "workdir" string`);

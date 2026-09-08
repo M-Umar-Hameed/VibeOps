@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { validateRelayConfig } from "./config.js";
 import type { RelayAgent, RelayConfig } from "./config.js";
 
 // cmd is absent on sdk/http lanes; config.ts validates that per type.
@@ -8,6 +9,17 @@ type AgentEntry = Omit<RelayAgent, "cmd"> & { cmd?: string[] };
 
 export function relayConfigPath(): string {
   return process.env.VIBEOPS_RELAY_CONFIG ?? join(homedir(), ".vibeops", "relay.json");
+}
+
+// The only sanctioned way to write relay.json. Checks the result against the
+// same rules loadRelayConfig applies on read, so a writer can never leave a
+// file that no route can load: the caller gets the error instead of the user
+// getting a bricked install.
+export function writeRelayConfig(cfg: unknown): RelayConfig {
+  const path = relayConfigPath();
+  const valid = validateRelayConfig(cfg, path);
+  writeFileSync(path, JSON.stringify(cfg, null, 2), "utf-8");
+  return valid;
 }
 
 function sandboxDir(): string {
@@ -73,6 +85,6 @@ export async function bootstrapRelayConfig(): Promise<{ config: RelayConfig; add
 
   const config = { ...current, workdir: current.workdir ?? sandboxDir(), agents } as unknown as RelayConfig;
   // Nothing new and the file is already there: leave the user's formatting alone.
-  if (added.length || !existed) writeFileSync(path, JSON.stringify(config, null, 2), "utf-8");
+  if (added.length || !existed) writeRelayConfig(config);
   return { config, added };
 }

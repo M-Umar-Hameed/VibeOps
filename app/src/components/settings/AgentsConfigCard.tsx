@@ -9,9 +9,9 @@ type AgentConfig = { name: string; roles: string[]; models: AgentModel[]; type?:
 export function AgentsConfigCard() {
   const queryClient = useQueryClient();
 
-  const { data: agents, isFetching } = useQuery({
+  const { data: agents, isFetching, error } = useQuery({
     queryKey: ["forge", "agents"],
-    // Guard non-array responses (error bodies) — .map on them crashes the tab.
+    // Guard non-array responses (error bodies) - .map on them crashes the tab.
     queryFn: async () => {
       const res = await api.get("/forge/agents");
       return (Array.isArray(res) ? res : []) as AgentConfig[];
@@ -30,11 +30,17 @@ export function AgentsConfigCard() {
         </p>
       </div>
 
+      {error && (
+        <div className="border border-error/50 bg-error-container/20 rounded-lg px-4 py-3 text-error font-code-sm text-sm">
+          {(error as Error).message}
+        </div>
+      )}
+
       <div className="space-y-4">
         {agents?.map(agent => (
           <AgentEditor key={agent.name} agent={agent} queryClient={queryClient} />
         ))}
-        {(!agents || agents.length === 0) && !isFetching && (
+        {(!agents || agents.length === 0) && !isFetching && !error && (
           <div className="text-on-surface-variant text-sm">No agents found in ~/.vibeops/relay.json.</div>
         )}
       </div>
@@ -45,6 +51,11 @@ export function AgentsConfigCard() {
 
 function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: any }) {
   const chatOnly = agent.type === "http";
+  // Phase 1 sdk lanes are work-only. loadRelayConfig rejects anything else on
+  // read, so offering plan/review here writes a relay.json that no longer
+  // loads and takes every relay route down with it.
+  const workOnly = agent.type === "sdk";
+  const roleChoices = chatOnly ? ["plan", "review"] : workOnly ? ["work"] : ["plan", "work", "review"];
   const [roles, setRoles] = useState(new Set(agent.roles));
   const [models, setModels] = useState<AgentModel[]>(agent.models ?? []);
   const [isDirty, setIsDirty] = useState(false);
@@ -63,6 +74,7 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
       setIsDirty(false);
     },
   });
+  const saveError = patchMutation.error ? (patchMutation.error as Error).message : "";
 
   // Chat-only lanes (e.g. OpenRouter): models here become the picker's choices
   // in chat, not the pipeline's. Fetched once per agent, cached by react-query.
@@ -115,44 +127,39 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
         </button>
       </div>
 
-      {chatOnly ? (
-        <div className="mb-4">
+      {saveError && (
+        <div className="mb-4 text-error font-code-sm text-xs">{saveError}</div>
+      )}
+
+      <div className="mb-4">
+        {chatOnly && (
           <div className="text-xs text-on-surface-variant mb-2">
             Chat and text-only pipeline stages (plan, review). The work stage needs an execution harness, so it stays off for this lane.
           </div>
-          <label className="text-xs text-on-surface-variant font-bold mb-2 block">Roles</label>
-          <div className="flex gap-4">
-            {["plan", "review"].map(r => (
-              <label key={r} className="flex items-center gap-2 cursor-pointer text-sm text-on-surface">
-                <input
-                  type="checkbox"
-                  checked={roles.has(r)}
-                  onChange={() => toggleRole(r)}
-                  className="rounded border-white/20 bg-surface-container-highest"
-                />
-                {r}
-              </label>
-            ))}
+        )}
+        {workOnly && (
+          <div className="text-xs text-on-surface-variant mb-2">
+            The SDK lane runs the work stage in-process. Plan and review stay on the CLI lanes.
           </div>
+        )}
+        <label className="text-xs text-on-surface-variant font-bold mb-2 block">Roles</label>
+        <div className="flex gap-4">
+          {roleChoices.map(r => (
+            <label key={r} className="flex items-center gap-2 cursor-pointer text-sm text-on-surface">
+              <input
+                type="checkbox"
+                checked={roles.has(r)}
+                onChange={() => toggleRole(r)}
+                className="rounded border-white/20 bg-surface-container-highest"
+              />
+              {r}
+            </label>
+          ))}
         </div>
-      ) : (
-        <div className="mb-4">
-          <label className="text-xs text-on-surface-variant font-bold mb-2 block">Roles</label>
-          <div className="flex gap-4">
-            {["plan", "work", "review"].map(r => (
-              <label key={r} className="flex items-center gap-2 cursor-pointer text-sm text-on-surface">
-                <input
-                  type="checkbox"
-                  checked={roles.has(r)}
-                  onChange={() => toggleRole(r)}
-                  className="rounded border-white/20 bg-surface-container-highest"
-                />
-                {r}
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
+        {!chatOnly && roles.size === 0 && (
+          <div className="text-xs text-on-surface-variant mt-2">Pick at least one role to save.</div>
+        )}
+      </div>
 
       <div>
         <label className="text-xs text-on-surface-variant font-bold mb-2 block">Models</label>

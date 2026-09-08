@@ -992,6 +992,62 @@ it("PATCH /relay/agents/:name returns 400 for bad payloads and extra fields", as
   expect(resQuality.status).toBe(400);
 });
 
+it("PATCH /relay/agents/:name refuses to make an sdk lane unloadable", async () => {
+  const h = await adminHeaders();
+  const { loadRelayConfig } = await import("../src/relay/config.js");
+
+  const cfg = JSON.parse(readFileSync(relayConfigPath, "utf-8"));
+  cfg.agents.sdklane = { type: "sdk", roles: ["work"] };
+  writeFileSync(relayConfigPath, JSON.stringify(cfg));
+
+  // loadRelayConfig rejects a non-work sdk role on READ, so accepting this
+  // write would leave a relay.json that no route can load.
+  const bad = await app.request("/relay/agents/sdklane", {
+    method: "PATCH", headers: h, body: JSON.stringify({ roles: ["work", "plan"] }),
+  });
+  expect(bad.status).toBe(400);
+  expect((await bad.json()).error).toContain('of type sdk can only have the "work" role');
+  expect(() => loadRelayConfig(relayConfigPath)).not.toThrow();
+
+  const ok = await app.request("/relay/agents/sdklane", {
+    method: "PATCH", headers: h, body: JSON.stringify({ roles: ["work"] }),
+  });
+  expect(ok.status).toBe(200);
+});
+
+it("writeRelayConfig refuses any config the reader would reject, leaving the file intact", async () => {
+  const { writeRelayConfig } = await import("../src/relay/bootstrap-config.js");
+  const { loadRelayConfig } = await import("../src/relay/config.js");
+
+  const before = readFileSync(relayConfigPath, "utf-8");
+
+  // One case per rule that lives only in config.ts, i.e. every way a future
+  // writer could drift from the reader and brick the file.
+  const rejected = [
+    { workdir: undefined, agents: {} },
+    { workdir, agents: { a: { roles: ["work"] } } },                                 // cli lane with no cmd
+    { workdir, agents: { a: { type: "sdk", roles: ["work", "review"] } } },           // sdk beyond work
+    { workdir, agents: { a: { type: "http", roles: ["plan"], baseUrl: "http://x", keySetting: "k" } } }, // non-https
+    { workdir, agents: { a: { cmd: ["x"], roles: ["work"], models: [] } } },          // present-but-empty models
+    { workdir, agents: { a: { cmd: ["x"], roles: ["work"], env: { k: 1 } } } },       // non-string env value
+  ];
+  for (const cfg of rejected) {
+    expect(() => writeRelayConfig(cfg)).toThrow();
+  }
+
+  expect(readFileSync(relayConfigPath, "utf-8")).toBe(before);
+  expect(() => loadRelayConfig(relayConfigPath)).not.toThrow();
+});
+
+it("GET /forge/agents reports why a broken relay.json will not load", async () => {
+  const h = await adminHeaders();
+  writeFileSync(relayConfigPath, "{ not json");
+
+  const res = await app.request("/forge/agents", { headers: h });
+  expect(res.status).toBe(400);
+  expect((await res.json()).error).toContain("not valid JSON");
+});
+
 it("PATCH /relay/agents/:name updates relay.json while keeping cmd untouched", async () => {
   const h = await adminHeaders();
   const { readFileSync } = await import("node:fs");

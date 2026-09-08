@@ -5,7 +5,7 @@ import { join, resolve, sep } from "node:path";
 import type { Hono } from "hono";
 import type { Actor } from "../db/schema.js";
 import { loadRelayConfig } from "../relay/config.js";
-import { relayConfigPath } from "../relay/bootstrap-config.js";
+import { relayConfigPath, writeRelayConfig } from "../relay/bootstrap-config.js";
 import { runDoctor } from "../relay/doctor.js";
 import { parseVerdict } from "../relay/prompts.js";
 import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, latestRunStatus, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes } from "../forge/runs.js";
@@ -99,7 +99,15 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
   });
 
   app.get("/forge/agents", requireAdmin, async (c) => {
-    const config = forgeConfig();
+    // Same contract as /forge/doctor: no file is an empty list, a broken file
+    // reports what is wrong with it instead of a bare 500.
+    if (!existsSync(relayConfigPath())) return c.json([]);
+    let config;
+    try {
+      config = forgeConfig();
+    } catch (e) {
+      return c.json({ error: (e as Error).message }, 400);
+    }
     return c.json(Object.entries(config.agents).map(([name, a]) => ({ name, roles: a.roles, models: a.models ?? [], type: a.type ?? "cli" })));
   });
 
@@ -495,12 +503,18 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     // edit files or run commands, so the work role is rejected. plan/review are
     // text-in/text-out and fine; roles: [] (the shape the Agents card always
     // sends for a chat-only lane) is fine too.
+    // sdk lanes are work-only in Phase 1. loadRelayConfig enforces that on
+    // read, so writing plan/review here does not fail now -- it makes the file
+    // unloadable, and every relay route 500s until someone hand-edits it back.
     const isHttp = cfg.agents[name].type === "http";
+    const isSdk = cfg.agents[name].type === "sdk";
     if (roles !== undefined) {
       if (isHttp) {
         if (roles.includes("work")) {
           return c.json({ error: `relay config agent "${name}" of type http cannot take the work role: a chat completion cannot edit files or run commands` }, 400);
         }
+      } else if (isSdk && roles.some((r: string) => r !== "work")) {
+        return c.json({ error: `relay config agent "${name}" of type sdk can only have the "work" role in Phase 1` }, 400);
       } else if (roles.length === 0) {
         return c.json({ error: "roles must be a non-empty array" }, 400);
       }
@@ -515,7 +529,15 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
       else cfg.agents[name].models = models;
     }
 
-    writeFileSync(configPath, JSON.stringify(cfg, null, 2), "utf-8");
+    // Final gate. The per-field checks above are a second copy of the rules in
+    // config.ts, and a copy drifts: this is how an sdk lane got plan/review and
+    // made the file unloadable. Whatever slips through, the write itself is
+    // checked against the reader, so drift becomes a 400 instead of a brick.
+    try {
+      writeRelayConfig(cfg);
+    } catch (e) {
+      return c.json({ error: (e as Error).message }, 400);
+    }
 
     return c.json({ name, roles: cfg.agents[name].roles, models: cfg.agents[name].models ?? [] });
   });

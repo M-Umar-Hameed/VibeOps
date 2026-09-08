@@ -126,3 +126,51 @@ test("a cli agent still renders roles and Save stays disabled until one is picke
   fireEvent.click(checkboxes[0]);
   await waitFor(() => expect((screen.getByText("Save") as HTMLButtonElement).disabled).toBe(false));
 });
+
+test("an sdk lane offers only the work role", async () => {
+  apiFetch.mockReset().mockImplementation((path: string, opts?: any) => {
+    if (path === "/forge/agents" && !opts) {
+      return Promise.resolve([{ name: "claude-sdk", roles: ["work"], models: [], type: "sdk" }]);
+    }
+    return Promise.resolve({ value: "" });
+  });
+
+  render(wrap(<AgentsConfigCard />));
+
+  await waitFor(() => expect(screen.getByRole("heading", { name: "claude-sdk" })).toBeInTheDocument());
+  expect(screen.getByLabelText("work")).toBeInTheDocument();
+  // plan/review here would write a relay.json that loadRelayConfig refuses.
+  expect(screen.queryByLabelText("plan")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("review")).not.toBeInTheDocument();
+});
+
+test("a failed save says why instead of silently reverting", async () => {
+  apiFetch.mockReset().mockImplementation((path: string, opts?: any) => {
+    if (path === "/forge/agents" && !opts) {
+      return Promise.resolve([{ name: "fake", roles: ["plan"], models: [] }]);
+    }
+    if (opts?.method === "PATCH" && path.startsWith("/relay/agents/")) {
+      return Promise.reject(new Error("model name required"));
+    }
+    return Promise.resolve({ value: "" });
+  });
+
+  const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+  render(<QueryClientProvider client={client}><AgentsConfigCard /></QueryClientProvider>);
+
+  await waitFor(() => expect(screen.getByRole("heading", { name: "fake" })).toBeInTheDocument());
+  fireEvent.click(screen.getByText("Add model"));
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+  await waitFor(() => expect(screen.getByText("model name required")).toBeInTheDocument());
+});
+
+test("a broken relay.json shows the reason instead of \"no agents found\"", async () => {
+  apiFetch.mockReset().mockRejectedValue(new Error('agent "claude-sdk" of type sdk can only have the "work" role'));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  render(<QueryClientProvider client={client}><AgentsConfigCard /></QueryClientProvider>);
+
+  await waitFor(() => expect(screen.getByText(/can only have the "work" role/)).toBeInTheDocument());
+  expect(screen.queryByText(/No agents found/)).not.toBeInTheDocument();
+});

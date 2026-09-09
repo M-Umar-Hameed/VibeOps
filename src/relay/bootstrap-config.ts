@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { validateRelayConfig } from "./config.js";
@@ -18,7 +18,19 @@ export function relayConfigPath(): string {
 export function writeRelayConfig(cfg: unknown): RelayConfig {
   const path = relayConfigPath();
   const valid = validateRelayConfig(cfg, path);
-  writeFileSync(path, JSON.stringify(cfg, null, 2), "utf-8");
+  try {
+    if (existsSync(path)) {
+      copyFileSync(path, `${path}.bak`);
+    }
+  } catch {}
+  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(cfg, null, 2), "utf-8");
+    renameSync(tmp, path);
+  } catch {
+    writeFileSync(path, JSON.stringify(cfg, null, 2), "utf-8");
+    try { if (existsSync(tmp)) unlinkSync(tmp); } catch {}
+  }
   return valid;
 }
 
@@ -32,6 +44,7 @@ function templates(): Record<string, AgentEntry> {
     agy: { cmd: ["agy", "exec", "-C", "{workdir}", "{prompt}"], roles: ["work", "plan"] },
     agy_local: { cmd: [join(homedir(), "AppData", "Local", "agy", "bin", "agy.exe"), "exec", "-C", "{workdir}", "{prompt}"], roles: ["work", "plan"] },
     codex: { cmd: ["codex", "exec", "-C", "{workdir}", "{prompt}"], roles: ["work"] },
+    kimi: { cmd: ["kimi", "-p", "{promptFile}"], roles: ["work"] },
     gemini: { cmd: ["gemini", "prompt", "--", "{prompt}"], roles: ["plan", "review"] },
   };
 }
@@ -76,6 +89,14 @@ export async function bootstrapRelayConfig(): Promise<{ config: RelayConfig; add
   if (hasCredentials()) detected["claude-sdk"] = { type: "sdk", roles: ["work"] };
 
   const agents = { ...(current.agents ?? {}) };
+  for (const [, a] of Object.entries(agents)) {
+    if (a.type === "sdk" && Array.isArray(a.roles) && a.roles.some((r: string) => r !== "work")) {
+      a.roles = ["work"];
+    }
+    if (Array.isArray(a.models) && a.models.length === 0) {
+      delete a.models;
+    }
+  }
   const added: string[] = [];
   for (const [name, agent] of Object.entries(detected)) {
     if (agents[name]) continue;

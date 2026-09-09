@@ -20,6 +20,7 @@ const PROBE_ARGS: Record<string, string[]> = {
   codex: ["--version"],
   agy: ["--version"],
   gemini: ["--version"],
+  kimi: ["--version"],
 };
 
 // Only binaries with a KNOWN local auth file get a reader; anything else

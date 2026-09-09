@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { substituteCmd } from "./invoke.js";
@@ -39,6 +39,15 @@ export function loadRelayConfig(path?: string): RelayConfig {
   try {
     parsed = JSON.parse(raw);
   } catch (e) {
+    const bak = `${configPath}.bak`;
+    if (existsSync(bak)) {
+      try {
+        const bakRaw = readFileSync(bak, "utf-8");
+        parsed = JSON.parse(bakRaw);
+        writeFileSync(configPath, bakRaw, "utf-8");
+        return validateRelayConfig(parsed, configPath);
+      } catch {}
+    }
     throw new Error(`relay config at ${configPath} is not valid JSON: ${(e as Error).message}`);
   }
   return validateRelayConfig(parsed, configPath);

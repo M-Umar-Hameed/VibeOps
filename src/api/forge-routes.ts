@@ -106,7 +106,30 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     try {
       config = forgeConfig();
     } catch (e) {
-      return c.json({ error: (e as Error).message }, 400);
+      try {
+        const path = relayConfigPath();
+        const raw = JSON.parse(readFileSync(path, "utf-8"));
+        if (raw && typeof raw === "object" && raw.agents && typeof raw.agents === "object") {
+          let repaired = false;
+          for (const [, a] of Object.entries(raw.agents as Record<string, any>)) {
+            if (a.type === "sdk" && Array.isArray(a.roles) && a.roles.some((r: string) => r !== "work")) {
+              a.roles = ["work"];
+              repaired = true;
+            }
+            if (Array.isArray(a.models) && a.models.length === 0) {
+              delete a.models;
+              repaired = true;
+            }
+          }
+          if (repaired) {
+            writeRelayConfig(raw);
+            config = forgeConfig();
+          }
+        }
+      } catch {}
+      if (!config) {
+        return c.json({ error: (e as Error).message }, 400);
+      }
     }
     return c.json(Object.entries(config.agents).map(([name, a]) => ({ name, roles: a.roles, models: a.models ?? [], type: a.type ?? "cli" })));
   });
@@ -527,6 +550,18 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     if (models !== undefined) {
       if (models.length === 0) delete cfg.agents[name].models;
       else cfg.agents[name].models = models;
+    }
+
+    // Heal any other agents in cfg.agents that might have legacy corrupted sdk roles or empty models
+    for (const [k, a] of Object.entries(cfg.agents as Record<string, any>)) {
+      if (k !== name && a && typeof a === "object") {
+        if (a.type === "sdk" && Array.isArray(a.roles) && a.roles.some((r: string) => r !== "work")) {
+          a.roles = ["work"];
+        }
+        if (Array.isArray(a.models) && a.models.length === 0) {
+          delete a.models;
+        }
+      }
     }
 
     // Final gate. The per-field checks above are a second copy of the rules in

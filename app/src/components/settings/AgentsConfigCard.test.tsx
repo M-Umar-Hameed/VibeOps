@@ -174,3 +174,71 @@ test("a broken relay.json shows the reason instead of \"no agents found\"", asyn
   await waitFor(() => expect(screen.getByText(/can only have the "work" role/)).toBeInTheDocument());
   expect(screen.queryByText(/No agents found/)).not.toBeInTheDocument();
 });
+
+test("a cli agent offers known models via datalist and auto-fills tier and quality", async () => {
+  apiFetch.mockReset().mockImplementation((path: string, opts?: any) => {
+    if (path === "/forge/agents" && !opts) {
+      return Promise.resolve([{ name: "claude", roles: ["plan", "work"], models: [] }]);
+    }
+    return Promise.resolve({ value: "" });
+  });
+  render(wrap(<AgentsConfigCard />));
+  await waitFor(() => expect(screen.getByRole("heading", { name: "claude" })).toBeInTheDocument());
+  const datalist = document.querySelector("datalist#catalog-claude");
+  expect(datalist).not.toBeNull();
+  expect(datalist?.querySelector('option[value="claude-sonnet-4-8"]')).not.toBeNull();
+
+  fireEvent.click(screen.getByText("Add model"));
+  const input = screen.getByPlaceholderText("Type to search known models, or enter model name");
+  fireEvent.change(input, { target: { value: "claude-sonnet-4-8" } });
+
+  const selects = screen.getAllByRole("combobox");
+  const tierSelect = selects.find(s => (s as HTMLSelectElement).value === "cheap");
+  expect(tierSelect).toBeDefined();
+});
+
+test("an sdk lane with corrupted roles in agent state only saves work role", async () => {
+  const patchCalls: any[] = [];
+  apiFetch.mockReset().mockImplementation((path: string, opts?: any) => {
+    if (path === "/forge/agents" && !opts) {
+      return Promise.resolve([{ name: "claude-sdk", type: "sdk", roles: ["work", "plan", "review"], models: [] }]);
+    }
+    if (path === "/relay/agents/claude-sdk" && opts?.method === "PATCH") {
+      patchCalls.push(opts.body);
+      return Promise.resolve({ name: "claude-sdk", roles: opts.body.roles, models: opts.body.models });
+    }
+    return Promise.resolve({ value: "" });
+  });
+  render(wrap(<AgentsConfigCard />));
+  await waitFor(() => expect(screen.getByRole("heading", { name: "claude-sdk" })).toBeInTheDocument());
+
+  fireEvent.click(screen.getByText("Add model"));
+  const input = screen.getByPlaceholderText("Type to search known models, or enter model name");
+  fireEvent.change(input, { target: { value: "Sonnet 5" } });
+  fireEvent.click(screen.getByText("Save"));
+
+  await waitFor(() => expect(patchCalls).toHaveLength(1));
+  expect(patchCalls[0].roles).toEqual(["work"]);
+});
+
+test("auto-repair button calls /relay/bootstrap when error is displayed", async () => {
+  let bootstrapCalled = false;
+  apiFetch.mockReset().mockImplementation((path: string, opts?: any) => {
+    if (path === "/forge/agents" && !opts) {
+      return Promise.reject(new Error('agent "claude-sdk" of type sdk can only have the "work" role'));
+    }
+    if (path === "/relay/bootstrap" && opts?.method === "POST") {
+      bootstrapCalled = true;
+      return Promise.resolve({ config: {}, added: [] });
+    }
+    return Promise.resolve({ value: "" });
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><AgentsConfigCard /></QueryClientProvider>);
+
+  await waitFor(() => expect(screen.getByText(/can only have the "work" role/)).toBeInTheDocument());
+  const repairBtn = screen.getByText("Auto-Repair Config");
+  expect(repairBtn).toBeInTheDocument();
+  fireEvent.click(repairBtn);
+  await waitFor(() => expect(bootstrapCalled).toBe(true));
+});

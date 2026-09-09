@@ -339,14 +339,20 @@ export function ChatScreen() {
                 )}
                 {roster.map((r) => (
                   <optgroup key={r.agent} label={r.toolCapable ? `${r.agent} · tools` : r.agent}>
-                    {r.models.map((m) => {
-                      const toolCapable = m.toolCapable ?? r.toolCapable;
-                      return (
-                        <option key={`${r.agent}::${m.name}`} value={`${r.agent}::${m.name}`}>
-                          {m.name}{toolCapable ? " · tools" : ""}
-                        </option>
-                      );
-                    })}
+                    {r.models.length > 0 ? (
+                      r.models.map((m) => {
+                        const toolCapable = m.toolCapable ?? r.toolCapable;
+                        return (
+                          <option key={`${r.agent}::${m.name}`} value={`${r.agent}::${m.name}`}>
+                            {m.name}{toolCapable ? " · tools" : ""}
+                          </option>
+                        );
+                      })
+                    ) : (
+                      <option key={`${r.agent}::`} value={`${r.agent}::`}>
+                        {r.agent} (default)
+                      </option>
+                    )}
                   </optgroup>
                 ))}
               </select>

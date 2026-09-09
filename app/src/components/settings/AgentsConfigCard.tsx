@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api.js";
 import { modelOptionsForRole } from "../WorkOrderComposer.js";
+import { getKnownModelsForAgent } from "../../lib/knownModels.js";
 
 type AgentModel = { name: string; tier: string; quality: number };
 type AgentConfig = { name: string; roles: string[]; models: AgentModel[]; type?: "cli" | "sdk" | "http" };
@@ -31,8 +32,21 @@ export function AgentsConfigCard() {
       </div>
 
       {error && (
-        <div className="border border-error/50 bg-error-container/20 rounded-lg px-4 py-3 text-error font-code-sm text-sm">
-          {(error as Error).message}
+        <div className="border border-error/50 bg-error-container/20 rounded-lg px-4 py-3 text-error font-code-sm text-sm flex items-center justify-between gap-4">
+          <span>{(error as Error).message}</span>
+          <button
+            onClick={async () => {
+              try {
+                await api.post("/relay/bootstrap");
+                queryClient.invalidateQueries({ queryKey: ["forge", "agents"] });
+              } catch (e: any) {
+                // ignore
+              }
+            }}
+            className="px-3 py-1 bg-error/20 hover:bg-error/30 text-error rounded text-xs font-bold shrink-0 cursor-pointer"
+          >
+            Auto-Repair Config
+          </button>
         </div>
       )}
 
@@ -56,12 +70,16 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
   // loads and takes every relay route down with it.
   const workOnly = agent.type === "sdk";
   const roleChoices = chatOnly ? ["plan", "review"] : workOnly ? ["work"] : ["plan", "work", "review"];
-  const [roles, setRoles] = useState(new Set(agent.roles));
+  const sanitizeRoles = (r: string[]) => {
+    if (workOnly) return ["work"];
+    return (r || []).filter(choice => roleChoices.includes(choice));
+  };
+  const [roles, setRoles] = useState(new Set(sanitizeRoles(agent.roles)));
   const [models, setModels] = useState<AgentModel[]>(agent.models ?? []);
   const [isDirty, setIsDirty] = useState(false);
 
   useEffect(() => {
-    setRoles(new Set(agent.roles));
+    setRoles(new Set(sanitizeRoles(agent.roles)));
     setModels(agent.models ?? []);
     setIsDirty(false);
   }, [agent]);
@@ -84,10 +102,27 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
     enabled: chatOnly,
   });
 
+  const known = getKnownModelsForAgent(agent.name);
+  const catalogModels = chatOnly
+    ? (catalogQuery.data?.models ?? [])
+    : known.map(k => ({ id: k.id, name: k.name, tier: k.tier, quality: k.quality }));
+
   const toggleRole = (r: string) => {
     const next = new Set(roles);
     if (next.has(r)) next.delete(r); else next.add(r);
     setRoles(next);
+    setIsDirty(true);
+  };
+
+  const handleModelNameChange = (idx: number, val: string) => {
+    const next = [...models];
+    const match = catalogModels.find((m: any) => (m.id || m.name) === val || m.name === val);
+    if (match && match.tier && match.quality) {
+      next[idx] = { ...next[idx], name: val, tier: match.tier, quality: match.quality };
+    } else {
+      next[idx] = { ...next[idx], name: val };
+    }
+    setModels(next);
     setIsDirty(true);
   };
 
@@ -110,8 +145,15 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
     setIsDirty(true);
   };
 
+  const addRecommendedModels = () => {
+    const toAdd = known.slice(0, 4).map(k => ({ name: k.id, tier: k.tier, quality: k.quality }));
+    setModels(toAdd);
+    setIsDirty(true);
+  };
+
   const handleSave = () => {
-    patchMutation.mutate({ roles: Array.from(roles), models });
+    const safeRoles = workOnly ? ["work"] : Array.from(roles);
+    patchMutation.mutate({ roles: safeRoles, models });
   };
 
   return (
@@ -163,11 +205,13 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
 
       <div>
         <label className="text-xs text-on-surface-variant font-bold mb-2 block">Models</label>
-        {chatOnly && (
-          <datalist id={`catalog-${agent.name}`}>
-            {(catalogQuery.data?.models ?? []).map((m: { id: string }) => <option key={m.id} value={m.id} />)}
-          </datalist>
-        )}
+        <datalist id={`catalog-${agent.name}`}>
+          {catalogModels.map((m: any) => (
+            <option key={m.id || m.name} value={m.id || m.name}>
+              {m.name && m.name !== m.id ? `${m.name} (${m.id})` : (m.id || m.name)}
+            </option>
+          ))}
+        </datalist>
         {models.length > 0 ? (
           <div className="space-y-2 mb-2">
             {models.map((m, idx) => (
@@ -175,9 +219,9 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
                 <input
                   type="text"
                   value={m.name}
-                  onChange={e => updateModel(idx, "name", e.target.value)}
-                  placeholder={chatOnly ? "Type to search the catalog, or enter any model id" : "Model name"}
-                  list={chatOnly ? `catalog-${agent.name}` : undefined}
+                  onChange={e => handleModelNameChange(idx, e.target.value)}
+                  placeholder={chatOnly ? "Type to search the catalog, or enter any model id" : "Type to search known models, or enter model name"}
+                  list={`catalog-${agent.name}`}
                   className="flex-1 bg-surface-container-highest border border-white/10 rounded px-2 py-1 text-sm text-on-surface focus:outline-none focus:border-primary"
                 />
                 <select 
@@ -208,12 +252,22 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
         ) : (
           <div className="text-xs text-on-surface-variant mb-2">No models configured.</div>
         )}
-        <button
-          onClick={addModel}
-          className="text-xs text-primary hover:underline flex items-center gap-1"
-        >
-          <span className="material-symbols-outlined text-[14px]">add</span> Add model
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={addModel}
+            className="text-xs text-primary hover:underline flex items-center gap-1"
+          >
+            <span className="material-symbols-outlined text-[14px]">add</span> Add model
+          </button>
+          {!chatOnly && models.length === 0 && known.length > 0 && (
+            <button
+              onClick={addRecommendedModels}
+              className="text-xs text-primary/80 hover:text-primary flex items-center gap-1 cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[14px]">playlist_add</span> Add recommended models
+            </button>
+          )}
+        </div>
         {chatOnly && catalogQuery.data?.reason && (
           <div className="text-xs text-on-surface-variant mt-1">{catalogQuery.data.reason}</div>
         )}

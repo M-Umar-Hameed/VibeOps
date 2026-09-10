@@ -195,7 +195,7 @@ export function AIModelsTab() {
                 </div>
                 <div>
                   <div className="text-sm font-medium text-on-surface group-hover:text-primary transition-colors">Maximum Intelligence</div>
-                  <div className="text-xs text-on-surface-variant mt-0.5">Always routes to the most capable model configured (e.g. Claude 3.5 or GPT-4) regardless of cost.</div>
+                  <div className="text-xs text-on-surface-variant mt-0.5">Always routes to the most capable model configured (e.g. Claude Opus 5 or GPT-5.6 Sol) regardless of cost.</div>
                 </div>
               </label>
             </div>
@@ -296,7 +296,7 @@ export function AIModelsTab() {
             <ProviderCard 
               settingKey="anthropic.api_key"
               name="Anthropic"
-              subtitle="Claude 3.5 Sonnet"
+              subtitle="Claude 5 & Opus 4.8"
               placeholder="sk-ant-..."
               borderColorClass="[#D97757]/40"
               icon={
@@ -308,7 +308,7 @@ export function AIModelsTab() {
             <ProviderCard 
               settingKey="openai.api_key"
               name="OpenAI / Codex"
-              subtitle="GPT-4o & Codex"
+              subtitle="GPT-5.6 Sol & Codex"
               placeholder="sk-..."
               borderColorClass="white/20"
               icon={
@@ -320,12 +320,24 @@ export function AIModelsTab() {
             <ProviderCard 
               settingKey="google.api_key"
               name="Google"
-              subtitle="Antigravity & Gemini"
+              subtitle="Antigravity & Gemini 3.8"
               placeholder="AIza..."
               borderColorClass="[#4285F4]/40"
               icon={
                 <div className="w-12 h-12 bg-[#4285F4]/20 rounded-xl flex items-center justify-center">
                   <span className="material-symbols-outlined text-2xl text-[#4285F4]">memory</span>
+                </div>
+              }
+            />
+            <ProviderCard 
+              settingKey="kimi.api_key"
+              name="Moonshot AI / Kimi"
+              subtitle="Kimi K3 & K2.7"
+              placeholder="sk-..."
+              borderColorClass="white/20"
+              icon={
+                <div className="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center">
+                  <span className="material-symbols-outlined text-2xl text-white">auto_awesome</span>
                 </div>
               }
             />

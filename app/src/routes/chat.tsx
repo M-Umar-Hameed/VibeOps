@@ -5,6 +5,7 @@ import { Markdown } from "../components/Markdown.js";
 import { ContextMenu, type MenuItemSpec } from "../components/ContextMenu.js";
 import { useImageAttachments } from "../components/useImageAttachments.js";
 import { useProject } from "../context/project.js";
+import { getKnownModelsForAgent } from "../lib/knownModels.js";
 
 type ChatSession = {
   id: string;
@@ -337,24 +338,29 @@ export function ChatScreen() {
                     <option value="opus">Opus</option>
                   </>
                 )}
-                {roster.map((r) => (
-                  <optgroup key={r.agent} label={r.toolCapable ? `${r.agent} · tools` : r.agent}>
-                    {r.models.length > 0 ? (
-                      r.models.map((m) => {
-                        const toolCapable = m.toolCapable ?? r.toolCapable;
-                        return (
-                          <option key={`${r.agent}::${m.name}`} value={`${r.agent}::${m.name}`}>
-                            {m.name}{toolCapable ? " · tools" : ""}
-                          </option>
-                        );
-                      })
-                    ) : (
-                      <option key={`${r.agent}::`} value={`${r.agent}::`}>
-                        {r.agent} (default)
-                      </option>
-                    )}
-                  </optgroup>
-                ))}
+                {roster.map((r) => {
+                  const models = (r.models && r.models.length > 0)
+                    ? r.models
+                    : getKnownModelsForAgent(r.agent).map(k => ({ name: k.name || k.id, toolCapable: r.toolCapable }));
+                  return (
+                    <optgroup key={r.agent} label={r.toolCapable ? `${r.agent} · tools` : r.agent}>
+                      {models.length > 0 ? (
+                        models.map((m) => {
+                          const toolCapable = m.toolCapable ?? r.toolCapable;
+                          return (
+                            <option key={`${r.agent}::${m.name}`} value={`${r.agent}::${m.name}`}>
+                              {m.name}{toolCapable ? " · tools" : ""}
+                            </option>
+                          );
+                        })
+                      ) : (
+                        <option key={`${r.agent}::`} value={`${r.agent}::`}>
+                          {r.agent} (default)
+                        </option>
+                      )}
+                    </optgroup>
+                  );
+                })}
               </select>
             </div>
 

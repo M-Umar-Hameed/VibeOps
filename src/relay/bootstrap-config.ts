@@ -38,14 +38,18 @@ function sandboxDir(): string {
   return join(homedir(), ".vibeops", "sandbox");
 }
 
+import { getKnownModelsForAgent } from "./known-models.js";
+
 function templates(): Record<string, AgentEntry> {
+  const modelsFor = (agent: string) =>
+    getKnownModelsForAgent(agent).map((k) => ({ name: k.name || k.id, tier: k.tier, quality: k.quality }));
   return {
-    claude: { cmd: ["claude", "-p", "{promptFile}"], roles: ["plan", "review"] },
-    agy: { cmd: ["agy", "exec", "-C", "{workdir}", "{prompt}"], roles: ["work", "plan"] },
-    agy_local: { cmd: [join(homedir(), "AppData", "Local", "agy", "bin", "agy.exe"), "exec", "-C", "{workdir}", "{prompt}"], roles: ["work", "plan"] },
-    codex: { cmd: ["codex", "exec", "-C", "{workdir}", "{prompt}"], roles: ["work"] },
-    kimi: { cmd: ["kimi", "-p", "{promptFile}"], roles: ["work"] },
-    gemini: { cmd: ["gemini", "prompt", "--", "{prompt}"], roles: ["plan", "review"] },
+    claude: { cmd: ["claude", "--model", "{model}", "-p", "{promptFile}"], roles: ["review", "plan", "work"], models: modelsFor("claude") },
+    agy: { cmd: ["agy", "exec", "-C", "{workdir}", "--model", "{model}", "{prompt}"], roles: ["work", "plan"], models: modelsFor("agy") },
+    agy_local: { cmd: [join(homedir(), "AppData", "Local", "agy", "bin", "agy.exe"), "exec", "-C", "{workdir}", "--model", "{model}", "{prompt}"], roles: ["work", "plan"], models: modelsFor("agy") },
+    codex: { cmd: ["codex", "exec", "-C", "{workdir}", "--model", "{model}", "{prompt}"], roles: ["work"], models: modelsFor("codex") },
+    kimi: { cmd: ["kimi", "--model", "{model}", "-p", "{promptFile}"], roles: ["work"], models: modelsFor("kimi") },
+    gemini: { cmd: ["gemini", "prompt", "--", "{prompt}"], roles: ["plan", "review"], models: modelsFor("gemini") },
   };
 }
 
@@ -86,15 +90,34 @@ export async function bootstrapRelayConfig(): Promise<{ config: RelayConfig; add
   // The SDK lane spawns no binary, so a machine where every CLI probe failed
   // still gets a work lane from the Claude Code login already on it.
   const { hasCredentials } = await import("./invoke-sdk.js");
-  if (hasCredentials()) detected["claude-sdk"] = { type: "sdk", roles: ["work"] };
+  if (hasCredentials()) {
+    const sdkModels = getKnownModelsForAgent("claude-sdk").map((k) => ({ name: k.name || k.id, tier: k.tier, quality: k.quality }));
+    detected["claude-sdk"] = { type: "sdk", roles: ["work"], models: sdkModels };
+  }
 
+  let enriched = false;
   const agents = { ...(current.agents ?? {}) };
-  for (const [, a] of Object.entries(agents)) {
+  for (const [name, a] of Object.entries(agents)) {
     if (a.type === "sdk" && Array.isArray(a.roles) && a.roles.some((r: string) => r !== "work")) {
       a.roles = ["work"];
+      enriched = true;
     }
-    if (Array.isArray(a.models) && a.models.length === 0) {
-      delete a.models;
+    if (!a.models || (Array.isArray(a.models) && a.models.length === 0)) {
+      const fallbackModels = (known[name]?.models && known[name].models!.length > 0)
+        ? known[name].models
+        : getKnownModelsForAgent(name).map((k) => ({ name: k.name || k.id, tier: k.tier, quality: k.quality }));
+      if (fallbackModels && fallbackModels.length > 0) {
+        a.models = fallbackModels;
+        enriched = true;
+      } else if (Array.isArray(a.models) && a.models.length === 0) {
+        delete a.models;
+      }
+    }
+    if (a.models && a.models.length > 0 && Array.isArray(a.cmd) && !a.cmd.some((p: string) => p.includes("{model}"))) {
+      if (known[name]?.cmd?.some((p: string) => p.includes("{model}"))) {
+        a.cmd = known[name].cmd;
+        enriched = true;
+      }
     }
   }
   const added: string[] = [];
@@ -106,6 +129,6 @@ export async function bootstrapRelayConfig(): Promise<{ config: RelayConfig; add
 
   const config = { ...current, workdir: current.workdir ?? sandboxDir(), agents } as unknown as RelayConfig;
   // Nothing new and the file is already there: leave the user's formatting alone.
-  if (added.length || !existed) writeRelayConfig(config);
+  if (added.length || !existed || enriched) writeRelayConfig(config);
   return { config, added };
 }

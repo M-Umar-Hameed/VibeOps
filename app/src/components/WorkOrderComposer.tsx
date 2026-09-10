@@ -1,5 +1,6 @@
 import { useState, useEffect, type ReactNode } from "react";
 import { useImageAttachments } from "./useImageAttachments.js";
+import { getKnownModelsForAgent } from "../lib/knownModels.js";
 
 export type EffortLevel = "quick" | "standard" | "max";
 const EFFORT_TIPS: Record<EffortLevel, string> = {
@@ -183,10 +184,14 @@ export function modelOptionsForRole(
   agents: { name: string; roles: string[]; models?: { name: string }[] }[],
   role: string,
 ): { value: string; label: string }[] {
-  return agents.filter(a => a.roles.includes(role)).flatMap(a =>
-    a.models?.length
-      ? a.models.map(m => ({ value: `${a.name}:${m.name}`, label: `${a.name} / ${m.name}` }))
-      : [{ value: a.name, label: a.name }]);
+  return agents.filter(a => a.roles.includes(role)).flatMap(a => {
+    const list = a.models?.length
+      ? a.models
+      : getKnownModelsForAgent(a.name).map(k => ({ name: k.name || k.id }));
+    return list.length
+      ? list.map(m => ({ value: `${a.name}:${m.name}`, label: `${a.name} / ${m.name}` }))
+      : [{ value: a.name, label: a.name }];
+  });
 }
 
 // ponytail: split on the first ":" — agent/model names carry no colons today.

@@ -24,6 +24,7 @@ import { listActors } from "../services/actors.js";
 import { ConflictError, NotFoundError } from "../services/errors.js";
 import { getSetting } from "../services/settings.js";
 import { fetchCatalog } from "../chat/catalog.js";
+import { getKnownModelsForAgent } from "../relay/known-models.js";
 import { requireAdmin } from "./auth.js";
 
 const ATTACH_MAX_BYTES = 10 * 1024 * 1024;
@@ -131,7 +132,16 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
         return c.json({ error: (e as Error).message }, 400);
       }
     }
-    return c.json(Object.entries(config.agents).map(([name, a]) => ({ name, roles: a.roles, models: a.models ?? [], type: a.type ?? "cli" })));
+    return c.json(Object.entries(config.agents).map(([name, a]) => {
+      let models = a.models ?? [];
+      if (models.length === 0) {
+        const known = getKnownModelsForAgent(name);
+        if (known.length > 0) {
+          models = known.map((k) => ({ name: k.name || k.id, tier: k.tier, quality: k.quality }));
+        }
+      }
+      return { name, roles: a.roles, models, type: a.type ?? "cli" };
+    }));
   });
 
   app.get("/forge/skills", requireAdmin, async (c) => {

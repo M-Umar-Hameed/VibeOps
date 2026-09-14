@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -953,8 +953,14 @@ it("explain-diff caches by hash (fake agent) and 404s without sandbox", async ()
   await pollUntilDone(h, runId);
 
   setScript("explain-diff");
+  const cwdOut = join(tmpdir(), `explain-cwd-${Date.now()}.txt`);
+  process.env.FAKE_CWD_OUT = cwdOut;
   const explainRes = await app.request(`/forge/tickets/${ticket.id}/explain-diff`, { method: "POST", headers: h });
+  delete process.env.FAKE_CWD_OUT;
   expect(explainRes.status).toBe(200);
+  const explainDir = readFileSync(cwdOut, "utf-8").trim().split("\t")[1];
+  expect(explainDir).toMatch(/[\\/]views[\\/][0-9a-f-]{36}-explain-[0-9a-f]{8}$/);
+  expect(existsSync(explainDir)).toBe(false);
   const body1 = await explainRes.json();
   expect(body1.summary).toContain("explain-result-counter-");
   const firstMarker = body1.summary.match(/explain-result-counter-\d+/)[0];

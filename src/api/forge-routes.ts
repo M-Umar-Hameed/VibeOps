@@ -10,7 +10,7 @@ import { runDoctor } from "../relay/doctor.js";
 import { parseVerdict } from "../relay/prompts.js";
 import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, latestRunStatus, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes } from "../forge/runs.js";
 import {
-  sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash, sandboxActivity, sandboxWorkingDiff
+  sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash, sandboxActivity, sandboxWorkingDiff, withReadOnlyView
 } from "../forge/sandbox.js";
 import { listSkillDir } from "../forge/skills.js";
 import { indexRepoDocs } from "../services/knowledge.js";
@@ -319,7 +319,7 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     const agent = { ...agentDef, cmd: resolveCmd(agentDef, pick.model) };
     const prompt = `Summarize this diff for a non-programmer: what changed, where, and why it matters. No jargon, max 10 bullet-free sentences.\n\n${payload}`;
     
-    const res = await runAgent(agent, prompt, workdir);
+    const { result: res } = await withReadOnlyView(workdir, ticketId, "explain", branchName(ticketId), (view) => runAgent(agent, prompt, view));
     if (!res.ok) return c.json({ error: "agent failed to explain diff" }, 500);
 
     const summary = res.output;

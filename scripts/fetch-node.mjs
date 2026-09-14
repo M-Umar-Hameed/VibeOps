@@ -46,7 +46,13 @@ console.log(`checksum verified: ${fileName}`);
 
 if (target.startsWith("win")) {
   // ponytail: `unzip` (Git for Windows / MSYS) — this machine's GNU tar can't read zip.
-  execSync(`unzip -j "${archive}" "${name}/node.exe" -d "${outDir}"`, { stdio: "inherit" });
+  // npm runs scripts under cmd where unzip is not on PATH; Windows' own bsdtar reads zip.
+  try {
+    execSync(`unzip -j "${archive}" "${name}/node.exe" -d "${outDir}"`, { stdio: "inherit" });
+  } catch {
+    const bsdtar = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe");
+    execSync(`"${bsdtar}" -xf "${archive}" -C "${outDir}" --strip-components=1 "${name}/node.exe"`, { stdio: "inherit" });
+  }
 } else {
   try {
     execSync(`tar -xJf node.tar.xz ${name}/bin/node`, { stdio: "inherit", cwd: outDir });

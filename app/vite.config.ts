@@ -17,6 +17,8 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
+    // Lets the dev server serve the shared model list from the server source tree.
+    fs: { allow: [".", "../src/relay/known-models.ts"] },
     host: host || false,
     hmr: host
       ? {

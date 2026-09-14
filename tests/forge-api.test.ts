@@ -85,6 +85,7 @@ afterEach(async () => {
   delete process.env.FAKE_WRITE_PATH;
   delete process.env.FAKE_WRITE_STRAY;
   delete process.env.FAKE_PROMPT_OUT;
+  delete process.env.FAKE_CWD_OUT;
   // Deregister any worktree a stopped/undiscarded run left behind BEFORE removing the
   // base repo. On Windows, rmSync of the base while a worktree is still registered in
   // its .git EPERMs. git worktree remove also deletes the sandbox working dir.

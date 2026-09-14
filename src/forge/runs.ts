@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getLessons, lessonsClause } from "./lessons.js";
-import { existsSync, openSync, readSync, fstatSync, closeSync, readFileSync, statSync } from "node:fs";
+import { existsSync, openSync, readSync, fstatSync, closeSync, readFileSync, statSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { vibeopsHome } from "../runtime/home.js";
 import type { ChildProcess } from "node:child_process";
@@ -15,7 +15,7 @@ import { chunkReviewDiff, mergeReviewVerdicts } from "./review-chunks.js";
 import { killTree, killPidTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { redactSecrets } from "./redact.js";
-import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName } from "./sandbox.js";
+import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
 import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths } from "./policy.js";
 import { pickAgents, escalate, pairsForRole, type Pick, type RoutingStrategy } from "./router.js";
@@ -319,6 +319,14 @@ export async function cleanupMergedSandboxes(config: RelayConfig): Promise<Sandb
     await discardSandbox(workdir, ticketId);
     discarded.push(ticketId);
     reclaimedBytes += bytes;
+  }
+  // Views are removed when their stage ends; one a Windows lock kept alive is
+  // reclaimed here. ponytail: age-based, views have no owner record; a live-view
+  // registry is the upgrade path if a stage ever runs longer than 24 hours.
+  const viewCutoff = Date.now() - 24 * 60 * 60 * 1000;
+  for (const name of existsSync(viewsRoot()) ? readdirSync(viewsRoot()) : []) {
+    const p = join(viewsRoot(), name);
+    try { if (statSync(p).mtimeMs < viewCutoff) rmSync(p, { recursive: true, force: true }); } catch {}
   }
   // Git-side residue that outlives the on-disk sandbox dirs: prunable worktree
   // registrations (a sandbox dir deleted behind git's back) and merged forge/*

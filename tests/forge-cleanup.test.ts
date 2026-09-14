@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync, symlinkSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -227,5 +227,21 @@ describe("forge cleanup", () => {
     expect(res.keptBranches).toContain(`forge/${ticket.id}`);
     expect(res.deletedBranches).not.toContain(`forge/${ticket.id}`);
     expect(branchExists(workdir, `forge/${ticket.id}`)).toBe(true); // -> false if -d becomes -D
+  });
+
+  it("deletes read-only views older than 24 hours and keeps fresh ones", async () => {
+    const views = join(sandboxRoot, "views");
+    const old = join(views, "old-view");
+    const fresh = join(views, "fresh-view");
+    mkdirSync(old, { recursive: true });
+    mkdirSync(fresh, { recursive: true });
+    writeFileSync(join(old, "f.txt"), "x");
+    const past = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    utimesSync(old, past, past);
+
+    await cleanupMergedSandboxes(relayConfig());
+
+    expect(existsSync(old)).toBe(false);
+    expect(existsSync(fresh)).toBe(true);
   });
 });

@@ -6,6 +6,7 @@ const apiFetch = vi.fn();
 vi.mock("../../api/client.js", () => ({ apiFetch: (...a: any[]) => apiFetch(...a) }));
 
 import { AgentsConfigCard } from "./AgentsConfigCard.js";
+import { getKnownModelsForAgent } from "../../lib/knownModels.js";
 const wrap = (ui: any) => <QueryClientProvider client={new QueryClient()}>{ui}</QueryClientProvider>;
 
 beforeEach(() => {
@@ -188,9 +189,10 @@ test("a cli agent picks models only from a dropdown of known models and auto-fil
   render(wrap(<AgentsConfigCard />));
   await waitFor(() => expect(screen.getByRole("heading", { name: "claude" })).toBeInTheDocument());
   expect(screen.queryByRole("textbox")).toBeNull();
-  fireEvent.change(screen.getByLabelText("Add model from dropdown for claude"), { target: { value: "claude-sonnet-4-8" } });
+  const cheap = getKnownModelsForAgent("claude").find((m) => m.tier === "cheap")!.id;
+  fireEvent.change(screen.getByLabelText("Add model from dropdown for claude"), { target: { value: cheap } });
   const row = screen.getByLabelText("Model 1 for claude") as HTMLSelectElement;
-  expect(row.value).toBe("claude-sonnet-4-8");
+  expect(row.value).toBe(cheap);
   const tierSelect = screen.getAllByRole("combobox").find(s => (s as HTMLSelectElement).value === "cheap");
   expect(tierSelect).toBeDefined();
 });
@@ -222,7 +224,7 @@ test("an sdk lane with corrupted roles in agent state only saves work role", asy
   render(wrap(<AgentsConfigCard />));
   await waitFor(() => expect(screen.getByRole("heading", { name: "claude-sdk" })).toBeInTheDocument());
 
-  fireEvent.change(screen.getByLabelText("Add model from dropdown for claude-sdk"), { target: { value: "Sonnet 5" } });
+  fireEvent.change(screen.getByLabelText("Add model from dropdown for claude-sdk"), { target: { value: getKnownModelsForAgent("claude-sdk").find((m) => m.tier === "cheap")!.id } });
   fireEvent.click(screen.getByText("Save"));
 
   await waitFor(() => expect(patchCalls).toHaveLength(1));

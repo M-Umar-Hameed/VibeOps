@@ -145,6 +145,26 @@ test("relay/bootstrap removes an agent whose program is missing and keeps the re
   expect(fs.existsSync(`${relayPath}.bak`)).toBe(true);
 });
 
+test("relay/bootstrap does not re-add a stock template under the name it just removed", async () => {
+  const h = { Authorization: `Bearer ${apiKey}` };
+  const relayPath = path.join(tempHome, "relay.json");
+  fs.writeFileSync(relayPath, JSON.stringify({ workdir: tempHome, agents: {
+    codex: { cmd: ["C:/gone/codex.exe", "exec", "{prompt}"], roles: ["work"] },
+  } }));
+  doctorImpl = (cfg) => Object.keys(cfg.agents).map((name) =>
+    cfg.agents[name].cmd?.[0] === "C:/gone/codex.exe"
+      ? { name, binary: "codex", probe: { ok: false, error: "spawn ENOENT", spawnFailed: true } }
+      : { name, binary: name, probe: { ok: true } });
+
+  const res = await app.request("/relay/bootstrap", { method: "POST", headers: h });
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.removed).toEqual(["codex"]);
+  expect(body.added).not.toContain("codex");
+  const cfg = JSON.parse(fs.readFileSync(relayPath, "utf-8"));
+  expect(cfg.agents.codex).toBeUndefined();
+});
+
 test("forge/doctor is empty without a relay.json and names the problem when one is broken", async () => {
   const h = { Authorization: `Bearer ${apiKey}` };
   const relayPath = path.join(tempHome, "relay.json");

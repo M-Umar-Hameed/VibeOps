@@ -132,7 +132,7 @@ export async function bootstrapRelayConfig(): Promise<{ config: RelayConfig; add
   }
   const added: string[] = [];
   for (const [name, agent] of Object.entries(detected)) {
-    if (agents[name]) continue;
+    if (agents[name] || removed.includes(name)) continue;
     agents[name] = agent;
     added.push(name);
   }

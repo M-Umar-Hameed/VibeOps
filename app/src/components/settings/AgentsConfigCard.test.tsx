@@ -124,7 +124,7 @@ test("a cli agent still renders roles and Save stays disabled until one is picke
   await waitFor(() => expect((screen.getByText("Save") as HTMLButtonElement).disabled).toBe(false));
 });
 
-test("an sdk lane offers only the work role", async () => {
+test("an sdk lane shows all three roles, locked to work", async () => {
   apiFetch.mockReset().mockImplementation((path: string, opts?: any) => {
     if (path === "/forge/agents" && !opts) {
       return Promise.resolve([{ name: "claude-sdk", roles: ["work"], models: [], type: "sdk" }]);
@@ -135,10 +135,16 @@ test("an sdk lane offers only the work role", async () => {
   render(wrap(<AgentsConfigCard />));
 
   await waitFor(() => expect(screen.getByRole("heading", { name: "claude-sdk" })).toBeInTheDocument());
-  expect(screen.getByLabelText("work")).toBeInTheDocument();
-  // plan/review here would write a relay.json that loadRelayConfig refuses.
-  expect(screen.queryByLabelText("plan")).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("review")).not.toBeInTheDocument();
+  const work = screen.getByRole("checkbox", { name: "work" }) as HTMLInputElement;
+  const plan = screen.getByRole("checkbox", { name: "plan" }) as HTMLInputElement;
+  const review = screen.getByRole("checkbox", { name: "review" }) as HTMLInputElement;
+  expect(work.checked).toBe(true);
+  expect(plan.checked).toBe(false);
+  expect(review.checked).toBe(false);
+  for (const c of [work, plan, review]) {
+    expect(c.disabled).toBe(true);
+    expect(c.title).toBe("The SDK lane runs the work stage only");
+  }
 });
 
 test("a failed save says why instead of silently reverting", async () => {

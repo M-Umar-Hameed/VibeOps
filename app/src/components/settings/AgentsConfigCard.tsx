@@ -69,7 +69,7 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
   // read, so offering plan/review here writes a relay.json that no longer
   // loads and takes every relay route down with it.
   const workOnly = agent.type === "sdk";
-  const roleChoices = chatOnly ? ["plan", "review"] : workOnly ? ["work"] : ["plan", "work", "review"];
+  const roleChoices = chatOnly ? ["plan", "review"] : ["plan", "work", "review"];
   const sanitizeRoles = (r: string[]) => {
     if (workOnly) return ["work"];
     return (r || []).filter(choice => roleChoices.includes(choice));
@@ -189,7 +189,9 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
                 type="checkbox"
                 checked={roles.has(r)}
                 onChange={() => toggleRole(r)}
-                className="rounded border-white/20 bg-surface-container-highest"
+                disabled={workOnly}
+                title={workOnly ? "The SDK lane runs the work stage only" : undefined}
+                className="rounded border-white/20 bg-surface-container-highest disabled:opacity-50 disabled:cursor-not-allowed"
               />
               {r}
             </label>

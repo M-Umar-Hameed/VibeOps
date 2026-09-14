@@ -54,12 +54,13 @@ function templates(): Record<string, AgentEntry> {
 }
 
 // Probes every known CLI and keeps the ones that answered, plus the SDK lane
-// when a Claude Code login is on the machine. Agents already in the file are
-// left exactly as the user has them and only new names are added, so this is
-// safe to re-run after installing a CLI. ponytail: re-running also re-adds an
-// agent the user deliberately deleted; a "dismissed" list in the config is the
-// upgrade path if that ever annoys anyone.
-export async function bootstrapRelayConfig(): Promise<{ config: RelayConfig; added: string[] }> {
+// when a Claude Code login is on the machine. Agents already in the file keep
+// their cmd exactly as written; one whose program is missing (spawn ENOENT) is
+// removed, so it stops showing up and cannot be routed to. writeRelayConfig
+// keeps the previous file as relay.json.bak. ponytail: re-running also re-adds
+// an agent the user deliberately deleted; a "dismissed" list in the config is
+// the upgrade path if that ever annoys anyone.
+export async function bootstrapRelayConfig(): Promise<{ config: RelayConfig; added: string[]; removed: string[] }> {
   const path = relayConfigPath();
   const existed = existsSync(path);
   let current: { workdir?: string; agents?: Record<string, AgentEntry> } = {};
@@ -97,6 +98,17 @@ export async function bootstrapRelayConfig(): Promise<{ config: RelayConfig; add
 
   let enriched = false;
   const agents = { ...(current.agents ?? {}) };
+  const cliAgents = Object.fromEntries(Object.entries(agents).filter(([, a]) => Array.isArray(a.cmd) && a.cmd.length > 0));
+  const removed: string[] = [];
+  if (Object.keys(cliAgents).length) {
+    const own = await runDoctor({ workdir: sandboxDir(), agents: cliAgents } as unknown as RelayConfig, { fresh: true });
+    for (const s of own) {
+      if (s.name in cliAgents && !s.probe.ok && s.probe.spawnFailed && /ENOENT/.test(s.probe.error ?? "")) {
+        delete agents[s.name];
+        removed.push(s.name);
+      }
+    }
+  }
   for (const [name, a] of Object.entries(agents)) {
     if (a.type === "sdk" && Array.isArray(a.roles) && a.roles.some((r: string) => r !== "work")) {
       a.roles = ["work"];
@@ -127,6 +139,6 @@ export async function bootstrapRelayConfig(): Promise<{ config: RelayConfig; add
 
   const config = { ...current, workdir: current.workdir ?? sandboxDir(), agents } as unknown as RelayConfig;
   // Nothing new and the file is already there: leave the user's formatting alone.
-  if (added.length || !existed || enriched) writeRelayConfig(config);
-  return { config, added };
+  if (added.length || removed.length || !existed || enriched) writeRelayConfig(config);
+  return { config, added, removed };
 }

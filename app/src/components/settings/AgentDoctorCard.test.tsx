@@ -104,3 +104,17 @@ test("Run checks re-detects first, and shows why when that fails", async () => {
   await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/relay/bootstrap", expect.objectContaining({ method: "POST" })));
   await waitFor(() => expect(screen.getByText("forbidden")).toBeInTheDocument());
 });
+
+test("Run checks says which agents it removed from relay.json", async () => {
+  apiFetch.mockImplementation((path: string, opts?: any) => {
+    if (path === "/relay/bootstrap" && opts?.method === "POST") return Promise.resolve({ config: {}, added: [], removed: ["codex", "kimi"] });
+    return Promise.resolve([]);
+  });
+
+  render(wrap(<AgentDoctorCard />));
+  const button = screen.getByRole("button", { name: /run checks/i });
+  await waitFor(() => expect(button).not.toBeDisabled());
+  fireEvent.click(button);
+
+  await waitFor(() => expect(screen.getByText("Removed from relay.json (program not found on this machine): codex, kimi")).toBeInTheDocument());
+});

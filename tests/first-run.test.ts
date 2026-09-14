@@ -21,6 +21,7 @@ beforeEach(async () => {
 afterEach(() => {
   fs.rmSync(tempHome, { recursive: true, force: true });
   delete process.env.VIBEOPS_RELAY_CONFIG;
+  doctorImpl = () => DEFAULT_DOCTOR;
 });
 
 // Shared test DB always has projects; first-run truth needs an empty list.
@@ -29,12 +30,12 @@ vi.mock("../src/services/projects.js", async (importOriginal) => ({
   listProjects: async () => [],
 }));
 
-vi.mock("../src/relay/doctor.js", () => ({
-  runDoctor: async () => [
-    { name: "claude", binary: "claude", probe: { ok: true } },
-    { name: "antigravity", binary: "agy", probe: { ok: false, error: "not found" } }
-  ]
-}));
+const DEFAULT_DOCTOR = [
+  { name: "claude", binary: "claude", probe: { ok: true } },
+  { name: "antigravity", binary: "agy", probe: { ok: false, error: "not found" } },
+];
+let doctorImpl: (cfg: any) => any[] = () => DEFAULT_DOCTOR;
+vi.mock("../src/relay/doctor.js", () => ({ runDoctor: async (cfg: any) => doctorImpl(cfg) }));
 
 // The SDK lane is gated on a real Claude Code login, which the CI box may or
 // may not have; both states are asserted below by flipping this.
@@ -115,6 +116,33 @@ test("relay/bootstrap fills models only for an agent whose cmd takes {model}, an
   const cfg = JSON.parse(fs.readFileSync(relayPath, "utf-8"));
   expect(cfg.agents.claude.cmd).toEqual(cmd);
   expect(cfg.agents.claude.models.length).toBeGreaterThan(0);
+});
+
+test("relay/bootstrap removes an agent whose program is missing and keeps the rest", async () => {
+  const h = { Authorization: `Bearer ${apiKey}` };
+  const relayPath = path.join(tempHome, "relay.json");
+  const claude = { cmd: ["claude", "--model", "{model}", "-p", "{promptFile}"], roles: ["work"], models: [{ name: "Opus 5", tier: "expensive", quality: 5 }] };
+  const sdk = { type: "sdk", roles: ["work"], models: [{ name: "Opus 5", tier: "expensive", quality: 5 }] };
+  fs.writeFileSync(relayPath, JSON.stringify({ workdir: tempHome, agents: {
+    claude, "claude-sdk": sdk,
+    codex: { cmd: ["codex", "exec", "{prompt}"], roles: ["work"] },
+    kimi: { cmd: ["kimi", "-p", "{promptFile}"], roles: ["work"] },
+  } }));
+  doctorImpl = (cfg) => Object.keys(cfg.agents).map((name) =>
+    name === "codex" ? { name, binary: "codex", probe: { ok: false, error: "spawn codex ENOENT", spawnFailed: true } }
+    : name === "kimi" ? { name, binary: "kimi", probe: { ok: false, error: "not logged in", spawnFailed: false } }
+    : { name, binary: name, probe: { ok: true } });
+
+  const res = await app.request("/relay/bootstrap", { method: "POST", headers: h });
+  expect(res.status).toBe(200);
+  expect((await res.json()).removed).toEqual(["codex"]);
+
+  const cfg = JSON.parse(fs.readFileSync(relayPath, "utf-8"));
+  expect(cfg.agents.codex).toBeUndefined();
+  expect(cfg.agents.kimi).toBeDefined();
+  expect(cfg.agents.claude).toEqual(claude);
+  expect(cfg.agents["claude-sdk"]).toEqual(sdk);
+  expect(fs.existsSync(`${relayPath}.bak`)).toBe(true);
 });
 
 test("forge/doctor is empty without a relay.json and names the problem when one is broken", async () => {

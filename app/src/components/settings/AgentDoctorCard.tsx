@@ -45,6 +45,7 @@ export function AgentDoctorCard() {
   const queryClient = useQueryClient();
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [removedNote, setRemovedNote] = useState("");
 
   const { data, isFetching, isLoading, error } = useQuery({
     queryKey: ["forge", "doctor"],
@@ -57,9 +58,12 @@ export function AgentDoctorCard() {
   // is left as they wrote it.
   const runChecks = async () => {
     setActionError("");
+    setRemovedNote("");
     setBusy(true);
     try {
-      await api.post("/relay/bootstrap");
+      const boot = await api.post("/relay/bootstrap") as { removed?: string[] };
+      if (boot?.removed?.length) setRemovedNote(`Removed from relay.json (program not found on this machine): ${boot.removed.join(", ")}`);
+      queryClient.invalidateQueries({ queryKey: ["forge", "agents"] });
       const fresh = await api.get("/forge/doctor?fresh=true") as DoctorStatus[];
       queryClient.setQueryData(["forge", "doctor"], fresh);
     } catch (e: any) {
@@ -98,6 +102,10 @@ export function AgentDoctorCard() {
         <div className="border border-error/50 bg-error-container/20 rounded-lg px-4 py-3 text-error font-code-sm text-sm">
           {failure}
         </div>
+      )}
+
+      {removedNote && (
+        <div className="text-on-surface-variant text-xs">{removedNote}</div>
       )}
 
       <div className="space-y-2">

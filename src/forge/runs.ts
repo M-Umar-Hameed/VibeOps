@@ -15,7 +15,7 @@ import { chunkReviewDiff, mergeReviewVerdicts } from "./review-chunks.js";
 import { killTree, killPidTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { redactSecrets } from "./redact.js";
-import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch } from "./sandbox.js";
+import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
 import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths } from "./policy.js";
 import { pickAgents, escalate, pairsForRole, type Pick, type RoutingStrategy } from "./router.js";
@@ -86,8 +86,9 @@ const NARRATION =
   "absolute paths and never write outside your working directory, even if the " +
   "plan shows absolute paths.";
 
-// Plan/review agents run in the REAL workdir; a permissive CLI would happily
-// write there (live incident: claude acceptEdits implemented during planning).
+// Plan/review agents run in a throwaway read-only view (withReadOnlyView); this
+// prompt text stays as defence in depth (live incident: claude acceptEdits
+// implemented during planning).
 const PLAN_ONLY =
   "\n\nOutput the plan as text only. Do NOT create, modify, or delete any files; " +
   "implementation happens later in an isolated workspace. Refer to every file " +
@@ -588,11 +589,13 @@ async function pipeline(
     const knowledge = await getKnowledgeSafe(ticket.title, ticket.projectId);
     const memory = await getMemorySafe(ticket.title, ticket.projectId);
     const planPrompt = composePlanPrompt({ ticket, knowledge, memory, skillIndex: formatSkillIndex(catalogue) }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra;
-    const res = await track(actorId, ticket.id, "plan", run.agents.plan, planPrompt.length, () => runAgent(
-      agents.plan, planPrompt, workdir, onData,
-      (child) => recordSpawn(run, child),
-      undefined, modelOf(run.agents.plan), run.logPath,
-    ));
+    const { result: res, strayPaths: planStray } = await withReadOnlyView(workdir, ticket.id, "plan", "HEAD", (view) =>
+      track(actorId, ticket.id, "plan", run.agents.plan, planPrompt.length, () => runAgent(
+        agents.plan, planPrompt, view, onData,
+        (child) => recordSpawn(run, child),
+        undefined, modelOf(run.agents.plan), run.logPath,
+      )));
+    if (planStray.length) append(run, `\n[forge: planner changed files in its read-only copy; discarded: ${planStray.join(", ")}]\n`);
     run.child = undefined;
     if (run.stopped) return settle(run, "stopped");
     applyVerification(res, run.agents.plan, run, config);
@@ -820,7 +823,8 @@ async function reviewStage(
 
   // Checks run CONCURRENTLY with the whole review (single or chunked): the
   // reviewer only needs check RESULTS at verdict time. Checks execute in
-  // `sandbox`; the review agent runs in `workdir`, so no filesystem race.
+  // `sandbox`; the review agent runs in its own read-only view, so no
+  // filesystem race.
   if (checkCmds.length) run.checksStartedAt = Date.now();
   const checksPromise: Promise<CheckResult[]> = checkCmds.length
     ? runChecks(checkCmds, sandbox, undefined, (child) => {
@@ -832,20 +836,23 @@ async function reviewStage(
   // One review invocation per chunk, sequential: recordSpawn tracks a single
   // live child/pid, and chunked review is the rare oversized-diff path.
   run.reviewStartedAt = Date.now();
-  const reviewResults: AgentResult[] = [];
-  for (const chunk of chunks) {
-    if (run.stopped) { run.child = undefined; return settle(run, "stopped"); }
-    const reviewPrompt = composeReviewPrompt({ ticket, plan, report: reportOutput, diff: chunk.payload, operatorNotes: run.operatorNotes, protectedViolation: protectedFinding, amendments, gate: gate.report || undefined, citations: gate.citations || undefined, skills }) + roleStyle("review", styleSetting);
-    const res = await track(actorId, ticket.id, "review", run.agents.review, reviewPrompt.length, () => runAgent(
-      reviewAgent,
-      reviewPrompt,
-      workdir, onData,
-      (child) => recordSpawn(run, child),
-      undefined, modelOf(run.agents.review), run.logPath,
-    ));
-    reviewResults.push(res);
-  }
+  const { result: reviewResults, strayPaths: reviewStray } = await withReadOnlyView(workdir, ticket.id, "review", branchName(ticket.id), async (view) => {
+    const results: AgentResult[] = [];
+    for (const chunk of chunks) {
+      if (run.stopped) break;
+      const reviewPrompt = composeReviewPrompt({ ticket, plan, report: reportOutput, diff: chunk.payload, operatorNotes: run.operatorNotes, protectedViolation: protectedFinding, amendments, gate: gate.report || undefined, citations: gate.citations || undefined, skills }) + roleStyle("review", styleSetting);
+      results.push(await track(actorId, ticket.id, "review", run.agents.review, reviewPrompt.length, () => runAgent(
+        reviewAgent,
+        reviewPrompt,
+        view, onData,
+        (child) => recordSpawn(run, child),
+        undefined, modelOf(run.agents.review), run.logPath,
+      )));
+    }
+    return results;
+  });
   run.child = undefined;
+  if (run.stopped) return settle(run, "stopped");
   const checkResults = await checksPromise;
   if (run.checksStartedAt !== undefined) run.checksDurationMs = Date.now() - run.checksStartedAt;
   if (run.stopped) return settle(run, "stopped");
@@ -859,6 +866,11 @@ async function reviewStage(
   const reviewFailure = reviewResults.find((r) => !r.ok);
   if (reviewFailure) {
     await bounce(run, actorId, "reviewer failed", reviewFailure.output);
+    return settle(run, "failed");
+  }
+
+  if (reviewStray.length) {
+    await bounce(run, actorId, "reviewer changed files in its read-only copy", reviewStray.join("\n"));
     return settle(run, "failed");
   }
 

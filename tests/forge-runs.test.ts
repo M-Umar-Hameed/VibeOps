@@ -1,6 +1,6 @@
 import { runDoctor, type ProbeStatus } from "../src/relay/doctor.js";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1681,4 +1681,76 @@ describe("forge emits run lifecycle events", () => {
       events.off("event", onEvent);
     }
   }, 30_000);
+});
+
+describe("read-only stage views", () => {
+  let cwdOut: string;
+  beforeEach(() => {
+    cwdOut = join(counterDir, "cwd.txt");
+    process.env.FAKE_CWD_OUT = cwdOut;
+  });
+  afterEach(() => {
+    delete process.env.FAKE_CWD_OUT;
+    delete process.env.FAKE_WRITE_PLAN;
+    delete process.env.FAKE_WRITE_REVIEW;
+  });
+
+  function stageDirs(): Record<string, string> {
+    const dirs: Record<string, string> = {};
+    for (const line of readFileSync(cwdOut, "utf-8").trim().split("\n")) {
+      const [mode, dir] = line.split("\t");
+      dirs[mode] = dir.trim();
+    }
+    return dirs;
+  }
+
+  it("plan and review run in views under the sandbox root, work in the ticket sandbox", async () => {
+    const { actorId, ticket } = await seedTicket("Views");
+    setScript("plan,work,review-pass", true);
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    expect(getRunOutput(runId, 0)?.status).toBe("passed");
+    const dirs = stageDirs();
+    const views = join(realpathSync(sandboxRoot), "views");
+    expect(dirs.plan.startsWith(views)).toBe(true);
+    expect(dirs["review-pass"].startsWith(views)).toBe(true);
+    expect(dirs.work.startsWith(views)).toBe(false);
+    expect(existsSync(dirs.plan)).toBe(false);
+    expect(existsSync(dirs["review-pass"])).toBe(false);
+  });
+
+  it("a planner that writes files gets a warning and the file never reaches the work commit", async () => {
+    const { actorId, ticket } = await seedTicket("Plan scribble");
+    setScript("plan,work,review-pass", true);
+    process.env.FAKE_WRITE_PLAN = "1";
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const out = getRunOutput(runId, 0);
+    expect(out?.status).toBe("passed");
+    expect(out?.chunk).toContain("[forge: planner changed files in its read-only copy; discarded: plan-scribble.txt]");
+    expect(await sandboxDiff(workdir, ticket.id)).not.toContain("plan-scribble.txt");
+    expect(existsSync(join(workdir, "plan-scribble.txt"))).toBe(false);
+  });
+
+  it("a reviewer that writes files fails the run", async () => {
+    const { actorId, ticket } = await seedTicket("Review scribble");
+    setScript("plan,work,review-pass", true);
+    process.env.FAKE_WRITE_REVIEW = "1";
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    expect(getRunOutput(runId, 0)?.status).toBe("failed");
+    const reports = (await listComments(ticket.id)).filter((c) => c.kind === "report");
+    expect(reports.some((c) =>
+      c.body.includes("reviewer changed files in its read-only copy") && c.body.includes("review-scribble.txt"),
+    )).toBe(true);
+  });
 });

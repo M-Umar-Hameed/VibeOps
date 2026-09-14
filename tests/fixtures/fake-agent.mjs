@@ -3,7 +3,7 @@
 // falling back to stdin) and prints a canned response selected by FAKE_MODE, or, when
 // FAKE_SCRIPT is set, by a comma list consumed left-to-right via FAKE_COUNTER_FILE
 // (clamped to the last entry once the script is exhausted).
-import { readFileSync, writeFileSync, existsSync, mkdirSync, rmdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmdirSync, appendFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 
 const prompt = process.argv[2] ?? "";
@@ -68,6 +68,11 @@ function selectMode() {
 }
 
 let mode = selectMode();
+
+// Test hook: record which directory each stage ran in.
+if (process.env.FAKE_CWD_OUT) {
+  appendFileSync(process.env.FAKE_CWD_OUT, `${mode}\t${process.cwd()}\n`);
+}
 
 // Test hook: record the WORK-stage prompt this child received (argv[2]; the
 // forge-api config delivers via {prompt}). Lets a test assert an attached skill
@@ -176,6 +181,14 @@ if (process.env.FAKE_WRITE_ABS && mode === "work") {
 if (process.env.FAKE_WRITE_DEPS && mode === "work") {
   const p = join(process.cwd(), "node_modules", process.env.FAKE_WRITE_DEPS);
   writeFileSync(p, "leaked by fake agent\n");
+}
+
+// Plan/review agents that write files anyway: must never reach the work commit.
+if (process.env.FAKE_WRITE_PLAN && mode === "plan") {
+  writeFileSync(join(process.cwd(), "plan-scribble.txt"), "planner wrote this\n");
+}
+if (process.env.FAKE_WRITE_REVIEW && mode.startsWith("review")) {
+  writeFileSync(join(process.cwd(), "review-scribble.txt"), "reviewer wrote this\n");
 }
 
 console.log(out);

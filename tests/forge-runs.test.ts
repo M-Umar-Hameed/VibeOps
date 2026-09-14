@@ -1752,5 +1752,9 @@ describe("read-only stage views", () => {
     expect(reports.some((c) =>
       c.body.includes("reviewer changed files in its read-only copy") && c.body.includes("review-scribble.txt"),
     )).toBe(true);
+
+    await waitForPersistedRun(runId);
+    const [item] = await listInterruptedRuns(relayConfig(), ticket.id);
+    expect(item?.resumeMode).toBe("review");
   });
 });

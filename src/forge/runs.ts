@@ -858,7 +858,9 @@ async function reviewStage(
       )));
     }
     return results;
-  });
+  })
+    // Never settle while checks still run in the sandbox; a resume would start a second set.
+    .catch(async (e) => { await checksPromise.catch(() => {}); throw e; });
   run.child = undefined;
   if (run.stopped) return settle(run, "stopped");
   const checkResults = await checksPromise;

@@ -184,7 +184,11 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
         <label className="text-xs text-on-surface-variant font-bold mb-2 block">Roles</label>
         <div className="flex gap-4">
           {roleChoices.map(r => (
-            <label key={r} className="flex items-center gap-2 cursor-pointer text-sm text-on-surface">
+            <label
+              key={r}
+              title={workOnly ? "The SDK lane runs the work stage only" : undefined}
+              className={`flex items-center gap-2 text-sm text-on-surface ${workOnly ? "cursor-not-allowed" : "cursor-pointer"}`}
+            >
               <input
                 type="checkbox"
                 checked={roles.has(r)}

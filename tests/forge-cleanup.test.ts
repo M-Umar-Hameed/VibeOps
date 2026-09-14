@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync, symlinkSync, utimesSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync, symlinkSync, utimesSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -243,5 +243,22 @@ describe("forge cleanup", () => {
 
     expect(existsSync(old)).toBe(false);
     expect(existsSync(fresh)).toBe(true);
+  });
+
+  it("the view sweep never follows a link inside an old view", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "forge-outside-"));
+    writeFileSync(join(outside, "keep.txt"), "keep\n");
+    const old = join(sandboxRoot, "views", "old-linked-view");
+    mkdirSync(old, { recursive: true });
+    symlinkSync(outside, join(old, "linked"), "junction");
+    const past = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    utimesSync(old, past, past);
+    try {
+      await cleanupMergedSandboxes(relayConfig());
+      expect(existsSync(old)).toBe(false);
+      expect(readFileSync(join(outside, "keep.txt"), "utf-8")).toBe("keep\n");
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 });

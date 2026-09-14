@@ -210,8 +210,9 @@ export function viewsRoot(): string {
 }
 
 // Throwaway detached checkout for stages that must only READ code. Removing it
-// is what discards any edits; no deps links, so the recursive delete cannot
-// traverse into the base repo.
+// is what discards any edits. The agent may create links inside it; the
+// fallback delete relies on rmSync removing a link without following it
+// (pinned by the link-survival tests).
 export async function withReadOnlyView<T>(
   workdir: string, ticketId: string, stage: ViewStage, ref: string,
   fn: (viewPath: string) => Promise<T>,
@@ -222,8 +223,10 @@ export async function withReadOnlyView<T>(
   await must(workdir, "worktree", "add", "--detach", path, ref);
   try {
     const result = await fn(path);
-    const { out } = await git(path, "status", "--porcelain");
-    const strayPaths = out.split("\n").map((l) => l.slice(3).trim()).filter(Boolean);
+    const { code, out } = await git(path, "status", "--porcelain");
+    const strayPaths = code !== 0
+      ? ["(git status failed in the read-only copy)"]
+      : out.split("\n").map((l) => l.slice(3).trim()).filter(Boolean);
     return { result, strayPaths };
   } finally {
     await git(workdir, "worktree", "remove", "--force", path);

@@ -960,6 +960,7 @@ it("explain-diff caches by hash (fake agent) and 404s without sandbox", async ()
   delete process.env.FAKE_CWD_OUT;
   expect(explainRes.status).toBe(200);
   const explainDir = readFileSync(cwdOut, "utf-8").trim().split("\t")[1];
+  rmSync(cwdOut, { force: true });
   expect(explainDir).toMatch(/[\\/]views[\\/][0-9a-f-]{36}-explain-[0-9a-f]{8}$/);
   expect(existsSync(explainDir)).toBe(false);
   const body1 = await explainRes.json();

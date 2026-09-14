@@ -611,8 +611,16 @@ describe("withReadOnlyView", () => {
     expect(existsSync(seen)).toBe(false);
   });
 
-  it("does not link node_modules into the view", async () => {
-    const linked = await withReadOnlyView(workdir, TID, "plan", "HEAD", async (p) => existsSync(join(p, "node_modules")));
-    expect(linked.result).toBe(false);
+  it("removing a view never follows a link the agent created to outside it", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "forge-outside-"));
+    writeFileSync(join(outside, "keep.txt"), "keep\n");
+    try {
+      await withReadOnlyView(workdir, TID, "review", "HEAD", async (p) => {
+        symlinkSync(outside, join(p, "linked"), "junction");
+      });
+      expect(readFileSync(join(outside, "keep.txt"), "utf-8")).toBe("keep\n");
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 });

@@ -7,7 +7,7 @@ import {
   assertTicketId, sandboxPath, sandboxExists, ensureSandbox, branchName,
   forgeCommit, sandboxDiff, sandboxDiffSummary, promoteSandbox, discardSandbox,
   unlinkDeps, hasCommitsToPromote, sandboxActivity, sandboxWorkingDiff,
-  snapshotDeps, detectDepsLeak, listSandboxTicketIds, sandboxSizeBytes
+  snapshotDeps, detectDepsLeak, listSandboxTicketIds, sandboxSizeBytes, withReadOnlyView
 } from "../src/forge/sandbox.js";
 import { ConflictError } from "../src/services/errors.js";
 
@@ -28,6 +28,7 @@ beforeEach(() => {
   git(workdir, "init", "-b", "main");
   git(workdir, "config", "user.email", "t@t");
   git(workdir, "config", "user.name", "t");
+  git(workdir, "config", "core.autocrlf", "false");
   writeFileSync(join(workdir, "a.txt"), "hello\n");
   writeFileSync(join(workdir, ".gitignore"), "node_modules/\n");
   mkdirSync(join(workdir, "node_modules"));
@@ -557,5 +558,61 @@ describe("range helpers", () => {
     // restore from HEAD
     await sandboxCheckout(TID, "HEAD", ["new.txt"]);
     expect(readFileSync(join(sp, "new.txt"), "utf-8").trim()).toBe("new content");
+  });
+});
+
+describe("withReadOnlyView", () => {
+  it("checks out the ref, reports nothing when untouched, and removes the view", async () => {
+    let seen = "";
+    const { result, strayPaths } = await withReadOnlyView(workdir, TID, "plan", "HEAD", async (p) => {
+      seen = p;
+      return readFileSync(join(p, "a.txt"), "utf-8");
+    });
+    expect(result).toBe("hello\n");
+    expect(strayPaths).toEqual([]);
+    expect(seen.startsWith(join(sandboxRoot, "views"))).toBe(true);
+    expect(existsSync(seen)).toBe(false);
+    expect(git(workdir, "worktree", "list")).not.toContain("views");
+  });
+
+  it("reports files the callback wrote, leaves the base repo untouched, and removes the view", async () => {
+    let seen = "";
+    const { strayPaths } = await withReadOnlyView(workdir, TID, "review", "HEAD", async (p) => {
+      seen = p;
+      writeFileSync(join(p, "a.txt"), "changed\n");
+      writeFileSync(join(p, "new.txt"), "x\n");
+    });
+    expect([...strayPaths].sort()).toEqual(["a.txt", "new.txt"]);
+    expect(existsSync(seen)).toBe(false);
+    expect(readFileSync(join(workdir, "a.txt"), "utf-8")).toBe("hello\n");
+  });
+
+  it("checks out a forge branch ref", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    writeFileSync(join(sp, "b.txt"), "work\n");
+    await forgeCommit(TID, "work");
+    const { result } = await withReadOnlyView(workdir, TID, "review", branchName(TID), async (p) => existsSync(join(p, "b.txt")));
+    expect(result).toBe(true);
+  });
+
+  it("gives two views of the same ticket and stage different paths", async () => {
+    const paths: string[] = [];
+    await withReadOnlyView(workdir, TID, "explain", "HEAD", async (p) => { paths.push(p); });
+    await withReadOnlyView(workdir, TID, "explain", "HEAD", async (p) => { paths.push(p); });
+    expect(paths[0]).not.toBe(paths[1]);
+  });
+
+  it("removes the view when the callback throws", async () => {
+    let seen = "";
+    await expect(withReadOnlyView(workdir, TID, "plan", "HEAD", async (p) => {
+      seen = p;
+      throw new Error("boom");
+    })).rejects.toThrow("boom");
+    expect(existsSync(seen)).toBe(false);
+  });
+
+  it("does not link node_modules into the view", async () => {
+    const linked = await withReadOnlyView(workdir, TID, "plan", "HEAD", async (p) => existsSync(join(p, "node_modules")));
+    expect(linked.result).toBe(false);
   });
 });

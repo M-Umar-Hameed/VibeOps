@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readlinkSync, rmdirSync, unlinkSync, symlinkSync, statSync, readdirSync, rmSync, cpSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { randomBytes } from "node:crypto";
 import { ConflictError } from "../services/errors.js";
 import { redactSecrets } from "./redact.js";
 import { vibeopsHome } from "../runtime/home.js";
@@ -200,6 +201,35 @@ export async function ensureSandbox(workdir: string, ticketId: string, frontendD
   if (attach.code !== 0) await must(workdir, "worktree", "add", path, "-b", branch);
   linkDeps(workdir, ticketId, frontendDeps);
   return path;
+}
+
+export type ViewStage = "plan" | "review" | "explain";
+
+export function viewsRoot(): string {
+  return join(sandboxRoot(), "views");
+}
+
+// Throwaway detached checkout for stages that must only READ code. Removing it
+// is what discards any edits; no deps links, so the recursive delete cannot
+// traverse into the base repo.
+export async function withReadOnlyView<T>(
+  workdir: string, ticketId: string, stage: ViewStage, ref: string,
+  fn: (viewPath: string) => Promise<T>,
+): Promise<{ result: T; strayPaths: string[] }> {
+  assertTicketId(ticketId);
+  mkdirSync(viewsRoot(), { recursive: true });
+  const path = join(viewsRoot(), `${ticketId}-${stage}-${randomBytes(4).toString("hex")}`);
+  await must(workdir, "worktree", "add", "--detach", path, ref);
+  try {
+    const result = await fn(path);
+    const { out } = await git(path, "status", "--porcelain");
+    const strayPaths = out.split("\n").map((l) => l.slice(3).trim()).filter(Boolean);
+    return { result, strayPaths };
+  } finally {
+    await git(workdir, "worktree", "remove", "--force", path);
+    try { rmSync(path, { recursive: true, force: true }); } catch {}
+    await git(workdir, "worktree", "prune");
+  }
 }
 
 export async function forgeCommit(ticketId: string, title: string): Promise<boolean> {

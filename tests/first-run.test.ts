@@ -1,6 +1,7 @@
 import { expect, test, vi, beforeEach, afterEach } from "vitest";
 import { app } from "../src/api/app.js";
 import { createActor } from "../src/services/actors.js";
+import { getKnownModelsForAgent } from "../src/relay/known-models.js";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -76,7 +77,10 @@ test("relay/bootstrap adds the sdk work lane when Claude credentials exist", asy
   sdkCredentials = true;
   expect((await app.request("/relay/bootstrap", { method: "POST", headers: h })).status).toBe(200);
   const cfg = JSON.parse(fs.readFileSync(path.join(tempHome, "relay.json"), "utf-8"));
-  expect(cfg.agents["claude-sdk"]).toEqual({ type: "sdk", roles: ["work"] });
+  expect(cfg.agents["claude-sdk"]).toEqual({
+    type: "sdk", roles: ["work"],
+    models: getKnownModelsForAgent("claude-sdk").map((k) => ({ name: k.name || k.id, tier: k.tier, quality: k.quality })),
+  });
 });
 
 test("relay/bootstrap omits the sdk lane when there are no Claude credentials", async () => {
@@ -98,6 +102,19 @@ test("relay/bootstrap leaves a hand-configured agent exactly as written", async 
   const cfg = JSON.parse(fs.readFileSync(relayPath, "utf-8"));
   expect(cfg.agents.claude).toEqual(mine);
   expect(cfg.workdir).toBe(tempHome);
+});
+
+test("relay/bootstrap fills models only for an agent whose cmd takes {model}, and never rewrites its cmd", async () => {
+  const h = { Authorization: `Bearer ${apiKey}` };
+  const relayPath = path.join(tempHome, "relay.json");
+  const cmd = ["claude", "--model", "{model}", "-p", "{promptFile}"];
+  fs.writeFileSync(relayPath, JSON.stringify({ workdir: tempHome, agents: { claude: { cmd, roles: ["work"] } } }));
+
+  expect((await app.request("/relay/bootstrap", { method: "POST", headers: h })).status).toBe(200);
+
+  const cfg = JSON.parse(fs.readFileSync(relayPath, "utf-8"));
+  expect(cfg.agents.claude.cmd).toEqual(cmd);
+  expect(cfg.agents.claude.models.length).toBeGreaterThan(0);
 });
 
 test("forge/doctor is empty without a relay.json and names the problem when one is broken", async () => {

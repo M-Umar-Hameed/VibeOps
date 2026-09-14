@@ -102,22 +102,20 @@ export async function bootstrapRelayConfig(): Promise<{ config: RelayConfig; add
       a.roles = ["work"];
       enriched = true;
     }
-    if (!a.models || (Array.isArray(a.models) && a.models.length === 0)) {
+    // A user's cmd is never rewritten; models are only filled in where the cmd can take one.
+    const takesModel = a.type === "sdk" || (Array.isArray(a.cmd) && a.cmd.some((p: string) => p.includes("{model}")));
+    if (takesModel && (!a.models || a.models.length === 0)) {
       const fallbackModels = (known[name]?.models && known[name].models!.length > 0)
         ? known[name].models
         : getKnownModelsForAgent(name).map((k) => ({ name: k.name || k.id, tier: k.tier, quality: k.quality }));
       if (fallbackModels && fallbackModels.length > 0) {
         a.models = fallbackModels;
         enriched = true;
-      } else if (Array.isArray(a.models) && a.models.length === 0) {
-        delete a.models;
       }
     }
-    if (a.models && a.models.length > 0 && Array.isArray(a.cmd) && !a.cmd.some((p: string) => p.includes("{model}"))) {
-      if (known[name]?.cmd?.some((p: string) => p.includes("{model}"))) {
-        a.cmd = known[name].cmd;
-        enriched = true;
-      }
+    if (Array.isArray(a.models) && a.models.length === 0) {
+      delete a.models;
+      enriched = true;
     }
   }
   const added: string[] = [];

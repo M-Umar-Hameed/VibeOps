@@ -43,9 +43,9 @@ export function loadRelayConfig(path?: string): RelayConfig {
     if (existsSync(bak)) {
       try {
         const bakRaw = readFileSync(bak, "utf-8");
-        parsed = JSON.parse(bakRaw);
+        const restored = validateRelayConfig(JSON.parse(bakRaw), configPath);
         writeFileSync(configPath, bakRaw, "utf-8");
-        return validateRelayConfig(parsed, configPath);
+        return restored;
       } catch {}
     }
     throw new Error(`relay config at ${configPath} is not valid JSON: ${(e as Error).message}`);

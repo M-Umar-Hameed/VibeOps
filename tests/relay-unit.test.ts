@@ -718,6 +718,28 @@ test("fenceUntrusted leaves a clean payload byte-identical inside the fence", ()
   expect(fenced).toBe(`<UNTRUSTED label="label">\n${payload}\n</UNTRUSTED>`);
 });
 
+test("loadRelayConfig does not restore a .bak that fails validation", () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-cfg-"));
+  const path = join(dir, "relay.json");
+  writeFileSync(path, "{ not json");
+  writeFileSync(`${path}.bak`, JSON.stringify({ workdir: dir, agents: { s: { type: "sdk", roles: ["work", "plan"] } } }));
+  try {
+    expect(() => loadRelayConfig(path)).toThrow(/not valid JSON/);
+    expect(readFileSync(path, "utf-8")).toBe("{ not json");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("loadRelayConfig restores a valid .bak over an unparseable file", () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-cfg-"));
+  const path = join(dir, "relay.json");
+  writeFileSync(path, "{ not json");
+  writeFileSync(`${path}.bak`, JSON.stringify({ workdir: dir, agents: { fable: { cmd: ["claude"], roles: ["plan"] } } }));
+  try {
+    expect(loadRelayConfig(path).agents.fable.roles).toEqual(["plan"]);
+    expect(JSON.parse(readFileSync(path, "utf-8")).agents.fable.roles).toEqual(["plan"]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("composePlanPrompt and composeWorkPrompt place a fenced memory block above knowledge; absent memory changes nothing", () => {
   const ticket = { title: "Fix the widget", body: "" };
   const knowledge = [{ content: "widgets are fiddly", citation: "note-1" }];

@@ -107,6 +107,8 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
     ? (catalogQuery.data?.models ?? [])
     : known.map(k => ({ id: k.id, name: k.name, tier: k.tier, quality: k.quality }));
 
+  const modelLabel = (c: any) => (c.name && c.name !== c.id ? `${c.name} (${c.id})` : (c.id || c.name));
+
   const toggleRole = (r: string) => {
     const next = new Set(roles);
     if (next.has(r)) next.delete(r); else next.add(r);
@@ -137,11 +139,6 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
     const next = [...models];
     next.splice(idx, 1);
     setModels(next);
-    setIsDirty(true);
-  };
-
-  const addModel = () => {
-    setModels([...models, { name: "", tier: "cheap", quality: 3 }]);
     setIsDirty(true);
   };
 
@@ -205,42 +202,23 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
 
       <div>
         <label className="text-xs text-on-surface-variant font-bold mb-2 block">Models</label>
-        <datalist id={`catalog-${agent.name}`}>
-          {catalogModels.map((m: any) => (
-            <option key={m.id || m.name} value={m.id || m.name}>
-              {m.name && m.name !== m.id ? `${m.name} (${m.id})` : (m.id || m.name)}
-            </option>
-          ))}
-        </datalist>
         {models.length > 0 ? (
           <div className="space-y-2 mb-2">
             {models.map((m, idx) => (
               <div key={idx} className="flex gap-2 items-center">
-                <input
-                  type="text"
+                <select
+                  aria-label={`Model ${idx + 1} for ${agent.name}`}
                   value={m.name}
                   onChange={e => handleModelNameChange(idx, e.target.value)}
-                  placeholder={chatOnly ? "Type to search the catalog, or enter any model id" : "Type to search known models, or enter model name"}
-                  list={`catalog-${agent.name}`}
                   className="flex-1 bg-surface-container-highest border border-white/10 rounded px-2 py-1 text-sm text-on-surface focus:outline-none focus:border-primary"
-                />
-                {catalogModels.length > 0 && (
-                  <select
-                    aria-label={`Select model preset for ${agent.name}`}
-                    value={catalogModels.some((c: any) => (c.name || c.id) === m.name || c.id === m.name) ? m.name : ""}
-                    onChange={e => {
-                      if (e.target.value) handleModelNameChange(idx, e.target.value);
-                    }}
-                    className="bg-surface-container-highest border border-white/10 rounded px-2 py-1 text-xs text-on-surface-variant focus:outline-none focus:border-primary max-w-[170px]"
-                  >
-                    <option value="">Choose preset...</option>
-                    {catalogModels.map((c: any) => (
-                      <option key={c.id || c.name} value={c.name || c.id}>
-                        {c.name || c.id}
-                      </option>
-                    ))}
-                  </select>
-                )}
+                >
+                  {!catalogModels.some((c: any) => (c.id || c.name) === m.name) && (
+                    <option value={m.name}>{m.name}</option>
+                  )}
+                  {catalogModels.map((c: any) => (
+                    <option key={c.id || c.name} value={c.id || c.name}>{modelLabel(c)}</option>
+                  ))}
+                </select>
                 <select 
                   value={m.tier} 
                   onChange={e => updateModel(idx, "tier", e.target.value)}
@@ -270,12 +248,6 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
           <div className="text-xs text-on-surface-variant mb-2">No models configured.</div>
         )}
         <div className="flex items-center gap-3 flex-wrap">
-          <button
-            onClick={addModel}
-            className="text-xs text-primary hover:underline flex items-center gap-1"
-          >
-            <span className="material-symbols-outlined text-[14px]">add</span> Add model
-          </button>
           {catalogModels.length > 0 && (
             <div className="flex items-center gap-1">
               <select
@@ -283,7 +255,7 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
                 value=""
                 onChange={e => {
                   if (e.target.value) {
-                    const match = catalogModels.find((c: any) => (c.name || c.id) === e.target.value);
+                    const match = catalogModels.find((c: any) => (c.id || c.name) === e.target.value);
                     setModels([...models, {
                       name: e.target.value,
                       tier: match?.tier || "cheap",
@@ -296,9 +268,7 @@ function AgentEditor({ agent, queryClient }: { agent: AgentConfig; queryClient: 
               >
                 <option value="">+ Add model from dropdown...</option>
                 {catalogModels.map((c: any) => (
-                  <option key={c.id || c.name} value={c.name || c.id}>
-                    {c.name || c.id} ({c.tier})
-                  </option>
+                  <option key={c.id || c.name} value={c.id || c.name}>{modelLabel(c)}{c.tier ? ` (${c.tier})` : ""}</option>
                 ))}
               </select>
             </div>

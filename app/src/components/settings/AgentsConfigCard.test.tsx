@@ -81,19 +81,18 @@ test("saving a chat-only agent with plan ticked PATCHes roles: ['plan'] and its 
   });
   render(wrap(<AgentsConfigCard />));
   await waitFor(() => screen.getByText("openrouter"));
-  fireEvent.click(screen.getByText("Add model"));
-  const nameInput = screen.getByPlaceholderText("Type to search the catalog, or enter any model id");
-  fireEvent.change(nameInput, { target: { value: "anthropic/claude-3.5-sonnet" } });
+  const add = await screen.findByLabelText("Add model from dropdown for openrouter");
+  fireEvent.change(add, { target: { value: "a/b" } });
   fireEvent.click(screen.getAllByRole("checkbox")[0]); // "plan"
   fireEvent.click(screen.getByText("Save"));
   await waitFor(() => expect(patchCalls).toHaveLength(1));
   expect(patchCalls[0]).toEqual({
     roles: ["plan"],
-    models: [{ name: "anthropic/claude-3.5-sonnet", tier: "cheap", quality: 3 }],
+    models: [{ name: "a/b", tier: "cheap", quality: 3 }],
   });
 });
 
-test("a chat-only agent's model input offers catalog ids via a datalist", async () => {
+test("a chat-only agent offers catalog ids in the add-model dropdown", async () => {
   apiFetch.mockReset().mockImplementation((path: string, opts?: any) => {
     if (path === "/forge/agents" && !opts) {
       return Promise.resolve([{ name: "openrouter", type: "http", roles: [], models: [] }]);
@@ -104,11 +103,9 @@ test("a chat-only agent's model input offers catalog ids via a datalist", async 
     return Promise.resolve({ value: "" });
   });
   render(wrap(<AgentsConfigCard />));
-  await waitFor(() => screen.getByText("openrouter"));
-  await waitFor(() =>
-    expect(document.querySelector("datalist#catalog-openrouter option[value='a/b']")).not.toBeNull(),
-  );
-  expect(document.querySelector("datalist#catalog-openrouter option[value='c/d']")).not.toBeNull();
+  const add = await screen.findByLabelText("Add model from dropdown for openrouter");
+  expect(add.querySelector("option[value='a/b']")).not.toBeNull();
+  expect(add.querySelector("option[value='c/d']")).not.toBeNull();
 });
 
 test("a cli agent still renders roles and Save stays disabled until one is picked", async () => {
@@ -159,7 +156,7 @@ test("a failed save says why instead of silently reverting", async () => {
   render(<QueryClientProvider client={client}><AgentsConfigCard /></QueryClientProvider>);
 
   await waitFor(() => expect(screen.getByRole("heading", { name: "fake" })).toBeInTheDocument());
-  fireEvent.click(screen.getByText("Add model"));
+  fireEvent.click(screen.getByRole("checkbox", { name: "work" }));
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
   await waitFor(() => expect(screen.getByText("model name required")).toBeInTheDocument());
@@ -175,7 +172,7 @@ test("a broken relay.json shows the reason instead of \"no agents found\"", asyn
   expect(screen.queryByText(/No agents found/)).not.toBeInTheDocument();
 });
 
-test("a cli agent offers known models via datalist and auto-fills tier and quality", async () => {
+test("a cli agent picks models only from a dropdown of known models and auto-fills tier", async () => {
   apiFetch.mockReset().mockImplementation((path: string, opts?: any) => {
     if (path === "/forge/agents" && !opts) {
       return Promise.resolve([{ name: "claude", roles: ["plan", "work"], models: [] }]);
@@ -184,17 +181,24 @@ test("a cli agent offers known models via datalist and auto-fills tier and quali
   });
   render(wrap(<AgentsConfigCard />));
   await waitFor(() => expect(screen.getByRole("heading", { name: "claude" })).toBeInTheDocument());
-  const datalist = document.querySelector("datalist#catalog-claude");
-  expect(datalist).not.toBeNull();
-  expect(datalist?.querySelector('option[value="claude-sonnet-4-8"]')).not.toBeNull();
-
-  fireEvent.click(screen.getByText("Add model"));
-  const input = screen.getByPlaceholderText("Type to search known models, or enter model name");
-  fireEvent.change(input, { target: { value: "claude-sonnet-4-8" } });
-
-  const selects = screen.getAllByRole("combobox");
-  const tierSelect = selects.find(s => (s as HTMLSelectElement).value === "cheap");
+  expect(screen.queryByRole("textbox")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Add model from dropdown for claude"), { target: { value: "claude-sonnet-4-8" } });
+  const row = screen.getByLabelText("Model 1 for claude") as HTMLSelectElement;
+  expect(row.value).toBe("claude-sonnet-4-8");
+  const tierSelect = screen.getAllByRole("combobox").find(s => (s as HTMLSelectElement).value === "cheap");
   expect(tierSelect).toBeDefined();
+});
+
+test("a saved model missing from the known list stays selected instead of blanking", async () => {
+  apiFetch.mockReset().mockImplementation((path: string, opts?: any) => {
+    if (path === "/forge/agents" && !opts) {
+      return Promise.resolve([{ name: "claude", roles: ["plan"], models: [{ name: "Claude 5 Plus", tier: "expensive", quality: 5 }] }]);
+    }
+    return Promise.resolve({ value: "" });
+  });
+  render(wrap(<AgentsConfigCard />));
+  const row = await screen.findByLabelText("Model 1 for claude") as HTMLSelectElement;
+  expect(row.value).toBe("Claude 5 Plus");
 });
 
 test("an sdk lane with corrupted roles in agent state only saves work role", async () => {
@@ -212,9 +216,7 @@ test("an sdk lane with corrupted roles in agent state only saves work role", asy
   render(wrap(<AgentsConfigCard />));
   await waitFor(() => expect(screen.getByRole("heading", { name: "claude-sdk" })).toBeInTheDocument());
 
-  fireEvent.click(screen.getByText("Add model"));
-  const input = screen.getByPlaceholderText("Type to search known models, or enter model name");
-  fireEvent.change(input, { target: { value: "Sonnet 5" } });
+  fireEvent.change(screen.getByLabelText("Add model from dropdown for claude-sdk"), { target: { value: "Sonnet 5" } });
   fireEvent.click(screen.getByText("Save"));
 
   await waitFor(() => expect(patchCalls).toHaveLength(1));

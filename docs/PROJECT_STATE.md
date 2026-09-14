@@ -44,7 +44,7 @@ Phases 1 to 4 were the original plan (ticket engine, knowledge/RAG, desktop app,
 
 ## What we have achieved, by the numbers
 
-- 938 commits over 47 days; published releases v0.1.2 through v0.1.6 (v0.1.6 tag predates the latest chat, tab and memory work; next release is 0.1.7).
+- 938 commits over 47 days; published releases v0.1.2 through v0.1.6 (v0.1.6 tag predates the latest chat, tab and memory work; next release is 0.1.8).
 - Server suite: 187 files on the embedded lane, 175 passing files; the 5 failing files are the fixed Docker-only set (global-setup, relay-pipeline, sidecar-payload, forge-resume, one vector-dim test) and pass when Docker is up. App suite: 245 passing. Extension e2e: 5 checks in real Chrome.
 - 31 design specs under `docs/superpowers/specs/`, each implemented through the forge or, where the pipeline was too slow for the slice, directly with the same review discipline.
 - The board is the record: every incident this project hit (stalled runs, orphaned agents, corrupted embedded DB, release mismatches, extension disconnects, silent chat failures) exists as a ticket with its diagnosis and fix.

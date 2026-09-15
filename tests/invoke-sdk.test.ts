@@ -38,6 +38,14 @@ describe("checkToolPermission", () => {
     expect(r.behavior).toBe("deny");
     expect(marks.join("")).toContain("[forge: permission-denied WebFetch");
   });
+
+  it("denies Bash when the wall is on and allows it when off", () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "sdk-wall-"));
+    const marks: string[] = [];
+    expect(checkToolPermission("Bash", { command: "node -e 1" }, sandbox, (c) => marks.push(c), true).behavior).toBe("deny");
+    expect(marks.join("")).toContain("permission-denied Bash");
+    expect(checkToolPermission("Bash", { command: "node -e 1" }, sandbox).behavior).toBe("allow");
+  });
 });
 
 describe("runAgentSdk credentials", () => {

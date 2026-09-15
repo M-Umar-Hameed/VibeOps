@@ -7,6 +7,7 @@ import { join, dirname } from "node:path";
 import type { RelayAgent } from "./config.js";
 import { pidAlive } from "../db/lifecycle.js";
 import { winCommand } from "./win-bin.js";
+import { loadWall, wallCmd } from "./wall.js";
 
 const OUTPUT_CAP = 100_000;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
@@ -77,13 +78,16 @@ export async function runAgent(
   onSpawn?: (child: ChildProcess) => void,
   logPath?: string,
 ): Promise<AgentResult> {
+  const wall = await loadWall();
+  const cmd = wall.on ? wallCmd(agent.cmd, wall.allowed) : agent.cmd;
+
   const promptFile = join(tmpdir(), `vibeops-relay-${randomUUID()}.txt`);
-  const needsFile = agent.cmd.some((p) => p.includes("{promptFile}"));
+  const needsFile = cmd.some((p) => p.includes("{promptFile}"));
   // No placeholder at all -> deliver the prompt on stdin. Windows argv tops out
   // near 32k; long prompts (review diffs) die with ENAMETOOLONG as {prompt}.
-  const viaStdin = !needsFile && !agent.cmd.some((p) => p.includes("{prompt}"));
+  const viaStdin = !needsFile && !cmd.some((p) => p.includes("{prompt}"));
 
-  const [cmd0, ...rest] = substituteCmd(agent.cmd, { prompt, promptFile, workdir });
+  const [cmd0, ...rest] = substituteCmd(cmd, { prompt, promptFile, workdir });
 
   // Merge agent.env over the inherited process env; only {workdir} is substituted.
   // {prompt}/{promptFile} intentionally excluded (secrets/size). ponytail: {model}

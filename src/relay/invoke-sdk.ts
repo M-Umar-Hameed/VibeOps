@@ -4,6 +4,7 @@ import path from "node:path";
 import type { RelayAgent } from "./config.js";
 import type { AgentResult } from "./invoke.js";
 import { query, type PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import { loadWall, allowRules } from "./wall.js";
 
 const OUTPUT_CAP = 100_000;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
@@ -30,11 +31,16 @@ function realBoundary(p: string): string {
 export function checkToolPermission(
   toolName: string, input: Record<string, unknown>, sandbox: string,
   onData?: (chunk: string) => void,
+  walled = false,
 ): PermissionResult {
   if (READ_ONLY.has(toolName)) return { behavior: "allow", updatedInput: input };
   // Bash runs with cwd = sandbox. We do NOT parse shell strings for paths; a
   // `cd /elsewhere && ...` is out of scope for Phase 1 (documented limitation).
-  if (toolName === "Bash") return { behavior: "allow", updatedInput: input };
+  if (toolName === "Bash") {
+    if (!walled) return { behavior: "allow", updatedInput: input };
+    onData?.(`\n[forge: permission-denied Bash ${String(input.command ?? "").slice(0, 120)}]\n`);
+    return { behavior: "deny", message: "command not in forge.allowedCommands" };
+  }
   if (WRITE_TOOLS.has(toolName)) {
     const raw = typeof input.file_path === "string" ? input.file_path : "";
     const target = realBoundary(path.resolve(sandbox, raw));
@@ -68,6 +74,7 @@ export async function runAgentSdk(
     return { ok: false, output: msg };
   }
 
+  const wall = await loadWall();
   const controller = new AbortController();
   onAbort?.(() => controller.abort());
   const timer = setTimeout(() => controller.abort(), agent.timeoutMs ?? DEFAULT_TIMEOUT_MS);
@@ -84,8 +91,9 @@ export async function runAgentSdk(
         cwd: workdir,
         ...(model ? { model } : {}),
         abortController: controller,
+        ...(wall.on ? { permissionMode: "acceptEdits" as const, settingSources: [], allowedTools: allowRules(wall.allowed) } : {}),
         canUseTool: async (toolName, toolInput) =>
-          checkToolPermission(toolName, toolInput as Record<string, unknown>, workdir, onData),
+          checkToolPermission(toolName, toolInput as Record<string, unknown>, workdir, onData, wall.on),
       },
     });
     for await (const message of response) {

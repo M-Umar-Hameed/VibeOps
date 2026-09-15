@@ -113,7 +113,7 @@ export type AgentDoctorStatus = {
   mcp?: McpRegStatus;
 };
 
-function binBasename(cmd0: string): string {
+export function binBasename(cmd0: string): string {
   const b = basename(cmd0);
   const ext = extname(b);
   return ext ? b.slice(0, -ext.length) : b;

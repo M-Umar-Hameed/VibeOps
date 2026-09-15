@@ -80,7 +80,7 @@ test("relay/bootstrap adds the sdk work lane when Claude credentials exist", asy
   const cfg = JSON.parse(fs.readFileSync(path.join(tempHome, "relay.json"), "utf-8"));
   expect(cfg.agents["claude-sdk"]).toEqual({
     type: "sdk", roles: ["work"],
-    models: getKnownModelsForAgent("claude-sdk").map((k) => ({ name: k.name || k.id, tier: k.tier, quality: k.quality })),
+    models: getKnownModelsForAgent("claude-sdk").map((k) => ({ name: k.id || k.name, tier: k.tier, quality: k.quality })),
   });
 });
 
@@ -163,6 +163,17 @@ test("relay/bootstrap does not re-add a stock template under the name it just re
   expect(body.added).not.toContain("codex");
   const cfg = JSON.parse(fs.readFileSync(relayPath, "utf-8"));
   expect(cfg.agents.codex).toBeUndefined();
+});
+
+test("relay/bootstrap adds agy with the stdin invocation and real model ids", async () => {
+  const h = { Authorization: `Bearer ${apiKey}` };
+  doctorImpl = (cfg) => Object.keys(cfg.agents).map((name) => ({ name, binary: name, probe: { ok: true } }));
+
+  expect((await app.request("/relay/bootstrap", { method: "POST", headers: h })).status).toBe(200);
+
+  const cfg = JSON.parse(fs.readFileSync(path.join(tempHome, "relay.json"), "utf-8"));
+  expect(cfg.agents.agy.cmd).toEqual(["agy", "--model", "{model}", "--dangerously-skip-permissions"]);
+  expect(cfg.agents.agy.models.map((m: { name: string }) => m.name)).toContain("gemini-3.8-flash-high");
 });
 
 test("forge/doctor is empty without a relay.json and names the problem when one is broken", async () => {

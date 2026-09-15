@@ -137,7 +137,7 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
       if (models.length === 0) {
         const known = getKnownModelsForAgent(name);
         if (known.length > 0) {
-          models = known.map((k) => ({ name: k.name || k.id, tier: k.tier, quality: k.quality }));
+          models = known.map((k) => ({ name: k.id || k.name, tier: k.tier, quality: k.quality }));
         }
       }
       return { name, roles: a.roles, models, type: a.type ?? "cli" };

@@ -42,11 +42,11 @@ import { getKnownModelsForAgent } from "./known-models.js";
 
 function templates(): Record<string, AgentEntry> {
   const modelsFor = (agent: string) =>
-    getKnownModelsForAgent(agent).map((k) => ({ name: k.name || k.id, tier: k.tier, quality: k.quality }));
+    getKnownModelsForAgent(agent).map((k) => ({ name: k.id || k.name, tier: k.tier, quality: k.quality }));
   return {
     claude: { cmd: ["claude", "--model", "{model}", "-p", "{promptFile}"], roles: ["review", "plan", "work"], models: modelsFor("claude") },
-    agy: { cmd: ["agy", "exec", "-C", "{workdir}", "--model", "{model}", "{prompt}"], roles: ["work", "plan"], models: modelsFor("agy") },
-    agy_local: { cmd: [join(homedir(), "AppData", "Local", "agy", "bin", "agy.exe"), "exec", "-C", "{workdir}", "--model", "{model}", "{prompt}"], roles: ["work", "plan"], models: modelsFor("agy") },
+    agy: { cmd: ["agy", "--model", "{model}", "--dangerously-skip-permissions"], roles: ["work", "plan"], models: modelsFor("agy") },
+    agy_local: { cmd: [join(homedir(), "AppData", "Local", "agy", "bin", "agy.exe"), "--model", "{model}", "--dangerously-skip-permissions"], roles: ["work", "plan"], models: modelsFor("agy") },
     codex: { cmd: ["codex", "exec", "-C", "{workdir}", "--model", "{model}", "{prompt}"], roles: ["work"], models: modelsFor("codex") },
     kimi: { cmd: ["kimi", "--model", "{model}", "-p", "{promptFile}"], roles: ["work"], models: modelsFor("kimi") },
     gemini: { cmd: ["gemini", "prompt", "--", "{prompt}"], roles: ["plan", "review"], models: modelsFor("gemini") },
@@ -92,7 +92,7 @@ export async function bootstrapRelayConfig(): Promise<{ config: RelayConfig; add
   // still gets a work lane from the Claude Code login already on it.
   const { hasCredentials } = await import("./invoke-sdk.js");
   if (hasCredentials()) {
-    const sdkModels = getKnownModelsForAgent("claude-sdk").map((k) => ({ name: k.name || k.id, tier: k.tier, quality: k.quality }));
+    const sdkModels = getKnownModelsForAgent("claude-sdk").map((k) => ({ name: k.id || k.name, tier: k.tier, quality: k.quality }));
     detected["claude-sdk"] = { type: "sdk", roles: ["work"], models: sdkModels };
   }
 
@@ -119,7 +119,7 @@ export async function bootstrapRelayConfig(): Promise<{ config: RelayConfig; add
     if (takesModel && (!a.models || a.models.length === 0)) {
       const fallbackModels = (known[name]?.models && known[name].models!.length > 0)
         ? known[name].models
-        : getKnownModelsForAgent(name).map((k) => ({ name: k.name || k.id, tier: k.tier, quality: k.quality }));
+        : getKnownModelsForAgent(name).map((k) => ({ name: k.id || k.name, tier: k.tier, quality: k.quality }));
       if (fallbackModels && fallbackModels.length > 0) {
         a.models = fallbackModels;
         enriched = true;

@@ -187,7 +187,7 @@ export function modelOptionsForRole(
   return agents.filter(a => a.roles.includes(role)).flatMap(a => {
     const list = a.models?.length
       ? a.models
-      : getKnownModelsForAgent(a.name).map(k => ({ name: k.name || k.id }));
+      : getKnownModelsForAgent(a.name).map(k => ({ name: k.id || k.name }));
     return list.length
       ? list.map(m => ({ value: `${a.name}:${m.name}`, label: `${a.name} / ${m.name}` }))
       : [{ value: a.name, label: a.name }];

@@ -341,7 +341,7 @@ export function ChatScreen() {
                 {roster.map((r) => {
                   const models = (r.models && r.models.length > 0)
                     ? r.models
-                    : getKnownModelsForAgent(r.agent).map(k => ({ name: k.name || k.id, toolCapable: r.toolCapable }));
+                    : getKnownModelsForAgent(r.agent).map(k => ({ name: k.id || k.name, toolCapable: r.toolCapable }));
                   return (
                     <optgroup key={r.agent} label={r.toolCapable ? `${r.agent} · tools` : r.agent}>
                       {models.length > 0 ? (

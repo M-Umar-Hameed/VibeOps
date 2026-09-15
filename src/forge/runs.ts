@@ -659,7 +659,7 @@ async function pipeline(
   const depsBaseline = snapshotDeps(workdir);
   const sentinelSnaps = snapshotSensitive(resolveSensitivePaths(await getSetting("forge.sensitivePaths")));
   const workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
-    runAgent(agents.work, workPrompt, sandbox, onData,
+    runAgent({ ...agents.work, write: true }, workPrompt, sandbox, onData,
       (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
       modelOf(run.agents.work), run.logPath));
   run.child = undefined;

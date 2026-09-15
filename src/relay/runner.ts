@@ -74,7 +74,7 @@ export async function runWork(config: RelayConfig, opts: RunOpts): Promise<void>
   const prompt = composeWorkPrompt({
     ticket: claimed, plan: plan?.body ?? "", knowledge, workdir: config.workdir,
   });
-  const result = await runAgent(agent, prompt, config.workdir);
+  const result = await runAgent({ ...agent, write: true }, prompt, config.workdir);
 
   if (result.ok) {
     await addComment(config, claimed.id, result.output, "report");

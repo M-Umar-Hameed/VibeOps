@@ -22,6 +22,7 @@ Threat in scope: stray WRITES outside the agent's working folder by an over-eage
 - Walls are applied by VibeOps at launch, per program, regardless of the relay.json cmd. No relay.json migration. `forge.agentWall` = `"false"` turns it off.
 - Allow-list default: `npm test`, `npm run`, `npx vitest`, `npx tsc`, `git status`, `git diff`, `git log`, `git show`. Overridable with `forge.allowedCommands` (JSON string array); malformed falls back to the default.
 - Each allow-list entry becomes four Claude permission rules: `Bash(<c>)`, `Bash(<c> *)`, `PowerShell(<c>)`, `PowerShell(<c> *)`.
+- git `--output` is denied (Bash and PowerShell, CLI and SDK lanes).
 
 ## Design
 
@@ -29,7 +30,7 @@ Threat in scope: stray WRITES outside the agent's working folder by an over-eage
 
 - `DEFAULT_ALLOWED_COMMANDS`, `resolveAllowedCommands(setting)`, `allowRules(allowed)`.
 - `wallCmd(cmd, allowed)`: pure. By the program basename of `cmd[0]`:
-  - `claude`: if `--restricted` is already present, return unchanged. Otherwise drop every argument exactly equal to `{prompt}` or `{promptFile}` (the prompt then goes on stdin; a prompt file outside the working folder would be refused and claude treats file content as untrusted), ensure `-p` or `--print` is present (append `-p` if not), and append `--restricted --permission-mode acceptEdits --permission-prompts none --tools Read,Edit,Write,Glob,Grep,Bash,PowerShell --settings <{"permissions":{"allow":[...allowRules]}}>`.
+  - `claude`: if `--restricted` is already present, return unchanged. Otherwise drop every argument exactly equal to `{prompt}` or `{promptFile}` (the prompt then goes on stdin; a prompt file outside the working folder would be refused and claude treats file content as untrusted), ensure `-p` or `--print` is present (append `-p` if not), and append `--restricted`, `--permission-mode acceptEdits` only when `write` is true (the forge and relay work stages), `--permission-prompts none --tools Read,Edit,Write,Glob,Grep,Bash,PowerShell --settings <{"permissions":{"allow":[...allowRules, "mcp__vibeops"],"deny":DENY_RULES}}>`.
   - `codex`: if the cmd has `exec` and no `--sandbox`, insert `--sandbox workspace-write` right after `exec`.
   - anything else: unchanged.
 - `loadWall()`: reads `forge.agentWall` and `forge.allowedCommands` through `getSetting` (dynamic import, so callers without a database get the defaults: wall on, default allow-list).

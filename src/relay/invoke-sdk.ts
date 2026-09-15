@@ -4,7 +4,7 @@ import path from "node:path";
 import type { RelayAgent } from "./config.js";
 import type { AgentResult } from "./invoke.js";
 import { query, type PermissionResult } from "@anthropic-ai/claude-agent-sdk";
-import { loadWall, allowRules } from "./wall.js";
+import { loadWall, allowRules, DENY_RULES } from "./wall.js";
 
 const OUTPUT_CAP = 100_000;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
@@ -91,7 +91,7 @@ export async function runAgentSdk(
         cwd: workdir,
         ...(model ? { model } : {}),
         abortController: controller,
-        ...(wall.on ? { settingSources: [], allowedTools: allowRules(wall.allowed) } : {}),
+        ...(wall.on ? { settingSources: [], allowedTools: allowRules(wall.allowed), disallowedTools: DENY_RULES } : {}),
         canUseTool: async (toolName, toolInput) =>
           checkToolPermission(toolName, toolInput as Record<string, unknown>, workdir, onData, wall.on),
       },

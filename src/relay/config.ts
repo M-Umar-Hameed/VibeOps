@@ -8,7 +8,8 @@ export type RelayModel = { name: string; tier: ModelTier; quality: number };
 // http lanes are chat-only model providers (e.g. OpenRouter): baseUrl is an
 // OpenAI-compatible API root, keySetting names the settings-table key holding
 // the user API key. cmd is unused for them.
-export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string };
+// write is set at call time for a stage that must edit files (forge work, relay work); relay.json never sets it.
+export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string; write?: boolean };
 export type RelayConfig = {
   workdir: string; apiKey?: string; baseUrl?: string; pollMs?: number;
   agents: Record<string, RelayAgent>;

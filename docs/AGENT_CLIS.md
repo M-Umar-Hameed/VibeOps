@@ -160,7 +160,7 @@ actually confines a work agent's *writes* depends entirely on the lane:
 
 | Lane | Write confinement | Enforced by |
 | --- | --- | --- |
-| `claude` (relay CLI, plan/review) | **Walled at launch.** VibeOps adds `--restricted` (file tools confined to the working folder), `--permission-mode acceptEdits`, `--permission-prompts none`, and allow rules from `forge.allowedCommands`; the prompt goes on stdin. Any other shell command is denied. | Claude Code `--restricted` (application-level, not an OS boundary) |
+| `claude` (CLI) | **Walled at launch.** VibeOps adds `--restricted` (file tools confined to the working folder), `--permission-mode acceptEdits` for the work stage only (other roles get no edit rights), `--permission-prompts none`, and allow rules from `forge.allowedCommands`; the prompt goes on stdin. Any other shell command is denied. | Claude Code `--restricted` (application-level, not an OS boundary) |
 | `agy` (`--dangerously-skip-permissions`) | **Not confined by VibeOps.** Runs with `--dangerously-skip-permissions`; `--sandbox` is not added because its effect on Windows is unverified. | None |
 | `codex` (`--sandbox workspace-write`) | Confined to the workspace/cwd. VibeOps adds `--sandbox workspace-write` at launch when the cmd has none. | codex's own OS-level workspace-write sandbox |
 | `kimi` (`-p` print mode) | **Not confined beyond cwd.** Print mode auto-approves tools inside the worktree; it is not an OS write-jail. | Kimi CLI behaviour (not an OS boundary) |
@@ -168,9 +168,11 @@ actually confines a work agent's *writes* depends entirely on the lane:
 
 The wall is on by default; set `forge.agentWall` to `false` to turn it off. `forge.allowedCommands` (JSON string array) overrides the default allow-list: `npm test`, `npm run`, `npx vitest`, `npx tsc`, `git status`, `git diff`, `git log`, `git show`.
 
+Limits: the allow-list runs project code (`npm test`, `npm run`, `npx` scripts), so an agent that edits a script and then runs it can still write outside the folder. The wall stops accidental writes, not determined ones; the sentinel below stays the backstop. `git ... --output` is denied. Only the value `false` disables the wall. For non-JavaScript repos set `forge.allowedCommands` through `PATCH /settings/forge.allowedCommands`. Under the wall claude has only `Read`, `Edit`, `Write`, `Glob`, `Grep`, `Bash` and `PowerShell` (no web fetch or search, subagents or skills).
+
 ### The Bash gap and the sentinel (interim control)
 
-A work agent's `Bash` (in the `sdk`, `agy`, and `kimi` lanes) can copy, move, or
+A work agent's shell (in the `agy` and `kimi` lanes, or any lane with the wall off) can copy, move, or
 delete files **outside** the sandbox. This escapes every diff-based control: a
 write outside the worktree produces no git diff, so the protected-path policy
 never sees it. It reached the installed application

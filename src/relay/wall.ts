@@ -17,23 +17,29 @@ export function allowRules(allowed: string[]): string[] {
   return allowed.flatMap((c) => ["Bash", "PowerShell"].flatMap((t) => [`${t}(${c})`, `${t}(${c} *)`]));
 }
 
+// git's --output writes a file anywhere; deny beats allow.
+export const DENY_RULES = ["Bash(git *--output*)", "PowerShell(git *--output*)"];
+
 // Per-program write wall added at launch, whatever relay.json says. claude: the
 // prompt moves to stdin (a prompt file outside the folder would be refused) and
-// --restricted confines its file tools to the working folder; only allow-listed
+// --restricted confines its file tools to the working folder, edit rights only
+// when write is true (the work stage); only allow-listed
 // commands run. codex: its own OS sandbox. Other programs are not walled here.
-export function wallCmd(cmd: string[], allowed: string[]): string[] {
+export function wallCmd(cmd: string[], allowed: string[], write = false): string[] {
   const bin = binBasename(cmd[0]).toLowerCase();
   if (bin === "claude") {
     if (cmd.includes("--restricted")) return cmd;
     const kept = cmd.filter((p) => p !== "{prompt}" && p !== "{promptFile}");
     const print = kept.includes("-p") || kept.includes("--print") ? [] : ["-p"];
-    return [...kept, ...print, "--restricted", "--permission-mode", "acceptEdits", "--permission-prompts", "none",
+    return [...kept, ...print, "--restricted",
+      ...(write ? ["--permission-mode", "acceptEdits"] : []),
+      "--permission-prompts", "none",
       "--tools", "Read,Edit,Write,Glob,Grep,Bash,PowerShell",
-      "--settings", JSON.stringify({ permissions: { allow: allowRules(allowed) } })];
+      "--settings", JSON.stringify({ permissions: { allow: [...allowRules(allowed), "mcp__vibeops"], deny: DENY_RULES } })];
   }
   if (bin === "codex") {
     const i = cmd.indexOf("exec");
-    if (i === -1 || cmd.includes("--sandbox")) return cmd;
+    if (i === -1 || cmd.some((p) => p === "-s" || p.startsWith("--sandbox") || p === "--dangerously-bypass-approvals-and-sandbox")) return cmd;
     return [...cmd.slice(0, i + 1), "--sandbox", "workspace-write", ...cmd.slice(i + 1)];
   }
   return cmd;

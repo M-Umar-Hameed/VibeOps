@@ -79,7 +79,7 @@ export async function runAgent(
   logPath?: string,
 ): Promise<AgentResult> {
   const wall = await loadWall();
-  const cmd = wall.on ? wallCmd(agent.cmd, wall.allowed) : agent.cmd;
+  const cmd = wall.on ? wallCmd(agent.cmd, wall.allowed, agent.write === true) : agent.cmd;
 
   const promptFile = join(tmpdir(), `vibeops-relay-${randomUUID()}.txt`);
   const needsFile = cmd.some((p) => p.includes("{promptFile}"));

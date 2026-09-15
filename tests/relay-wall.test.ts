@@ -1,9 +1,10 @@
 import { expect, test } from "vitest";
-import { wallCmd, allowRules, resolveAllowedCommands, DEFAULT_ALLOWED_COMMANDS } from "../src/relay/wall.js";
+import { wallCmd, allowRules, resolveAllowedCommands, DEFAULT_ALLOWED_COMMANDS, DENY_RULES, loadWall } from "../src/relay/wall.js";
+import { withSettings } from "./helpers/settings.js";
 
-const RULES = JSON.stringify({ permissions: { allow: allowRules(["npm test"]) } });
-const CLAUDE_FLAGS = ["--restricted", "--permission-mode", "acceptEdits", "--permission-prompts", "none",
-  "--tools", "Read,Edit,Write,Glob,Grep,Bash,PowerShell", "--settings", RULES];
+const SETTINGS = JSON.stringify({ permissions: { allow: [...allowRules(["npm test"]), "mcp__vibeops"], deny: DENY_RULES } });
+const CLAUDE_FLAGS = ["--restricted", "--permission-prompts", "none",
+  "--tools", "Read,Edit,Write,Glob,Grep,Bash,PowerShell", "--settings", SETTINGS];
 
 test("claude: drops the prompt-file placeholder and appends the wall", () => {
   expect(wallCmd(["claude", "--model", "Opus", "-p", "{promptFile}"], ["npm test"]))
@@ -58,4 +59,24 @@ test("resolveAllowedCommands: valid array wins, malformed or unset falls back to
   expect(resolveAllowedCommands("not json")).toEqual(DEFAULT_ALLOWED_COMMANDS);
   expect(resolveAllowedCommands('{"a":1}')).toEqual(DEFAULT_ALLOWED_COMMANDS);
   expect(resolveAllowedCommands(null)).toEqual(DEFAULT_ALLOWED_COMMANDS);
+});
+
+test("claude: edit rights only when write is true", () => {
+  expect(wallCmd(["claude", "-p"], ["npm test"], true).slice(0, 5))
+    .toEqual(["claude", "-p", "--restricted", "--permission-mode", "acceptEdits"]);
+  expect(wallCmd(["claude", "-p"], ["npm test"])).not.toContain("acceptEdits");
+});
+
+test("codex: an existing -s, --sandbox= or bypass flag is left alone", () => {
+  for (const own of [
+    ["codex", "exec", "-s", "read-only", "{prompt}"],
+    ["codex", "exec", "--sandbox=read-only", "{prompt}"],
+    ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "{prompt}"],
+  ]) expect(wallCmd(own, [])).toEqual(own);
+});
+
+test("loadWall reads forge.agentWall and forge.allowedCommands", async () => {
+  await withSettings({ "forge.agentWall": "false", "forge.allowedCommands": '["make test"]' }, async () => {
+    expect(await loadWall()).toEqual({ on: false, allowed: ["make test"] });
+  });
 });

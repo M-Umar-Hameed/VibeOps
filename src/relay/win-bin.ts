@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { delimiter, dirname, join } from "node:path";
 
 const SHIM_RE = /\.(cmd|bat)$/i;
 const DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
@@ -24,6 +24,20 @@ export function resolveBin(cmd0: string): string {
   return cmd0;
 }
 
+// npm's shim for a native binary is a single launch line: "%dp0%\<path>.exe" %*.
+// Spawning that .exe directly skips cmd.exe, which loses a detached child's output.
+const EXE_SHIM_RE = /^"%dp0%\\([^"]+\.exe)"\s+%\*\s*$/im;
+export function unwrapExeShim(shim: string): string | null {
+  try {
+    const m = EXE_SHIM_RE.exec(readFileSync(shim, "utf-8"));
+    if (!m) return null;
+    const exe = join(dirname(shim), ...m[1].split("\\"));
+    return existsSync(exe) ? exe : null;
+  } catch {
+    return null;
+  }
+}
+
 // Each argument is wrapped in quotes with inner quotes doubled: cmd.exe reads a
 // quoted span as literal (no & | > parsing) and the MSVC runtime reads "" as one
 // literal quote. ponytail: %VAR% still expands inside quotes, so a prompt
@@ -39,6 +53,8 @@ export function winCommand(
   cmd0: string, args: string[],
 ): { file: string; args: string[]; verbatim: boolean } {
   const exe = resolveBin(cmd0);
+  const direct = process.platform === "win32" && SHIM_RE.test(exe) ? unwrapExeShim(exe) : null;
+  if (direct) return { file: direct, args, verbatim: false };
   if (process.platform !== "win32" || !SHIM_RE.test(exe)) {
     return { file: exe, args, verbatim: false };
   }

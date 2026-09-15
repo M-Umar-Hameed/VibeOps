@@ -45,8 +45,8 @@ function templates(): Record<string, AgentEntry> {
     getKnownModelsForAgent(agent).map((k) => ({ name: k.id || k.name, tier: k.tier, quality: k.quality }));
   return {
     claude: { cmd: ["claude", "--model", "{model}", "-p", "{promptFile}"], roles: ["review", "plan", "work"], models: modelsFor("claude") },
-    agy: { cmd: ["agy", "--model", "{model}", "--dangerously-skip-permissions"], roles: ["work", "plan"], models: modelsFor("agy") },
-    agy_local: { cmd: [join(homedir(), "AppData", "Local", "agy", "bin", "agy.exe"), "--model", "{model}", "--dangerously-skip-permissions"], roles: ["work", "plan"], models: modelsFor("agy") },
+    agy: { cmd: ["agy", "--model", "{model}", "--dangerously-skip-permissions", "--print-timeout", "30m"], roles: ["work", "plan"], models: modelsFor("agy") },
+    agy_local: { cmd: [join(homedir(), "AppData", "Local", "agy", "bin", "agy.exe"), "--model", "{model}", "--dangerously-skip-permissions", "--print-timeout", "30m"], roles: ["work", "plan"], models: modelsFor("agy") },
     codex: { cmd: ["codex", "exec", "-C", "{workdir}", "--model", "{model}", "{prompt}"], roles: ["work"], models: modelsFor("codex") },
     kimi: { cmd: ["kimi", "--model", "{model}", "-p", "{promptFile}"], roles: ["work"], models: modelsFor("kimi") },
     gemini: { cmd: ["gemini", "prompt", "--", "{prompt}"], roles: ["plan", "review"], models: modelsFor("gemini") },

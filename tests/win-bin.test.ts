@@ -1,9 +1,11 @@
 import { execFile } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, expect, test } from "vitest";
-import { resolveBin, winCommand } from "../src/relay/win-bin.js";
+import { resolveBin, winCommand, unwrapExeShim } from "../src/relay/win-bin.js";
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -41,4 +43,31 @@ winTest("a .cmd shim actually spawns, with multi-word and metachar args intact",
 test("winCommand passes a plain executable through untouched", () => {
   const exe = join(FIXTURES, "fake-agent.mjs");
   expect(winCommand(exe, ["--version"])).toEqual({ file: exe, args: ["--version"], verbatim: false });
+});
+
+test("unwrapExeShim returns the .exe an npm native-binary shim launches", () => {
+  const dir = mkdtempSync(join(tmpdir(), "shim-"));
+  mkdirSync(join(dir, "node_modules", "pkg", "bin"), { recursive: true });
+  writeFileSync(join(dir, "node_modules", "pkg", "bin", "tool.exe"), "");
+  const shim = join(dir, "tool.CMD");
+  writeFileSync(shim, '@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n"%dp0%\\node_modules\\pkg\\bin\\tool.exe"   %*\r\n');
+  try {
+    expect(unwrapExeShim(shim)).toBe(join(dir, "node_modules", "pkg", "bin", "tool.exe"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("unwrapExeShim returns null for a node-script shim and for a missing .exe", () => {
+  const dir = mkdtempSync(join(tmpdir(), "shim-"));
+  const nodeShim = join(dir, "script.CMD");
+  writeFileSync(nodeShim, '@ECHO off\r\nSETLOCAL\r\n"%_prog%"  "%dp0%\\node_modules\\pkg\\cli.js" %*\r\n');
+  const missing = join(dir, "missing.CMD");
+  writeFileSync(missing, '@ECHO off\r\n"%dp0%\\node_modules\\gone\\bin\\gone.exe"   %*\r\n');
+  try {
+    expect(unwrapExeShim(nodeShim)).toBeNull();
+    expect(unwrapExeShim(missing)).toBeNull();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

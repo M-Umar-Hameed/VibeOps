@@ -172,7 +172,7 @@ test("relay/bootstrap adds agy with the stdin invocation and real model ids", as
   expect((await app.request("/relay/bootstrap", { method: "POST", headers: h })).status).toBe(200);
 
   const cfg = JSON.parse(fs.readFileSync(path.join(tempHome, "relay.json"), "utf-8"));
-  expect(cfg.agents.agy.cmd).toEqual(["agy", "--model", "{model}", "--dangerously-skip-permissions"]);
+  expect(cfg.agents.agy.cmd).toEqual(["agy", "--model", "{model}", "--dangerously-skip-permissions", "--print-timeout", "30m"]);
   expect(cfg.agents.agy.models.map((m: { name: string }) => m.name)).toContain("gemini-3.8-flash-high");
 });
 

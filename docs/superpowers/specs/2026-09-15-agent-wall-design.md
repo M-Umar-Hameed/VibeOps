@@ -41,7 +41,7 @@ Threat in scope: stray WRITES outside the agent's working folder by an over-eage
 
 ### `src/relay/invoke-sdk.ts`
 
-When the wall is on, `query()` gets `permissionMode: "acceptEdits"`, `settingSources: []`, `allowedTools: allowRules(allowed)`. `checkToolPermission` gains a `walled` flag: a `Bash` call that reaches the callback (so no allow rule approved it) is denied and logged as `[forge: permission-denied Bash ...]`; with the wall off it is allowed as today. The Write/Edit sandbox guard is unchanged (edits outside the working folder still reach the callback under acceptEdits).
+When the wall is on, `query()` gets `settingSources: []` and `allowedTools: allowRules(allowed)` (no acceptEdits, so every Write/Edit still reaches the realpath-aware guard). `checkToolPermission` gains a `walled` flag: a `Bash` call that reaches the callback (so no allow rule approved it) is denied and logged as `[forge: permission-denied Bash ...]`; with the wall off it is allowed as today.
 
 ### Docs
 

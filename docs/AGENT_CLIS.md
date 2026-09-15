@@ -164,7 +164,7 @@ actually confines a work agent's *writes* depends entirely on the lane:
 | `agy` (`--dangerously-skip-permissions`) | **Not confined by VibeOps.** Runs with `--dangerously-skip-permissions`; `--sandbox` is not added because its effect on Windows is unverified. | None |
 | `codex` (`--sandbox workspace-write`) | Confined to the workspace/cwd. VibeOps adds `--sandbox workspace-write` at launch when the cmd has none. | codex's own OS-level workspace-write sandbox |
 | `kimi` (`-p` print mode) | **Not confined beyond cwd.** Print mode auto-approves tools inside the worktree; it is not an OS write-jail. | Kimi CLI behaviour (not an OS boundary) |
-| `sdk` lane | `Write`/`Edit` are confined to the sandbox by `checkToolPermission`; `permissionMode: acceptEdits` with `allowedTools` from `forge.allowedCommands`; any other `Bash` call is denied. | Tool-permission gate (application-level, not an OS boundary) |
+| `sdk` lane | `Write`/`Edit` are confined to the sandbox by `checkToolPermission`; `allowedTools` from `forge.allowedCommands`; any other `Bash` call is denied. | Tool-permission gate (application-level, not an OS boundary) |
 
 The wall is on by default; set `forge.agentWall` to `false` to turn it off. `forge.allowedCommands` (JSON string array) overrides the default allow-list: `npm test`, `npm run`, `npx vitest`, `npx tsc`, `git status`, `git diff`, `git log`, `git show`.
 

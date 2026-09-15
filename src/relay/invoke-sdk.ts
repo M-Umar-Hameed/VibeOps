@@ -91,7 +91,7 @@ export async function runAgentSdk(
         cwd: workdir,
         ...(model ? { model } : {}),
         abortController: controller,
-        ...(wall.on ? { permissionMode: "acceptEdits" as const, settingSources: [], allowedTools: allowRules(wall.allowed) } : {}),
+        ...(wall.on ? { settingSources: [], allowedTools: allowRules(wall.allowed) } : {}),
         canUseTool: async (toolName, toolInput) =>
           checkToolPermission(toolName, toolInput as Record<string, unknown>, workdir, onData, wall.on),
       },

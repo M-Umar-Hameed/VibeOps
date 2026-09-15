@@ -160,11 +160,13 @@ actually confines a work agent's *writes* depends entirely on the lane:
 
 | Lane | Write confinement | Enforced by |
 | --- | --- | --- |
-| `claude` (relay CLI, plan/review) | **Not confined.** Runs in the REAL workdir. The `PLAN_ONLY` prompt asks it not to write; nothing enforces that. Mitigated only by plan/review not being the write stage. | Prompt only (not an OS boundary) |
-| `agy` (`--dangerously-skip-permissions`) | **Not confined by VibeOps.** Relies on Antigravity's own workspace security. | Antigravity's own sandbox (external, unverified by us) |
-| `codex` (`--sandbox workspace-write`) | Confined to the workspace/cwd. | codex's own OS-level workspace-write sandbox |
+| `claude` (relay CLI, plan/review) | **Walled at launch.** VibeOps adds `--restricted` (file tools confined to the working folder), `--permission-mode acceptEdits`, `--permission-prompts none`, and allow rules from `forge.allowedCommands`; the prompt goes on stdin. Any other shell command is denied. | Claude Code `--restricted` (application-level, not an OS boundary) |
+| `agy` (`--dangerously-skip-permissions`) | **Not confined by VibeOps.** Runs with `--dangerously-skip-permissions`; `--sandbox` is not added because its effect on Windows is unverified. | None |
+| `codex` (`--sandbox workspace-write`) | Confined to the workspace/cwd. VibeOps adds `--sandbox workspace-write` at launch when the cmd has none. | codex's own OS-level workspace-write sandbox |
 | `kimi` (`-p` print mode) | **Not confined beyond cwd.** Print mode auto-approves tools inside the worktree; it is not an OS write-jail. | Kimi CLI behaviour (not an OS boundary) |
-| `sdk` lane | `Write`/`Edit` are confined to the sandbox by `checkToolPermission`. **`Bash` is NOT OS-jailed** — it runs as the user and can write anywhere the user account can reach. | Partial: tool-permission gate for Write/Edit only |
+| `sdk` lane | `Write`/`Edit` are confined to the sandbox by `checkToolPermission`; `permissionMode: acceptEdits` with `allowedTools` from `forge.allowedCommands`; any other `Bash` call is denied. | Tool-permission gate (application-level, not an OS boundary) |
+
+The wall is on by default; set `forge.agentWall` to `false` to turn it off. `forge.allowedCommands` (JSON string array) overrides the default allow-list: `npm test`, `npm run`, `npx vitest`, `npx tsc`, `git status`, `git diff`, `git log`, `git show`.
 
 ### The Bash gap and the sentinel (interim control)
 

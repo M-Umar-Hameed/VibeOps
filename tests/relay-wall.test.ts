@@ -25,6 +25,16 @@ test("claude: an already-walled cmd is left unchanged", () => {
   expect(wallCmd(walled, ["npm test"])).toEqual(walled);
 });
 
+test("claude: keeps --print and does not add -p", () => {
+  expect(wallCmd(["claude", "--print", "{promptFile}"], ["npm test"]))
+    .toEqual(["claude", "--print", ...CLAUDE_FLAGS]);
+});
+
+test("claude: detected through a .cmd shim name and mixed case", () => {
+  expect(wallCmd(["claude.cmd", "-p"], ["npm test"])).toEqual(["claude.cmd", "-p", ...CLAUDE_FLAGS]);
+  expect(wallCmd(["C:\\x\\CLAUDE.EXE", "-p"], ["npm test"])).toEqual(["C:\\x\\CLAUDE.EXE", "-p", ...CLAUDE_FLAGS]);
+});
+
 test("codex: inserts the workspace-write sandbox after exec unless one is set", () => {
   expect(wallCmd(["codex", "exec", "-C", "{workdir}", "{prompt}"], []))
     .toEqual(["codex", "exec", "--sandbox", "workspace-write", "-C", "{workdir}", "{prompt}"]);

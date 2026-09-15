@@ -148,6 +148,8 @@ if (mode === "explain-diff") {
   process.exit(0);
 }
 
+if (mode === "empty") process.exit(0);
+
 let out = OUTPUTS[mode];
 if (!out) {
   console.error(`fake-agent: unknown FAKE_MODE "${mode}"`);

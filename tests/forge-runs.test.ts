@@ -1758,3 +1758,44 @@ describe("read-only stage views", () => {
     expect(item?.resumeMode).toBe("review");
   });
 });
+
+describe("empty agent output", () => {
+  it("an empty plan fails the run and leaves the ticket open with no plan saved", async () => {
+    const { actorId, ticket } = await seedTicket("Empty plan");
+    setScript("empty");
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    expect(getRunOutput(runId, 0)?.status).toBe("failed");
+    expect((await getTicket(ticket.id)).status).toBe("open");
+    expect((await listComments(ticket.id)).filter((c) => c.kind === "plan")).toHaveLength(0);
+  });
+
+  it("a planned ticket with no saved plan is planned again instead of reusing nothing", async () => {
+    const { actorId, ticket } = await seedTicket("No saved plan");
+    await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });
+    setScript("plan,work,review-pass", true);
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    expect(getRunOutput(runId, 0)?.status).toBe("passed");
+    const plans = (await listComments(ticket.id)).filter((c) => c.kind === "plan");
+    expect(plans).toHaveLength(1);
+    expect(plans[0].body.trim().length).toBeGreaterThan(0);
+  });
+
+  it("an empty review settles failed (reviewer unreachable), not rejected", async () => {
+    const { actorId, ticket } = await seedTicket("Empty review");
+    setScript("plan,work,empty", true);
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    expect(getRunOutput(runId, 0)?.status).toBe("failed");
+  });
+});

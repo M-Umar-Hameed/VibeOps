@@ -590,7 +590,8 @@ async function pipeline(
 
   // plan
   let plan: string;
-  const planRegenerated = ticket.status === "open";
+  const priorPlan = planCommentIndex === -1 ? "" : allComments[planCommentIndex].body;
+  const planRegenerated = ticket.status === "open" || !priorPlan.trim();
   if (planRegenerated) {
     enterStage(run, "plan");
     append(run, `=== FORGE plan (${run.agents.plan}) ===\n`);
@@ -608,6 +609,7 @@ async function pipeline(
     if (run.stopped) return settle(run, "stopped");
     applyVerification(res, run.agents.plan, run, config);
     if (!res.ok) { await bounce(run, actorId, "planner failed", res.output); return settle(run, "failed"); }
+    if (!res.output.trim()) { await bounce(run, actorId, "planner returned an empty plan", ""); return settle(run, "failed"); }
     // Comments are the DURABLE record — redact them too, not just the console.
     await addComment(actorId, ticket.id, redactSecrets(res.output), "plan");
     ticket = await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });
@@ -624,8 +626,7 @@ async function pipeline(
       }
     }
   } else {
-    const prior = [...(await listComments(ticket.id))].reverse().find((c) => c.kind === "plan");
-    plan = prior?.body ?? "";
+    plan = priorPlan;
   }
 
   const selectedSkills = selectSkills(plan);
@@ -867,13 +868,13 @@ async function reviewStage(
   if (run.checksStartedAt !== undefined) run.checksDurationMs = Date.now() - run.checksStartedAt;
   if (run.stopped) return settle(run, "stopped");
 
-  // A reviewer that never produced a verdict (non-zero exit, thrown error, or an
-  // API/transport error surfaced in output) is "could not be reached", NOT
+  // A reviewer that never produced a verdict (non-zero exit, thrown error, an
+  // API/transport error surfaced in output, or empty output) is "could not be reached", NOT
   // "judged and said no". Settle `failed` (the infra-trouble status) so recovery
   // offers resume-to-review against the existing work commit, instead of
   // `rejected` — which routes to rework and needlessly re-runs the whole work
   // stage over code that was already complete and verified.
-  const reviewFailure = reviewResults.find((r) => !r.ok);
+  const reviewFailure = reviewResults.find((r) => !r.ok || !r.output.trim());
   if (reviewFailure) {
     await bounce(run, actorId, "reviewer failed", reviewFailure.output);
     return settle(run, "failed");

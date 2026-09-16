@@ -689,7 +689,8 @@ describe("forge run resume", () => {
 
   // MUST be last test: closeDb ends the connection for subsequent tests
   it("closeDb is idempotent and does not throw", async () => {
-    // Under vitest isEmbedded is false, so this exercises the sql.end branch
+    // Either branch: sql.end on the Postgres lane, closeEmbedded on the
+    // embedded PGlite lane (which test-lane picks when :5433 is down).
     await expect(closeDb()).resolves.not.toThrow();
     // Idempotent: calling again must not throw either
     await expect(closeDb()).resolves.not.toThrow();

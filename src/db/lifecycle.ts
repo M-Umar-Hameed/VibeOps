@@ -120,7 +120,10 @@ export async function openEmbedded(
 // embedded cluster goes through here so the "clean close clears the pid, a hard kill
 // leaves it" contract is true in one place rather than assumed in several.
 export async function closeEmbedded(client: PGlite, dataDir: string): Promise<void> {
-  await client.close();
+  // PGlite.close() throws "PGlite is closed" on a second call, and closeDb is
+  // reached twice on some shutdown paths -- guard here so every caller is
+  // idempotent rather than each one remembering to check.
+  if (!client.closed) await client.close();
   try { unlinkSync(join(dataDir, "postmaster.pid")); } catch { /* best effort */ }
   releaseLock(dataDir);
 }

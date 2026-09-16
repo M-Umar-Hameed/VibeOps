@@ -141,7 +141,7 @@ export function AgentDoctorCard() {
                     <p>{copy.note}</p>
                     {s.mcp?.registered === false && (
                       <>
-                        <p className="mt-1">This lane declares mcp:true but no vibeops MCP server is registered. Register it:</p>
+                        <p className="mt-1">No vibeops MCP server is registered for this CLI, so the lane has no tools. VibeOps wires this automatically at startup; if it did not, register it by hand:</p>
                         <code className="block bg-background rounded px-2 py-1 mt-1">{s.mcp.addCommand}</code>
                       </>
                     )}

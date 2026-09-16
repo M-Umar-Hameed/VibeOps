@@ -11,7 +11,9 @@ test("built sidecar payload boots embedded and serves 401", { timeout: 120_000 }
   expect(existsSync("dist-server/drizzle")).toBe(true);
 
   const home = mkdtempSync(join(tmpdir(), "vibeops-home-"));
-  const env = { ...process.env, PORT: "18787", VIBEOPS_MIGRATIONS_DIR: resolve("dist-server/drizzle"), HOME: home, USERPROFILE: home };
+  // VIBEOPS_HOME too: an inherited one from the embedded test lane points this
+  // server at the vitest worker's data dir, where it loses the lock and exits.
+  const env = { ...process.env, PORT: "18787", VIBEOPS_MIGRATIONS_DIR: resolve("dist-server/drizzle"), HOME: home, USERPROFILE: home, VIBEOPS_HOME: home };
   delete (env as any).DATABASE_URL;
   delete (env as any).VITEST;
   const child = spawn(process.execPath, [resolve("dist-server/server.mjs")], { env, stdio: "pipe" });

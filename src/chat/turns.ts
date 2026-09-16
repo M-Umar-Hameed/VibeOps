@@ -189,22 +189,26 @@ export async function runTurn(
     } else {
       // CLI lane: one-shot process. An mcp-wired lane reaches the shared MCP tools
       // through its own CLI MCP client config (one-time `claude mcp add --transport
-      // http vibeops <url>`; see docs/AGENT_CLIS.md). But a lane that DECLARES
-      // mcp:true with NO vibeops server registered has silently no tools (live
-      // incident 2026-08-26: agy mcp:true, `agy mcp list` empty). Consult the
-      // doctor's registration check: only a registered -- or uncheckable -- mcp
-      // lane gets CHAT_CAPABILITIES; a declared-but-unregistered lane gets
-      // NO_TOOLS_CLAUSE plus a user-facing notice, so the model never claims
-      // tools it lacks.
-      const reg = agentDef.mcp === true ? await mcpRegistration(config!, agentName) : undefined;
-      const unregistered = reg?.registered === false;
-      const wired = agentDef.mcp === true && !unregistered;
+      // http vibeops <url>`; see docs/AGENT_CLIS.md). But a lane whose CLI has
+      // NO vibeops server registered has silently no tools (live incident
+      // 2026-08-26: agy mcp:true, `agy mcp list` empty). Consult the doctor's
+      // registration check: for a checkable CLI basename (claude, kimi, agy,
+      // gemini) the live check is authoritative; an uncheckable CLI falls back
+      // to the `mcp` flag. Only a registered -- or flag-trusted-uncheckable --
+      // lane gets CHAT_CAPABILITIES; an unregistered lane gets NO_TOOLS_CLAUSE
+      // plus a user-facing notice, so the model never claims tools it lacks.
+      // An explicit mcp:false is an opt-out: no CHAT_CAPABILITIES, no notice,
+      // ever -- the user has already told us not to wire or nag this lane.
+      const reg = await mcpRegistration(config!, agentName);
+      const optedOut = agentDef.mcp === false;
+      const unregistered = !optedOut && reg?.registered === false;
+      const wired = optedOut ? false : reg ? reg.registered : agentDef.mcp === true;
       const cliAgent = { ...agentDef, cmd: resolveCmd(agentDef, modelName || undefined) };
       const transcript = rollTranscript(await store.getMessages(sessionId));
       const sys = wired ? `${sysBase}${CHAT_CAPABILITIES}` : `${sysBase}${NO_TOOLS_CLAUSE}`;
       const prompt = sys ? `${sys}\n\n${transcript}` : transcript;
       const notice = unregistered
-        ? `[chat: lane "${agentName}" declares mcp:true but no vibeops MCP server is registered for its CLI, so this model has no tools. Register with: ${reg!.addCommand}]\n`
+        ? `[chat: lane "${agentName}" has no vibeops MCP server registered for its CLI, so this model has no tools. Register with: ${reg!.addCommand}]\n`
         : "";
       if (notice) onData(notice);
       const turnStart = Date.now();

@@ -114,11 +114,14 @@ describe("chat turns", () => {
     // Start turn in background
     const turnPromise = runTurn(actor, sess.id, "hi");
 
-    // Wait a tick for the turn to start
-    await new Promise((r) => setTimeout(r, 50));
-
-    // Poll output while running
-    const out1 = getChatOutput(sess.id, 0);
+    // Poll for the first chunk rather than sleeping a fixed 50ms: the recall
+    // and memory reads that run before the agent is called are slower against
+    // a real Postgres than against embedded PGlite, and a fixed wait races them.
+    let out1 = getChatOutput(sess.id, 0);
+    for (let i = 0; i < 100 && !out1.chunk.includes("AB"); i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      out1 = getChatOutput(sess.id, 0);
+    }
     expect(out1.status).toBe("running");
     expect(out1.chunk).toContain("AB");
     const next1 = out1.next;

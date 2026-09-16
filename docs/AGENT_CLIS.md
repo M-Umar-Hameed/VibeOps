@@ -11,7 +11,7 @@ type RelayAgent = {
   models?: RelayModel[];
   env?: Record<string, string>;
   type?: "cli" | "sdk";
-  mcp?: boolean;
+  mcp?: boolean; // written by auto-wiring as a record that the lane is registered; set false to opt out
 };
 
 type RelayModel = {
@@ -43,7 +43,7 @@ Login Flow: Run `claude login` once in a terminal on this machine. Signs in with
 
 MCP Wiring: Run once to reach VibeOps tools:
 `claude mcp add --transport http vibeops http://127.0.0.1:8787/mcp --header "Authorization: Bearer <key>"`
-Setting `"mcp": true` in `relay.json` marks the lane tool-capable in chat.
+VibeOps does this for you: `ensureMcpWiring` (src/mcp/autowire.ts) registers the server at startup and records it as `"mcp": true` in `relay.json`. The command above is the manual fallback. Set `"mcp": false` to opt a lane out -- auto-wiring skips it and chat never nags about it.
 
 ```json
 "claude": {
@@ -63,7 +63,7 @@ Login Flow: Sign in through the Antigravity CLI/app's own sign-in flow (no singl
 
 MCP Wiring: Run once to reach VibeOps tools:
 `agy mcp add --header "Authorization: Bearer <key>" vibeops http://127.0.0.1:8787/mcp`
-Setting `"mcp": true` in `relay.json` marks the lane tool-capable in chat.
+VibeOps does this for you: `ensureMcpWiring` (src/mcp/autowire.ts) registers the server at startup and records it as `"mcp": true` in `relay.json`. The command above is the manual fallback. Set `"mcp": false` to opt a lane out -- auto-wiring skips it and chat never nags about it.
 
 ```json
 "agy": {
@@ -99,7 +99,7 @@ Login Flow: Authenticate this CLI in your terminal the way its provider expects.
 
 MCP Wiring: Run once to reach VibeOps tools:
 `kimi mcp add --transport http vibeops http://127.0.0.1:8787/mcp --header "Authorization: Bearer <key>"`
-Setting `"mcp": true` in `relay.json` marks the lane tool-capable in chat.
+VibeOps does this for you: `ensureMcpWiring` (src/mcp/autowire.ts) registers the server at startup and records it as `"mcp": true` in `relay.json`. The command above is the manual fallback. Set `"mcp": false` to opt a lane out -- auto-wiring skips it and chat never nags about it.
 
 ```json
 "kimi": {

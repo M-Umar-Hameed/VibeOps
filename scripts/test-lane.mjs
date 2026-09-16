@@ -32,7 +32,13 @@ function finish(status) {
 
 const up = await probe(HOST, PORT, 1000);
 if (up) {
-  const r = spawnSync("npx", ["vitest", "run", ...extra], { stdio: "inherit", env: { ...process.env, ...tmpEnv }, shell: win });
+  // VIBEOPS_HOME here too, not just on the embedded lane: without it every test
+  // that reads ~/.vibeops (relay.json, the model catalog) sees the developer's
+  // real config instead of a throwaway one.
+  const home = join(tmpRoot, "home");
+  mkdirSync(home);
+  const env = { ...process.env, ...tmpEnv, VIBEOPS_HOME: home };
+  const r = spawnSync("npx", ["vitest", "run", ...extra], { stdio: "inherit", env, shell: win });
   finish(r.status);
 } else if (EMBEDDED) {
   const home = join(tmpRoot, "home");

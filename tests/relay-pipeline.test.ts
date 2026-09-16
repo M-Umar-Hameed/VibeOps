@@ -20,7 +20,10 @@ type Comment = { kind: string; body: string };
 test("relay pipeline: plan -> work -> review(fail) -> rework -> review(pass) -> closed, plus claim race", { timeout: 120_000 }, async () => {
   const home = mkdtempSync(join(tmpdir(), "vibeops-relay-pipeline-"));
   const port = 18994;
-  const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: String(port), EMBED_PROVIDER: "fake" };
+  // VIBEOPS_HOME too, not just HOME: the embedded lane sets it for the whole
+  // vitest run, and an inherited one points this server at the worker's own
+  // data dir, where it loses the lock and exits before writing credentials.
+  const env = { ...process.env, HOME: home, USERPROFILE: home, VIBEOPS_HOME: home, PORT: String(port), EMBED_PROVIDER: "fake" };
   delete (env as Record<string, unknown>).DATABASE_URL;
   delete (env as Record<string, unknown>).VITEST;
   const child: ChildProcess = spawn(process.execPath, ["node_modules/tsx/dist/cli.mjs", "src/api/server.ts"], { env, stdio: "ignore" });

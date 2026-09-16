@@ -35,7 +35,13 @@ const DEFAULT_DOCTOR = [
   { name: "antigravity", binary: "agy", probe: { ok: false, error: "not found" } },
 ];
 let doctorImpl: (cfg: any) => any[] = () => DEFAULT_DOCTOR;
-vi.mock("../src/relay/doctor.js", () => ({ runDoctor: async (cfg: any) => doctorImpl(cfg) }));
+vi.mock("../src/relay/doctor.js", () => ({
+  runDoctor: async (cfg: any) => doctorImpl(cfg),
+  // autowire calls these through /relay/bootstrap; stubbed so the suite can
+  // never write to the developer's real ~/.gemini or ~/.claude.json.
+  mcpRegistration: async () => undefined,
+  binBasename: (s: string) => s,
+}));
 
 // The SDK lane is gated on a real Claude Code login, which the CI box may or
 // may not have; both states are asserted below by flipping this.

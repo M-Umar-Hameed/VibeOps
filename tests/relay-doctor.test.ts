@@ -167,6 +167,17 @@ test("runDoctor: mcp:true claude lane with no CLI present reports unregistered",
   expect(s.mcp?.addCommand).toContain("claude mcp add");
 });
 
+test("runDoctor: agy lane with no mcp key but registered settings reports registered", async () => {
+  const name = uniq("agy-nomcp-reg");
+  const home = mkTmp("doctor-agy-nomcp-");
+  mkdirSync(join(home, ".gemini", "antigravity-cli"), { recursive: true });
+  writeFileSync(join(home, ".gemini", "antigravity-cli", "settings.json"),
+    JSON.stringify({ mcpServers: { vibeops: { httpUrl: "http://x/mcp" } } }));
+  const cfg: RelayConfig = { workdir: tmpdir(), agents: { [name]: { cmd: ["agy"], roles: ["work"] } } };
+  const [s] = await runDoctor(cfg, { homeDir: home, fresh: true });
+  expect(s.mcp?.registered).toBe(true);
+});
+
 test("runDoctor: uncheckable basename with mcp:true is not flagged", async () => {
   const name = uniq("unknown-mcp");
   const cfg: RelayConfig = { workdir: tmpdir(), agents: { [name]: { cmd: [EXIT0], roles: ["plan"], mcp: true } } };

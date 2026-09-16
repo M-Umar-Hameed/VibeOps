@@ -8,7 +8,7 @@ import type { RelayConfig } from "./config.js";
 
 const execFileAsync = promisify(execFile);
 
-const PROBE_TIMEOUT_MS = 10_000;
+export const PROBE_TIMEOUT_MS = 10_000;
 const CACHE_TTL_MS = 10 * 60_000;
 const DEFAULT_PROBE_ARGS = ["--version"];
 
@@ -68,8 +68,7 @@ const MCP_ADD: Record<string, (url: string) => string> = {
 
 const mcpCache = new Map<string, { value: McpRegStatus | undefined; expiresAt: number }>();
 
-async function computeMcp(agent: RelayConfig["agents"][string], cmd0: string, homeDir: string): Promise<McpRegStatus | undefined> {
-  if (agent.mcp !== true) return undefined;
+async function computeMcp(cmd0: string, homeDir: string): Promise<McpRegStatus | undefined> {
   const bin = binBasename(cmd0);
   const check = MCP_CHECKS[bin];
   if (!check) return undefined; // uncheckable CLI -> never flag
@@ -79,27 +78,25 @@ async function computeMcp(agent: RelayConfig["agents"][string], cmd0: string, ho
 }
 
 async function mcpRegStatus(
-  agent: RelayConfig["agents"][string], name: string, cmd0: string,
-  homeDir: string, now: number, fresh?: boolean,
+  name: string, cmd0: string, homeDir: string, now: number, fresh?: boolean,
 ): Promise<McpRegStatus | undefined> {
   const key = cacheKey(name, cmd0);
   const c = mcpCache.get(key);
   if (!fresh && c && c.expiresAt > now) return c.value;
-  const value = await computeMcp(agent, cmd0, homeDir);
+  const value = await computeMcp(cmd0, homeDir);
   mcpCache.set(key, { value, expiresAt: now + CACHE_TTL_MS });
   return value;
 }
 
 // Registration-only lookup for the chat CLI-lane prompt gate. Shares mcpCache
 // with runDoctor; never triggers the --version probe. Undefined = not
-// applicable (no cmd, mcp!=true) or uncheckable CLI -> caller trusts the flag.
+// applicable (no cmd) or uncheckable CLI -> caller trusts the flag.
 export async function mcpRegistration(
   config: RelayConfig, agentName: string, opts: { homeDir?: string; fresh?: boolean } = {},
 ): Promise<McpRegStatus | undefined> {
-  const agent = config.agents[agentName];
-  const cmd0 = agent?.cmd?.[0];
-  if (!agent || !cmd0) return undefined;
-  return mcpRegStatus(agent, agentName, cmd0, opts.homeDir ?? homedir(), Date.now(), opts.fresh);
+  const cmd0 = config.agents[agentName]?.cmd?.[0];
+  if (!cmd0) return undefined;
+  return mcpRegStatus(agentName, cmd0, opts.homeDir ?? homedir(), Date.now(), opts.fresh);
 }
 
 export type ProbeStatus = { ok: boolean; error?: string; spawnFailed?: boolean };
@@ -107,7 +104,7 @@ export type AuthStatus = { known: boolean; connected: boolean | null };
 export type McpRegStatus = { registered: boolean; addCommand: string };
 export type AgentDoctorStatus = {
   name: string; binary: string; probe: ProbeStatus; auth: AuthStatus; lastChecked: string;
-  // Present only for a lane with mcp:true whose CLI basename is checkable
+  // Present only for a lane whose CLI basename is checkable
   // (claude, kimi, agy, gemini). Omitted otherwise -- never flag what we
   // cannot verify.
   mcp?: McpRegStatus;
@@ -179,7 +176,7 @@ export async function runDoctor(
     const probe = await probeBinary(cmd0);
     const status: AgentDoctorStatus = {
       name, binary: binBasename(cmd0), probe, auth: checkAuth(cmd0, homeDir),
-      mcp: await mcpRegStatus(config.agents[name], name, cmd0, homeDir, now, opts.fresh),
+      mcp: await mcpRegStatus(name, cmd0, homeDir, now, opts.fresh),
       lastChecked: new Date(now).toISOString(),
     };
     cache.set(cacheKey(name, cmd0), { status, expiresAt: now + CACHE_TTL_MS });

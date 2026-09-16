@@ -17,6 +17,10 @@ const CLIENTS = {
     rel: [".gemini", "antigravity-cli", "settings.json"],
     entry: (url: string, key: string) => ({ httpUrl: url, headers: { Authorization: `Bearer ${key}` } }),
   },
+  claude: {
+    rel: [".claude.json"],
+    entry: (url: string, key: string) => ({ type: "http", url, headers: { Authorization: `Bearer ${key}` } }),
+  },
 } as const;
 export type InstallableClient = keyof typeof CLIENTS;
 export const INSTALLABLE_CLIENTS = Object.keys(CLIENTS) as InstallableClient[];
@@ -31,6 +35,7 @@ export function buildMcpConfig(url: string, apiKey: string) {
     cursor: { path: path("cursor"), snippet: { mcpServers: { vibeops: CLIENTS.cursor.entry(url, apiKey) } } },
     gemini: { path: path("gemini"), snippet: { mcpServers: { vibeops: CLIENTS.gemini.entry(url, apiKey) } } },
     agy: { path: path("agy"), snippet: { mcpServers: { vibeops: CLIENTS.agy.entry(url, apiKey) } } },
+    claude: { path: path("claude"), snippet: { mcpServers: { vibeops: CLIENTS.claude.entry(url, apiKey) } } },
   };
 }
 
@@ -71,4 +76,23 @@ export function installClientConfig(
   writeFileSync(path, JSON.stringify(existing, null, 2) + "\n", { mode: 0o600 });
   try { chmodSync(path, 0o600); } catch { /* fs without POSIX modes */ }
   return { path, backedUp };
+}
+
+// True when the client's config already holds exactly the entry we would write.
+// A drifted url or key (rotated, revoked, port moved) reads as false so the
+// caller can re-install, which a name-only check cannot detect.
+export function clientEntryCurrent(
+  client: InstallableClient, url: string, apiKey: string, homeDir: string = homedir(),
+): boolean {
+  const spec = CLIENTS[client];
+  const path = join(homeDir, ...spec.rel);
+  if (!existsSync(path)) return false;
+  try {
+    const existing = JSON.parse(readFileSync(path, "utf-8")) as { mcpServers?: Record<string, unknown> };
+    // Both sides are plain objects built the same way, so JSON.stringify
+    // equality is a sufficient value-compare here.
+    return JSON.stringify(existing.mcpServers?.vibeops) === JSON.stringify(spec.entry(url, apiKey));
+  } catch {
+    return false;
+  }
 }

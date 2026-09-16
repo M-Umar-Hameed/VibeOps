@@ -116,13 +116,21 @@ async function bootNormally() {
   // Forge with no lanes and no way to get any. Detect once here instead, after
   // serve so the CLI probes never delay startup.
   const { relayConfigPath, bootstrapRelayConfig } = await import("../relay/bootstrap-config.js");
-  if (!existsSync(relayConfigPath())) {
-    void bootstrapRelayConfig()
-      .then(({ added }) => console.log(
-        added.length
-          ? `relay: detected ${added.join(", ")} -> ${relayConfigPath()}`
-          : `relay: no agent CLIs detected; configure ${relayConfigPath()} by hand`,
-      ))
-      .catch((e) => console.warn(`relay auto-detect failed: ${(e as Error).message}`));
-  }
+  const { ensureMcpWiring } = await import("../mcp/autowire.js");
+  const bootstrapped = existsSync(relayConfigPath())
+    ? Promise.resolve()
+    : bootstrapRelayConfig()
+        .then(({ added }) => console.log(
+          added.length
+            ? `relay: detected ${added.join(", ")} -> ${relayConfigPath()}`
+            : `relay: no agent CLIs detected; configure ${relayConfigPath()} by hand`,
+        ))
+        .catch((e) => console.warn(`relay auto-detect failed: ${(e as Error).message}`));
+  void bootstrapped
+    .then(() => ensureMcpWiring())
+    .then(({ wired, failed }) => {
+      if (wired.length) console.log(`mcp: wired vibeops into ${wired.join(", ")}`);
+      for (const f of failed) console.warn(`mcp: could not wire ${f.name}: ${f.error}`);
+    })
+    .catch((e) => console.warn(`mcp auto-wire failed: ${(e as Error).message}`));
 }

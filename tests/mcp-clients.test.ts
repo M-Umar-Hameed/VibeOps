@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildMcpConfig, installClientConfig } from "../src/mcp/clients.js";
+import { buildMcpConfig, installClientConfig, clientEntryCurrent } from "../src/mcp/clients.js";
 
 const URL = "http://127.0.0.1:8787/mcp";
 const KEY = "test-key-123";
@@ -130,5 +130,22 @@ describe("installClientConfig", () => {
     expect(written.editor).toBe("vim");
     expect(written.mcpServers.other.httpUrl).toBe("y");
     expect(written.mcpServers.vibeops.httpUrl).toBe(URL);
+  });
+
+  it("writes the claude lane as a top-level http mcpServers entry in ~/.claude.json", () => {
+    const home = mkdtempSync(join(tmpdir(), "vibeops-mcp-"));
+    const r = installClientConfig("claude", URL, KEY, home);
+    expect(r.path.replace(/\\/g, "/")).toContain(".claude.json");
+    const written = JSON.parse(readFileSync(r.path, "utf-8"));
+    expect(written.mcpServers.vibeops).toEqual({ type: "http", url: URL, headers: { Authorization: `Bearer ${KEY}` } });
+  });
+});
+
+describe("clientEntryCurrent", () => {
+  it("is true right after install and false once the key changes", () => {
+    const home = mkdtempSync(join(tmpdir(), "vibeops-mcp-"));
+    installClientConfig("claude", URL, KEY, home);
+    expect(clientEntryCurrent("claude", URL, KEY, home)).toBe(true);
+    expect(clientEntryCurrent("claude", URL, "rotated-key", home)).toBe(false);
   });
 });

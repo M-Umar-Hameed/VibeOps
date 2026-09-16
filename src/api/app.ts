@@ -539,6 +539,10 @@ app.post("/relay/bootstrap", requireAdmin, async (c) => {
   const { bootstrapRelayConfig } = await import("../relay/bootstrap-config.js");
   try {
     const { config, added, removed } = await bootstrapRelayConfig();
+    const { ensureMcpWiring } = await import("../mcp/autowire.js");
+    // fire-and-forget: wiring spawns CLIs and can take a minute; the doctor
+    // reports the result on its next refresh.
+    void ensureMcpWiring().catch(() => {});
     return c.json({ config, added, removed });
   } catch (e) {
     // An existing relay.json that no longer loads: say so, rather than 500.

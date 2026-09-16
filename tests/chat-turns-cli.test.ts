@@ -21,6 +21,8 @@ vi.mock("../src/relay/config.js", () => ({
     agents: {
       "claude-cli": { cmd: ["claude", "-p", "{promptFile}"], roles: ["work"], mcp: true },
       agy: { cmd: ["agy", "{model}"], roles: ["plan", "work"] },
+      "plain-cli": { cmd: ["plain", "{model}"], roles: ["plan", "work"] },
+      "optout-cli": { cmd: ["optout", "{model}"], roles: ["plan", "work"], mcp: false },
     },
   }),
   resolveCmd: (agent: any) => agent.cmd,
@@ -71,6 +73,7 @@ describe("chat turns CLI lane prompt capability composition", () => {
   });
 
   it("omits CHAT_CAPABILITIES for unwired CLI agent lane", async () => {
+    mcpRegMock.mockResolvedValue(undefined);
     getSessionMock.mockResolvedValue({ id: "s2", model: "agy::default", projectId: null });
     await runTurn(fakeActor, "s2", "hello world", "agy::default");
     expect(runAgentMock).toHaveBeenCalledTimes(1);
@@ -80,6 +83,7 @@ describe("chat turns CLI lane prompt capability composition", () => {
   });
 
   it("includes NO_TOOLS_CLAUSE for unwired CLI agent lane", async () => {
+    mcpRegMock.mockResolvedValue(undefined);
     getSessionMock.mockResolvedValue({ id: "s3", model: "agy::default", projectId: null });
     await runTurn(fakeActor, "s3", "hello world", "agy::default");
     const promptArg = runAgentMock.mock.calls[0][1];
@@ -132,14 +136,39 @@ describe("chat turns CLI lane prompt capability composition", () => {
     getSessionMock.mockResolvedValue({ id: "s7", model: "claude-cli::default", projectId: null });
     await runTurn(fakeActor, "s7", "hello world", "claude-cli::default");
     const saved = appendMessageMock.mock.calls.find((c: any[]) => c[0].role === "assistant")?.[0];
-    expect(saved.body).toContain("no vibeops MCP server is registered");
+    expect(saved.body).toContain("no vibeops MCP server registered");
     expect(saved.body).toContain("agy mcp add vibeops");
     expect(saved.body).toContain("agent reply");
   });
 
-  it("does not call mcpRegistration for a lane without mcp", async () => {
-    getSessionMock.mockResolvedValue({ id: "s8", model: "agy::default", projectId: null });
-    await runTurn(fakeActor, "s8", "hello world", "agy::default");
-    expect(mcpRegMock).not.toHaveBeenCalled();
+  it("wires CHAT_CAPABILITIES for a lane without mcp whose CLI reports registered", async () => {
+    mcpRegMock.mockResolvedValue({ registered: true, addCommand: "plain mcp add ..." });
+    getSessionMock.mockResolvedValue({ id: "s8", model: "plain-cli::default", projectId: null });
+    await runTurn(fakeActor, "s8", "hello world", "plain-cli::default");
+    const promptArg = runAgentMock.mock.calls[0][1];
+    expect(promptArg).toContain(CHAT_CAPABILITIES);
+    const saved = appendMessageMock.mock.calls.find((c: any[]) => c[0].role === "assistant")?.[0];
+    expect(saved.body).not.toContain("[chat:");
+  });
+
+  it("falls back to NO_TOOLS_CLAUSE for a lane without mcp whose CLI is uncheckable", async () => {
+    mcpRegMock.mockResolvedValue(undefined);
+    getSessionMock.mockResolvedValue({ id: "s9", model: "plain-cli::default", projectId: null });
+    await runTurn(fakeActor, "s9", "hello world", "plain-cli::default");
+    const promptArg = runAgentMock.mock.calls[0][1];
+    expect(promptArg).toContain(NO_TOOLS_CLAUSE);
+    const saved = appendMessageMock.mock.calls.find((c: any[]) => c[0].role === "assistant")?.[0];
+    expect(saved.body).not.toContain("[chat:");
+  });
+
+  it("mcp:false lane gets NO_TOOLS_CLAUSE and no notice, even if the CLI reports registered", async () => {
+    mcpRegMock.mockResolvedValue({ registered: true, addCommand: "optout mcp add ..." });
+    getSessionMock.mockResolvedValue({ id: "s10", model: "optout-cli::default", projectId: null });
+    await runTurn(fakeActor, "s10", "hello world", "optout-cli::default");
+    const promptArg = runAgentMock.mock.calls[0][1];
+    expect(promptArg).toContain(NO_TOOLS_CLAUSE);
+    expect(promptArg).not.toContain(CHAT_CAPABILITIES);
+    const saved = appendMessageMock.mock.calls.find((c: any[]) => c[0].role === "assistant")?.[0];
+    expect(saved.body).not.toContain("[chat:");
   });
 });

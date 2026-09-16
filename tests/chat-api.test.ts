@@ -6,6 +6,7 @@ import { app } from "../src/api/app.js";
 import { createActor } from "../src/services/actors.js";
 import { setChatAgent } from "../src/chat/turns.js";
 import * as store from "../src/chat/store.js";
+import { withSetting } from "./helpers/settings.js";
 
 process.env.EMBED_PROVIDER = "fake";
 
@@ -64,12 +65,17 @@ describe("chat API", () => {
     }));
     process.env.VIBEOPS_RELAY_CONFIG = cfgPath;
 
-    const h = await adminHeaders();
-    const res = await app.request("/chat/models", { headers: h });
-    expect(res.status).toBe(200);
-    const roster = await res.json();
-    const or = roster.find((r: any) => r.agent === "openrouter");
-    expect(or.models).toEqual([{ name: "anthropic/claude-3.5-sonnet" }]);
+    // Empty key override: the shared test database can carry a real
+    // openrouterApiKey from another run, which would make the route fetch the
+    // live catalog instead of taking the no-key path this test is about.
+    await withSetting("openrouterApiKey", "", async () => {
+      const h = await adminHeaders();
+      const res = await app.request("/chat/models", { headers: h });
+      expect(res.status).toBe(200);
+      const roster = await res.json();
+      const or = roster.find((r: any) => r.agent === "openrouter");
+      expect(or.models).toEqual([{ name: "anthropic/claude-3.5-sonnet" }]);
+    });
   });
 
   it("GET /chat/models: an http lane without saved models and no key lists no models", async () => {
@@ -82,12 +88,14 @@ describe("chat API", () => {
     }));
     process.env.VIBEOPS_RELAY_CONFIG = cfgPath;
 
-    const h = await adminHeaders();
-    const res = await app.request("/chat/models", { headers: h });
-    expect(res.status).toBe(200);
-    const roster = await res.json();
-    const or = roster.find((r: any) => r.agent === "openrouter");
-    expect(or.models).toEqual([]);
+    await withSetting("openrouterApiKey", "", async () => {
+      const h = await adminHeaders();
+      const res = await app.request("/chat/models", { headers: h });
+      expect(res.status).toBe(200);
+      const roster = await res.json();
+      const or = roster.find((r: any) => r.agent === "openrouter");
+      expect(or.models).toEqual([]);
+    });
   });
 
   it("POST /chat/sessions creates a session", async () => {

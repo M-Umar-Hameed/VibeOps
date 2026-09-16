@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { PG_BASE } from "../src/runtime/slice.js";
 import { ensureSharedSchema } from "./global-setup.js";
+import { EMBEDDED } from "./helpers/embedded.js";
 
 const admin = postgres(`${PG_BASE}/postgres`, { max: 1 });
 const created: string[] = [];
@@ -25,7 +26,7 @@ afterAll(async () => {
   await admin.end();
 }, 60_000);
 
-test("empty database is provisioned from scratch", async () => {
+test.skipIf(EMBEDDED)("empty database is provisioned from scratch", async () => {
   const sql = await freshDb();
   try {
     await ensureSharedSchema(sql);
@@ -38,7 +39,7 @@ test("empty database is provisioned from scratch", async () => {
   }
 });
 
-test("up-to-date database is untouched and does not replay 0000", async () => {
+test.skipIf(EMBEDDED)("up-to-date database is untouched and does not replay 0000", async () => {
   const sql = await freshDb();
   try {
     await ensureSharedSchema(sql);
@@ -51,7 +52,7 @@ test("up-to-date database is untouched and does not replay 0000", async () => {
   }
 });
 
-test("a tracked database behind the migration folder is brought current", async () => {
+test.skipIf(EMBEDDED)("a tracked database behind the migration folder is brought current", async () => {
   const sql = await freshDb();
   try {
     await ensureSharedSchema(sql); // full provision (tracked)
@@ -83,7 +84,7 @@ test("a tracked database behind the migration folder is brought current", async 
   }
 });
 
-test("a provisioned database with no migration history fails loudly", async () => {
+test.skipIf(EMBEDDED)("a provisioned database with no migration history fails loudly", async () => {
   const sql = await freshDb();
   try {
     await ensureSharedSchema(sql);         // provision + bookkeeping

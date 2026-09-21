@@ -119,6 +119,19 @@ export function AIModelsTab() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings", "forge.maxActiveRuns"] }),
   });
 
+  const { data: councilContextBudget } = useQuery({
+    queryKey: ["settings", "council.contextTokenBudget"],
+    queryFn: async () => {
+      const res = await api.get("/settings/council.contextTokenBudget");
+      return (res.value as string) || "";
+    },
+  });
+
+  const setCouncilContextBudget = useMutation({
+    mutationFn: (value: string) => api.patch("/settings/council.contextTokenBudget", { value }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings", "council.contextTokenBudget"] }),
+  });
+
   return (
     <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
       <div className="mb-8 border-b border-white/10 pb-6">
@@ -247,6 +260,19 @@ export function AIModelsTab() {
                 placeholder="3"
               />
               <p className="text-[11px] text-on-surface-variant/60 mt-1">Max simultaneous forge runs. Empty/invalid defaults to 3.</p>
+            </div>
+            <div className="flex flex-col gap-1 w-1/2">
+              <label htmlFor="councilContextTokenBudget" className="text-sm text-on-surface">Council codebase context budget</label>
+              <input
+                id="councilContextTokenBudget"
+                type="text"
+                data-testid="councilContextTokenBudget"
+                className="bg-surface-container-highest border border-white/10 rounded-md px-3 py-2 text-sm text-on-surface focus:outline-none focus:border-primary transition-colors"
+                value={councilContextBudget ?? ""}
+                onChange={(e) => setCouncilContextBudget.mutate(e.target.value)}
+                placeholder="unlimited"
+              />
+              <p className="text-[11px] text-on-surface-variant/60 mt-1">Token cap for the repository briefing injected into council personas. Empty or "unlimited" means no cap; 0 disables context injection.</p>
             </div>
           </div>
 

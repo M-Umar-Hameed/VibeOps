@@ -216,5 +216,6 @@ evaluated and is a feature-sized project on Windows, not a bounded change:
 ## Concurrency
 
 - **Cap setting:** `forge.maxActiveRuns` (default 3) limits simultaneous pipeline runs. Invalid or empty values fall back to the default.
+- **Council context setting:** `council.contextTokenBudget` caps the repository briefing injected into council persona prompts. Empty/`unlimited` (default) = no token cap, structural caps only; `0` = no briefing, no repo scan; `N` = briefing truncated to ~N estimated tokens, lowest-priority sections dropped first.
 - **Node_modules leak guard:** the work stage snapshots top-level `node_modules` entries before running; additions through the shared junction are reverted and fail the run. In-place nested edits are not caught (ceiling documented in code).
 - **Promote conflict:** `promoteSandbox` aborts on merge conflict, names the conflicting files in the error, and leaves the sandbox and branch intact for rework.

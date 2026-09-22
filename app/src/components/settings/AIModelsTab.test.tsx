@@ -79,3 +79,22 @@ test("concurrent run cap renders fetched value and patches on change", async () 
     expect(apiFetch).toHaveBeenCalledWith("/settings/forge.maxActiveRuns", { method: "PATCH", body: { value: "2" } }),
   );
 });
+
+test("council context budget renders fetched value and patches on change", async () => {
+  apiFetch.mockReset().mockImplementation((path: string, opts?: any) => {
+    if (path === "/settings/council.contextTokenBudget" && !opts) return Promise.resolve({ value: "unlimited" });
+    if (path === "/settings/council.contextTokenBudget" && opts?.method === "PATCH") return Promise.resolve({ value: opts.body.value });
+    if (path === "/settings/ai.routing_strategy") return Promise.resolve({ value: "cost" });
+    if (path === "/settings/agents.commProfile") return Promise.resolve({ value: "off" });
+    return Promise.resolve({ value: "" });
+  });
+
+  render(wrap(<AIModelsTab />));
+  const input = await screen.findByLabelText("Council codebase context budget");
+  await waitFor(() => expect(input).toHaveValue("unlimited"));
+
+  fireEvent.change(input, { target: { value: "0" } });
+  await waitFor(() =>
+    expect(apiFetch).toHaveBeenCalledWith("/settings/council.contextTokenBudget", { method: "PATCH", body: { value: "0" } }),
+  );
+});

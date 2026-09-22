@@ -9,12 +9,16 @@ const PERSONA_ROLE: Record<"believer" | "investor" | "skeptic", string> = {
 export function composePersonaPrompt(
   persona: "believer" | "investor" | "skeptic",
   idea: string,
-  round?: { qa: { question: string; answer: string }[]; priorResponse: string }
+  round?: { qa: { question: string; answer: string }[]; priorResponse: string },
+  briefing?: string
 ): string {
   const parts = [
     `Role: ${PERSONA_ROLE[persona]}`,
     `Idea: ${fenceUntrusted("idea", idea)}`,
   ];
+  if (briefing) {
+    parts.push(`Repository context (the user's actual codebase — ground your claims in it): ${fenceUntrusted("repo-briefing", briefing)}`);
+  }
   if (round && round.qa.length > 0) {
     const qaBlock = round.qa.map((qa) => `Q: ${qa.question}\nA: ${qa.answer}`).join("\n\n");
     parts.push(`The user has since answered the council's questions: ${fenceUntrusted("qa", qaBlock)}`);

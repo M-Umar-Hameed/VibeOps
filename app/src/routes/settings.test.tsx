@@ -7,7 +7,7 @@ const withClient = (ui: React.ReactElement) => (
   <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{ui}</QueryClientProvider>
 );
 
-vi.mock("../lib/api.js", () => ({ api: { get: vi.fn(async () => []), post: vi.fn(async () => ({})), del: vi.fn(async () => ({})) } }));
+vi.mock("../lib/api.js", () => ({ api: { get: vi.fn(async () => []), post: vi.fn(async () => ({})), patch: vi.fn(async () => ({})), del: vi.fn(async () => ({})) } }));
 vi.mock("../api/projects.js", () => ({ projects: { list: vi.fn(async () => []) } }));
 vi.mock("../settings.js", () => ({ getSettings: vi.fn(async () => ({ baseUrl: "", apiKey: "" })), saveSettings: vi.fn(async () => {}), detectLocalNode: vi.fn(async () => null) }));
 
@@ -38,4 +38,24 @@ test("Test Link disables its button while probing", async () => {
   render(withClient(<LocalNodeTab rejected={false} />));
   fireEvent.click(screen.getByText("Test Link"));
   await waitFor(() => expect(screen.getByText("Test Link").closest("button")).toBeDisabled());
+});
+
+import { AIModelsTab } from "../components/settings/AIModelsTab.js";
+import { api } from "../lib/api.js";
+
+test("rendering AI Models tab issues GET and PATCH for council.contextTokenBudget", async () => {
+  (api.get as any).mockImplementation(async (path: string) => {
+    if (path === "/settings/council.contextTokenBudget") return { value: "unlimited" };
+    return { value: "" };
+  });
+
+  render(withClient(<AIModelsTab />));
+  const input = await screen.findByLabelText("Council codebase context budget");
+  await waitFor(() => expect(input).toHaveValue("unlimited"));
+  expect(api.get).toHaveBeenCalledWith("/settings/council.contextTokenBudget");
+
+  fireEvent.change(input, { target: { value: "0" } });
+  await waitFor(() =>
+    expect(api.patch).toHaveBeenCalledWith("/settings/council.contextTokenBudget", { value: "0" }),
+  );
 });

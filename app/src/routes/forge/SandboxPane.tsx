@@ -117,7 +117,19 @@ export function SandboxPane({
     }
   };
 
+  const handleOverrideGate = async () => {
+    if (!selectedTicket) return;
+    try {
+      await api.post(`/forge/tickets/${selectedTicket.id}/override-gate`);
+      await queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] });
+      await queryClient.invalidateQueries({ queryKey: ["tickets", selectedTicket.id, "comments"] });
+    } catch (e: any) {
+      setSandboxError(e.message || "Failed to override gate");
+    }
+  };
+
   const hasViolations = (sandbox?.protectedViolation?.length ?? 0) > 0;
+  const gateOverridden = /^\s*GATE-OVERRIDE:/im.test(selectedTicket.body ?? "");
 
   return (
     <div className="glass-card rounded-xl border border-white/10 p-6 flex flex-col gap-4">
@@ -144,6 +156,8 @@ export function SandboxPane({
             onApprove={handleApprove}
             onDiscard={handleDiscard}
             onRework={onRework}
+            gateOverridden={gateOverridden}
+            onOverrideGate={handleOverrideGate}
           />
 
           {hasViolations && (
@@ -155,7 +169,7 @@ export function SandboxPane({
           )}
           {!hasViolations && sandbox.lastVerdict !== "pass" && (
             <div className="text-xs text-on-surface-variant">
-              Promote unlocks after a passing review. Approve override records YOUR passing review on the ticket, then Promote merges.
+              {`Promote unlocks after a passing review. Approve override records YOUR passing review on the ticket, then Promote merges.${!gateOverridden ? " Override gate clears mechanical blocks the pipeline cannot clear by itself." : ""}`}
             </div>
           )}
 

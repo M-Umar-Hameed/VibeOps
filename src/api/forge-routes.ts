@@ -19,6 +19,7 @@ import { runAgent } from "../relay/invoke.js";
 import { resolveCmd } from "../relay/config.js";
 import { updateTicket } from "../services/tickets.js";
 import { getTicket } from "../services/history.js";
+import { parseGateOverrides } from "../forge/policy.js";
 import { addComment, listComments } from "../services/comments.js";
 import { listActors } from "../services/actors.js";
 import { ConflictError, NotFoundError } from "../services/errors.js";
@@ -438,6 +439,27 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
       `Policy waiver by ${actor.name} for protected paths:\n${policy.paths.map((p) => `  - ${p}`).join("\n")}\n\nThese files control how the project is built or tested.`,
       "comment");
     return c.json({ waived: policy.paths });
+  });
+
+  // Sticky gate override: the secret and citation checks scan committed branch
+  // history, so a rework can never clear them and the operator loops forever on
+  // the same rejection. Writing GATE-OVERRIDE into the ticket body downgrades
+  // every gate block to a warning on this and all later runs. Audited and
+  // actor-attributed, and visible in the ticket body itself.
+  app.post("/forge/tickets/:id/override-gate", requireAdmin, async (c) => {
+    const ticketId = c.req.param("id");
+    if (await hasActiveRun(ticketId)) return c.json({ error: "run in progress for this ticket" }, 409);
+    const ticket = await getTicket(ticketId);
+    const body = ticket.body ?? "";
+    if (parseGateOverrides(body).has("all")) return c.json({ overridden: true });
+    const actor = c.get("actor");
+    const updated = await updateTicket(actor.id, ticketId, ticket.version, {
+      body: `${body}${body.endsWith("\n") || !body ? "" : "\n"}\nGATE-OVERRIDE: all\n`,
+    });
+    await addComment(actor.id, ticketId,
+      `Gate override by ${actor.name}: every mechanical gate block on this work order is downgraded to a warning for this and all later runs.`,
+      "comment");
+    return c.json({ overridden: true, version: updated.version });
   });
 
   app.post("/forge/tickets/:id/discard", requireAdmin, async (c) => {

@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { findSecrets, redactSecrets } from "./redact.js";
-import { matchAny, parseAllowFiles } from "./policy.js";
+import { matchAny, parseAllowFiles, parseGateOverrides } from "./policy.js";
 import { runChecks } from "./checks.js";
 import {
   sandboxPath, sandboxRangePatch, sandboxDiffNameStatus, sandboxBaseCommit,
@@ -331,6 +331,18 @@ export async function runGate(deps: {
     findings.push({ check: "citation", severity: "warn", detail: `Citation check error: ${(e as Error).message}` });
   }
 
+  // Human override (GATE-OVERRIDE: in the ticket body) downgrades a block to a
+  // warning on every run. Sticky by construction: the directive lives on the
+  // ticket, so a rework cannot re-block on a finding the operator already cleared.
+  const overrides = parseGateOverrides(ticketBody);
+  const overridden: GateFinding[] = [];
+  for (const f of findings) {
+    if (f.severity === "block" && (overrides.has("all") || overrides.has(f.check))) {
+      f.severity = "warn";
+      overridden.push(f);
+    }
+  }
+
   // Build report
   const blocks = findings.filter(f => f.severity === "block");
   const warns = findings.filter(f => f.severity === "warn");
@@ -339,7 +351,8 @@ export async function runGate(deps: {
     report += `AUTOMATIC BLOCK — promotion is blocked regardless of the review verdict.\n[${f.check}] ${f.detail}\n\n`;
   }
   for (const f of warns) {
-    report += `WARNING (advisory)\n[${f.check}] ${f.detail}\n\n`;
+    const note = overridden.includes(f) ? " — GATE-OVERRIDE in the ticket body; a human cleared this" : "";
+    report += `WARNING (advisory)${note}\n[${f.check}] ${f.detail}\n\n`;
   }
   report = redactSecrets(report.trim()).slice(0, REPORT_CAP);
 

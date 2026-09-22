@@ -304,6 +304,31 @@ describe("forge API", () => {
     expect((await promoteAfterWaive.json()).status).toBe("closed");
   });
 
+  it("override-gate writes a sticky GATE-OVERRIDE directive into the ticket body and is idempotent", async () => {
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+    expect(ticket.body).toBeFalsy();
+
+    const firstRes = await app.request(`/forge/tickets/${ticket.id}/override-gate`, { method: "POST", headers: h });
+    expect(firstRes.status).toBe(200);
+    expect((await firstRes.json()).overridden).toBe(true);
+
+    const afterFirst = await getTicket(ticket.id);
+    expect(afterFirst.body).toMatch(/^\s*GATE-OVERRIDE:\s*all$/im);
+
+    const overrideComment = (await listComments(ticket.id)).find((cm) => cm.body.includes("Gate override by"));
+    expect(overrideComment).toBeTruthy();
+
+    const secondRes = await app.request(`/forge/tickets/${ticket.id}/override-gate`, { method: "POST", headers: h });
+    expect(secondRes.status).toBe(200);
+    expect((await secondRes.json()).overridden).toBe(true);
+
+    const afterSecond = await getTicket(ticket.id);
+    expect(afterSecond.body).toBe(afterFirst.body);
+    expect(afterSecond.version).toBe(afterFirst.version);
+    expect(afterSecond.body!.match(/GATE-OVERRIDE:/gi)?.length).toBe(1);
+  });
+
   it("member-authored VERDICT: PASS review comments cannot unlock promote", async () => {
     const h = await adminHeaders();
     const ticket = await seedTicket();

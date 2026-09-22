@@ -48,6 +48,21 @@ export function parseAllowFiles(body: string): string[] {
   return globs;
 }
 
+// GATE-OVERRIDE: <check>, <check> lines in the ticket body downgrade those gate
+// blocks to warnings on every run, not just the current one. `all` covers every
+// check. History-scanning checks (secret, citation) can never be cleared by
+// rework, so without this an operator is stuck rejecting the same branch forever.
+export function parseGateOverrides(body: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of body.matchAll(/^\s*GATE-OVERRIDE:\s*(.+)$/gim)) {
+    for (const c of m[1].split(",")) {
+      const t = c.trim().toLowerCase();
+      if (t) out.add(t);
+    }
+  }
+  return out;
+}
+
 // Minimatch-style, full-path anchored. * and ? do not cross "/"; ** does.
 function globToRegExp(glob: string): RegExp {
   let re = "";

@@ -11,6 +11,8 @@ type SandboxActionsProps = {
   onApprove: () => void;
   onDiscard: () => void;
   onRework: () => void;
+  gateOverridden: boolean;
+  onOverrideGate: () => void;
 };
 
 export function SandboxActions({
@@ -26,6 +28,8 @@ export function SandboxActions({
   onApprove,
   onDiscard,
   onRework,
+  gateOverridden,
+  onOverrideGate,
 }: SandboxActionsProps) {
   return (
     <div className="flex items-center gap-3">
@@ -57,6 +61,16 @@ export function SandboxActions({
           className="px-4 py-2 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-400 text-sm font-bold uppercase transition-all disabled:opacity-50 cursor-pointer"
         >
           {confirmApprove ? "Confirm approve?" : "Approve override"}
+        </button>
+      )}
+      {!gateOverridden && (
+        <button
+          onClick={onOverrideGate}
+          disabled={runActiveForTicket}
+          title={runActiveForTicket ? "Pipeline run in progress for this work order" : "Downgrade every mechanical gate block to a warning for this and all later runs"}
+          className="px-4 py-2 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-400 text-sm font-bold uppercase transition-all disabled:opacity-50 cursor-pointer"
+        >
+          Override gate
         </button>
       )}
       <button

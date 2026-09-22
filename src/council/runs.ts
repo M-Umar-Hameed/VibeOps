@@ -10,6 +10,10 @@ import { redactSecrets } from "../forge/redact.js";
 import { ConflictError, NotFoundError } from "../services/errors.js";
 import { createTicket } from "../services/tickets.js";
 import { loadCouncilSessions, saveCouncilSessions } from "./store.js";
+import { buildRepoBriefing, resolveContextBudget } from "./briefing.js";
+import { estimateTokens } from "../services/usage.js";
+import { projectWorkdir } from "../services/projects.js";
+import { repoIndexed, searchKnowledge } from "../services/knowledge.js";
 
 type Session = {
   id: string;
@@ -109,6 +113,24 @@ export async function startCouncil(
 }
 
 async function runPersonas(session: Session, config: RelayConfig): Promise<void> {
+  let briefing = "";
+  try {
+    const budget = resolveContextBudget(await getSetting("council.contextTokenBudget"));
+    if (budget !== 0) {
+      const root = (session.projectId ? await projectWorkdir(session.projectId) : null) ?? config.workdir;
+      let code: Awaited<ReturnType<typeof searchKnowledge>> = [];
+      if (session.projectId && (await repoIndexed(session.projectId))) {
+        code = await searchKnowledge(session.prompt, { projectId: session.projectId, limit: 5 }).catch(() => []);
+      }
+      briefing = await buildRepoBriefing(root, budget, code);
+      if (briefing) {
+        append(session, `\n=== COUNCIL context (${estimateTokens(briefing.length)} est. tokens from ${root}) ===\n`);
+      }
+    }
+  } catch (e) {
+    briefing = "";
+    append(session, `\nCOUNCIL briefing skipped: ${(e as Error).message}\n`);
+  }
   const personasPick = pickAgents(config, "cheapest-first").plan;
   const personaAgent = { ...config.agents[personasPick.agent] };
   personaAgent.cmd = resolveCmd(personaAgent, personasPick.model);
@@ -122,7 +144,7 @@ async function runPersonas(session: Session, config: RelayConfig): Promise<void>
     const round = session.qa && session.qa.length > 0
       ? { qa: session.qa, priorResponse: session[role] ?? "" }
       : undefined;
-    const prompt = composePersonaPrompt(role, session.prompt, round);
+    const prompt = composePersonaPrompt(role, session.prompt, round, briefing);
     let buf = "";
     const res = await runAgent(personaAgent, prompt, workdir, (chunk) => { buf += chunk; });
     // Personas run concurrently; buffer locally and append header+body atomically

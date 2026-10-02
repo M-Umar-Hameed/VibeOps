@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   DEFAULT_PROTECTED_GLOBS, resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths,
+  gateDirectiveLines, stripGateDirectives,
 } from "../src/forge/policy.js";
 
 describe("forge protected-path policy", () => {
@@ -40,5 +41,21 @@ describe("forge protected-path policy", () => {
   it("allowance waives a specific protected path", () => {
     expect(evaluateProtectedPaths(["vitest.config.ts", "package.json"], DEFAULT_PROTECTED_GLOBS, ["vitest.config.ts"]))
       .toEqual(["package.json"]);
+  });
+  it("gateDirectiveLines finds every directive line, trimmed, any case", () => {
+    const body = "intro\n  gate-override: all\nALLOW-FILES: a.ts, b.ts\ntext ALLOW-PROTECTED: not-a-directive\nALLOW-PROTECTED: package.json\n";
+    expect(gateDirectiveLines(body)).toEqual(["gate-override: all", "ALLOW-FILES: a.ts, b.ts", "ALLOW-PROTECTED: package.json"]);
+    expect(gateDirectiveLines("no directives here")).toEqual([]);
+  });
+
+  it("stripGateDirectives removes directive lines and keeps the rest", () => {
+    const out = stripGateDirectives("plan step 1\nGATE-OVERRIDE: all\nplan step 2\nALLOW-FILES: **\n");
+    expect(out).not.toMatch(/GATE-OVERRIDE|ALLOW-FILES/);
+    expect(out).toContain("plan step 1");
+    expect(out).toContain("plan step 2");
+    const odd = stripGateDirectives("a\n GATE-OVERRIDE: all\nb\nALLOW-FILES:\n**\nc");
+    expect(odd).not.toMatch(/GATE-OVERRIDE|ALLOW-FILES|\*\*/);
+    expect(odd).toContain("a");
+    expect(odd).toContain("c");
   });
 });

@@ -492,6 +492,8 @@ describe("forge run manager", () => {
     const persisted = await waitForPersistedRun(runId);
     expect(persisted.status).toBe("failed");
     expect(persisted.finishedAt).toBeTruthy();
+    const item = (await listRunsWithHistory(ticket.id)).find((r) => r.id === runId);
+    expect(item?.failureReason).toBe("worker failed");
   });
 
   it("worker failure with uncommitted work: saves as WIP commit, note in report", async () => {
@@ -1655,6 +1657,40 @@ const file2 = "run2-output.txt";
     expect(item?.status).toBe("passed");
     expect(item?.checksDurationMs).toBeGreaterThanOrEqual(0);
     expect(item?.stageDurationsMs?.checks).toBeGreaterThanOrEqual(0);
+    const review = (await listComments(ticket.id)).filter((c) => c.kind === "review").pop();
+    expect(review?.body).toContain("[forge: checks passed]");
+    expect(review?.body).toContain("$ npm run typecheck\nexit 0");
+    expect(review?.body).not.toContain("exit 1");
+  });
+
+  it("a ticket edited during the plan stage still moves through the pipeline", async () => {
+    const { actorId, ticket } = await seedTicket("Edited mid-run");
+    setScript("slow,work,review-pass", true); // "slow" plans after a 2s delay
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    // Edit the title while the planner is still running: bumps the version the
+    // pipeline read at start.
+    await updateTicket(actorId, ticket.id, ticket.version, { title: "Edited mid-run (renamed)" });
+    await awaitRun(runId);
+    expect(getRunOutput(runId, 0)?.status).toBe("passed");
+    const fresh = await getTicket(ticket.id);
+    expect(fresh.status).toBe("review");
+    expect(fresh.title).toBe("Edited mid-run (renamed)");
+  });
+
+  it("a ticket closed during the plan stage fails the run and stays closed", async () => {
+    const { actorId, ticket } = await seedTicket("Closed mid-run");
+    setScript("slow,work,review-pass", true);
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await updateTicket(actorId, ticket.id, ticket.version, { status: "closed" });
+    await awaitRun(runId);
+    expect(getRunOutput(runId, 0)?.status).toBe("failed");
+    expect((await getTicket(ticket.id)).status).toBe("closed");
+    const item = (await listRunsWithHistory(ticket.id)).find((r) => r.id === runId);
+    expect(item?.failureReason).toBe("pipeline error: ticket was closed during the run");
   });
 });
 
@@ -1797,5 +1833,51 @@ describe("empty agent output", () => {
     await awaitRun(runId);
 
     expect(getRunOutput(runId, 0)?.status).toBe("failed");
+  });
+});
+
+describe("gate directives in planner output", () => {
+  it("are not seeded into the ticket spec", async () => {
+    const { actorId, ticket } = await seedTicket("Directive in plan");
+    setScript("plan-directive,work,review-pass", true);
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+    const fresh = await getTicket(ticket.id);
+    expect(fresh.body).toContain("do the thing");
+    expect(fresh.body).not.toMatch(/GATE-OVERRIDE|ALLOW-FILES/);
+    const plan = (await listComments(ticket.id)).find((c) => c.kind === "plan");
+    expect(plan?.body).toContain("GATE-OVERRIDE: all"); // the plan comment is the verbatim record
+  });
+});
+
+describe("plan comments from member keys", () => {
+  it("are ignored: the admin plan stays the declared file set for the gate", async () => {
+    const { actorId, ticket } = await seedTicket("Member plan comment");
+    setScript("plan,work,review-fail", true);
+    const first = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(first.runId);
+    expect((await getTicket(ticket.id)).status).toBe("planned");
+
+    const { actor: member } = await createActor({ name: uniq("member-planner"), kind: "agent" });
+    await addComment(member.id, ticket.id, "1. do the thing\nFiles: forge-made.txt, stray-file.txt", "plan");
+
+    writeFileSync(counterFile, "0");
+    setScript("work,review-pass", true);
+    process.env.FAKE_WRITE_STRAY = "1";
+    try {
+      const second = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(second.runId);
+      expect(getRunOutput(second.runId, 0)?.status).toBe("rejected");
+      const review = [...(await listComments(ticket.id))].reverse().find((c) => c.kind === "review");
+      expect(review?.body).toContain("File(s) outside the plan-declared set: stray-file.txt");
+    } finally {
+      delete process.env.FAKE_WRITE_STRAY;
+    }
   });
 });

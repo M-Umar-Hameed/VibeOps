@@ -154,12 +154,16 @@ export async function runAgent(
       let pollTimer: NodeJS.Timeout | undefined;
       let tailPos = tailStart;
 
-      const timer = setTimeout(() => { void killTree(child); }, agent.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-
       const push = (s: string) => {
         if (output.length < OUTPUT_CAP) output += s;
         onData?.(s);
       };
+
+      const timeoutMs = agent.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+      const timer = setTimeout(() => {
+        push(`\n[forge: agent timed out after ${Math.round(timeoutMs / 1000)}s; killed]\n`);
+        void killTree(child);
+      }, timeoutMs);
 
       // Read only the bytes appended since tailPos. readSync at an explicit
       // position keeps no shared cursor; drainTail() also runs once at settle so a
@@ -214,7 +218,9 @@ export async function runAgent(
         resolve({ ok, output: output.slice(0, OUTPUT_CAP) });
       };
       child.on("close", (code) => finish(code === 0));
-      child.on("error", () => finish(false));
+      // A spawn failure (binary renamed or missing) used to settle with an empty
+      // output; the message is the only clue the run record will ever have.
+      child.on("error", (e) => { push(`\n[forge: agent could not be started: ${e.message}]\n`); finish(false); });
       // "close" waits for stdio EOF, which never comes if a descendant inherited
       // our stdout/stderr pipe and outlived the direct child (live incident: agy
       // exec's subprocess held the pipe, the run sat "running" past its timeout

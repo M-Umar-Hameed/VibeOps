@@ -5,7 +5,6 @@ type PipelineSettingsPaneProps = {
   agents: Agent[];
   skills: Skill[];
   doctorStatuses: Record<string, DoctorStatus>;
-  runsData: unknown;
   tickets: Ticket[];
   planAgent: string;
   setPlanAgent: (v: string) => void;
@@ -24,13 +23,13 @@ type PipelineSettingsPaneProps = {
   onRun: (force?: boolean) => void;
   onStop: () => void;
   onResume: () => void;
+  recovery?: { resumable: boolean; reason: string };
 };
 
 export function PipelineSettingsPane({
   agents,
   skills,
   doctorStatuses,
-  runsData,
   tickets,
   planAgent,
   setPlanAgent,
@@ -49,6 +48,7 @@ export function PipelineSettingsPane({
   onRun,
   onStop,
   onResume,
+  recovery,
 }: PipelineSettingsPaneProps) {
   const planAgents = agents.filter(a => a.roles.includes("plan"));
   const workAgents = agents.filter(a => a.roles.includes("work"));
@@ -68,9 +68,9 @@ export function PipelineSettingsPane({
     );
   }
 
-  const allRuns = Array.isArray(runsData) ? runsData : [];
-  const running = allRuns.filter((r: any) => r.status === "running");
-  const ticketTitle = (id: string) => tickets.find((t) => t.id === id)?.title ?? id;
+  // GET /tickets marks every work order with a live run; the runs query only
+  // covers the selected ticket, so it cannot show the others.
+  const running = tickets.filter((t) => t.activeRun);
 
   return (
     <div className="glass-card rounded-xl border border-white/10 p-6 flex flex-col gap-4">
@@ -143,8 +143,8 @@ export function PipelineSettingsPane({
             <span className="font-bold text-on-surface">{running.length} run{running.length > 1 ? "s" : ""} in flight</span>
           </div>
           <ul className="text-xs space-y-0.5">
-            {running.map((r: any) => (
-              <li key={r.id}>{ticketTitle(r.ticketId)} <span className="text-on-surface-variant/70">({r.stage})</span></li>
+            {running.map((t) => (
+              <li key={t.id}>{t.title} <span className="text-on-surface-variant/70">({t.activeRun!.stage})</span></li>
             ))}
           </ul>
           <p className="mt-2 text-[11px] text-on-surface-variant/70">Note: Concurrent runs multiply token spend and can hit provider rate limits.</p>
@@ -176,12 +176,14 @@ export function PipelineSettingsPane({
             Stop
           </button>
         )}
-        {interruptedRun && !activeRunId && (
+        {!activeRunId && runStatus !== "running" && (interruptedRun || recovery?.resumable) && (
           <div className="flex items-center gap-3">
-            <span className="text-amber-400 text-sm font-medium">Run interrupted (app restarted)</span>
+            <span className="text-amber-400 text-sm font-medium">{interruptedRun ? "Run interrupted (app restarted)" : "The last run can be resumed"}</span>
             <button
+              type="button"
               onClick={onResume}
               disabled={isSubmitting}
+              title={recovery?.reason}
               className="px-4 py-2 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-400 text-sm font-bold uppercase tracking-widest transition-all disabled:opacity-50 cursor-pointer"
             >
               Resume

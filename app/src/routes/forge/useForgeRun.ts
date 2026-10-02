@@ -31,7 +31,7 @@ export function useForgeRun(
   const lastDerivedRunTicketRef = useRef<string | null>(null);
 
   const resetForTicket = () => {
-    setSandboxActivity(null); setOutputUnavailable(false); setRunStartedAt(null); setShowDetails(false);
+    setSandboxActivity(null); setOutputUnavailable(false); setRunStartedAt(null); setShowDetails(false); setExtraPrompt("");
   };
 
   const initRunStart = () => {
@@ -198,6 +198,7 @@ export function useForgeRun(
     sandboxActivity, setSandboxActivity,
     extraPrompt, setExtraPrompt,
     runActiveForTicket: runStatus === "running" || ticketRunActive,
+    latestRunKey,
     handleRun, handleStop, handleResume, handleRework, resetForTicket,
   };
 }

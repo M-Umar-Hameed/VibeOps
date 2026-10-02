@@ -38,7 +38,7 @@ export function elapsedLabel(startMs: number, nowMs: number): string {
 export function failureLine(status: string, error?: string): string | null {
   switch (status) {
     case "failed":
-      return "A stage failed before finishing. The work order was returned to planned - open details, then re-run the pipeline.";
+      return "A stage failed before finishing. The work order was returned to planned - Resume the run if it is offered, otherwise re-run the pipeline.";
     case "rejected":
       return "Review found blocking issues. The work order went back to planned for another pass - see the diff and details.";
     case "stopped":

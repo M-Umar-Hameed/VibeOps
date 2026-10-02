@@ -17,7 +17,7 @@ import { runAgent } from "../relay/dispatch.js";
 import { redactSecrets } from "./redact.js";
 import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
-import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths } from "./policy.js";
+import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, stripGateDirectives } from "./policy.js";
 import { pickAgents, escalate, pairsForRole, type Pick, type RoutingStrategy } from "./router.js";
 import { updateTicket } from "../services/tickets.js";
 import { addComment, listComments } from "../services/comments.js";
@@ -148,6 +148,24 @@ async function writeSpecFromPlan(actorId: string, ticketId: string, body: string
   } catch (e) {
     if (!(e instanceof StaleVersionError)) throw e;
     return write(); // retry once against a fresh version
+  }
+}
+
+// Status writes land minutes after the ticket was last read (a stage ran in
+// between), and any edit meanwhile (spec edit, MCP update, sync) made that
+// version stale. The pipeline owns the status during a run, so write against
+// the fresh version and retry once, as writeSpecFromPlan does.
+async function setStatus(actorId: string, ticketId: string, status: Ticket["status"]): Promise<Ticket> {
+  const write = async () => {
+    const fresh = await getTicket(ticketId);
+    if (fresh.status === "closed") throw new ConflictError("ticket was closed during the run");
+    return updateTicket(actorId, ticketId, fresh.version, { status });
+  };
+  try {
+    return await write();
+  } catch (e) {
+    if (!(e instanceof StaleVersionError)) throw e;
+    return write();
   }
 }
 
@@ -509,7 +527,7 @@ export async function startPipeline(
     append(run, `\nforge: pipeline error: ${(e as Error).message}\n`);
     // Uphold the never-stuck-in_progress invariant even for unexpected throws
     // (forgeCommit/addComment failures land here, after the claim).
-    await bounce(run, actorId, "pipeline error", (e as Error).message);
+    await bounce(run, actorId, `pipeline error: ${(e as Error).message}`, "");
     settle(run, "failed");
   }).then(() => run.persisted).catch(() => {});
   return { runId: run.id, doctorWarnings };
@@ -523,6 +541,11 @@ async function pipeline(
   let extra = extraPrompt ? `\n\nOperator instructions:\n${extraPrompt}` : "";
   const onData = (c: string) => append(run, c);
   let ticket = await getTicket(run.ticketId);
+  // Only an admin-authored plan is the plan: a member key can post kind "plan"
+  // too, and that text would become the file-set gate's declared set and reach
+  // the work and review prompts unfenced. Same trust rule as lastVerdict().
+  const admins = new Set((await listActors()).filter((a) => a.role === "admin").map((a) => a.id));
+  const isAdminPlan = (c: { kind: string; authorId: string }) => c.kind === "plan" && admins.has(c.authorId);
 
   // Skills catalogue for this run's workdir. listSkills is internally defensive
   // (missing dirs -> []), but a read failure must never fail the run: warn + attach
@@ -547,7 +570,7 @@ async function pipeline(
   if (resumeStage === "review") {
     run.stage = "review";
     const comments = await listComments(ticket.id);
-    const plan = [...comments].reverse().find((c) => c.kind === "plan")?.body ?? "";
+    const plan = [...comments].reverse().find(isAdminPlan)?.body ?? "";
     const report = [...comments].reverse().find((c) => c.kind === "report")?.body ?? "";
     // ponytail: resume-to-review reuses the stale plan without passing
     // change-request comments as amendments (see reviewStage caller below).
@@ -561,7 +584,7 @@ async function pipeline(
   }
 
   const allComments = await listComments(ticket.id);
-  const planCommentIndex = allComments.map(c => c.kind).lastIndexOf("plan");
+  const planCommentIndex = allComments.map(isAdminPlan).lastIndexOf(true);
   const recentComments = planCommentIndex === -1 ? allComments : allComments.slice(planCommentIndex + 1);
   // Include ALL human comments (kind "comment") written since the last plan;
   // agent-authored kinds (plan/report/review/verification/diff-summary) are not
@@ -612,14 +635,14 @@ async function pipeline(
     if (!res.output.trim()) { await bounce(run, actorId, "planner returned an empty plan", ""); return settle(run, "failed"); }
     // Comments are the DURABLE record — redact them too, not just the console.
     await addComment(actorId, ticket.id, redactSecrets(res.output), "plan");
-    ticket = await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });
+    ticket = await setStatus(actorId, ticket.id, "planned");
     plan = res.output;
     // Title-only work orders leave the Spec panel blank; seed it from the plan.
     // Best-effort: a spec-write failure must NOT fail the run.
     if (!ticket.body || !ticket.body.trim()) {
       try {
         const before = ticket.version;
-        ticket = await writeSpecFromPlan(actorId, ticket.id, redactSecrets(res.output));
+        ticket = await writeSpecFromPlan(actorId, ticket.id, stripGateDirectives(redactSecrets(res.output)));
         if (ticket.version !== before) append(run, `\n=== FORGE spec populated from plan ===\n`);
       } catch (e) {
         console.warn(`forge: spec write failed for ${ticket.id}:`, e);
@@ -635,7 +658,7 @@ async function pipeline(
   // work — claim, then run inside the sandbox
   enterStage(run, "work");
   append(run, `\n=== FORGE work (${run.agents.work}) ===\n`);
-  ticket = await updateTicket(actorId, ticket.id, ticket.version, { status: "in_progress" });
+  ticket = await setStatus(actorId, ticket.id, "in_progress");
   const frontendDeps = (await getSetting("forge.frontendDeps")) === "true";
   const sandbox = await ensureSandbox(workdir, ticket.id, frontendDeps);
   const knowledge = await getKnowledgeSafe(ticket.title, ticket.projectId);
@@ -732,7 +755,7 @@ async function pipeline(
   await forgeCommit(ticket.id, ticket.title);
   await addComment(actorId, ticket.id, redactSecrets(workRes.output), "report");
   void captureMemory({ actorId, text: redactSecrets(reportTail(workRes.output)), projectId: ticket.projectId ?? undefined });
-  ticket = await updateTicket(actorId, ticket.id, ticket.version, { status: "review" });
+  ticket = await setStatus(actorId, ticket.id, "review");
 
   // review — against the sandbox branch diff. On a rework the plan stage was
   // skipped (stale plan), so change-request comments the supervisor added since
@@ -896,21 +919,27 @@ async function reviewStage(
   for (const res of reviewResults) applyVerification(res, run.agents.review, run, config);
   const verdict = mergeReviewVerdicts(chunks, reviewResults.map((r) => r.output));
 
-  // Gate block or a failing check forces FAIL regardless of the model's verdict
+  // Gate block or a failing check forces FAIL regardless of the model's verdict.
+  // The comment is the durable record (run output dies with the process), so it
+  // carries the check results on every outcome: the full tail on a failure, one
+  // command+exit line per check when they passed.
   const pass = verdict.pass && !gateBlocked && !checksFailed;
-  const checksBlockNote = (!gateBlocked && checksFailed)
+  const checksBlockNote = checksFailed
     ? `\n\n[forge: check(s) failed — verdict forced to FAIL]\n${checksText}\nVERDICT: FAIL`
     : "";
+  const checksPassedNote = (checkCmds.length && !checksFailed)
+    ? `\n\n[forge: checks passed]\n${checkResults.map((r) => `$ ${r.command}\nexit ${r.code}`).join("\n")}`
+    : "";
   const reviewBody = gateBlocked
-    ? `${verdict.raw}\n\n[forge: mechanical gate BLOCK — verdict forced to FAIL]\n${gate.report}\nVERDICT: FAIL`
-    : `${verdict.raw}${checksBlockNote}`;
+    ? `${verdict.raw}${checksBlockNote}${checksPassedNote}\n\n[forge: mechanical gate BLOCK — verdict forced to FAIL]\n${gate.report}\nVERDICT: FAIL`
+    : `${verdict.raw}${checksBlockNote}${checksPassedNote}`;
   await addComment(actorId, ticket.id, redactSecrets(reviewBody), "review");
 
   if (!pass) {
     // FAIL: back to planned; sandbox kept for the rework pass. The run settles
     // "rejected" (not "passed") so the quality signal reflects the verdict, not
     // pipeline completion.
-    await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });
+    await setStatus(actorId, ticket.id, "planned");
     return settle(run, "rejected");
   }
   // PASS: ticket STAYS in review — promotion is a human action.
@@ -1093,7 +1122,7 @@ async function deriveStageDurations(
   return out;
 }
 
-export type RunListItem = RunSummary & { persisted?: boolean; modelVerified?: boolean | "unknown"; rejectionReason?: string; stageDurationsMs?: StageDurationsMs };
+export type RunListItem = RunSummary & { persisted?: boolean; modelVerified?: boolean | "unknown"; rejectionReason?: string; failureReason?: string; stageDurationsMs?: StageDurationsMs };
 
 const HISTORY_LIMIT = 20;
 const TICKET_HISTORY_LIMIT = 200;
@@ -1133,16 +1162,23 @@ export async function listRunsWithHistory(ticketId?: string): Promise<RunListIte
         item.ticketId, new Date(item.startedAt), new Date(item.finishedAt), item.checksDurationMs,
       );
     }
-    if (item.status === "rejected") {
+    if (item.status === "rejected" || item.status === "failed" || item.status === "stopped") {
       const comments = await listComments(item.ticketId);
       const from = new Date(item.startedAt).getTime();
       const to = item.finishedAt ? new Date(item.finishedAt).getTime() : Date.now();
-      const review = [...comments].reverse().find(
-        (c) => c.kind === "review" &&
-          new Date(c.createdAt).getTime() >= from &&
-          new Date(c.createdAt).getTime() <= to,
-      );
-      if (review) item.rejectionReason = parseReason(review.body);
+      const inWindow = (c: { createdAt: Date }) => {
+        const at = new Date(c.createdAt).getTime();
+        return at >= from && at <= to;
+      };
+      if (item.status === "rejected") {
+        const review = [...comments].reverse().find((c) => c.kind === "review" && inWindow(c));
+        if (review) item.rejectionReason = parseReason(review.body.split("\n\n[forge: ")[0]);
+      } else {
+        // bounce() records why a run died as a "forge: <why>" report comment;
+        // its first line is the reason the run card shows.
+        const report = [...comments].reverse().find((c) => c.kind === "report" && c.body.startsWith("forge: ") && inWindow(c));
+        if (report) item.failureReason = report.body.split(/\r?\n/)[0].slice("forge: ".length).trim();
+      }
     }
   });
   await Promise.all(enrichPromises);

@@ -30,7 +30,7 @@ test("opens one EventSource with the key as a query param", async () => {
   expect(FakeES.last?.url).toBe("http://x/events?access_token=K%20K");
 });
 
-test("run.settled frame invalidates the forge runs and tickets keys", async () => {
+test("run.settled frame invalidates the forge runs, tickets and sandbox keys", async () => {
   setEventSourceImpl(FakeES as any);
   const qc = new QueryClient();
   const spy = vi.spyOn(qc, "invalidateQueries");
@@ -40,6 +40,7 @@ test("run.settled frame invalidates the forge runs and tickets keys", async () =
   const keys = spy.mock.calls.map((c) => JSON.stringify((c[0] as any).queryKey));
   expect(keys).toContain(JSON.stringify(["forge", "runs"]));
   expect(keys).toContain(JSON.stringify(["forge", "tickets"]));
+  expect(keys).toContain(JSON.stringify(["forge", "sandbox"]));
   expect(keys).toContain(JSON.stringify(["tickets"]));
 });
 

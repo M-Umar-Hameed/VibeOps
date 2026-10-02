@@ -102,6 +102,15 @@ export function ForgeScreen() {
     if (selectedTicket) localStorage.setItem(SELECTED_TICKET_KEY, selectedTicket.id);
   }, [selectedTicket?.id]);
 
+  // The list is the live source and the selection is one row of it. When the
+  // pipeline or an edit bumps that row's version, swap the fresh row in so the
+  // status pill, the spec and version-guarded writes stay current.
+  useEffect(() => {
+    if (!selectedTicket) return;
+    const fresh = tickets.find((t) => t.id === selectedTicket.id) ?? closedTickets.find((t) => t.id === selectedTicket.id);
+    if (fresh && fresh.version > selectedTicket.version) setSelectedTicket(fresh);
+  }, [tickets, closedTickets, selectedTicket]);
+
   useEffect(() => {
     if (!ticketsQ.isSuccess || !closedQ.isSuccess) return;
     const inEither = (tid: string) => tickets.some(t => t.id === tid) || closedTickets.some(t => t.id === tid);
@@ -147,7 +156,8 @@ export function ForgeScreen() {
             />
 
             <PipelineSettingsPane
-              agents={agents} skills={skills} doctorStatuses={doctorStatuses} runsData={runsQ.data} tickets={tickets}
+              agents={agents} skills={skills} doctorStatuses={doctorStatuses} tickets={tickets}
+              recovery={selectedTicket ? recoveryByTicket.get(selectedTicket.id) : undefined}
               planAgent={planAgent} setPlanAgent={setPlanAgent} workAgent={workAgent} setWorkAgent={setWorkAgent}
               reviewAgent={reviewAgent} setReviewAgent={setReviewAgent} extraPrompt={run.extraPrompt}
               onExtraPromptChange={run.setExtraPrompt} activeRunId={run.activeRunId} isSubmitting={run.isSubmitting}
@@ -160,15 +170,17 @@ export function ForgeScreen() {
               runStatus={run.runStatus} runError={run.runError} outputUnavailable={run.outputUnavailable}
               showDetails={run.showDetails} setShowDetails={run.setShowDetails} runStartedAt={run.runStartedAt}
               nowMs={run.nowMs} sandboxActivity={run.sandboxActivity} rejectionReason={ticketRuns[0]?.rejectionReason}
+              failureReason={ticketRuns[0]?.failureReason}
               onOpenActivityFile={handleOpenActivityFile}
             />
 
-            <SandboxPane
+            <SandboxPane key={selectedTicket.id}
               selectedTicket={selectedTicket} sandbox={sandboxQ.data ?? null}
               sandboxQError={(sandboxQ.error as any)?.message ?? ""} runStatus={run.runStatus}
               runActiveForTicket={run.runActiveForTicket} isSubmitting={run.isSubmitting} ticketRuns={ticketRuns}
               onRework={run.handleRework} selectedActivityFile={selectedActivityFile}
               onActivityFileConsumed={handleActivityFileConsumed}
+              latestRunKey={run.latestRunKey}
             />
 
             <DiscussionPane selectedTicket={selectedTicket} actors={actors} onTicketUpdated={setSelectedTicket} />

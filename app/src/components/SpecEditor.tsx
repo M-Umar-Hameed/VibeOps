@@ -12,11 +12,12 @@ export function SpecEditor({ ticket, onSave }: { ticket: Ticket; onSave?: (t: Ti
   const [conflict, setConflict] = useState(false);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
+  const [baseVersion, setBaseVersion] = useState(ticket.version);
 
   const isReadOnly = ticket.status === "in_progress" || ticket.status === "review";
 
   const save = useMutation({
-    mutationFn: () => tickets.update(ticket.id, ticket.version, { body }),
+    mutationFn: () => tickets.update(ticket.id, baseVersion, { body }),
     onSuccess: (updatedTicket) => {
       setConflict(false);
       setError("");
@@ -67,7 +68,7 @@ export function SpecEditor({ ticket, onSave }: { ticket: Ticket; onSave?: (t: Ti
           <h3 className="font-headline-md text-headline-md">Spec</h3>
         </div>
         {!isReadOnly ? (
-          <button onClick={() => { setEditing(true); setBody(ticket.body || ""); }} className="text-xs text-primary hover:underline uppercase font-bold tracking-wider cursor-pointer">Edit Spec</button>
+          <button onClick={() => { setEditing(true); setBody(ticket.body || ""); setBaseVersion(ticket.version); }} className="text-xs text-primary hover:underline uppercase font-bold tracking-wider cursor-pointer">Edit Spec</button>
         ) : (
           <span className="text-xs text-on-surface-variant italic" title="Read-only because a run has already consumed the spec">Read-only (in pipeline)</span>
         )}

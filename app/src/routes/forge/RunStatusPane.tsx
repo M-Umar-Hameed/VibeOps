@@ -17,6 +17,7 @@ type RunStatusPaneProps = {
   nowMs: number;
   sandboxActivity: SandboxActivityData | null;
   rejectionReason?: string;
+  failureReason?: string;
   onOpenActivityFile: (path: string) => void;
 };
 
@@ -34,6 +35,7 @@ export const RunStatusPane = memo(function RunStatusPane({
   nowMs,
   sandboxActivity,
   rejectionReason,
+  failureReason,
   onOpenActivityFile,
 }: RunStatusPaneProps) {
   const showRunStatus = !!(activeRunId || runOutput || outputUnavailable);
@@ -97,6 +99,11 @@ export const RunStatusPane = memo(function RunStatusPane({
             {runStatus === "rejected" && rejectionReason && (
               <div className="text-sm text-on-surface font-medium" data-testid="run-reason">
                 <span className="font-bold text-error">Rejected: </span>{rejectionReason}
+              </div>
+            )}
+            {runStatus === "failed" && failureReason && (
+              <div className="text-sm text-on-surface font-medium" data-testid="run-reason">
+                <span className="font-bold text-error">Failed: </span>{failureReason}
               </div>
             )}
             {fail && (

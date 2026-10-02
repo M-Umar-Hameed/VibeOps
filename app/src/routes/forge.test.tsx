@@ -841,8 +841,8 @@ test("protected-path violation shows the waive action, hides Approve, and posts 
 test("in-flight runs strip shows count, ticket titles, and cost note", async () => {
   apiFetch.mockImplementation(async (path) => {
     if (path === "/tickets") return [
-      { id: "t1", title: "Task Alpha", status: "in_progress" },
-      { id: "t2", title: "Task Beta", status: "in_progress" },
+      { id: "t1", title: "Task Alpha", status: "in_progress", activeRun: { stage: "work" } },
+      { id: "t2", title: "Task Beta", status: "in_progress", activeRun: { stage: "review" } },
       { id: "t3", title: "Selected Ticket", status: "open" },
     ];
     if (path === "/forge/agents") return [
@@ -851,10 +851,7 @@ test("in-flight runs strip shows count, ticket titles, and cost note", async () 
       { name: "ReviewGPT", roles: ["review"] },
     ];
     if (path === "/forge/skills") return [];
-    if (path.split("?")[0] === "/forge/runs") return [
-      { id: "run1", ticketId: "t1", status: "running", stage: "work", startedAt: "2026-07-18T00:00:00Z" },
-      { id: "run2", ticketId: "t2", status: "running", stage: "review", startedAt: "2026-07-18T00:01:00Z" },
-    ];
+    if (path.split("?")[0] === "/forge/runs") return [];
     if (path.includes("/sandbox")) return { exists: false };
     return {};
   });

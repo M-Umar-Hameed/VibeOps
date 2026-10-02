@@ -5,6 +5,7 @@ import { createTicket, updateTicket } from "../services/tickets.js";
 import { addComment } from "../services/comments.js";
 import { getTicket } from "../services/history.js";
 import { StaleVersionError } from "../services/errors.js";
+import { stripGateDirectives } from "../forge/policy.js";
 import { resolveSyncActor } from "./actor.js";
 import type { SourceConnector } from "./connector.js";
 
@@ -41,7 +42,7 @@ export async function runSync(connector: SourceConnector, opts: { projectId: str
       let ticketId: string;
       if (!link) {
         const t = await db.transaction(async (tx) => {
-          const created = await createTicket(actor.id, { projectId: opts.projectId, title: ext.title, body: ext.body, status: ext.status }, tx);
+          const created = await createTicket(actor.id, { projectId: opts.projectId, title: ext.title, body: stripGateDirectives(ext.body), status: ext.status }, tx);
           await tx.insert(syncLinks).values({
             source: connector.source, externalId: ext.externalId, ticketId: created.id, externalUpdatedAt: new Date(ext.updatedAt),
           });
@@ -54,7 +55,7 @@ export async function runSync(connector: SourceConnector, opts: { projectId: str
         if (link.externalUpdatedAt && new Date(ext.updatedAt) <= link.externalUpdatedAt) {
           res.skipped++;
         } else {
-          await updateOnceWithRetry(actor.id, ticketId, { title: ext.title, body: ext.body, status: ext.status });
+          await updateOnceWithRetry(actor.id, ticketId, { title: ext.title, body: stripGateDirectives(ext.body), status: ext.status });
           await db.update(syncLinks).set({ externalUpdatedAt: new Date(ext.updatedAt) }).where(eq(syncLinks.id, link.id));
           res.updated++;
         }

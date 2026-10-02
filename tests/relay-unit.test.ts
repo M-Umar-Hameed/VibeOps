@@ -480,6 +480,7 @@ test("runAgent leaves no prompt file behind on failure and timeout paths (net-ze
     "unused", process.cwd(),
   );
   expect(timedOut.ok).toBe(false);
+  expect(timedOut.output).toContain("[forge: agent timed out after 1s; killed]");
 
   expect(countTxt()).toBe(before);
 }, 10_000);
@@ -795,3 +796,41 @@ test("composeReviewPrompt with skills includes the bodies; absent leaves it unch
   expect(base).not.toContain("Skills to follow");
 });
 
+test("composePlanPrompt asks for the full file list the gate will enforce", () => {
+  const prompt = composePlanPrompt({ ticket: { title: "Fix the widget" }, knowledge: [] });
+  expect(prompt).toContain("Name every file the worker will create or modify, including test files");
+});
+
+test("composeWorkPrompt names the gate rules and asks for targeted tests only", () => {
+  const prompt = composeWorkPrompt({ ticket: { title: "Fix the widget" }, plan: "do it", knowledge: [], workdir: "/w" });
+  expect(prompt).toContain("Change only the files the plan names.");
+  expect(prompt).toContain("unless the ticket body allows them with an ALLOW-PROTECTED line");
+  expect(prompt).toContain("Run only the tests that cover the files you changed, one test file at a time; never run the full suite.");
+});
+
+test("composeReviewPrompt fences the ticket body unless the body is the plan itself", () => {
+  const body = "Acceptance criteria:\n- rejects empty input";
+  const withBody = composeReviewPrompt({ ticket: { title: "Fix the widget", body }, plan: "1. Replace the gear", report: "REPORT: done", diff: "diff --git a/x b/x" });
+  expect(withBody).toContain(fenceUntrusted("ticket-body", body));
+  expect(withBody.indexOf("ticket-body")).toBeLessThan(withBody.indexOf("Plan:"));
+
+  const plan = "1. Replace the gear\n2. Test it";
+  const seeded = composeReviewPrompt({ ticket: { title: "Fix the widget", body: `${plan}\n` }, plan, report: "REPORT: done", diff: "d" });
+  expect(seeded).not.toContain('<UNTRUSTED label="ticket-body">');
+
+  const noBody = composeReviewPrompt({ ticket: { title: "Fix the widget", body: null }, plan, report: "REPORT: done", diff: "d" });
+  expect(noBody).not.toContain('<UNTRUSTED label="ticket-body">');
+});
+
+test("composeReviewPrompt describes the read-only branch checkout, not a foreign cwd", () => {
+  const prompt = composeReviewPrompt({ ticket: { title: "t" }, plan: "p", report: "r", diff: "d" });
+  expect(prompt).toContain("read-only checkout of the worker's branch with the diff already applied");
+  expect(prompt).not.toContain("NOT the worker's");
+  expect(prompt).toContain("Do not raise one from counting braces or hunks");
+});
+
+test("runAgent reports a binary that cannot be started in its output", async () => {
+  const res = await runAgent({ cmd: ["vibeops-no-such-binary-xyz", "{prompt}"], roles: [] }, "hi", process.cwd());
+  expect(res.ok).toBe(false);
+  expect(res.output).toContain("[forge: agent could not be started:");
+});

@@ -13,6 +13,7 @@ Prompt injection via untrusted text (ticket bodies, synced comments, RAG knowled
 - Arg-vector `spawn` only, no shell interpolation (`src/relay/invoke.ts`, `src/forge/sandbox.ts`, `src/services/projects.ts`);
 - Fail-closed, line-anchored, last-match `VERDICT`/`VERIFICATION` parsing (`src/relay/prompts.ts`);
 - Admin-authored-only gate on both the promote path (`src/api/forge-routes.ts` `lastVerdict()`) and the close-with-verification path (`src/services/tickets.ts`);
+- Gate directives in a ticket body (`GATE-OVERRIDE`, `ALLOW-PROTECTED`, `ALLOW-FILES`) can only be added by an admin actor; the service layer refuses them from members and MCP agents, inbound sync strips them from external issue bodies, and the forge strips them from planner and council output before it becomes a spec (`src/services/tickets.ts`, `src/forge/policy.ts`).
 - Untrusted-content fencing with a standing data-not-instructions clause on every composed prompt (`src/relay/prompts.ts`, `src/council/personas.ts`);
 - Reviewer-specific injection-detection instruction;
 - Marketplace path containment (resolve+prefix check);

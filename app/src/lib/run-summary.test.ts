@@ -31,6 +31,7 @@ test("elapsedLabel formats seconds and minutes, clamps negatives", () => {
 
 test("failureLine is plain-language for terminal failures, null otherwise", () => {
   expect(failureLine("failed")).toMatch(/returned to planned/);
+  expect(failureLine("failed")).toMatch(/Resume/);
   expect(failureLine("rejected")).toMatch(/blocking issues/);
   expect(failureLine("stopped")).toMatch(/Run stopped/);
   expect(failureLine("error", "token cap exceeded")).toBe("token cap exceeded");

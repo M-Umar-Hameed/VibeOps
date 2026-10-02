@@ -63,6 +63,20 @@ export function parseGateOverrides(body: string): Set<string> {
   return out;
 }
 
+// Gate directives are human controls. They live in the ticket body, which
+// members, MCP agents and inbound sync can write too, so the service layer only
+// lets an admin add one (src/services/tickets.ts) and the forge strips them from
+// model output before it becomes a spec.
+const DIRECTIVE_RE = /^\s*(GATE-OVERRIDE|ALLOW-PROTECTED|ALLOW-FILES):\s*.*$/gim;
+
+export function gateDirectiveLines(text: string): string[] {
+  return [...text.matchAll(DIRECTIVE_RE)].map((m) => m[0].trim());
+}
+
+export function stripGateDirectives(text: string): string {
+  return text.replace(DIRECTIVE_RE, "");
+}
+
 // Minimatch-style, full-path anchored. * and ? do not cross "/"; ** does.
 function globToRegExp(glob: string): RegExp {
   let re = "";

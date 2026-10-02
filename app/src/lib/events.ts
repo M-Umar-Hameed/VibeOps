@@ -6,10 +6,11 @@ import { getSettings } from "../settings.js";
 export type EventType = "run.stage" | "run.settled" | "ticket.changed";
 
 // One mapping table: event type -> query keys to invalidate. run.settled also
-// refreshes recovery so its poller can retire while the stream is connected.
+// refreshes the sandbox verdict (the 1s output poll can miss the terminal
+// status) and recovery, so its poller can retire while the stream is connected.
 export const INVALIDATIONS: Record<EventType, QueryKey[]> = {
   "run.stage": [["forge", "runs"], ["forge", "tickets"]],
-  "run.settled": [["forge", "runs"], ["forge", "tickets"], ["forge", "recovery"], ["tickets"]],
+  "run.settled": [["forge", "runs"], ["forge", "tickets"], ["forge", "sandbox"], ["forge", "recovery"], ["tickets"]],
   "ticket.changed": [["tickets"], ["forge", "tickets"]],
 };
 

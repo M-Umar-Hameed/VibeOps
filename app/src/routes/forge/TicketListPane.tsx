@@ -125,6 +125,9 @@ export const TicketListPane = memo(function TicketListPane({
                   className={`p-3 rounded border transition-colors cursor-pointer ${selectedTicketId === t.id ? 'bg-primary-fixed-dim/10 border-primary-fixed-dim text-primary' : 'bg-surface-container-lowest border-white/5 text-on-surface hover:border-white/20'}`}
                 >
                   <div className="text-sm font-medium truncate">{t.title}</div>
+                  {t.activeRun && (
+                    <div className="mt-2 text-[10px] font-code-label bg-secondary/20 text-secondary px-2 py-1 rounded inline-block uppercase">{t.activeRun.stage} running</div>
+                  )}
                   {status === "review" && t.sandbox?.lastVerdict === "pass" && (
                     <div className="mt-2 text-[10px] font-code-label bg-green-500/20 text-green-400 px-2 py-1 rounded inline-block">PASS - awaiting promote</div>
                   )}

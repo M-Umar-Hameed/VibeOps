@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { eq } from "drizzle-orm";
 import {
   startPipeline, stopRun, awaitRun, getRunOutput,
-  sweepStalledRuns, logSizeReader, resolveStallWindowMs,
+  sweepStalledRuns, logSizeReader, resolveStallWindowMs, listRunsWithHistory,
 } from "../src/forge/runs.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
@@ -107,6 +107,8 @@ describe("forge stall detection", () => {
       .find((c) => c.kind === "report" && c.body.includes("stalled: no output"));
     expect(report).toBeTruthy();
     expect(report!.body).toContain("work stage");
+    const item = (await listRunsWithHistory(ticket.id)).find((r) => r.id === runId);
+    expect(item?.failureReason).toMatch(/^stalled: no output for \d+m in work stage/);
   }, 20_000);
 
   it("does NOT kill a run whose log is still growing, even far past the window", async () => {

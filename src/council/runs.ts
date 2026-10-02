@@ -9,6 +9,7 @@ import { getSetting } from "../services/settings.js";
 import { redactSecrets } from "../forge/redact.js";
 import { ConflictError, NotFoundError } from "../services/errors.js";
 import { createTicket } from "../services/tickets.js";
+import { stripGateDirectives } from "../forge/policy.js";
 import { loadCouncilSessions, saveCouncilSessions } from "./store.js";
 import { buildRepoBriefing, resolveContextBudget } from "./briefing.js";
 import { estimateTokens } from "../services/usage.js";
@@ -280,7 +281,7 @@ export async function createTicketFromCouncil(
 
   const formatPersona = (text?: string) => text ? text.split("\n")[0].trim().substring(0, 100) : "N/A";
   const body = `${spec}\n\n---\nCouncil verdict: ${rating}/10 ${decision} (round ${session.round})\n- Believer: ${formatPersona(session.believer)}\n- Investor: ${formatPersona(session.investor)}\n- Skeptic: ${formatPersona(session.skeptic)}`;  
-  const ticket = await createTicket(actorId, { projectId, title, body, status: "open" });
+  const ticket = await createTicket(actorId, { projectId, title, body: stripGateDirectives(body), status: "open" });
   session.status = "consumed";
   session.finishedAt = new Date().toISOString();
   persist();

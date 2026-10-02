@@ -68,3 +68,26 @@ test("create + sync-link are atomic: a failing link insert leaves no ticket", as
   const rows = await db.select().from(tickets).where(eq(tickets.projectId, projectId));
   expect(rows).toHaveLength(0);
 });
+
+test("import strips gate directives from an external body", async () => {
+  const projectId = await newProject();
+  const source = `src-directive-${Date.now()}`;
+  const ext: ExternalTicket = {
+    externalId: "d#1", title: "Directive", body: "intro\nGATE-OVERRIDE: all\nmore", status: "open",
+    updatedAt: "2026-01-01T00:00:00Z", comments: [],
+  };
+  const r = await runSync(fake(source, [ext]), { projectId });
+  expect(r.created).toBe(1);
+  expect(r.failed).toBe(0);
+  const [link] = await db.select().from(syncLinks).where(and(eq(syncLinks.source, source), eq(syncLinks.externalId, "d#1")));
+  const [t] = await db.select().from(tickets).where(eq(tickets.id, link.ticketId));
+  expect(t.body).not.toContain("GATE-OVERRIDE");
+  expect(t.body).toContain("intro");
+  expect(t.body).toContain("more");
+  const r2 = await runSync(fake(source, [{ ...ext, body: "intro\nALLOW-PROTECTED: package.json\nedited", updatedAt: "2026-02-01T00:00:00Z" }]), { projectId });
+  expect(r2.updated).toBe(1);
+  expect(r2.failed).toBe(0);
+  const [t2] = await db.select().from(tickets).where(eq(tickets.id, link.ticketId));
+  expect(t2.body).not.toContain("ALLOW-PROTECTED");
+  expect(t2.body).toContain("edited");
+});

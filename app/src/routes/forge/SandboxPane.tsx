@@ -19,6 +19,7 @@ type SandboxPaneProps = {
   onRework: () => void;
   selectedActivityFile: string | null;
   onActivityFileConsumed: () => void;
+  latestRunKey: string;
 };
 
 export function SandboxPane({
@@ -32,6 +33,7 @@ export function SandboxPane({
   onRework,
   selectedActivityFile,
   onActivityFileConsumed,
+  latestRunKey,
 }: SandboxPaneProps) {
   const queryClient = useQueryClient();
   const [diff, setDiff] = useState<string | null>(null);
@@ -39,6 +41,9 @@ export function SandboxPane({
   const [sandboxError, setSandboxError] = useState("");
   const [viewDiff, setViewDiff] = useState(false);
   const [confirmApprove, setConfirmApprove] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [promoting, setPromoting] = useState(false);
+  const [promoted, setPromoted] = useState(false);
 
   useEffect(() => {
     if (sandbox && !sandbox.exists) {
@@ -49,6 +54,11 @@ export function SandboxPane({
   useEffect(() => {
     setSandboxError(""); setViewDiff(false); setDiff(null); setDiffParsed([]); setConfirmApprove(false);
   }, [selectedTicket.id]);
+
+  // A new run, or the current one settling, changes what the branch holds; a
+  // diff fetched before that is another run's code. Drop it so View diff
+  // refetches (viewDiff stays as it was).
+  useEffect(() => { setDiff(null); setDiffParsed([]); }, [latestRunKey]);
 
   useEffect(() => {
     if (selectedActivityFile) {
@@ -74,12 +84,20 @@ export function SandboxPane({
 
   const handlePromote = async () => {
     if (!selectedTicket) return;
+    setPromoting(true);
+    setSandboxError("");
     try {
       await api.post(`/forge/tickets/${selectedTicket.id}/promote`);
+      // Closed list first: the ticket leaves the open list on the next refetch,
+      // and the selection is only kept if some list still carries it.
+      await queryClient.invalidateQueries({ queryKey: ["forge", "closed"] });
       await queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] });
       await queryClient.invalidateQueries({ queryKey: ["forge", "sandbox", selectedTicket.id] });
+      setPromoted(true);
     } catch (e: any) {
       setSandboxError(e.message || "Failed to promote");
+    } finally {
+      setPromoting(false);
     }
   };
 
@@ -97,6 +115,8 @@ export function SandboxPane({
 
   const handleDiscard = async () => {
     if (!selectedTicket) return;
+    if (!confirmDiscard) { setConfirmDiscard(true); return; }
+    setConfirmDiscard(false);
     try {
       await api.post(`/forge/tickets/${selectedTicket.id}/discard`);
       await queryClient.invalidateQueries({ queryKey: ["forge", "tickets"] });
@@ -135,6 +155,9 @@ export function SandboxPane({
     <div className="glass-card rounded-xl border border-white/10 p-6 flex flex-col gap-4">
       <h3 className="font-headline-sm text-on-surface font-bold border-b border-white/5 pb-2">Sandbox</h3>
       {(sandboxQError || sandboxError) && <div className="text-error text-sm">{sandboxQError || sandboxError}</div>}
+      {promoted && (
+        <div className="text-sm text-green-400" data-testid="promote-done">Promoted. The sandbox was merged into the project repository and the work order is closed.</div>
+      )}
       
       {sandbox?.exists ? (
         <div className="space-y-4">
@@ -150,6 +173,8 @@ export function SandboxPane({
             runActiveForTicket={runActiveForTicket}
             hasViolations={hasViolations}
             confirmApprove={confirmApprove}
+            confirmDiscard={confirmDiscard}
+            promoting={promoting}
             isRejected={ticketRuns[0]?.status === "rejected"}
             isSubmitting={isSubmitting}
             onPromote={handlePromote}
@@ -192,7 +217,7 @@ export function SandboxPane({
         </div>
       ) : (
         <div className="p-8 text-center text-on-surface-variant border border-white/10 rounded-lg bg-surface-container-highest/50 border-dashed">
-          Sandbox not created yet. Run the pipeline to generate code.
+          {selectedTicket.status === "closed" ? "Closed. No sandbox." : "Sandbox not created yet. Run the pipeline to generate code."}
         </div>
       )}
     </div>

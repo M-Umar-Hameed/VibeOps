@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdtempSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test, describe, it } from "vitest";
+import { expect, test, describe, it, vi } from "vitest";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted } from "../src/relay/prompts.js";
 import { loadRelayConfig, resolveCmd } from "../src/relay/config.js";
 import { substituteCmd, runAgent, killTree } from "../src/relay/invoke.js";
@@ -612,6 +612,66 @@ test("runAgent: killTree still kills a detached (logPath) child (S2-A2)", async 
   // 60s timeout means only killTree can make this return quickly & non-ok.
   expect(res.ok).toBe(false);
   rmSync(dir, { recursive: true, force: true });
+}, 15_000);
+
+test("runAgent (logPath) settles via liveness poll when exit/close events never fire", async () => {
+  // Incident 6e3dcc32: the detached child completes but its exit/close events are
+  // never delivered to our handle. Strip those listeners once attached (queueMicrotask
+  // runs after the Promise executor wired them, before the child can exit), leaving
+  // the fd-branch liveness poll as the only path that can settle the run.
+  const dir = mkdtempSync(join(tmpdir(), "relay-log-poll-"));
+  const logPath = join(dir, "run.log");
+  const res = await runAgent(
+    { cmd: [process.execPath, "-e", "console.log('work-done');process.exit(0)"], roles: [], timeoutMs: 60_000 },
+    "unused", process.cwd(),
+    undefined,        // onData
+    (child) => queueMicrotask(() => {
+      child.removeAllListeners("exit");
+      child.removeAllListeners("close");
+      child.removeAllListeners("error");
+    }),
+    logPath,
+  );
+  expect(res.ok).toBe(true);                 // child.exitCode === 0 read by the poll
+  expect(res.output).toContain("work-done"); // final bytes drained at settle
+  rmSync(dir, { recursive: true, force: true });
+}, 15_000);
+
+test("runAgent (logPath) settles passed when liveness is observed before exitCode is populated", async () => {
+  // Concurrency race: pidAlive observes OS process gone before Node populates
+  // child.exitCode (or while exitCode is still null). Settle must not judge
+  // (null === 0) as failure while exitCode is unknown.
+  const dir = mkdtempSync(join(tmpdir(), "relay-log-race-"));
+  const logPath = join(dir, "run.log");
+  let childRef: any;
+  const origKill = process.kill;
+  let simulated = false;
+  const killSpy = vi.spyOn(process, "kill").mockImplementation((pid, sig) => {
+    if (sig === 0 && childRef && pid === childRef.pid && childRef.exitCode === null && !simulated) {
+      simulated = true;
+      throw new Error("ESRCH");
+    }
+    return origKill.call(process, pid, sig);
+  });
+  try {
+    const res = await runAgent(
+      {
+        cmd: [process.execPath, "-e", "const t = Date.now(); while(Date.now() - t < 200) {} console.log('race-work'); process.exit(0)"],
+        roles: [],
+        timeoutMs: 60_000,
+      },
+      "unused", process.cwd(),
+      undefined,
+      (child) => { childRef = child; },
+      logPath,
+    );
+    expect(simulated).toBe(true);
+    expect(res.ok).toBe(true);
+    expect(res.output).toContain("race-work");
+  } finally {
+    killSpy.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  }
 }, 15_000);
 
 test("loadRelayConfig accepts an agent with mcp: true", () => {

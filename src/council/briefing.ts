@@ -32,11 +32,7 @@ const MAX_SCAN_FILES = 5000;
 export async function listRepoFiles(root: string): Promise<string[]> {
   try {
     const gitFiles = await new Promise<string[] | null>((resolve) => {
-      const child = spawn("git", ["ls-files", "-c", "-o", "--exclude-standard"], {
-        cwd: root,
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      });
+      const child = spawn("git", ["ls-files", "-c", "-o", "--exclude-standard"], { cwd: root, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
       let stdout = "";
       child.stdout?.on("data", (d: Buffer) => {
         stdout += d.toString("utf-8");

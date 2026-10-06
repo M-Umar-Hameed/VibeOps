@@ -192,7 +192,7 @@ export function renderTree(files: string[]): string {
     lines = render(true);
     if (lines.length > TREE_MAX_LINES) {
       lines = lines.slice(0, TREE_MAX_LINES - 1);
-      lines.push("… (tree truncated)");
+      lines.push("â€¦ (tree truncated)");
     }
   }
   return lines.join("\n");
@@ -562,7 +562,7 @@ export async function buildRepoBriefing(
 
     if (estimateTokens(assembled.length) > budget) {
       const maxChars = budget * 4;
-      const suffix = "\n… (briefing truncated to fit the configured token budget)";
+      const suffix = "\nâ€¦ (briefing truncated to fit the configured token budget)";
       if (assembled.length > maxChars) {
         assembled = assembled.slice(0, Math.max(0, maxChars - suffix.length)) + suffix;
       }

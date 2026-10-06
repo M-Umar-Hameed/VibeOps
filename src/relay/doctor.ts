@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { basename, extname, join } from "node:path";
+import { join, win32 } from "node:path";
 import { homedir } from "node:os";
 import { promisify } from "node:util";
 import { readClaudeAccount, readCodexAccount } from "../system/agents.js";
@@ -111,8 +111,9 @@ export type AgentDoctorStatus = {
 };
 
 export function binBasename(cmd0: string): string {
-  const b = basename(cmd0);
-  const ext = extname(b);
+  // win32 splits on both / and \, so a Windows path resolves on any host.
+  const b = win32.basename(cmd0);
+  const ext = win32.extname(b);
   return ext ? b.slice(0, -ext.length) : b;
 }
 

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync, mkdirSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openEmbedded, EmbeddedDbOpenError, EmbeddedDbLockedError, closeEmbedded } from "../src/db/lifecycle.js";
+import { startTimeReader } from "../src/runtime/proc-start.js";
 
 test("openEmbedded happy path returns a usable client", { timeout: 60_000 }, async () => {
   const { PGlite } = await import("@electric-sql/pglite");
@@ -73,7 +74,7 @@ test("a lock file whose pid is dead is reclaimed and the open succeeds", { timeo
   const { client } = await mk(dir);
   const r = await client.query("select 1 as n");
   expect((r.rows as { n: number }[])[0].n).toBe(1);
-  expect(readFileSync(join(dir, ".vibeops-lock"), "utf-8").trim()).toBe(String(process.pid));
+  expect(readFileSync(join(dir, ".vibeops-lock"), "utf-8").trim().split(" ")[0]).toBe(String(process.pid));
   await client.close();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -93,6 +94,28 @@ test("a LIVE holder is never stolen from, even when the lock file is old", { tim
   writeFileSync(lockPath, String(process.pid)); // our own pid: definitely alive
   const old = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
   utimesSync(lockPath, old, old); // older than any plausible time-based threshold
+  let err: EmbeddedDbLockedError | undefined;
+  try { await mk(dir); } catch (e) { err = e as EmbeddedDbLockedError; }
+  expect(err).toBeInstanceOf(EmbeddedDbLockedError);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a lock whose pid was reused by another process is reclaimed", { timeout: 60_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "vibeops-reused-"));
+  // Our own pid is alive, but the lock says it started at a different time: the
+  // original holder died and the OS handed its pid to an unrelated process.
+  writeFileSync(join(dir, ".vibeops-lock"), `${process.pid} 1`);
+  const { client } = await mk(dir);
+  const [pid, started] = readFileSync(join(dir, ".vibeops-lock"), "utf-8").trim().split(" ");
+  expect(pid).toBe(String(process.pid));
+  expect(started).toBe(startTimeReader.read(process.pid));
+  await client.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a lock naming our pid with our real start time still refuses", { timeout: 60_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "vibeops-live-"));
+  writeFileSync(join(dir, ".vibeops-lock"), `${process.pid} ${startTimeReader.read(process.pid)}`);
   let err: EmbeddedDbLockedError | undefined;
   try { await mk(dir); } catch (e) { err = e as EmbeddedDbLockedError; }
   expect(err).toBeInstanceOf(EmbeddedDbLockedError);

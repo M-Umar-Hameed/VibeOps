@@ -17,7 +17,7 @@ export function composePersonaPrompt(
     `Idea: ${fenceUntrusted("idea", idea)}`,
   ];
   if (briefing) {
-    parts.push(`Repository context (the user's actual codebase — ground your claims in it): ${fenceUntrusted("repo-briefing", briefing)}`);
+    parts.push(`Repository context (the user's actual codebase â€” ground your claims in it): ${fenceUntrusted("repo-briefing", briefing)}`);
   }
   if (round && round.qa.length > 0) {
     const qaBlock = round.qa.map((qa) => `Q: ${qa.question}\nA: ${qa.answer}`).join("\n\n");

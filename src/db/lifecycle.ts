@@ -2,6 +2,7 @@ import { existsSync, openSync, closeSync, writeSync, readFileSync, unlinkSync } 
 import { join } from "node:path";
 import type { PGlite } from "@electric-sql/pglite";
 import { latestGoodSnapshot } from "./snapshots.js";
+import { startTimeReader } from "../runtime/proc-start.js";
 
 // Thrown when the embedded cluster cannot be opened (typically a corrupt WAL
 // after an unclean shutdown). Carries the data dir and the pre-recovery backup
@@ -48,11 +49,25 @@ export function pidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
-function readLockPid(lockPath: string): number | null {
+// Lock body is "<pid> <OS start time>". The start time tells a live holder apart
+// from an unrelated process that later reused its pid (Windows recycles pids fast;
+// a stale lock naming a pid now owned by another app kept the sidecar down for days).
+// An old pid-only lock carries no start time and falls back to the liveness check.
+function readLock(lockPath: string): { pid: number; started: string | null } | null {
   try {
-    const pid = parseInt(readFileSync(lockPath, "utf-8").trim(), 10);
-    return Number.isNaN(pid) ? null : pid;
+    const [pidText, started] = readFileSync(lockPath, "utf-8").trim().split(/\s+/);
+    const pid = parseInt(pidText, 10);
+    return Number.isNaN(pid) ? null : { pid, started: started || null };
   } catch { return null; }
+}
+
+// Alive AND, when the lock recorded one, started at the same moment. A different
+// start time means the pid was recycled, so the real holder is gone.
+function holderAlive(holder: { pid: number; started: string | null }): boolean {
+  if (!pidAlive(holder.pid)) return false;
+  if (holder.started === null) return true;
+  const now = startTimeReader.read(holder.pid);
+  return now === null || now === holder.started; // unreadable stays alive: never displace a live holder
 }
 
 // Atomic exclusive create. If the lock exists: a live OR unreadable holder ->
@@ -66,14 +81,15 @@ function acquireLock(dataDir: string): void {
       fd = openSync(lockPath, "wx");
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      const holderPid = readLockPid(lockPath);
-      if (holderPid === null || pidAlive(holderPid)) {
-        throw new EmbeddedDbLockedError(dataDir, holderPid);
+      const holder = readLock(lockPath);
+      if (holder === null || holderAlive(holder)) {
+        throw new EmbeddedDbLockedError(dataDir, holder?.pid ?? null);
       }
       unlinkSync(lockPath); // dead pid: reclaim, then retry the exclusive create
       continue;
     }
-    try { writeSync(fd, String(process.pid)); } finally { closeSync(fd); }
+    const started = startTimeReader.read(process.pid);
+    try { writeSync(fd, started ? `${process.pid} ${started}` : String(process.pid)); } finally { closeSync(fd); }
     return;
   }
 }

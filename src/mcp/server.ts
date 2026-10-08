@@ -81,6 +81,19 @@ export async function buildServer(apiKey: string) {
     { inputSchema: { scope: z.enum(["global", "project", "ticket"]).optional(), refId: z.string().optional(), limit: z.number().optional() } },
     async (f) => ({ content: [{ type: "text", text: JSON.stringify(await listNotes(f)) }] }));
 
+  server.registerTool("laya_decide",
+    { description: "Answer a structured decision with a local model in one forward pass: no text generation, so no hallucination. The schema's properties must be booleans, enums, or integers with an integer minimum/maximum; free strings, arrays and nested objects are rejected. Returns decided values plus per-field confidence, or an unavailable error when the local model is not configured. Use for choice, score and yes/no decisions, never for open questions, summarisation or code.",
+      inputSchema: {
+        state: z.record(z.unknown()),
+        schema: z.record(z.unknown()),
+        minConfidence: z.number().min(0).max(1).optional(),
+      } },
+    async ({ state, schema, minConfidence }) => {
+      const { layaDecide } = await import("../laya/client.js");
+      const d = await layaDecide(state as Record<string, unknown>, schema as Record<string, unknown>, { minConfidence });
+      return { content: [{ type: "text", text: JSON.stringify(d ?? { error: "laya unavailable: set the laya.command setting or LAYA_COMMAND" }) }] };
+    });
+
   server.registerTool("list_projects",
     { description: "List VibeOps projects with their repoPath, so an agent can map the repo it is working in to a projectId for project-scoped notes and search.",
       inputSchema: {} },

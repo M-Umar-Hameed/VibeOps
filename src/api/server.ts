@@ -109,7 +109,15 @@ async function bootNormally() {
     console.log(`api on :${info.port}${isEmbedded ? " (embedded db)" : ""}`);
   });
   const { installShutdown } = await import("./shutdown.js");
-  installShutdown(server, closeDb, isEmbedded, runLogicalExport);
+  // Laya's MCP stdio transport owns a spawned Python process. Windows will not
+  // reap it when the sidecar exits, so it is closed before the DB is, chained
+  // ahead of the logical export rather than replacing it.
+  const beforeClose = async () => {
+    const { closeLaya } = await import("../laya/client.js");
+    await closeLaya();
+    if (runLogicalExport) await runLogicalExport();
+  };
+  installShutdown(server, closeDb, isEmbedded, beforeClose);
 
   // A fresh install has no relay.json, and its only other writer is the
   // first-run wizard -- which never appears once a project exists, leaving the

@@ -410,13 +410,19 @@ async function resolveHookProject(c: { req: { query(k: string): string | undefin
   const cwd = c.req.query("cwd");
   if (!cwd) return null;
   const target = normalizePath(cwd);
-  const rows = await db.select({ id: projects.id, repoPath: projects.repoPath }).from(projects);
-  let best: { id: string; len: number } | null = null;
+  const rows = await db.select({ id: projects.id, repoPath: projects.repoPath, createdAt: projects.createdAt }).from(projects);
+  let best: { id: string; len: number; createdAt: Date } | null = null;
   for (const r of rows) {
     if (!r.repoPath) continue;
     const rp = normalizePath(r.repoPath);
     if (target === rp || target.startsWith(rp + "/")) {
-      if (!best || rp.length > best.len) best = { id: r.id, len: rp.length };
+      // Longest repoPath wins (most specific). On a tie the NEWEST project wins:
+      // with `>` alone the first row did, so when one repo had several projects
+      // the oldest duplicate answered forever and a newly registered project's
+      // rules never fired.
+      const better = !best || rp.length > best.len
+        || (rp.length === best.len && r.createdAt > best.createdAt);
+      if (better) best = { id: r.id, len: rp.length, createdAt: r.createdAt };
     }
   }
   return best?.id ?? null;

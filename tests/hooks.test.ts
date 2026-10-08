@@ -157,6 +157,28 @@ test("GET /recall matches cwd against repoPath through repeated path separators"
   expect(await res.text()).toContain(rule);
 });
 
+test("GET /recall resolves a duplicated repoPath to the newest project", async () => {
+  const { apiKey, actor } = await createActor({ name: uniq("recall-dupe"), kind: "agent" });
+  const repoPath = `E:/Github/dupe-${Date.now()}`;
+  const older = await createProject({ key: uniq("k"), name: uniq("DupeOld") });
+  await db.update(projects).set({ repoPath }).where(eq(projects.id, older.id));
+  const newer = await createProject({ key: uniq("k"), name: uniq("DupeNew") });
+  await db.update(projects).set({ repoPath }).where(eq(projects.id, newer.id));
+
+  const staleRule = `${uniq("rule")} stale duplicate rule`;
+  const liveRule = `${uniq("rule")} newest duplicate rule`;
+  await saveNote(actor.id, { body: staleRule, scope: "project", refId: older.id, kind: "rule" });
+  await saveNote(actor.id, { body: liveRule, scope: "project", refId: newer.id, kind: "rule" });
+
+  const res = await app.request(
+    `/recall?q=anything&cwd=${encodeURIComponent(repoPath)}`,
+    { headers: { Authorization: `Bearer ${apiKey}` } },
+  );
+  const body = await res.text();
+  expect(body).toContain(liveRule);
+  expect(body).not.toContain(staleRule);
+});
+
 test("install-hooks.mjs adds both hooks once, backs up, and keeps unrelated hooks", () => {
   const home = mkdtempSync(join(tmpdir(), "hooks-home-"));
   const settingsDir = join(home, ".claude");

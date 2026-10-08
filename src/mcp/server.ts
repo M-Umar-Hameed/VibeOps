@@ -6,6 +6,7 @@ import { addComment } from "../services/comments.js";
 import { getTicketHistory, searchTickets } from "../services/history.js";
 import { saveNote, updateNote, deleteNote, listNotes } from "../services/notes.js";
 import { searchKnowledge } from "../services/knowledge.js";
+import { listProjects } from "../services/projects.js";
 import { fetchDocs } from "../knowledge/docs.js";
 import { exists, list, submitBatch, type ActionStep } from "../browser/channel.js";
 import { validateSteps } from "../browser/validate.js";
@@ -79,6 +80,11 @@ export async function buildServer(apiKey: string) {
   server.registerTool("list_notes",
     { inputSchema: { scope: z.enum(["global", "project", "ticket"]).optional(), refId: z.string().optional(), limit: z.number().optional() } },
     async (f) => ({ content: [{ type: "text", text: JSON.stringify(await listNotes(f)) }] }));
+
+  server.registerTool("list_projects",
+    { description: "List VibeOps projects with their repoPath, so an agent can map the repo it is working in to a projectId for project-scoped notes and search.",
+      inputSchema: {} },
+    async () => ({ content: [{ type: "text", text: JSON.stringify(await listProjects()) }] }));
 
   server.registerTool("search_knowledge",
     { inputSchema: { query: z.string(), limit: z.number().optional(), project: z.string().optional() } },

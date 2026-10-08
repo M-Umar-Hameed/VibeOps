@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { fileHashBytes } from "../../services/knowledge.js";
+import { readIndexTail } from "./tail.js";
 import type { SessionSource, SessionDoc } from "./source.js";
 
 // Antigravity's Agent Manager writes markdown artifacts (plans, task lists) under brain/<conversation>/
@@ -25,8 +25,8 @@ function* walkFiles(dir: string): Generator<string> {
   }
 }
 
-function parseTranscript(buf: Buffer): string {
-  const lines = buf.toString("utf8").trim().split("\n");
+function parseTranscript(raw: string): string {
+  const lines = raw.trim().split("\n");
   let out = "";
   for (const line of lines) {
     if (!line) continue;
@@ -64,18 +64,19 @@ export function makeAntigravitySource(
         for (const path of walkFiles(dir)) {
           try {
             if (statSync(path).mtimeMs < cutoff) continue;
-            const buf = readFileSync(path);
-            
+            const t = readIndexTail(path);
+            if (!t) continue;
+
             let text = "";
             if (path.endsWith("transcript.jsonl")) {
-              text = parseTranscript(buf);
+              text = parseTranscript(t.text);
             } else {
-              text = buf.toString("utf8").trim();
+              text = t.text.trim();
             }
-            
+
             if (!text) continue;
             if (text.length > 200_000) text = text.slice(-200_000);
-            docs.push({ ref: path, text, hash: fileHashBytes(buf) });
+            docs.push({ ref: path, text, hash: t.hash });
           } catch (e) {
             console.warn(`antigravity artifact skipped ${path}: ${(e as Error).message}`);
           }

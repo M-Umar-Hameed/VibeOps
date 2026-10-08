@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { fileHashBytes } from "../../services/knowledge.js";
+import { readIndexTail } from "./tail.js";
 import type { SessionSource, SessionDoc } from "./source.js";
 
 // Rollout jsonl: clean conversation text lives in event_msg lines with
@@ -43,11 +43,12 @@ export function makeCodexSource(
       for (const path of walkJsonl(sessionsDir)) {
         try {
           if (statSync(path).mtimeMs < cutoff) continue;
-          const buf = readFileSync(path);
-          let text = extractText(buf.toString("utf8"));
+          const t = readIndexTail(path);
+          if (!t) continue;
+          let text = extractText(t.text);
           if (!text) continue;
           if (text.length > 200_000) text = text.slice(-200_000);
-          docs.push({ ref: path, text, hash: fileHashBytes(buf) });
+          docs.push({ ref: path, text, hash: t.hash });
         } catch (e) {
           console.warn(`codex session skipped ${path}: ${(e as Error).message}`);
         }

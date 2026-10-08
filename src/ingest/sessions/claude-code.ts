@@ -1,7 +1,7 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { fileHashBytes } from "../../services/knowledge.js";
+import { readIndexTail } from "./tail.js";
 import type { SessionSource, SessionDoc } from "./source.js";
 
 function extractText(raw: string): string {
@@ -41,13 +41,14 @@ export function makeClaudeCodeSource(
           const path = join(pdir, name);
           try {
             if (statSync(path).mtimeMs < cutoff) continue;
-            const buf = readFileSync(path);
-            let text = extractText(buf.toString("utf8"));
+            const t = readIndexTail(path);
+            if (!t) continue;
+            let text = extractText(t.text);
             if (!text) continue;
             // ponytail: cap to the most recent 200k chars per session — full multi-MB
             // transcripts bloat the index by GBs for little retrieval value; raise if needed.
             if (text.length > 200_000) text = text.slice(-200_000);
-            docs.push({ ref: path, text, hash: fileHashBytes(buf) });
+            docs.push({ ref: path, text, hash: t.hash });
           } catch (e) {
             console.warn(`transcript skipped ${path}: ${(e as Error).message}`);
           }

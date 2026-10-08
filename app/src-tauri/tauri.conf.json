@@ -12,15 +12,21 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "VibeOps",
         "width": 1200,
         "height": 800,
         "minWidth": 900,
-        "minHeight": 600
+        "minHeight": 600,
+        "visible": false
       }
     ],
     "security": {
       "csp": null
+    },
+    "trayIcon": {
+      "iconPath": "icons/32x32.png",
+      "iconAsTemplate": false
     }
   },
   "plugins": {

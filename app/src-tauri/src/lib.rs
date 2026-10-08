@@ -2,8 +2,12 @@ use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
+use tauri::menu::{Menu, MenuItem};
 use tauri::path::BaseDirectory;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
+use tauri_plugin_autostart::ManagerExt;
+use tauri_plugin_window_state::StateFlags;
 
 struct Sidecar(Mutex<Option<Child>>);
 
@@ -27,8 +31,70 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--minimized"]),
+        ))
+        // VISIBLE is excluded deliberately: close-to-tray hides the window, and
+        // persisting that would restore a hidden window on the next launch.
+        .plugin(tauri_plugin_window_state::Builder::new()
+            .with_state_flags(StateFlags::all() & !StateFlags::VISIBLE)
+            .build())
         .manage(Sidecar(Mutex::new(None)))
         .setup(|app| {
+            let show_item = MenuItem::with_id(app, "show", "Show VibeOps", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit VibeOps", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let mut tray = TrayIconBuilder::new().tooltip("VibeOps");
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
+            tray
+                .menu(&tray_menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.unminimize();
+                            let _ = w.set_focus();
+                        }
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                        let app = tray.app_handle();
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.unminimize();
+                            let _ = w.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+
+            if let Some(window) = app.get_webview_window("main") {
+                let win = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = win.hide();
+                    }
+                });
+                if !std::env::args().any(|a| a == "--minimized") {
+                    let _ = window.show();
+                }
+            }
+
+            // ponytail: enable only when not already enabled, so disabling it in
+            // Windows Startup settings sticks. A first-run-only flag (tauri-plugin-store
+            // is already a dep) would also let the user keep it off while we never retry.
+            if app.autolaunch().is_enabled().unwrap_or(false) == false {
+                let _ = app.autolaunch().enable();
+            }
+
             let port = std::env::var("PORT").unwrap_or_else(|_| "8787".to_string());
             if port_in_use(port.parse().unwrap_or(8787)) {
                 return Ok(()); // dev server / other instance already serving

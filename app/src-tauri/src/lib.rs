@@ -118,7 +118,15 @@ pub fn run() {
                 return Ok(());
             }
             let mut cmd = Command::new(&node);
-            cmd.arg(&server)
+            // V8 sizes its default old-space from total RAM, which on a 16 GB box is
+            // multiple GB of headroom the sidecar never needs - and headroom it will
+            // happily commit under load. Cap it; PGlite's WASM heap and the ONNX
+            // runtime live outside this budget, so it only bounds JS objects.
+            // Raise VIBEOPS_NODE_MAX_OLD_SPACE if a large ingest ever needs more.
+            let max_old_space =
+                std::env::var("VIBEOPS_NODE_MAX_OLD_SPACE").unwrap_or_else(|_| "1024".to_string());
+            cmd.arg(format!("--max-old-space-size={max_old_space}"))
+                .arg(&server)
                 .stdin(Stdio::piped())
                 .env_remove("DATABASE_URL")
                 .env("PORT", &port)

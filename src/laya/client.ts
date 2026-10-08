@@ -15,10 +15,40 @@ export type LayaDecision = {
 // Laya ships a calibration warning for some checkpoint entries ("values outside
 // [0.5, 5] ... treat confidence as uncalibrated"), so a threshold is a filter,
 // never a guarantee. Keep thresholds high and always keep the fallback path.
-const DEFAULT_TIMEOUT_MS = 15_000;
+//
+// A cold call pays connect (~1.3s) plus the checkpoint load (~7s) before it can
+// answer; a warm one answers in 217-291ms. One flat 15s budget was enough warm
+// and too tight cold under load, which silently turned real answers into nulls.
+// Hence two budgets - and callers on a latency-sensitive path pass their own.
+const COLD_TIMEOUT_MS = 45_000;
+const WARM_TIMEOUT_MS = 10_000;
 
 let clientPromise: Promise<Client> | undefined;
 let warned = false;
+let inflight = 0;
+let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+// The spawned model process costs ~3.4 GB of commit and used to be held for the
+// life of the sidecar after a single decision. Since the sidecar now runs
+// always-on in the tray, that is most of the day for nothing. Drop it after an
+// idle period instead; the next call pays the reconnect (~1.3s) plus a checkpoint
+// load, which is the right trade for a tool asked a few questions an hour.
+const DEFAULT_IDLE_MS = 5 * 60_000;
+
+function idleMs(): number {
+  const raw = Number(process.env.LAYA_IDLE_MS);
+  if (Number.isFinite(raw) && raw >= 0) return raw; // 0 disables the idle close
+  return DEFAULT_IDLE_MS;
+}
+
+function armIdleClose(): void {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = undefined;
+  const ms = idleMs();
+  if (ms === 0) return;
+  idleTimer = setTimeout(() => { if (inflight === 0) void closeLaya(); }, ms);
+  idleTimer.unref?.();
+}
 
 function warnOnce(msg: string): void {
   if (warned) return;
@@ -49,16 +79,31 @@ async function connect(): Promise<Client> {
     args: [],
     // LAYA_PRELOAD=0 keeps the checkpoint off the boot path; it loads on the
     // first decision instead, so an idle sidecar pays nothing for laya.
-    env: { ...process.env, LAYA_DEVICE: process.env.LAYA_DEVICE ?? "cpu", LAYA_PRELOAD: "0" } as Record<string, string>,
+    // Torch and OpenMP default to one thread per core for a model answering one
+    // short question at a time. Measured: caps take the spawned process from
+    // 3606 MB commit / 23 threads to 3379 MB / 11 threads - only ~6% of the
+    // memory, but half the threads, and it costs nothing we use. The real saving
+    // is the idle close below, which drops all of it.
+    env: {
+      ...process.env,
+      LAYA_DEVICE: process.env.LAYA_DEVICE ?? "cpu",
+      LAYA_PRELOAD: "0",
+      OMP_NUM_THREADS: process.env.OMP_NUM_THREADS ?? "1",
+      MKL_NUM_THREADS: process.env.MKL_NUM_THREADS ?? "1",
+      TORCH_NUM_THREADS: process.env.TORCH_NUM_THREADS ?? "1",
+      TOKENIZERS_PARALLELISM: process.env.TOKENIZERS_PARALLELISM ?? "false",
+    } as Record<string, string>,
   });
   const client = new Ctor({ name: "vibeops", version: "0.0.0" });
   await client.connect(transport);
   return client;
 }
 
-function timeoutMs(): number {
+function timeoutMs(cold: boolean, override?: number): number {
+  if (override !== undefined && Number.isFinite(override) && override > 0) return override;
   const raw = Number(process.env.LAYA_TIMEOUT_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_TIMEOUT_MS;
+  if (Number.isFinite(raw) && raw > 0) return raw;
+  return cold ? COLD_TIMEOUT_MS : WARM_TIMEOUT_MS;
 }
 
 // Module-scoped so one spawned laya is shared, and a failed connect does not
@@ -75,16 +120,20 @@ function load(): Promise<Client> {
 export async function layaDecide(
   state: Record<string, unknown>,
   schema: Record<string, unknown>,
-  opts: { minConfidence?: number } = {},
+  opts: { minConfidence?: number; timeoutMs?: number } = {},
 ): Promise<LayaDecision | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  // Cold means nothing is connected yet, so this call also pays the model load.
+  const cold = clientPromise === undefined;
+  const budget = timeoutMs(cold, opts.timeoutMs);
+  inflight++;
   try {
     const client = await load();
     const args: Record<string, unknown> = { state, schema };
     if (opts.minConfidence !== undefined) args.min_confidence = opts.minConfidence;
     // A wedged model must not hold a request open: bound every call.
     const deadline = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`laya timed out after ${timeoutMs()}ms`)), timeoutMs());
+      timer = setTimeout(() => reject(new Error(`laya timed out after ${budget}ms`)), budget);
     });
     const res = await Promise.race([client.callTool({ name: "laya_decide", arguments: args }), deadline]);
     const text = (res as { content?: Array<{ type: string; text?: string }> }).content?.[0]?.text;
@@ -97,6 +146,8 @@ export async function layaDecide(
     return null;
   } finally {
     if (timer) clearTimeout(timer);
+    inflight--;
+    armIdleClose();
   }
 }
 
@@ -106,8 +157,13 @@ export async function layaBoolean(
   state: Record<string, unknown>,
   field: string,
   minConfidence: number,
+  opts: { timeoutMs?: number } = {},
 ): Promise<boolean | null> {
-  const d = await layaDecide(state, { type: "object", properties: { [field]: { type: "boolean" } } }, { minConfidence });
+  const d = await layaDecide(
+    state,
+    { type: "object", properties: { [field]: { type: "boolean" } } },
+    { minConfidence, timeoutMs: opts.timeoutMs },
+  );
   const v = d?.values?.[field];
   if (typeof v !== "boolean") return null;
   const c = d?.confidence?.[field];
@@ -118,6 +174,8 @@ export async function layaBoolean(
 // The stdio transport owns a spawned Python process; Windows will not reap it for
 // us, so shutdown must close it or an idle torch process survives the sidecar.
 export async function closeLaya(): Promise<void> {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = undefined;
   const p = clientPromise;
   clientPromise = undefined;
   if (!p) return;
@@ -126,6 +184,9 @@ export async function closeLaya(): Promise<void> {
 
 // Test seam: drop the memoised client without closing a real one.
 export function resetLayaForTests(): void {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = undefined;
   clientPromise = undefined;
+  inflight = 0;
   warned = false;
 }

@@ -39,10 +39,15 @@ export async function actRiskRefusal(steps: ActionStep[], targetOrigin: string):
   if (!steps.length) return null;
   if (!(await screenEnabled())) return null;
   const { layaBoolean } = await import("../laya/client.js");
+  // Deliberately short: this sits in front of a user's click. A cold model needs
+  // ~8s to load, and waiting that long to maybe allow an action is worse than
+  // allowing it - the screen is deny-only, so a timeout just means no opinion.
+  // Once warm it answers in ~250ms, which is where it actually earns its place.
   const risky = await layaBoolean(
     { request: describeSteps(steps, targetOrigin) },
     "is_irreversible_or_destructive",
     RISK_CONFIDENCE,
+    { timeoutMs: 2_500 },
   );
   if (risky !== true) return null;
   return `This browser action was blocked by the local risk screen as irreversible or destructive on ${targetOrigin}. `

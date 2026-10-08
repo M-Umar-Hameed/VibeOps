@@ -13,6 +13,12 @@ const OUTPUT_CAP = 100_000;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 const KILL_TIMEOUT_MS = 10_000;
 const EXIT_DRAIN_MS = 2_000;
+// Windows caps a full command line near 32767 chars; a {prompt} arg past that
+// makes spawn throw ENAMETOOLONG (measured: ok at 32000, throws at 40000). Keep
+// headroom for the exe path and per-arg quoting. POSIX limits are far higher, so
+// this only triggers the stdin fallback earlier there, which is harmless.
+const ARGV_SAFE_LIMIT = 30_000;
+const cmdLineLength = (argv: string[]): number => argv.reduce((n, x) => n + x.length + 3, 0);
 // How long the liveness poll waits for Node to reap a vanished child and report
 // its exit status before declaring failure. Generous: a wrong "failed" on a
 // successful run is worse than settling a truly-lost child a second later.
@@ -83,11 +89,24 @@ export async function runAgent(
 
   const promptFile = join(tmpdir(), `vibeops-relay-${randomUUID()}.txt`);
   const needsFile = cmd.some((p) => p.includes("{promptFile}"));
+  const usesPromptArg = cmd.some((p) => p.includes("{prompt}"));
   // No placeholder at all -> deliver the prompt on stdin. Windows argv tops out
   // near 32k; long prompts (review diffs) die with ENAMETOOLONG as {prompt}.
-  const viaStdin = !needsFile && !cmd.some((p) => p.includes("{prompt}"));
+  let viaStdin = !needsFile && !usesPromptArg;
 
-  const [cmd0, ...rest] = substituteCmd(cmd, { prompt, promptFile, workdir });
+  let argv = substituteCmd(cmd, { prompt, promptFile, workdir });
+  // A {prompt} arg over the OS limit took down the whole pipeline ("forge:
+  // pipeline error: spawn ENAMETOOLONG") instead of the stage, because spawn
+  // throws synchronously and never reaches the child "error" handler below.
+  // Drop the prompt arg and deliver on stdin - the mechanism a no-placeholder
+  // config already uses.
+  // ponytail: a {prompt} embedded in a larger token (--x={prompt}) loses that
+  // whole token; nothing in-tree does that, and a partial arg cannot go on stdin.
+  if (usesPromptArg && !needsFile && cmdLineLength(argv) > ARGV_SAFE_LIMIT) {
+    argv = substituteCmd(cmd.filter((p) => !p.includes("{prompt}")), { prompt: "", promptFile, workdir });
+    viaStdin = true;
+  }
+  const [cmd0, ...rest] = argv;
 
   // Merge agent.env over the inherited process env; only {workdir} is substituted.
   // {prompt}/{promptFile} intentionally excluded (secrets/size). ponytail: {model}
@@ -134,9 +153,22 @@ export async function runAgent(
       // stdin ignored unless piping the prompt: headless CLIs (codex exec)
       // otherwise block reading an open stdin.
       const { file, args, verbatim } = winCommand(cmd0, rest);
-      const child = outFd !== undefined
-        ? spawn(file, args, { cwd: workdir, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", outFd, outFd], detached: true, windowsHide: true, windowsVerbatimArguments: verbatim })
-        : spawn(file, args, { cwd: workdir, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", "pipe", "pipe"], windowsHide: true, windowsVerbatimArguments: verbatim });
+      // spawn validates argv before spawning and THROWS (not "error") on
+      // ENAMETOOLONG, so without this catch the rejection escaped runAgent and
+      // failed the run as a pipeline error with no stage output.
+      let child: ChildProcess;
+      try {
+        child = outFd !== undefined
+          ? spawn(file, args, { cwd: workdir, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", outFd, outFd], detached: true, windowsHide: true, windowsVerbatimArguments: verbatim })
+          : spawn(file, args, { cwd: workdir, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", "pipe", "pipe"], windowsHide: true, windowsVerbatimArguments: verbatim });
+      } catch (e) {
+        const msg = `
+[forge: agent could not be started: ${(e as Error).message}]
+`;
+        onData?.(msg);
+        resolve({ ok: false, output: msg });
+        return;
+      }
       // Detached child must not keep the parent's event loop alive; the run still
       // awaits its exit via the listeners below (unref drops only the keep-alive
       // ref, not the handlers). This is what lets an API restart leave the child

@@ -157,6 +157,34 @@ export function submitBatch(
 ): Promise<BatchResult | null> {
   const inst = live(instances.get(instanceId), Date.now());
   if (!inst) return Promise.resolve(null); // route guarantees existence; defensive only
+  return submitScreened(inst, instanceId, tenant, steps, delivery);
+}
+
+// Every act path (chat tools, MCP verbs, the HTTP route) reaches the browser
+// through submitBatch, so the risk screen sits here rather than in each caller.
+// Deny-only: a null refusal is indistinguishable from the pre-screen behaviour.
+async function submitScreened(
+  inst: Instance,
+  instanceId: string,
+  tenant: string,
+  steps: ActionStep[],
+  delivery?: { grant: "act"; targetOrigin: string },
+): Promise<BatchResult | null> {
+  if (delivery?.grant === "act") {
+    const { actRiskRefusal } = await import("./risk.js");
+    const refusal = await actRiskRefusal(steps, delivery.targetOrigin);
+    if (refusal) return { results: [{ ok: false, error: refusal }], snapshot: null };
+  }
+  return enqueueBatch(inst, instanceId, tenant, steps, delivery);
+}
+
+function enqueueBatch(
+  inst: Instance,
+  instanceId: string,
+  tenant: string,
+  steps: ActionStep[],
+  delivery?: { grant: "act"; targetOrigin: string },
+): Promise<BatchResult | null> {
   return new Promise<BatchResult | null>((resolve) => {
     const batch: Pending = {
       batchId: randomUUID(),

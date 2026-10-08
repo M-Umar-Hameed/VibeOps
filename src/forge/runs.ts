@@ -18,7 +18,7 @@ import { redactSecrets } from "./redact.js";
 import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
 import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, stripGateDirectives } from "./policy.js";
-import { pickAgents, escalate, pairsForRole, type Pick, type RoutingStrategy } from "./router.js";
+import { pickAgents, escalate, pairsForRole, resolveStrategy, type Pick, type RoutingStrategy } from "./router.js";
 import { updateTicket } from "../services/tickets.js";
 import { addComment, listComments } from "../services/comments.js";
 import { getTicket } from "../services/history.js";
@@ -410,7 +410,18 @@ export async function startPipeline(
     : opts.effort === "max" ? "quality-first"
     : undefined;
 
-  const getAuto = () => (auto ??= pickAgents(config, effortStrategy ?? strategy));
+  // Only "balanced" means the owner expressed no preference, so that is the only
+  // case the local model may refine. An explicit cost/max setting and an explicit
+  // per-run effort both outrank it and are never overridden.
+  let routing = strategy;
+  if (strategy === "balanced" && !effortStrategy) {
+    try {
+      const t = await getTicket(opts.ticketId);
+      routing = await resolveStrategy(strategy, { title: t.title, body: t.body });
+    } catch { /* keep balanced: routing must never block a run */ }
+  }
+
+  const getAuto = () => (auto ??= pickAgents(config, effortStrategy ?? routing));
 
   // Saved per-role default. For an "auto" role the priority is: explicit request
   // pick > effort preset (quick/max) > this default > routing strategy. An

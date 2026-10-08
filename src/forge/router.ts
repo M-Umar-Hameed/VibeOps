@@ -2,6 +2,7 @@ import type { RelayConfig, ModelTier } from "../relay/config.js";
 
 export type Pick = { agent: string; model?: string };
 export type RoutingStrategy = "cheapest-first" | "quality-first" | "balanced";
+export type WorkShape = { title: string; body?: string | null };
 export type AgentModelPair = Pick & { tier: ModelTier; quality: number };
 
 type Role = "plan" | "work" | "review";
@@ -58,4 +59,41 @@ export function escalate(pairs: AgentModelPair[], basePick: Pick, attempts: numb
   const higher = pairs.filter((p) => p.quality > baseQuality).sort((a, b) => a.quality - b.quality);
   if (!higher.length) return basePick;
   return { agent: higher[0].agent, model: higher[0].model };
+}
+
+// Laya-assisted strategy choice. The pickers above stay pure and synchronous;
+// only the strategy is decided here, so routing remains testable without a model.
+//
+// Fail-open by construction: no laya, low confidence, or no answer all return
+// `base` unchanged, which is exactly today's behaviour. A local model choosing
+// WHICH configured model runs cannot grant anything new - the candidate pairs
+// come from the owner's own relay config either way.
+//
+// The question is deliberately a concrete, observable property. Measured on this
+// checkpoint over eight hand-labelled tickets:
+//   is_large_multi_file_change  7/8 correct, and its one miss sits at 0.60
+//   is_complex                  right label but 0.51 confidence on hard work
+//   requires_senior_engineer    0.93 confident and WRONG on hard work
+//   complexity (3-way enum)     0.09-0.27 confidence, unusable
+// Judgement-shaped questions ("needs a senior engineer") come back confidently
+// wrong; grounded ones work. Keep this phrasing unless re-measured.
+//
+// At 0.75 that set yields six correct routes, two abstentions and no wrong
+// routes. Abstaining costs nothing; routing hard work to the cheapest model
+// would, which is why the floor stays high.
+const SHAPE_CONFIDENCE = 0.75;
+
+export async function resolveStrategy(base: RoutingStrategy, work: WorkShape): Promise<RoutingStrategy> {
+  const text = `${work.title}
+
+${work.body ?? ""}`.trim();
+  if (!text) return base;
+  try {
+    const { getSetting } = await import("../services/settings.js");
+    if ((await getSetting("laya.routing")) === "false") return base;
+  } catch { /* no database: the laya.command check still gates this */ }
+  const { layaBoolean } = await import("../laya/client.js");
+  const large = await layaBoolean({ request: text.slice(0, 4000) }, "is_large_multi_file_change", SHAPE_CONFIDENCE);
+  if (large === null) return base;
+  return large ? "quality-first" : "cheapest-first";
 }

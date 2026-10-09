@@ -9,7 +9,16 @@ export type RelayModel = { name: string; tier: ModelTier; quality: number };
 // OpenAI-compatible API root, keySetting names the settings-table key holding
 // the user API key. cmd is unused for them.
 // write is set at call time for a stage that must edit files (forge work, relay work); relay.json never sets it.
-export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string; write?: boolean };
+// How the initial prompt reaches the agent. Declared per agent rather than
+// inferred from the cmd placeholders: inference silently picked argv for any
+// config carrying {prompt}, and an oversized prompt then died at spawn with
+// ENAMETOOLONG. Declaring it makes a mismatch a config error at load instead.
+//   argv  - substituted into the launch command ({prompt})
+//   file  - written to a temp file whose path is substituted ({promptFile})
+//   stdin - written to the child's stdin after it starts (no placeholder)
+export type PromptDelivery = "argv" | "file" | "stdin";
+export const PROMPT_DELIVERIES: PromptDelivery[] = ["argv", "file", "stdin"];
+export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string; write?: boolean; promptDelivery?: PromptDelivery };
 export type RelayConfig = {
   workdir: string; apiKey?: string; baseUrl?: string; pollMs?: number;
   agents: Record<string, RelayAgent>;
@@ -95,6 +104,24 @@ export function validateRelayConfig(parsed: unknown, configPath: string): RelayC
     }
     if (!Array.isArray(a.roles) || !a.roles.every((r) => typeof r === "string")) {
       throw new Error(`relay config agent "${name}" must have a roles string array`);
+    }
+    if (a.promptDelivery !== undefined) {
+      if (typeof a.promptDelivery !== "string" || !PROMPT_DELIVERIES.includes(a.promptDelivery as PromptDelivery)) {
+        throw new Error(`relay config agent "${name}" promptDelivery must be one of ${PROMPT_DELIVERIES.join(", ")}`);
+      }
+      // Catch the contradiction at load. A declared delivery that the cmd cannot
+      // satisfy would otherwise fail at spawn, mid-run, with a confusing error.
+      const cmd = Array.isArray(a.cmd) ? (a.cmd as string[]) : [];
+      const has = (tok: string) => cmd.some((c) => typeof c === "string" && c.includes(tok));
+      if (a.promptDelivery === "argv" && !has("{prompt}")) {
+        throw new Error(`relay config agent "${name}" declares promptDelivery "argv" but its cmd has no {prompt}`);
+      }
+      if (a.promptDelivery === "file" && !has("{promptFile}")) {
+        throw new Error(`relay config agent "${name}" declares promptDelivery "file" but its cmd has no {promptFile}`);
+      }
+      if (a.promptDelivery === "stdin" && (has("{prompt}") || has("{promptFile}"))) {
+        throw new Error(`relay config agent "${name}" declares promptDelivery "stdin" but its cmd still substitutes the prompt`);
+      }
     }
     if (a.type === "sdk" && a.roles.some((r) => r !== "work")) {
       throw new Error(`relay config agent "${name}" of type sdk can only have the "work" role in Phase 1`);

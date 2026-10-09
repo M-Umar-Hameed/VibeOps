@@ -4,7 +4,7 @@ import { writeFile, unlink } from "node:fs/promises";
 import { mkdirSync, openSync, readSync, fstatSync, closeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import type { RelayAgent } from "./config.js";
+import type { RelayAgent, PromptDelivery } from "./config.js";
 import { pidAlive } from "../db/lifecycle.js";
 import { winCommand } from "./win-bin.js";
 import { loadWall, wallCmd } from "./wall.js";
@@ -88,11 +88,15 @@ export async function runAgent(
   const cmd = wall.on ? wallCmd(agent.cmd, wall.allowed, agent.write === true) : agent.cmd;
 
   const promptFile = join(tmpdir(), `vibeops-relay-${randomUUID()}.txt`);
-  const needsFile = cmd.some((p) => p.includes("{promptFile}"));
-  const usesPromptArg = cmd.some((p) => p.includes("{prompt}"));
-  // No placeholder at all -> deliver the prompt on stdin. Windows argv tops out
-  // near 32k; long prompts (review diffs) die with ENAMETOOLONG as {prompt}.
-  let viaStdin = !needsFile && !usesPromptArg;
+  // Declared delivery wins; otherwise fall back to the placeholders the cmd
+  // carries, which is what every pre-existing config relies on.
+  const delivery: PromptDelivery = agent.promptDelivery
+    ?? (cmd.some((p) => p.includes("{promptFile}")) ? "file"
+      : cmd.some((p) => p.includes("{prompt}")) ? "argv"
+      : "stdin");
+  const needsFile = delivery === "file";
+  const usesPromptArg = delivery === "argv";
+  let viaStdin = delivery === "stdin";
 
   let argv = substituteCmd(cmd, { prompt, promptFile, workdir });
   // A {prompt} arg over the OS limit took down the whole pipeline ("forge:

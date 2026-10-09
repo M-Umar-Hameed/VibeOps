@@ -13,6 +13,9 @@ export default defineConfig(async () => ({
   //
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
+  // Single self-contained bundle: code-split chunks were served as text/html by
+  // the Tauri asset protocol in production and broke module loading. One file avoids it.
+  build: { emptyOutDir: true, rollupOptions: { output: { inlineDynamicImports: true } } },
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
     port: 1420,

@@ -4,6 +4,7 @@ import { api } from "../../lib/api.js";
 type MarketplaceSkill = { name: string; description: string; dir: string; installed: boolean };
 type Marketplace = { url: string; skills: MarketplaceSkill[] };
 type InstalledSkill = { name: string; dir: string; url: string; installedAt: string; present: boolean };
+type RegistrySkill = { name: string; source: string; url: string; installs: number; installed: boolean };
 
 export function PluginsTab() {
   const [installed, setInstalled] = useState<InstalledSkill[]>([]);
@@ -16,6 +17,10 @@ export function PluginsTab() {
   const [busy, setBusy] = useState<string | null>(null);
   const [addError, setAddError] = useState<string | null>(null);
   const [rowError, setRowError] = useState<{ key: string; message: string } | null>(null);
+
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<RegistrySkill[] | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   async function loadAll() {
     try {
@@ -52,6 +57,38 @@ export function PluginsTab() {
       await loadAll();
     } catch (err) {
       setAddError(err instanceof Error ? err.message : "Failed to add marketplace");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleSearch(e: FormEvent) {
+    e.preventDefault();
+    const q = query.trim();
+    if (!q) return;
+    setBusy("search-registry");
+    setSearchError(null);
+    try {
+      const res = await api.get(`/skills/registry/search?q=${encodeURIComponent(q)}&limit=25`) as { skills: RegistrySkill[] };
+      setResults(res.skills);
+    } catch (err) {
+      setSearchError(err instanceof Error ? err.message : "Search failed");
+      setResults(null);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleRegistryInstall(skill: RegistrySkill) {
+    const key = `registry-install:${skill.source}:${skill.name}`;
+    setBusy(key);
+    setRowError(null);
+    try {
+      await api.post("/skills/registry/install", { source: skill.source, name: skill.name });
+      setResults((prev) => prev ? prev.map((r) => r === skill ? { ...r, installed: true } : r) : prev);
+      await loadAll();
+    } catch (err) {
+      setRowError({ key, message: err instanceof Error ? err.message : "Install failed" });
     } finally {
       setBusy(null);
     }
@@ -173,6 +210,62 @@ export function PluginsTab() {
             </div>
             {addError && <div className="text-xs text-error font-code-sm">{addError}</div>}
           </form>
+        </div>
+      </div>
+
+      <div className="glass-card rounded-xl overflow-hidden border border-white/10 flex flex-col group mb-6">
+        <div className="p-6 border-b border-white/5 bg-surface-container/30">
+          <h3 className="font-headline-sm text-on-surface font-bold">Search the skills.sh registry</h3>
+          <p className="text-on-surface-variant text-xs mt-1">Ranked by installs. Installing clones the source repo and adds the skill to ~/.claude/skills.</p>
+        </div>
+        <div className="p-6 flex flex-col">
+          <form onSubmit={handleSearch} className="flex gap-2 mb-4">
+            <input
+              type="text"
+              className="flex-1 bg-surface-container-lowest/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface font-code-sm outline-none"
+              placeholder="Search skills (e.g. testing, deploy, react)"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <button
+              type="submit"
+              className="px-4 py-2 rounded bg-white/5 hover:bg-primary hover:text-on-primary text-on-surface text-sm font-medium transition-all disabled:opacity-50 flex-shrink-0"
+              disabled={busy !== null || !query.trim()}
+            >
+              {busy === "search-registry" ? "Searching..." : "Search"}
+            </button>
+          </form>
+          {searchError && <div className="text-xs text-error font-code-sm mb-2">{searchError}</div>}
+          {results !== null && results.length === 0 && (
+            <p className="text-sm text-on-surface-variant">No skills found.</p>
+          )}
+          {results !== null && results.map((skill) => {
+            const key = `registry-install:${skill.source}:${skill.name}`;
+            return (
+              <div key={`${skill.source}/${skill.name}`} className="flex items-center justify-between gap-4 py-3 border-b border-white/5 last:border-0">
+                <div className="flex flex-col gap-1 min-w-0 flex-1">
+                  <span className="text-sm font-medium text-on-surface">{skill.name}</span>
+                  <span className="text-xs text-on-surface-variant font-code-sm truncate">
+                    {skill.source} • {skill.installs.toLocaleString()} installs
+                  </span>
+                </div>
+                <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                  {skill.installed ? (
+                    <span className="text-xs text-on-surface-variant">Installed</span>
+                  ) : (
+                    <button
+                      onClick={() => handleRegistryInstall(skill)}
+                      disabled={busy !== null}
+                      className="px-3 py-1.5 rounded bg-primary/20 hover:bg-primary hover:text-on-primary text-primary text-xs font-medium transition-all disabled:opacity-50"
+                    >
+                      {busy === key ? "Installing..." : "Install"}
+                    </button>
+                  )}
+                  {rowError?.key === key && <div className="text-xs text-error font-code-sm">{rowError.message}</div>}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 

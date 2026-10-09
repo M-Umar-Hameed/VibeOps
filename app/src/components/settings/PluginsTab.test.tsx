@@ -147,3 +147,61 @@ test("failed add shows the error message inline", async () => {
   expect(apiFetch).toHaveBeenCalledWith("/skills/marketplaces", { method: "POST", body: { url: "https://github.com/bad/repo" } });
   expect(screen.getAllByText("alpha").length).toBeGreaterThan(0);
 });
+
+test("registry search posts the query and renders ranked results", async () => {
+  render(<PluginsTab />);
+  await waitFor(() => { expect(screen.getAllByText("alpha").length).toBeGreaterThan(0); });
+
+  const input = screen.getByPlaceholderText("Search skills (e.g. testing, deploy, react)");
+  fireEvent.change(input, { target: { value: "testing" } });
+
+  apiFetch.mockImplementation((path: string) => {
+    if (path.startsWith("/skills/registry/search")) {
+      return Promise.resolve({ skills: [
+        { name: "webapp-testing", source: "anthropics/skills", url: "https://github.com/anthropics/skills", installs: 172108, installed: false },
+      ] });
+    }
+    if (path === "/skills/installed") return Promise.resolve(installedFixture);
+    if (path === "/skills/marketplaces") return Promise.resolve(marketplacesFixture);
+    return Promise.resolve({ ok: true });
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+  await waitFor(() => { expect(screen.getByText("webapp-testing")).toBeInTheDocument(); });
+  expect(screen.getByText(/anthropics\/skills/)).toBeInTheDocument();
+  expect(apiFetch).toHaveBeenCalledWith("/skills/registry/search?q=testing&limit=25");
+});
+
+test("installing a registry result posts source and name", async () => {
+  // Installed-only marketplace BEFORE render, so the initial mount renders no
+  // marketplace Install button and the registry result's is the only one.
+  marketplacesFixture = [{ url: "https://github.com/o/r", skills: [{ name: "alpha", description: "alpha desc", dir: "alpha", installed: true }] }];
+  render(<PluginsTab />);
+  await waitFor(() => { expect(screen.getAllByText("alpha").length).toBeGreaterThan(0); });
+
+  fireEvent.change(screen.getByPlaceholderText("Search skills (e.g. testing, deploy, react)"), { target: { value: "testing" } });
+  apiFetch.mockImplementation((path: string, init?: { method?: string; body?: any }) => {
+    if (path.startsWith("/skills/registry/search")) {
+      return Promise.resolve({ skills: [
+        { name: "webapp-testing", source: "anthropics/skills", url: "https://github.com/anthropics/skills", installs: 172108, installed: false },
+      ] });
+    }
+    if (path === "/skills/registry/install" && init?.method === "POST") {
+      return Promise.resolve({ name: "webapp-testing", dir: "webapp-testing", url: "https://github.com/anthropics/skills", installedAt: "2026-10-09T00:00:00Z" });
+    }
+    if (path === "/skills/installed") return Promise.resolve(installedFixture);
+    // Only installed marketplace skills here, so the only "Install" button on the
+    // page is the registry result's - keeps getByRole unambiguous.
+    if (path === "/skills/marketplaces") return Promise.resolve([{ url: "https://github.com/o/r", skills: [{ name: "alpha", description: "alpha desc", dir: "alpha", installed: true }] }]);
+    return Promise.resolve({ ok: true });
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() => { expect(screen.getByText("webapp-testing")).toBeInTheDocument(); });
+
+  fireEvent.click(screen.getByRole("button", { name: "Install" }));
+  await waitFor(() => {
+    expect(apiFetch).toHaveBeenCalledWith("/skills/registry/install", { method: "POST", body: { source: "anthropics/skills", name: "webapp-testing" } });
+  });
+});

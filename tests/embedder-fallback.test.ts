@@ -45,3 +45,55 @@ test("getEmbedder returns LocalEmbedder directly once fallback is sticky", async
     if (saved.k === undefined) delete process.env.VOYAGE_API_KEY; else process.env.VOYAGE_API_KEY = saved.k;
   }
 });
+
+test("re-probes voyage after the cooldown window expires", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  // Cooldown 0: the failure sets voyageFallbackUntil = now + 0, so the very next
+  // call is already past the window and must re-probe the primary.
+  process.env.VIBEOPS_VOYAGE_COOLDOWN_MS = "0";
+  resetVoyageFallback();
+  try {
+    let calls = 0;
+    const primary = new FakeEmbedder(1024);
+    vi.spyOn(primary, "embed").mockImplementation(async (texts: string[]) => {
+      calls++;
+      if (calls === 1) throw new Error("voyage embed failed: 503");
+      return texts.map(() => new Array(1024).fill(0.1));
+    });
+    const local = new FakeEmbedder(384);
+    const localEmbed = vi.spyOn(local, "embed");
+    const w = new VoyageWithLocalFallback(primary, () => local);
+
+    const [a] = await w.embed(["first"]);   // primary throws -> local
+    expect(a).toHaveLength(384);
+    expect(localEmbed).toHaveBeenCalledTimes(1);
+
+    const [b] = await w.embed(["second"]);  // window already expired -> primary retried
+    expect(b).toHaveLength(1024);           // voyage vector, recovered
+    expect(calls).toBe(2);                  // primary was probed again
+    expect(localEmbed).toHaveBeenCalledTimes(1); // local not used the second time
+  } finally {
+    delete process.env.VIBEOPS_VOYAGE_COOLDOWN_MS;
+    resetVoyageFallback();
+  }
+});
+
+test("does NOT re-probe voyage while still inside the cooldown window", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  process.env.VIBEOPS_VOYAGE_COOLDOWN_MS = "600000"; // 10 min: far longer than the test
+  resetVoyageFallback();
+  try {
+    const primary = new FakeEmbedder(1024);
+    const primaryEmbed = vi.spyOn(primary, "embed").mockImplementation(async () => { throw new Error("voyage embed failed: 503"); });
+    const local = new FakeEmbedder(384);
+    const w = new VoyageWithLocalFallback(primary, () => local);
+
+    await w.embed(["first"]);               // trips cooldown
+    expect(primaryEmbed).toHaveBeenCalledTimes(1);
+    await w.embed(["second"]);              // inside window -> no re-probe
+    expect(primaryEmbed).toHaveBeenCalledTimes(1);
+  } finally {
+    delete process.env.VIBEOPS_VOYAGE_COOLDOWN_MS;
+    resetVoyageFallback();
+  }
+});

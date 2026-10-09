@@ -65,7 +65,7 @@ test("429 then 200 returns vectors, sticky flag stays unflipped", async () => {
   expect(localEmbed).not.toHaveBeenCalled();
 });
 
-test("429 x4 exhausts retries, falls back local, flag sticky", async () => {
+test("429 x4 exhausts retries, falls back local, holds within cooldown", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => tooMany("0")));
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const local = new FakeEmbedder(384);
@@ -76,13 +76,13 @@ test("429 x4 exhausts retries, falls back local, flag sticky", async () => {
   expect(v).toHaveLength(384);
   expect(w.model).toBe("fake");
   expect(fetch).toHaveBeenCalledTimes(4);      // initial + 3 retries
-  expect(warn.mock.calls.map(([m]) => String(m))).toEqual([
-    "voyage 429, retrying with backoff",
-    "voyage embed failed: 429, falling back to local embedder",
-  ]);
+  const msgs = warn.mock.calls.map(([m]) => String(m));
+  expect(msgs[0]).toBe("voyage 429, retrying with backoff");
+  expect(msgs[1]).toMatch(/^voyage embed failed: 429, falling back to local embedder for \d+s$/);
+  expect(msgs).toHaveLength(2);
   (fetch as any).mockClear();
   await w.embed(["b"]);
-  expect(fetch).not.toHaveBeenCalled();        // sticky
+  expect(fetch).not.toHaveBeenCalled();        // within cooldown: no re-probe
 });
 
 test("Retry-After header honored over default backoff", async () => {

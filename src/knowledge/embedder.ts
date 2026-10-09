@@ -173,11 +173,32 @@ export class VoyageEmbedder implements Embedder {
 // network) the whole process embeds locally for the rest of its lifetime, so new
 // rows and queries stay in one vector space. Voyage rows written earlier keep
 // their 1024-dim tag and are simply not queried again (dim discriminator).
-let voyageFellBack = false;
+// A Voyage failure used to latch local embeddings for the whole process. With
+// the sidecar now always-on in the tray, one transient 429 could mean days on the
+// local model. Instead, a failure starts a cooldown: local for the window, then
+// the next call re-probes Voyage. The downgrade is bounded by the outage plus the
+// window, not by when the user happens to restart the app.
+//
+// Local and Voyage occupy different embedding spaces (local is 384 padded to the
+// 1024 column, Voyage is native 1024), so any fallback already mixes spaces in the
+// index. Re-probing does not worsen that - it just makes future docs correct again
+// once Voyage recovers - which is why a bounded cooldown beats a permanent latch.
+let voyageFallbackUntil = 0;
 
-// Test-only: reset the sticky flag between cases in a shared module instance.
+// Read per call (like the throttle's forcedIntervalMs) so tests and a live
+// restart-free settings change both take effect without reloading the module.
+function voyageCooldownMs(): number {
+  const raw = Number(process.env.VIBEOPS_VOYAGE_COOLDOWN_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 300_000;
+}
+
+function voyageInFallback(now = Date.now()): boolean {
+  return now < voyageFallbackUntil;
+}
+
+// Test-only: clear the cooldown between cases in a shared module instance.
 export function resetVoyageFallback(): void {
-  voyageFellBack = false;
+  voyageFallbackUntil = 0;
 }
 
 export class VoyageWithLocalFallback implements Embedder {
@@ -189,15 +210,18 @@ export class VoyageWithLocalFallback implements Embedder {
     this.dim = primary.dim;
   }
   async embed(texts: string[]): Promise<number[][]> {
-    if (!voyageFellBack) {
+    if (!voyageInFallback()) {
       try {
         return await this.primary.embed(texts);
       } catch (e) {
-        // Sync check-and-set in the catch: at most one warn even under concurrent
-        // in-flight batches (no await between check and set).
-        if (!voyageFellBack) {
-          voyageFellBack = true;
-          console.warn(`${(e as Error).message}, falling back to local embedder`);
+        // Sync check-and-set in the catch: at most one warn per transition into
+        // fallback even under concurrent in-flight batches (no await between the
+        // check and the set). A re-probe that fails after the window warns again,
+        // which is at most once per cooldown window, not per doc.
+        if (!voyageInFallback()) {
+          const cooldown = voyageCooldownMs();
+          voyageFallbackUntil = Date.now() + cooldown;
+          console.warn(`${(e as Error).message}, falling back to local embedder for ${Math.round(cooldown / 1000)}s`);
         }
       }
     }
@@ -216,7 +240,7 @@ export function getEmbedder(): Embedder {
   const model = process.env.EMBED_MODEL ?? "voyage-3";
   if (!MODEL_DIMS[model]) throw new Error(`unknown embed model: ${model}`);
   if (provider === "voyage") {
-    if (voyageFellBack) return new LocalEmbedder();
+    if (voyageInFallback()) return new LocalEmbedder();
     return new VoyageWithLocalFallback(new VoyageEmbedder(model, process.env.VOYAGE_API_KEY ?? ""));
   }
   throw new Error(`unsupported EMBED_PROVIDER: ${provider}`);

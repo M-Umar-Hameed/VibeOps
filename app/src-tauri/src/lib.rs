@@ -45,7 +45,10 @@ pub fn run() {
             let show_item = MenuItem::with_id(app, "show", "Show VibeOps", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit VibeOps", true, None::<&str>)?;
             let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
-            let mut tray = TrayIconBuilder::new().tooltip("VibeOps");
+            // Stable id: without it Tauri assigns a new tray id every launch, so Windows
+            // persists a fresh NotifyIconSettings entry each run and stacks duplicate
+            // tray icons that survive reboots.
+            let mut tray = TrayIconBuilder::with_id("vibeops-tray").tooltip("VibeOps");
             if let Some(icon) = app.default_window_icon() {
                 tray = tray.icon(icon.clone());
             }

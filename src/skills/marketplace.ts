@@ -271,6 +271,26 @@ export async function installSkill(url: string, dir: string): Promise<InstalledS
   return entry;
 }
 
+// One-call install straight from a registry result: add (clone) the source repo
+// as a marketplace, find the skill whose directory matches the registry name, and
+// install it. Every step is the existing hardened path - addMarketplace's url
+// validation, discoverSkills, installSkill's traversal and dir-name guards - so
+// this only chains them; it introduces no new way to fetch or copy anything.
+export async function installFromRegistry(source: string, name: string): Promise<InstalledSkillEntry> {
+  if (!OWNER_REPO_RE.test(source)) throw new NotFoundError(`invalid registry source "${source}"`);
+  // Base is configurable only so tests can point at a local git fixture; it
+  // defaults to github.com and the owner/repo shape is already validated above.
+  const base = (process.env.VIBEOPS_SKILLS_GITHUB_BASE ?? "https://github.com").replace(/\/$/, "");
+  const url = `${base}/${source}`;
+  await addMarketplace(url); // clones/refreshes and registers the marketplace
+  const skills = discoverSkills(marketplaceDir(url));
+  // Registry name is the skill's directory inside its repo; fall back to the
+  // frontmatter name so a repo that renames via frontmatter still resolves.
+  const match = skills.find((sk) => sk.dir === name) ?? skills.find((sk) => sk.name === name);
+  if (!match) throw new NotFoundError(`skill "${name}" not found in ${source}`);
+  return installSkill(url, match.dir);
+}
+
 export async function uninstallSkill(name: string): Promise<void> {
   const installed = await getInstalled();
   const entry = installed.find((e) => e.name === name);

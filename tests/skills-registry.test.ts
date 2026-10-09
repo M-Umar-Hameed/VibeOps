@@ -55,3 +55,58 @@ describe("searchRegistry", () => {
     expect(seenUrl).toContain("owner=anthropics");
   });
 });
+
+import { describe as describe2, it as it2, expect as expect2, beforeEach } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, dirname } from "node:path";
+import { execFileSync } from "node:child_process";
+import { installFromRegistry, listInstalled, removeMarketplace } from "../src/skills/marketplace.js";
+
+function gitRepoWithSkill(base: string, source: string, skillDir: string): void {
+  const repo = join(base, source);
+  mkdirSync(join(repo, skillDir), { recursive: true });
+  writeFileSync(join(repo, skillDir, "SKILL.md"), `---\nname: ${skillDir}\ndescription: ${skillDir} skill\n---\n# ${skillDir}\n`);
+  const g = (...a: string[]) => execFileSync("git", a, { cwd: repo });
+  g("init", "-b", "main"); g("config", "user.email", "t@t"); g("config", "user.name", "t");
+  g("add", "-A"); g("commit", "-m", "base");
+}
+
+describe2("installFromRegistry (local git fixture, isolated home)", () => {
+  let ghBase: string;
+  let skillsHome: string;
+  const SOURCE = "acme/skills";
+
+  beforeEach(() => {
+    ghBase = mkdtempSync(join(tmpdir(), "gh-base-"));
+    skillsHome = mkdtempSync(join(tmpdir(), "skills-home-reg-"));
+    gitRepoWithSkill(ghBase, SOURCE, "cool-skill");
+    process.env.VIBEOPS_SKILLS_HOME = skillsHome;
+    process.env.VIBEOPS_SKILLS_ALLOW_LOCAL = "1";
+    process.env.VIBEOPS_SKILLS_GITHUB_BASE = ghBase;
+  });
+
+  afterEach(async () => {
+    await removeMarketplace(`${ghBase}/${SOURCE}`).catch(() => {});
+    delete process.env.VIBEOPS_SKILLS_HOME;
+    delete process.env.VIBEOPS_SKILLS_ALLOW_LOCAL;
+    delete process.env.VIBEOPS_SKILLS_GITHUB_BASE;
+    rmSync(ghBase, { recursive: true, force: true });
+    rmSync(skillsHome, { recursive: true, force: true });
+  });
+
+  it2("clones the source and installs the named skill in one call", async () => {
+    const entry = await installFromRegistry(SOURCE, "cool-skill");
+    expect2(entry.dir).toBe("cool-skill");
+    const installed = await listInstalled();
+    expect2(installed.some((e) => e.dir === "cool-skill" && e.present)).toBe(true);
+  });
+
+  it2("rejects a source that is not owner/repo", async () => {
+    await expect2(installFromRegistry("../../etc", "x")).rejects.toThrow(/invalid registry source/);
+  });
+
+  it2("404s a name that does not exist in the source", async () => {
+    await expect2(installFromRegistry(SOURCE, "no-such-skill")).rejects.toThrow(/not found in/);
+  });
+});

@@ -337,3 +337,27 @@ describe("chat API", () => {
     );
   });
 });
+
+describe("chat API: malformed session id is 404, never 500", () => {
+  const BAD = "not-a-uuid";
+  it("GET /chat/sessions/:id", async () => {
+    const res = await app.request(`/chat/sessions/${BAD}`, { headers: await adminHeaders() });
+    expect(res.status).toBe(404);
+  });
+  it("POST /chat/sessions/:id/messages", async () => {
+    const res = await app.request(`/chat/sessions/${BAD}/messages`, {
+      method: "POST", headers: await adminHeaders(), body: JSON.stringify({ body: "hi" }),
+    });
+    expect(res.status).toBe(404);
+  });
+  it("PATCH /chat/sessions/:id", async () => {
+    const res = await app.request(`/chat/sessions/${BAD}`, {
+      method: "PATCH", headers: await adminHeaders(), body: JSON.stringify({ title: "x" }),
+    });
+    expect(res.status).toBe(404);
+  });
+  it("DELETE /chat/sessions/:id", async () => {
+    const res = await app.request(`/chat/sessions/${BAD}`, { method: "DELETE", headers: await adminHeaders() });
+    expect(res.status).toBe(404);
+  });
+});

@@ -15,7 +15,14 @@ export async function listSessions(): Promise<ChatSession[]> {
   return db.select().from(chatSessions).orderBy(desc(chatSessions.createdAt));
 }
 
+// chatSessions.id is a uuid column, so a non-uuid path param (a stray or hand-typed
+// id) made the query throw "invalid input syntax for type uuid" and every route
+// that guards on getSession returned 500 instead of 404. Treat a malformed id as
+// "no such session" here, once, so every caller gets the clean not-found path.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function getSession(id: string): Promise<ChatSession | undefined> {
+  if (!UUID_RE.test(id)) return undefined;
   const [row] = await db.select().from(chatSessions).where(eq(chatSessions.id, id)).limit(1);
   return row;
 }

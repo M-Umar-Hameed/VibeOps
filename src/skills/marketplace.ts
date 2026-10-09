@@ -279,6 +279,62 @@ export async function uninstallSkill(name: string): Promise<void> {
   await setInstalled(installed.filter((e) => e.name !== name));
 }
 
+export interface RegistrySkill {
+  name: string;      // skill directory name inside its source repo
+  source: string;    // GitHub "owner/repo" the skill lives in
+  url: string;       // clone url: https://github.com/<source>
+  installs: number;
+  installed: boolean; // already present in ~/.claude/skills under this name
+}
+
+// skills.sh is the public, install-ranked registry behind `npx skills`. Its
+// search API returns each skill's source repo ("owner/repo") and skill name; a
+// result maps straight onto the marketplace model this file already hardened -
+// the source is a GitHub repo to addMarketplace, the name is a skill inside it
+// to installSkill. So search only resolves and ranks; clone/discover/install
+// stay on the one path with the traversal and dir-name guards.
+const REGISTRY_BASE = process.env.VIBEOPS_SKILLS_API_URL ?? "https://skills.sh";
+const OWNER_REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
+
+export async function searchRegistry(
+  query: string,
+  opts: { owner?: string; limit?: number } = {},
+): Promise<RegistrySkill[]> {
+  const params = new URLSearchParams({ q: query });
+  if (opts.owner) params.set("owner", opts.owner);
+  const url = `${REGISTRY_BASE}/api/search?${params.toString()}`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 10_000);
+  let data: { skills?: Array<{ name?: unknown; source?: unknown; installs?: unknown }> };
+  try {
+    const res = await fetch(url, { signal: ctrl.signal, headers: { accept: "application/json" } });
+    if (!res.ok) throw new Error(`skills.sh search failed: HTTP ${res.status}`);
+    data = await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+  const installedDirs = new Set((await getInstalled()).map((e) => e.dir));
+  const localDirs = new Set(listLocalSkillDirs());
+  const out: RegistrySkill[] = [];
+  for (const raw of data.skills ?? []) {
+    // The registry is third-party data: a malformed or hostile row (a source
+    // that is not owner/repo, a non-string name) is dropped, never turned into
+    // a clone url, so nothing downstream clones an attacker-chosen host.
+    const name = typeof raw.name === "string" ? raw.name.trim() : "";
+    const source = typeof raw.source === "string" ? raw.source.trim() : "";
+    if (!name || !OWNER_REPO_RE.test(source)) continue;
+    const installs = typeof raw.installs === "number" && raw.installs >= 0 ? raw.installs : 0;
+    out.push({
+      name, source,
+      url: `https://github.com/${source}`,
+      installs,
+      installed: installedDirs.has(name) || localDirs.has(name),
+    });
+    if (opts.limit && out.length >= opts.limit) break;
+  }
+  return out;
+}
+
 export async function listInstalled(): Promise<(InstalledSkillEntry & { present: boolean })[]> {
   const installed = await getInstalled();
   return installed.map((e) => ({ ...e, present: existsSync(join(claudeSkillsDir(), e.dir)) }));

@@ -5,12 +5,27 @@ import { ConflictError, NotFoundError } from "../services/errors.js";
 import {
   addMarketplace, listMarketplaces, removeMarketplace,
   installSkill, uninstallSkill, listInstalled, listLocalSkillDirs,
+  searchRegistry,
 } from "../skills/marketplace.js";
 
 type AppEnv = { Variables: { actor: Actor } };
 
 export function registerSkillsRoutes(app: Hono<AppEnv>): void {
   app.get("/skills/marketplaces", requireAdmin, async (c) => c.json(await listMarketplaces()));
+
+  // Search the public skills.sh registry. Returns ranked results whose source
+  // repo and name feed the existing /skills/marketplaces + /skills/install path.
+  app.get("/skills/registry/search", requireAdmin, async (c) => {
+    const q = c.req.query("q");
+    if (!q) return c.json({ error: "q required" }, 400);
+    const owner = c.req.query("owner") || undefined;
+    const limit = Number(c.req.query("limit")) || undefined;
+    try {
+      return c.json({ skills: await searchRegistry(q, { owner, limit }) });
+    } catch (e) {
+      return c.json({ error: (e as Error).message }, 502);
+    }
+  });
 
   app.post("/skills/marketplaces", requireAdmin, async (c) => {
     const { url } = await c.req.json().catch(() => ({}));

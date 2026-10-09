@@ -114,6 +114,38 @@ export function resetVoyageThrottle(): void {
   warned429 = false;
 }
 
+// OpenAI-compatible embeddings client for a LOCAL static-embedding server such
+// as model2vec-serve (a ~30 MB static model behind /v1/embeddings). Opt-in via
+// EMBED_PROVIDER=model2vec: it does NOT replace the zero-config local ONNX
+// embedder, because model2vec has no Node-native runtime - it runs as a separate
+// process the owner starts, the same arrangement as Voyage's API or laya's
+// binary. When used, it keeps the ~200 MB ONNX runtime out of the sidecar.
+export class HttpEmbedder implements Embedder {
+  constructor(
+    public model: string,
+    public dim: number,
+    private baseUrl: string,
+    private apiKey?: string,
+  ) {
+    if (!baseUrl) throw new Error("http embedder requires a base url (EMBED_HTTP_URL)");
+  }
+  async embed(texts: string[]): Promise<number[][]> {
+    const url = `${this.baseUrl.replace(/\/$/, "")}/v1/embeddings`;
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (this.apiKey) headers.authorization = `Bearer ${this.apiKey}`;
+    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ model: this.model, input: texts }) });
+    if (!res.ok) throw new Error(`http embed failed: ${res.status}`);
+    const body = (await res.json()) as { data?: { embedding: number[] }[] };
+    const rows = body.data;
+    if (!Array.isArray(rows) || rows.length !== texts.length) {
+      throw new Error(`http embed returned ${rows?.length ?? 0} rows for ${texts.length} inputs`);
+    }
+    // Pad to the vector(1024) column width, identical to the local and Voyage
+    // paths; shared zero padding does not change cosine similarity.
+    return rows.map((d) => padTo(d.embedding, 1024));
+  }
+}
+
 export class VoyageEmbedder implements Embedder {
   dim: number;
   constructor(public model: string, private apiKey: string) {
@@ -237,6 +269,11 @@ export function getEmbedder(): Embedder {
     ?? (process.env.VOYAGE_API_KEY ? "voyage" : "local");
   if (provider === "fake") return new FakeEmbedder(1024);
   if (provider === "local") return new LocalEmbedder();
+  if (provider === "model2vec" || provider === "http") {
+    // True model dim is the search discriminator; vectors are padded to 1024.
+    const dim = Number(process.env.EMBED_DIM) || 256;
+    return new HttpEmbedder(process.env.EMBED_MODEL ?? "model2vec", dim, process.env.EMBED_HTTP_URL ?? "", process.env.EMBED_HTTP_KEY);
+  }
   const model = process.env.EMBED_MODEL ?? "voyage-3";
   if (!MODEL_DIMS[model]) throw new Error(`unknown embed model: ${model}`);
   if (provider === "voyage") {

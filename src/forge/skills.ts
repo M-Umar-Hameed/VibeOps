@@ -19,11 +19,12 @@ export function listSkillDir(dir: string): string[] {
   }
 }
 
-// Every <dir>/SKILL.md under ~/.claude/skills and <workdir>/.claude/skills.
-// workdir wins on a name clash. name = frontmatter name else dir; description
-// = frontmatter description else "". A dir without a readable SKILL.md is skipped.
-export function listSkills(workdir: string): SkillMeta[] {
-  const roots = [join(homedir(), ".claude", "skills"), join(workdir, ".claude", "skills")];
+// Every <dir>/SKILL.md under <workdir>/.claude/skills and ~/.claude/skills.
+// workdir first, workdir wins on a name clash, optional allowlist (case-insensitive,
+// empty means no filter). name = frontmatter name else dir; description = frontmatter
+// description else "". A dir without a readable SKILL.md is skipped.
+export function listSkills(workdir: string, allowlist?: string[]): SkillMeta[] {
+  const roots = [join(workdir, ".claude", "skills"), join(homedir(), ".claude", "skills")];
   const byName = new Map<string, SkillMeta>();
   for (const root of roots) {
     for (const dir of listSkillDir(root)) {
@@ -34,10 +35,28 @@ export function listSkills(workdir: string): SkillMeta[] {
       } catch {
         continue; // no SKILL.md in this dir
       }
-      byName.set(meta.name, { name: meta.name, description: meta.description, path });
+      if (!byName.has(meta.name)) {
+        byName.set(meta.name, { name: meta.name, description: meta.description, path });
+      }
     }
   }
+  if (allowlist?.length) {
+    const allow = new Set(allowlist.map((n) => n.toLowerCase()));
+    return [...byName.values()].filter((s) => allow.has(s.name.toLowerCase()));
+  }
   return [...byName.values()];
+}
+
+// forge.skillAllowlist value: JSON array of skill names. Unset, invalid, non-array
+// or empty -> undefined (no filter). Invalid JSON warns so a typo is visible.
+export function parseSkillAllowlist(raw: string | null | undefined): string[] | undefined {
+  if (!raw?.trim()) return undefined;
+  try {
+    const v = JSON.parse(raw);
+    if (Array.isArray(v) && v.length && v.every((n) => typeof n === "string")) return v;
+  } catch { /* fallthrough */ }
+  console.warn("forge: forge.skillAllowlist is not a JSON array of names; ignored");
+  return undefined;
 }
 
 // SKILL.md body with the leading frontmatter block removed, capped at 16000

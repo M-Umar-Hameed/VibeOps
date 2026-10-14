@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import {
   listSkills, readSkillBody, parsePlanSkills, parseOperatorSkills, formatSkillIndex,
+  parseSkillAllowlist,
 } from "../src/forge/skills.js";
 
 function writeSkill(root: string, dir: string, frontmatter: string, body: string): string {
@@ -37,6 +38,30 @@ test("listSkills reads both roots, workdir wins on a name clash, frontmatter fal
   expect(byName.alpha.description).toBe("workdir alpha");
   expect(byName.beta.description).toBe("home beta");
   expect(byName.gamma).toBeTruthy();
+});
+
+test("listSkills lists workdir skills before home skills", () => {
+  writeSkill(home, "alpha", "name: alpha\ndescription: home alpha", "home body");
+  writeSkill(workdir, "zeta", "name: zeta\ndescription: workdir zeta", "workdir body");
+  expect(listSkills(workdir).map((s) => s.name)[0]).toBe("zeta");
+});
+
+test("listSkills filters with allowlist case-insensitively and returns all when allowlist is empty", () => {
+  writeSkill(home, "alpha", "name: alpha\ndescription: home alpha", "home body");
+  writeSkill(home, "beta", "name: beta\ndescription: home beta", "beta body");
+  writeSkill(workdir, "gamma", "name: gamma\ndescription: workdir gamma", "gamma body");
+  expect(listSkills(workdir, ["BETA", "gamma"]).map((s) => s.name)).toEqual(["gamma", "beta"]);
+  expect(listSkills(workdir, []).map((s) => s.name)).toEqual(["gamma", "alpha", "beta"]);
+});
+
+test("parseSkillAllowlist parses JSON array of names or returns undefined", () => {
+  expect(parseSkillAllowlist('["a","b"]')).toEqual(["a", "b"]);
+  expect(parseSkillAllowlist(undefined)).toBeUndefined();
+  expect(parseSkillAllowlist("")).toBeUndefined();
+  expect(parseSkillAllowlist("[]")).toBeUndefined();
+  expect(parseSkillAllowlist("not json")).toBeUndefined();
+  expect(parseSkillAllowlist('{"a":1}')).toBeUndefined();
+  expect(parseSkillAllowlist('[1]')).toBeUndefined();
 });
 
 test("listSkills returns [] when the skills roots are missing", () => {

@@ -18,11 +18,28 @@ const EXIT_DRAIN_MS = 2_000;
 // headroom for the exe path and per-arg quoting. POSIX limits are far higher, so
 // this only triggers the stdin fallback earlier there, which is harmless.
 const ARGV_SAFE_LIMIT = 30_000;
-const cmdLineLength = (argv: string[]): number => argv.reduce((n, x) => n + x.length + 3, 0);
+// ponytail: conservative estimate for quotes re-escaped when hosted; only effect is an earlier stdin fallback.
+const cmdLineLength = (argv: string[]): number => argv.reduce((n, x) => n + x.length + 3 + 4 * (x.split('"').length - 1), 0);
 // How long the liveness poll waits for Node to reap a vanished child and report
 // its exit status before declaring failure. Generous: a wrong "failed" on a
 // successful run is worse than settling a truly-lost child a second later.
 const EXIT_REAP_GRACE_MS = 5_000;
+
+// Incident 2026-10-14: on Windows 11 with Windows Terminal as default terminal,
+// detached children with inherited fd stdio receive no console from libuv. Every
+// console child the agent spawns gets a new console that svchost hands to Windows
+// Terminal, flashing windows and leaking OpenConsole.exe / conhost.exe (~1,650
+// leaked in 50 min until desktop heap exhaustion and 0xc0000142 failures).
+// Spawning the agent under a small detached host via pipes + windowsHide gives
+// the agent CREATE_NO_WINDOW — a single hidden console that all its children share.
+const CONSOLE_HOST_JS =
+  `const{spawn}=require("child_process");const[,f,file,...args]=process.argv;` +
+  `const c=spawn(file,args,{stdio:[f[1]==="1"?"pipe":"ignore","pipe","pipe"],windowsHide:true,windowsVerbatimArguments:f[0]==="1"});` +
+  `if(c.stdin){c.stdin.on("error",()=>{});process.stdin.pipe(c.stdin);}` +
+  `c.stdout.on("data",(d)=>process.stdout.write(d));c.stderr.on("data",(d)=>process.stderr.write(d));` +
+  `c.on("error",(e)=>{process.stderr.write("\\n[forge: agent could not be started: "+e.message+"]\\n");process.exit(1);});` +
+  `c.on("exit",(code)=>setTimeout(()=>process.exit(code??1),${EXIT_DRAIN_MS}).unref());` +
+  `c.on("close",(code)=>process.exit(code??1));`;
 
 export type AgentResult = { ok: boolean; output: string; usage?: { tokens: number; cost: number } };
 
@@ -119,7 +136,8 @@ export async function runAgent(
   // config already uses.
   // ponytail: a {prompt} embedded in a larger token (--x={prompt}) loses that
   // whole token; nothing in-tree does that, and a partial arg cannot go on stdin.
-  if (usesPromptArg && !needsFile && cmdLineLength(argv) > ARGV_SAFE_LIMIT) {
+  const hostOverhead = process.platform === "win32" && logPath ? CONSOLE_HOST_JS.length + process.execPath.length : 0;
+  if (usesPromptArg && !needsFile && cmdLineLength(argv) + hostOverhead > ARGV_SAFE_LIMIT) {
     argv = substituteCmd(cmd.filter((p) => !p.includes("{prompt}")), { prompt: "", promptFile, workdir });
     viaStdin = true;
   }
@@ -175,9 +193,12 @@ export async function runAgent(
       // failed the run as a pipeline error with no stage output.
       let child: ChildProcess;
       try {
-        child = outFd !== undefined
-          ? spawn(file, args, { cwd: workdir, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", outFd, outFd], detached: true, windowsHide: true, windowsVerbatimArguments: verbatim })
-          : spawn(file, args, { cwd: workdir, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", "pipe", "pipe"], windowsHide: true, windowsVerbatimArguments: verbatim });
+        const hosted = process.platform === "win32" && outFd !== undefined;
+        child = hosted
+          ? spawn(process.execPath, ["-e", CONSOLE_HOST_JS, `${verbatim ? 1 : 0}${viaStdin ? 1 : 0}`, file, ...args], { cwd: workdir, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", outFd, outFd], detached: true, windowsHide: true })
+          : outFd !== undefined
+            ? spawn(file, args, { cwd: workdir, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", outFd, outFd], detached: true, windowsHide: true, windowsVerbatimArguments: verbatim })
+            : spawn(file, args, { cwd: workdir, env: childEnv, stdio: [viaStdin ? "pipe" : "ignore", "pipe", "pipe"], windowsHide: true, windowsVerbatimArguments: verbatim });
       } catch (e) {
         const msg = `
 [forge: agent could not be started: ${(e as Error).message}]

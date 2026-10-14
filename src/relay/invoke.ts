@@ -88,12 +88,17 @@ export async function runAgent(
   const cmd = wall.on ? wallCmd(agent.cmd, wall.allowed, agent.write === true) : agent.cmd;
 
   const promptFile = join(tmpdir(), `vibeops-relay-${randomUUID()}.txt`);
-  // Declared delivery wins; otherwise fall back to the placeholders the cmd
-  // carries, which is what every pre-existing config relies on.
-  const delivery: PromptDelivery = agent.promptDelivery
-    ?? (cmd.some((p) => p.includes("{promptFile}")) ? "file"
-      : cmd.some((p) => p.includes("{prompt}")) ? "argv"
-      : "stdin");
+  // Declared delivery wins while the cmd still carries its placeholder. The wall
+  // strips {prompt}/{promptFile} from claude, and a declared delivery left with
+  // no placeholder would send the prompt nowhere, so it falls through. Undeclared
+  // falls back to the placeholders the cmd carries, which is what every
+  // pre-existing config relies on.
+  const carries = (tok: string) => cmd.some((p) => p.includes(tok));
+  const declared = agent.promptDelivery === "file" && !carries("{promptFile}") ? undefined
+    : agent.promptDelivery === "argv" && !carries("{prompt}") ? undefined
+    : agent.promptDelivery;
+  const delivery: PromptDelivery = declared
+    ?? (carries("{promptFile}") ? "file" : carries("{prompt}") ? "argv" : "stdin");
   const needsFile = delivery === "file";
   const usesPromptArg = delivery === "argv";
   let viaStdin = delivery === "stdin";

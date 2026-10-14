@@ -1,4 +1,8 @@
+import { copyFileSync, linkSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test } from "vitest";
+import { runAgent } from "../src/relay/invoke.js";
 import { wallCmd, allowRules, resolveAllowedCommands, DEFAULT_ALLOWED_COMMANDS, DENY_RULES, loadWall } from "../src/relay/wall.js";
 import { withSettings } from "./helpers/settings.js";
 
@@ -80,3 +84,49 @@ test("loadWall reads forge.agentWall and forge.allowedCommands", async () => {
     expect(await loadWall()).toEqual({ on: false, allowed: ["make test"] });
   });
 });
+
+// A node binary named claude, so wallCmd treats the fake agent as claude.
+function fakeClaude(): { bin: string; dir: string } {
+  const dir = mkdtempSync(join(tmpdir(), "fake-claude-"));
+  const bin = join(dir, process.platform === "win32" ? "claude.exe" : "claude");
+  try { linkSync(process.execPath, bin); } catch { copyFileSync(process.execPath, bin); }
+  return { bin, dir };
+}
+const FIXTURE = join(process.cwd(), "tests", "fixtures", "fake-agent.mjs");
+
+test("runAgent: declared file delivery on a walled claude cmd sends the prompt on stdin", async () => {
+  const { bin, dir } = fakeClaude();
+  process.env.FAKE_MODE = "echo-stdin";
+  try {
+    await withSettings({ "forge.agentWall": "true" }, async () => {
+      const res = await runAgent(
+        { cmd: [bin, FIXTURE, "{promptFile}", "-p"], roles: ["plan"], promptDelivery: "file", timeoutMs: 20_000 },
+        "wall-prompt", process.cwd(),
+      );
+      expect(res.ok).toBe(true);
+      expect(res.output).toContain("STDIN:wall-prompt");
+    });
+  } finally {
+    delete process.env.FAKE_MODE;
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* exe may still be locked on Windows */ }
+  }
+}, 30_000);
+
+test("runAgent: declared file delivery with the wall off still passes the prompt file", async () => {
+  const { bin, dir } = fakeClaude();
+  process.env.FAKE_MODE = "echo-prompt";
+  try {
+    await withSettings({ "forge.agentWall": "false" }, async () => {
+      const res = await runAgent(
+        { cmd: [bin, FIXTURE, "{promptFile}", "-p"], roles: ["plan"], promptDelivery: "file", timeoutMs: 20_000 },
+        "wall-prompt", process.cwd(),
+      );
+      expect(res.ok).toBe(true);
+      expect(res.output).toMatch(/PROMPT:.*vibeops-relay-.*\.txt/);
+    });
+  } finally {
+    delete process.env.FAKE_MODE;
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* exe may still be locked on Windows */ }
+  }
+}, 30_000);
+

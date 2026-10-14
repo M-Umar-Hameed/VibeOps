@@ -8,6 +8,7 @@ import type { RelayAgent, PromptDelivery } from "./config.js";
 import { pidAlive } from "../db/lifecycle.js";
 import { winCommand } from "./win-bin.js";
 import { loadWall, wallCmd } from "./wall.js";
+import { registerEnvSecrets } from "../forge/redact.js";
 
 const OUTPUT_CAP = 100_000;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
@@ -151,6 +152,7 @@ export async function runAgent(
   if (agent.env) {
     const keys = Object.keys(agent.env);
     const vals = substituteCmd(Object.values(agent.env), { workdir });
+    registerEnvSecrets(Object.fromEntries(keys.map((k, i) => [k, vals[i]])));
     childEnv = { ...process.env };
     keys.forEach((k, i) => { childEnv![k] = vals[i]; });
   }

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getLessons, lessonsClause } from "./lessons.js";
-import { existsSync, openSync, readSync, fstatSync, closeSync, statSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, openSync, readSync, fstatSync, closeSync, statSync, readdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { vibeopsHome } from "../runtime/home.js";
 import { startTimeReader } from "../runtime/proc-start.js";
@@ -795,6 +795,13 @@ function settle(run: Run, status: Status): void {
   run.finishedAt = new Date().toISOString();
   emitEvent("run.settled", { runId: run.id, ticketId: run.ticketId, status });
   run.pid = undefined; // a settled row must never look live (S2-A1)
+  // Child wrote the log raw via fd (invoke.ts ponytail); rewrite it redacted once the run settles.
+  // ponytail: best-effort, whole-file read; live tail before settle reads the raw file but only via append() (redacted).
+  try {
+    const raw = readFileSync(run.logPath, "utf-8");
+    const clean = redactSecrets(raw);
+    if (clean !== raw) writeFileSync(run.logPath, clean);
+  } catch { /* absent/unreadable log: nothing to redact */ }
   // Still never allowed to break a pipeline, but the promise is kept so run.done
   // can await it. hasActiveRun consults the DB after the in-memory map goes quiet,
   // so until this row lands a settled run still reads as active. That gap used to
@@ -1329,6 +1336,7 @@ export { startTimeReader };
 // continuation is S2-B), so the run settles interrupted with output intact and
 // the existing listInterruptedRuns resume path applies.
 function reattach(row: ForgeRun): void {
+  try { loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG); } catch { /* no config: nothing to register */ }
   const run: Run = {
     id: row.id, ticketId: row.ticketId, stage: row.stage as Stage, status: "running",
     agents: { plan: row.planAgent, work: row.workAgent, review: row.reviewAgent },

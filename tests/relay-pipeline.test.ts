@@ -111,7 +111,28 @@ test("relay pipeline: plan -> work -> review(fail) -> rework -> review(pass) -> 
     ]);
     expect((await getTicket(raceTicket.id)).status).toBe("review");
     expect((await getComments(raceTicket.id)).filter((c) => c.kind === "report")).toHaveLength(1);
+
+    // --- Agent env secret redaction in runner comments ---
+    const secretTicket = await createTicket("Secret ticket");
+    const secretConfig: RelayConfig = {
+      ...config,
+      agents: {
+        fakeSecret: {
+          cmd: [process.execPath, FAKE_AGENT, "{prompt}"],
+          roles: ["plan", "work", "review"],
+          env: { DEMO_PASSWORD: "relay-secret-pw-4422" },
+        },
+      },
+    };
+    process.env.FAKE_MODE = "env-leak";
+    await runPlan(secretConfig, { agent: "fakeSecret", ticket: secretTicket.id });
+    const secretComments = await getComments(secretTicket.id);
+    const planBody = secretComments.find((c) => c.kind === "plan")?.body;
+    expect(planBody).toBeDefined();
+    expect(planBody).not.toContain("relay-secret-pw-4422");
+    expect(planBody).toContain("password=[redacted]");
   } finally {
+    delete process.env.FAKE_MODE;
     // Reuse the awaitable kill: resolves only once the tree has actually exited, so the
     // rmSync below cannot race a process still holding the PGlite DB open. No retries needed.
     await killTree(child);

@@ -22,7 +22,7 @@ test("posts OpenAI-shaped body to <base>/v1/embeddings and pads to 1024", async 
   expect(out[0].slice(0, 256).every((x) => x === 0.5)).toBe(true);
   expect(out[0].slice(256).every((x) => x === 0)).toBe(true); // zero padding
 
-  const [url, init] = fetchMock.mock.calls[0] as [string, any];
+  const [url, init] = fetchMock.mock.calls[0] as unknown as [string, any];
   expect(url).toBe("http://127.0.0.1:8081/v1/embeddings");
   expect(init.method).toBe("POST");
   expect(JSON.parse(init.body)).toEqual({ model: "model2vec", input: ["a", "b"] });

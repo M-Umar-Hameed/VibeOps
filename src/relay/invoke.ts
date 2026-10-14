@@ -111,7 +111,7 @@ export async function runAgent(
   }
 
   const wall = await loadWall(agent.projectId);
-  const cmd = wall.on ? wallCmd(agent.cmd, wall.allowed, agent.write === true) : agent.cmd;
+  const cmd = wall.on ? wallCmd(agent.cmd, wall.allowed, agent.write === true, agent.addDirs) : agent.cmd;
 
   const promptFile = join(tmpdir(), `vibeops-relay-${randomUUID()}.txt`);
   // Declared delivery wins while the cmd still carries its placeholder. The wall

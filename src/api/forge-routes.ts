@@ -10,7 +10,8 @@ import { runDoctor } from "../relay/doctor.js";
 import { parseVerdict } from "../relay/prompts.js";
 import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, latestRunStatus, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes } from "../forge/runs.js";
 import {
-  sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash, sandboxActivity, sandboxWorkingDiff, withReadOnlyView
+  sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash, sandboxActivity, sandboxWorkingDiff, withReadOnlyView,
+  attachmentsDir, exportOutputs, validateExportPath,
 } from "../forge/sandbox.js";
 import { listSkillDir } from "../forge/skills.js";
 import { indexRepoDocs } from "../services/knowledge.js";
@@ -19,7 +20,7 @@ import { runAgent } from "../relay/invoke.js";
 import { resolveCmd } from "../relay/config.js";
 import { updateTicket } from "../services/tickets.js";
 import { getTicket } from "../services/history.js";
-import { parseGateOverrides } from "../forge/policy.js";
+import { parseGateOverrides, parseExportTo } from "../forge/policy.js";
 import { addComment, listComments } from "../services/comments.js";
 import { listActors } from "../services/actors.js";
 import { ConflictError, NotFoundError } from "../services/errors.js";
@@ -27,6 +28,8 @@ import { getSetting } from "../services/settings.js";
 import { fetchCatalog } from "../chat/catalog.js";
 import { getKnownModelsForAgent } from "../relay/known-models.js";
 import { requireAdmin } from "./auth.js";
+
+export { attachmentsDir };
 
 const ATTACH_MAX_BYTES = 10 * 1024 * 1024;
 
@@ -37,10 +40,6 @@ function sniffImageExt(buf: Buffer): "png" | "jpg" | "gif" | "webp" | null {
   if (buf.length >= 4 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return "gif";
   if (buf.length >= 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "webp";
   return null;
-}
-
-export function attachmentsDir(): string {
-  return process.env.VIBEOPS_ATTACHMENTS_DIR ?? join(homedir(), ".vibeops", "attachments");
 }
 
 const ATTACHMENT_FILE_RE = /^[0-9a-f-]{36}\.(png|jpg|gif|webp)$/;
@@ -367,6 +366,14 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     if (!(await hasCommitsToPromote(workdir, ticketId))) {
       return c.json({ error: "sandbox has no commits to promote" }, 409);
     }
+    const exportTo = parseExportTo(ticket.body ?? "");
+    if (exportTo) {
+      let dest: string;
+      try { dest = validateExportPath(exportTo, workdir); }
+      catch (e) { return c.json({ error: `EXPORT-TO refused: ${(e as Error).message}` }, 409); }
+      const n = exportOutputs(ticketId, dest);
+      await addComment(c.get("actor").id, ticketId, `forge: exported ${n} file(s) from .forge/out to ${dest}`, "comment");
+    }
     // Default: discard the sandbox once the merge lands (reclaims the worktree +
     // any frontendDeps node_modules copy). Set forge.discardOnPromote=false to keep
     // the tree for debugging a promote.
@@ -411,6 +418,33 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     indexRepoDocs(ticket.projectId)
       .catch((e) => console.warn(`repo re-index after promote failed: ${(e as Error).message}`));
     return c.json(updated);
+  });
+
+  app.post("/forge/tickets/:id/export", requireAdmin, async (c) => {
+    const ticketId = c.req.param("id");
+    if (await hasActiveRun(ticketId)) return c.json({ error: "run in progress for this ticket" }, 409);
+    const verdict = await lastVerdict(ticketId);
+    if (!sandboxExists(ticketId) || verdict !== "pass") {
+      return c.json({ error: "sandbox must exist and have a passing review before exporting" }, 409);
+    }
+    const ticket = await getTicket(ticketId);
+    const exportTo = parseExportTo(ticket.body ?? "");
+    if (!exportTo) {
+      return c.json({ error: "ticket body has no EXPORT-TO line" }, 409);
+    }
+    const workdir = await resolveWorkdir(ticket.projectId, forgeConfig());
+    let dest: string;
+    try {
+      dest = validateExportPath(exportTo, workdir);
+    } catch (e) {
+      return c.json({ error: `EXPORT-TO refused: ${(e as Error).message}` }, 400);
+    }
+    const n = exportOutputs(ticketId, dest);
+    if (n === 0) {
+      return c.json({ error: "sandbox has no .forge/out outputs" }, 409);
+    }
+    await addComment(c.get("actor").id, ticketId, `forge: exported ${n} file(s) from .forge/out to ${dest}`, "comment");
+    return c.json({ exported: n, to: dest });
   });
 
   // A protected-path violation is a durable fact on the run row; a normal Approve

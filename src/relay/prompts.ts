@@ -60,9 +60,10 @@ export function composeWorkPrompt(
 }
 
 export function composeReviewPrompt(
-  { ticket, plan, report, diff, operatorNotes, checks, protectedViolation, amendments, gate, citations, skills }: {
+  { ticket, plan, report, diff, operatorNotes, checks, protectedViolation, amendments, gate, citations, skills, evidence, outputs }: {
     ticket: TicketLike; plan: string; report: string; diff: string;
     operatorNotes?: string; checks?: string; protectedViolation?: string; amendments?: string; gate?: string; citations?: string; skills?: string;
+    evidence?: string[]; outputs?: string[];
   },
 ): string {
   return [
@@ -80,6 +81,13 @@ export function composeReviewPrompt(
       : "",
     `\nWorker report:\n${fenceUntrusted("worker-report", report)}`,
     `\nDiff:\n${fenceUntrusted("diff", diff)}`,
+    outputs
+      ? `\nEXPORT OUTPUTS: this ticket's deliverables are files under .forge/out/ in the worker's sandbox, copied outside git on promote. They are not in the diff, so an empty or small diff is expected and is not by itself a failure. ` +
+        (outputs.length ? `Files (${outputs.length}):\n${fenceUntrusted("export-outputs", outputs.slice(0, 200).join("\n"))}` : `No output files were produced.`)
+      : "",
+    evidence
+      ? `\nEvidence images, open each with Read: ${evidence.join(", ")}\nThey are copied into your working directory under .forge/evidence/ (not part of the diff). Judge visual acceptance criteria against them.`
+      : "",
     checks
       ? `\nCHECKS (project check commands, run by the pipeline in the worker's sandbox):\n${fenceUntrusted("checks", checks)}\n` +
         `A non-zero exit code in any check above is an automatic Critical finding and requires VERDICT: FAIL, ` +

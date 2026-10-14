@@ -1,10 +1,15 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readlinkSync, rmdirSync, unlinkSync, symlinkSync, statSync, readdirSync, rmSync, cpSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve, isAbsolute, normalize } from "node:path";
+import { existsSync, mkdirSync, readlinkSync, rmdirSync, unlinkSync, symlinkSync, statSync, readdirSync, rmSync, cpSync, copyFileSync, readFileSync, writeFileSync, lstatSync } from "node:fs";
+import { dirname, join, resolve, isAbsolute, normalize, relative, parse } from "node:path";
+import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { ConflictError } from "../services/errors.js";
 import { redactSecrets } from "./redact.js";
 import { vibeopsHome } from "../runtime/home.js";
+
+export function attachmentsDir(): string {
+  return process.env.VIBEOPS_ATTACHMENTS_DIR ?? join(homedir(), ".vibeops", "attachments");
+}
 
 // Candidate deps dirs to link from the base repo into a sandbox, so work agents
 // (fresh worktree, no install) can run tests without a full npm install per ticket.
@@ -229,13 +234,24 @@ function dropLink(dest: string): void {
   else unlinkSync(dest);
 }
 
+function ignoreForgeDir(tree: string): void {
+  const dir = join(tree, ".forge");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, ".gitignore"), "*\n");
+}
+
 export async function ensureSandbox(workdir: string, ticketId: string, frontendDeps: boolean | string[] = false, depsDirs: string[] = DEPS_DIRS): Promise<string> {
   const path = sandboxPath(ticketId);
-  if (existsSync(path)) { linkDeps(workdir, ticketId, frontendDeps, depsDirs); return path; } // rework continues in the same tree
+  if (existsSync(path)) {
+    ignoreForgeDir(path);
+    linkDeps(workdir, ticketId, frontendDeps, depsDirs);
+    return path;
+  } // rework continues in the same tree
   const branch = branchName(ticketId);
   // Branch may survive a removed worktree (e.g. manual cleanup): attach, else create.
   const attach = await git(workdir, "worktree", "add", path, branch);
   if (attach.code !== 0) await must(workdir, "worktree", "add", path, "-b", branch);
+  ignoreForgeDir(path);
   linkDeps(workdir, ticketId, frontendDeps, depsDirs);
   return path;
 }
@@ -288,7 +304,8 @@ export async function forgeCommit(ticketId: string, title: string): Promise<bool
   // Why this is needed at all: .gitignore says "node_modules/", and a trailing
   // slash matches directories only. A Windows junction is a directory so git
   // ignores it; a POSIX symlink is a file, so without this it gets committed.
-  const DEPS = ["node_modules", "app/node_modules"];
+  // .forge holds outputs/evidence that live outside git; never committed even if its .gitignore was removed.
+  const DEPS = ["node_modules", "app/node_modules", ".forge"];
   await must(path, "add", "-A");
   await git(path, "rm", "-r", "--cached", "--quiet", "--ignore-unmatch", ...DEPS);
   // The empty-check has to skip the deps too, or an unstaged link reads as a change.
@@ -597,3 +614,109 @@ export async function sandboxCheckout(ticketId: string, ref: string, paths: stri
 export async function sandboxDeletePaths(ticketId: string, paths: string[]): Promise<void> {
   for (const p of paths) rmSync(join(sandboxPath(ticketId), p), { force: true });
 }
+
+const EVIDENCE_RE = /\.(png|jpe?g|webp)$/i;
+export const EVIDENCE_MAX_FILES = 12;
+export const EVIDENCE_MAX_BYTES = 5 * 1024 * 1024;
+
+// Copies <sandbox>/.forge/evidence/*.{png,jpg,jpeg,webp} (top level, regular files,
+// capped) into <view>/.forge/evidence so a reviewer in the read-only view can Read them.
+export function copyEvidence(sandbox: string, view: string): { paths: string[]; skipped: number } {
+  const src = join(sandbox, ".forge", "evidence");
+  if (!existsSync(src)) return { paths: [], skipped: 0 };
+  let entries: import("node:fs").Dirent[] = [];
+  try { entries = readdirSync(src, { withFileTypes: true }); } catch { return { paths: [], skipped: 0 }; }
+  const matching = entries.filter((e) => e.isFile() && EVIDENCE_RE.test(e.name)).sort((a, b) => a.name.localeCompare(b.name));
+  const kept: string[] = [];
+  let skipped = 0;
+  for (const e of matching) {
+    const full = join(src, e.name);
+    let size = 0;
+    try { size = statSync(full).size; } catch { skipped++; continue; }
+    if (size > EVIDENCE_MAX_BYTES || kept.length >= EVIDENCE_MAX_FILES) {
+      skipped++;
+      continue;
+    }
+    kept.push(e.name);
+  }
+  ignoreForgeDir(view);
+  const dest = join(view, ".forge", "evidence");
+  mkdirSync(dest, { recursive: true });
+  for (const name of kept) {
+    copyFileSync(join(src, name), join(dest, name));
+  }
+  return { paths: kept.map((n) => `.forge/evidence/${n}`), skipped };
+}
+
+// Lists <sandbox>/.forge/out recursively.
+export function listExportOutputs(ticketId: string): string[] {
+  const dir = join(sandboxPath(ticketId), ".forge", "out");
+  if (!existsSync(dir)) return [];
+  try {
+    const entries = readdirSync(dir, { recursive: true, withFileTypes: true });
+    return entries
+      .filter((e) => e.isFile())
+      .map((e) => {
+        const full = join(e.parentPath ?? dir, e.name);
+        return relative(dir, full).split("\\").join("/");
+      })
+      .sort((a, b) => a.localeCompare(b));
+  } catch {
+    return [];
+  }
+}
+
+function inside(child: string, parent: string): boolean {
+  const c = process.platform === "win32" ? child.toLowerCase() : child;
+  const p = process.platform === "win32" ? parent.toLowerCase() : parent;
+  const rel = relative(p, c);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function overlaps(a: string, b: string): boolean {
+  return inside(a, b) || inside(b, a);
+}
+
+// ponytail: lexical check only; a symlinked target folder is not realpath-resolved. Upgrade: realpathSync the deepest existing ancestor.
+export function validateExportPath(p: string, workdir: string): string {
+  if (!isAbsolute(p)) throw new Error(`export path must be absolute: "${p}"`);
+  const r = resolve(p);
+  if (r === parse(r).root) throw new Error(`export path cannot be a filesystem root: "${p}"`);
+  const forbiddenRoots: string[] = [
+    resolve(workdir),
+    sandboxRoot(),
+    join(vibeopsHome(), ".vibeops"),
+  ];
+  if (process.platform === "win32") {
+    forbiddenRoots.push(process.env.SystemRoot ?? "C:\\Windows");
+    if (process.env.ProgramFiles) forbiddenRoots.push(process.env.ProgramFiles);
+    if (process.env["ProgramFiles(x86)"]) forbiddenRoots.push(process.env["ProgramFiles(x86)"]);
+    if (process.env.ProgramData) forbiddenRoots.push(process.env.ProgramData);
+  } else {
+    forbiddenRoots.push(
+      "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64",
+      "/proc", "/sbin", "/sys", "/usr", "/var"
+    );
+  }
+  for (const x of forbiddenRoots) {
+    if (overlaps(r, resolve(x))) {
+      throw new Error(`export path overlaps forbidden root: "${x}"`);
+    }
+  }
+  return r;
+}
+
+export function exportOutputs(ticketId: string, dest: string): number {
+  const src = join(sandboxPath(ticketId), ".forge", "out");
+  if (!existsSync(src)) return 0;
+  mkdirSync(dest, { recursive: true });
+  cpSync(src, dest, {
+    recursive: true,
+    force: true,
+    filter: (s) => {
+      try { return !lstatSync(s).isSymbolicLink(); } catch { return false; }
+    },
+  });
+  return listExportOutputs(ticketId).length;
+}
+

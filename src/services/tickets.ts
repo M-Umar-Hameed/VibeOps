@@ -8,7 +8,7 @@ import { emitEvent } from "../api/events.js";
 
 type Executor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 
-// Gate directives in a body (GATE-OVERRIDE, ALLOW-PROTECTED, ALLOW-FILES) switch
+// Gate directives in a body (GATE-OVERRIDE, ALLOW-PROTECTED, ALLOW-FILES, EXPORT-TO) switch
 // review gates off. Members and inbound sync write bodies too, so a directive
 // the current body does not already carry needs an admin actor. REST, MCP and
 // sync all come through here, so this is the one place to check.

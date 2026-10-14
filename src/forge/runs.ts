@@ -15,9 +15,9 @@ import { chunkReviewDiff, mergeReviewVerdicts } from "./review-chunks.js";
 import { killTree, killPidTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { redactSecrets } from "./redact.js";
-import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps } from "./sandbox.js";
+import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
-import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, stripGateDirectives } from "./policy.js";
+import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, stripGateDirectives, parseExportTo } from "./policy.js";
 import { pickAgents, escalate, pairsForRole, resolveStrategy, type Pick, type RoutingStrategy } from "./router.js";
 import { updateTicket } from "../services/tickets.js";
 import { addComment, listComments } from "../services/comments.js";
@@ -85,6 +85,14 @@ const NARRATION =
   "\n\nAll file paths are relative to your current working directory. Never use " +
   "absolute paths and never write outside your working directory, even if the " +
   "plan shows absolute paths.";
+
+// EXPORT-TO tickets deliver files that live outside git (images, video, posts).
+const EXPORT_NARRATION =
+  "\n\nThis ticket's deliverables are files outside git. Write every output file under " +
+  ".forge/out/ (relative to your working directory); that folder is never committed and the " +
+  "supervisor copies it to the operator's export folder after review. Save screenshots or " +
+  "renders the reviewer must look at as .png, .jpg, .jpeg or .webp files directly under " +
+  ".forge/evidence/. Do not write anywhere else outside your working directory.";
 
 // Plan/review agents run in a throwaway read-only view (withReadOnlyView); this
 // prompt text stays as defence in depth (live incident: claude acceptEdits
@@ -697,7 +705,7 @@ async function pipeline(
     // defect rate on a task its own "test isolation" line targets. Most of its lines
     // address the supervisor ("Supervisor sweeps before planning", "REPORT:/VERDICT:"),
     // which a worker cannot act on. Still injected at the plan stage, which was not tested.
-    + findings + NARRATION + "\n\nDo NOT run git commit; the supervisor commits for you." + roleStyle("work", styleSetting) + extra;
+    + findings + NARRATION + (parseExportTo(ticket.body ?? "") ? EXPORT_NARRATION : "") + "\n\nDo NOT run git commit; the supervisor commits for you." + roleStyle("work", styleSetting) + extra;
   // Sandbox-escape sentinel: snapshot known-sensitive files OUTSIDE the sandbox
   // before the work stage runs. Bash in a work lane is not OS-jailed, so a diff
   // gate (which only sees the worktree) cannot catch a write to the installed
@@ -899,13 +907,29 @@ async function reviewStage(
   // One review invocation per chunk, sequential: recordSpawn tracks a single
   // live child/pid, and chunked review is the rare oversized-diff path.
   run.reviewStartedAt = Date.now();
+  const outputs = parseExportTo(ticket.body ?? "") ? listExportOutputs(ticket.id) : undefined;
+  const reviewer = {
+    ...reviewAgent,
+    projectId: ticket.projectId,
+    ...(existsSync(attachmentsDir()) ? { addDirs: [attachmentsDir()] } : {}),
+  };
   const { result: reviewResults, strayPaths: reviewStray } = await withReadOnlyView(workdir, ticket.id, "review", branchName(ticket.id), async (view) => {
+    const evidence = copyEvidence(sandbox, view);
+    if (evidence.paths.length || evidence.skipped) {
+      append(run, `\nforge: evidence images for review: ${evidence.paths.length}${evidence.skipped ? `, ${evidence.skipped} skipped (over ${EVIDENCE_MAX_FILES} files or ${EVIDENCE_MAX_BYTES / 1024 / 1024}MB)` : ""}\n`);
+    }
     const results: AgentResult[] = [];
     for (const chunk of chunks) {
       if (run.stopped) break;
-      const reviewPrompt = composeReviewPrompt({ ticket, plan, report: reportOutput, diff: chunk.payload, operatorNotes: run.operatorNotes, protectedViolation: protectedFinding, amendments, gate: gate.report || undefined, citations: gate.citations || undefined, skills }) + roleStyle("review", styleSetting);
+      const reviewPrompt = composeReviewPrompt({
+        ticket, plan, report: reportOutput, diff: chunk.payload, operatorNotes: run.operatorNotes,
+        protectedViolation: protectedFinding, amendments, gate: gate.report || undefined,
+        citations: gate.citations || undefined, skills,
+        evidence: evidence.paths.length ? evidence.paths : undefined,
+        outputs,
+      }) + roleStyle("review", styleSetting);
       results.push(await track(actorId, ticket.id, "review", run.agents.review, reviewPrompt.length, () => runAgent(
-        { ...reviewAgent, projectId: ticket.projectId },
+        reviewer,
         reviewPrompt,
         view, onData,
         (child) => recordSpawn(run, child),

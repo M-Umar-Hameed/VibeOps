@@ -3,7 +3,7 @@
 // falling back to stdin) and prints a canned response selected by FAKE_MODE, or, when
 // FAKE_SCRIPT is set, by a comma list consumed left-to-right via FAKE_COUNTER_FILE
 // (clamped to the last entry once the script is exhausted).
-import { readFileSync, writeFileSync, existsSync, mkdirSync, rmdirSync, appendFileSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmdirSync, appendFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 
 const prompt = process.argv[2] ?? "";
@@ -149,6 +149,16 @@ if (mode === "echo-argv") {
   process.exit(0);
 }
 if (mode === "echo-prompt") {
+  if (process.env.FAKE_WRITE_PATH && (prompt.includes("Implement this plan") || prompt.includes("Do NOT run git commit"))) {
+    const p = join(process.cwd(), process.env.FAKE_WRITE_PATH);
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, "edited by fake agent\n");
+  }
+  if (process.env.FAKE_REVIEW_LS && (prompt.includes("Review whether the diff") || prompt.includes("VERDICT:"))) {
+    let names = [];
+    try { names = readdirSync(join(process.cwd(), ".forge", "evidence")); } catch {}
+    writeFileSync(process.env.FAKE_REVIEW_LS, names.join("\n"));
+  }
   console.log(`PROMPT:${prompt}`);
   process.exit(0);
 }
@@ -201,6 +211,13 @@ if (process.env.FAKE_WRITE_PLAN && mode === "plan") {
 }
 if (process.env.FAKE_WRITE_REVIEW && mode.startsWith("review")) {
   writeFileSync(join(process.cwd(), "review-scribble.txt"), "reviewer wrote this\n");
+}
+
+// Reviewer evidence probe: record what .forge/evidence the review cwd can read.
+if (process.env.FAKE_REVIEW_LS && mode.startsWith("review")) {
+  let names = [];
+  try { names = readdirSync(join(process.cwd(), ".forge", "evidence")); } catch {}
+  writeFileSync(process.env.FAKE_REVIEW_LS, names.join("\n"));
 }
 
 console.log(out);

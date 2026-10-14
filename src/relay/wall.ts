@@ -24,8 +24,8 @@ export const DENY_RULES = ["Bash(git *--output*)", "PowerShell(git *--output*)"]
 // prompt moves to stdin (a prompt file outside the folder would be refused) and
 // --restricted confines its file tools to the working folder, edit rights only
 // when write is true (the work stage); only allow-listed
-// commands run. codex: its own OS sandbox. Other programs are not walled here.
-export function wallCmd(cmd: string[], allowed: string[], write = false): string[] {
+// commands run; the reviewer can also read the attachments folder. codex: its own OS sandbox. Other programs are not walled here.
+export function wallCmd(cmd: string[], allowed: string[], write = false, addDirs: string[] = []): string[] {
   const bin = binBasename(cmd[0]).toLowerCase();
   if (bin === "claude") {
     if (cmd.includes("--restricted")) return cmd;
@@ -35,7 +35,8 @@ export function wallCmd(cmd: string[], allowed: string[], write = false): string
       ...(write ? ["--permission-mode", "acceptEdits"] : []),
       "--permission-prompts", "none",
       "--tools", "Read,Edit,Write,Glob,Grep,Bash,PowerShell",
-      "--settings", JSON.stringify({ permissions: { allow: [...allowRules(allowed), "mcp__vibeops"], deny: DENY_RULES } })];
+      "--settings", JSON.stringify({ permissions: { allow: [...allowRules(allowed), "mcp__vibeops"], deny: DENY_RULES } }),
+      ...addDirs.flatMap((d) => ["--add-dir", d])];
   }
   if (bin === "codex") {
     const i = cmd.indexOf("exec");

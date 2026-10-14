@@ -130,3 +130,12 @@ test("runAgent: declared file delivery with the wall off still passes the prompt
   }
 }, 30_000);
 
+test("wallCmd: addDirs for claude and ignored by codex", () => {
+  const walled = wallCmd(["claude"], ["npm test"], false, ["/att"]);
+  expect(walled.slice(-2)).toEqual(["--add-dir", "/att"]);
+  expect(wallCmd(["claude"], ["npm test"])).toEqual(["claude", "-p", ...CLAUDE_FLAGS]);
+  expect(wallCmd(["codex", "exec", "{prompt}"], [], false, ["/att"]))
+    .toEqual(["codex", "exec", "--sandbox", "workspace-write", "{prompt}"]);
+});
+
+

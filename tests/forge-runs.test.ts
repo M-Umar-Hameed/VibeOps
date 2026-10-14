@@ -104,6 +104,7 @@ afterEach(() => {
   delete process.env.FAKE_WRITE_ABS;
   delete process.env.FAKE_WRITE_DEPS;
   delete process.env.FAKE_TOKEN_OUT;
+  delete process.env.FAKE_REVIEW_LS;
   rmSync(workdir, { recursive: true, force: true });
   rmSync(sandboxRoot, { recursive: true, force: true });
   rmSync(counterDir, { recursive: true, force: true });
@@ -1922,5 +1923,62 @@ describe("plan comments from member keys", () => {
     } finally {
       delete process.env.FAKE_WRITE_STRAY;
     }
+  });
+});
+
+describe("forge evidence and EXPORT-TO end to end", () => {
+  it("evidence end to end: copies evidence, lists in review prompt, and does not trip stray check", async () => {
+    const exportTarget = mkdtempSync(join(tmpdir(), "forge-runs-export-"));
+    const reviewLsFile = join(tmpdir(), `forge-review-ls-${Date.now()}.txt`);
+    try {
+      const { actor } = await createActor({ name: uniq("forge-admin"), kind: "human", role: "admin" });
+      const project = await createProject({ key: uniq("forge-proj"), name: "Forge" });
+      const ticket = await createTicket(actor.id, {
+        projectId: project.id,
+        title: "Evidence E2E",
+        body: `human spec\nEXPORT-TO: ${exportTarget}`,
+      });
+
+      process.env.FAKE_WRITE_PATH = ".forge/evidence/shot.png";
+      process.env.FAKE_REVIEW_LS = reviewLsFile;
+      setScript("echo-prompt");
+
+      const { runId } = await startPipeline(actor.id, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+
+      await waitForPersistedRun(runId);
+      const comments = await listComments(ticket.id);
+      const bouncedComment = comments.find((c) => c.body.includes("reviewer changed files"));
+      expect(bouncedComment).toBeUndefined();
+
+      const output = getRunOutput(runId, 0);
+      const chunk = output?.chunk ?? "";
+      expect(chunk).toContain("Evidence images, open each with Read: .forge/evidence/shot.png");
+      expect(chunk).toContain("EXPORT OUTPUTS");
+      expect(chunk).toContain(".forge/out/");
+
+      expect(existsSync(reviewLsFile)).toBe(true);
+      expect(readFileSync(reviewLsFile, "utf-8").trim()).toBe("shot.png");
+    } finally {
+      rmSync(exportTarget, { recursive: true, force: true });
+      try { rmSync(reviewLsFile, { force: true }); } catch {}
+    }
+  });
+
+  it("ticket without EXPORT-TO: work prompt does not contain .forge/out/", async () => {
+    const { actorId, ticket } = await seedTicket("No export ticket");
+    await updateTicket(actorId, ticket.id, ticket.version, { body: "human spec without export" });
+    setScript("echo-prompt");
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    const chunk = output?.chunk ?? "";
+    expect(chunk).not.toContain(".forge/out/");
   });
 });

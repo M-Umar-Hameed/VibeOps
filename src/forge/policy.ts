@@ -67,7 +67,8 @@ export function parseGateOverrides(body: string): Set<string> {
 // members, MCP agents and inbound sync can write too, so the service layer only
 // lets an admin add one (src/services/tickets.ts) and the forge strips them from
 // model output before it becomes a spec.
-const DIRECTIVE_RE = /^\s*(GATE-OVERRIDE|ALLOW-PROTECTED|ALLOW-FILES):\s*.*$/gim;
+// (GATE-OVERRIDE, ALLOW-PROTECTED, ALLOW-FILES, EXPORT-TO).
+const DIRECTIVE_RE = /^\s*(GATE-OVERRIDE|ALLOW-PROTECTED|ALLOW-FILES|EXPORT-TO):\s*.*$/gim;
 
 export function gateDirectiveLines(text: string): string[] {
   return [...text.matchAll(DIRECTIVE_RE)].map((m) => m[0].trim());
@@ -75,6 +76,14 @@ export function gateDirectiveLines(text: string): string[] {
 
 export function stripGateDirectives(text: string): string {
   return text.replace(DIRECTIVE_RE, "");
+}
+
+// EXPORT-TO: <absolute path> — admin-only (same trust rules as ALLOW-FILES). Work outputs
+// under <sandbox>/.forge/out/ are copied there on promote or the export action. First line wins.
+export function parseExportTo(body: string): string | null {
+  const m = /^\s*EXPORT-TO:\s*(.+)$/im.exec(body);
+  const p = m?.[1].trim();
+  return p ? p : null;
 }
 
 // Minimatch-style, full-path anchored. * and ? do not cross "/"; ** does.

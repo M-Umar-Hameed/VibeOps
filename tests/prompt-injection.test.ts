@@ -225,4 +225,31 @@ describe("Prompt Injection Defenses - Pipeline Level", () => {
     const run = runs.find((r: any) => r.id === runId);
     expect(run).toBeDefined();
   });
+
+  it("composeReviewPrompt includes evidence and export outputs when provided", () => {
+    const baseInput = {
+      ticket: { title: "Title", body: "Body" },
+      plan: "Plan",
+      report: "Report",
+      diff: "Diff",
+    };
+    const withEvidence = composeReviewPrompt({
+      ...baseInput,
+      evidence: [".forge/evidence/a.png"],
+    });
+    expect(withEvidence).toContain("Evidence images, open each with Read: .forge/evidence/a.png");
+    expect(withEvidence).not.toContain("EXPORT OUTPUTS");
+
+    const withOutputs = composeReviewPrompt({
+      ...baseInput,
+      outputs: ["post.txt"],
+    });
+    expect(withOutputs).toContain("EXPORT OUTPUTS");
+    expect(withOutputs).toContain("post.txt");
+    expect(withOutputs).not.toContain("Evidence images, open each with Read:");
+
+    const withNeither = composeReviewPrompt(baseInput);
+    expect(withNeither).not.toContain("Evidence images, open each with Read:");
+    expect(withNeither).not.toContain("EXPORT OUTPUTS");
+  });
 });

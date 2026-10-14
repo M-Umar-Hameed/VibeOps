@@ -1381,3 +1381,145 @@ it("boot reconcile does NOT touch a review ticket whose last run failed", async 
     rmSync(dirname(promptOut), { recursive: true, force: true });
   });
 
+  describe("forge EXPORT-TO and export route", () => {
+    it("promote with EXPORT-TO copies outputs and merges", async () => {
+      const exportDest = mkdtempSync(join(tmpdir(), "forge-api-dest-"));
+      try {
+        const { actor: adminActor, apiKey: adminKey } = await createActor({ name: uniq("forge-api-admin"), kind: "human", role: "admin" });
+        const h = { Authorization: `Bearer ${adminKey}`, "Content-Type": "application/json" };
+        const project = await createProject({ key: uniq("forge-api-proj"), name: "Forge API" });
+        const ticket = await createTicket(adminActor.id, {
+          projectId: project.id,
+          title: "Export promote ticket",
+          body: `human spec\nEXPORT-TO: ${exportDest}`,
+        });
+
+        setScript("plan,work,review-pass", true);
+        const startRes = await app.request("/forge/pipeline", {
+          method: "POST", headers: h,
+          body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+        });
+        expect(startRes.status).toBe(201);
+        const { runId } = await startRes.json();
+        const final = await pollUntilDone(h, runId);
+        expect(final.status).toBe("passed");
+
+        const sp = sandbox.sandboxPath(ticket.id);
+        const outDir = join(sp, ".forge", "out");
+        mkdirSync(outDir, { recursive: true });
+        writeFileSync(join(outDir, "post.txt"), "hello from post\n");
+
+        const promoteRes = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
+        expect(promoteRes.status).toBe(200);
+        expect((await promoteRes.json()).status).toBe("closed");
+        expect(existsSync(join(exportDest, "post.txt"))).toBe(true);
+        expect(readFileSync(join(exportDest, "post.txt"), "utf-8")).toBe("hello from post\n");
+      } finally {
+        rmSync(exportDest, { recursive: true, force: true });
+      }
+    });
+
+    it("promote with EXPORT-TO inside workdir is refused with 409 and does not close ticket", async () => {
+      const badExport = join(workdir, "sub-export");
+      const { actor: adminActor, apiKey: adminKey } = await createActor({ name: uniq("forge-api-admin"), kind: "human", role: "admin" });
+      const h = { Authorization: `Bearer ${adminKey}`, "Content-Type": "application/json" };
+      const project = await createProject({ key: uniq("forge-api-proj"), name: "Forge API" });
+      const ticket = await createTicket(adminActor.id, {
+        projectId: project.id,
+        title: "Refused export promote",
+        body: `human spec\nEXPORT-TO: ${badExport}`,
+      });
+
+      setScript("plan,work,review-pass", true);
+      const startRes = await app.request("/forge/pipeline", {
+        method: "POST", headers: h,
+        body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+      });
+      const { runId } = await startRes.json();
+      await pollUntilDone(h, runId);
+
+      const promoteRes = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
+      expect(promoteRes.status).toBe(409);
+      const promoteBody = await promoteRes.json();
+      expect(promoteBody.error).toContain("EXPORT-TO refused");
+
+      const fresh = await getTicket(ticket.id);
+      expect(fresh.status).not.toBe("closed");
+    });
+
+    it("POST /forge/tickets/:id/export: handles status codes and exports without commits", async () => {
+      const exportDest = mkdtempSync(join(tmpdir(), "forge-api-exp-"));
+      try {
+        const { actor: adminActor, apiKey: adminKey } = await createActor({ name: uniq("forge-api-admin"), kind: "human", role: "admin" });
+        const h = { Authorization: `Bearer ${adminKey}`, "Content-Type": "application/json" };
+        const project = await createProject({ key: uniq("forge-api-proj"), name: "Forge API" });
+
+        // 403 for member key
+        const { apiKey: memberKey } = await createActor({ name: uniq("forge-api-member"), kind: "agent" });
+        const memberH = { Authorization: `Bearer ${memberKey}`, "Content-Type": "application/json" };
+        const res403 = await app.request(`/forge/tickets/${randomUUID()}/export`, { method: "POST", headers: memberH });
+        expect(res403.status).toBe(403);
+
+        // 409 without passing review / sandbox
+        const unreviewed = await createTicket(adminActor.id, {
+          projectId: project.id, title: "Unreviewed", body: `EXPORT-TO: ${exportDest}`,
+        });
+        const res409Review = await app.request(`/forge/tickets/${unreviewed.id}/export`, { method: "POST", headers: h });
+        expect(res409Review.status).toBe(409);
+
+        // Ticket without EXPORT-TO line -> 409
+        const ticketNoExport = await createTicket(adminActor.id, {
+          projectId: project.id, title: "No export line", body: "plain body",
+        });
+        setScript("plan,work,review-pass", true);
+        const startNoExport = await app.request("/forge/pipeline", {
+          method: "POST", headers: h,
+          body: JSON.stringify({ ticketId: ticketNoExport.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+        });
+        await pollUntilDone(h, (await startNoExport.json()).runId);
+        const res409NoLine = await app.request(`/forge/tickets/${ticketNoExport.id}/export`, { method: "POST", headers: h });
+        expect(res409NoLine.status).toBe(409);
+        expect((await res409NoLine.json()).error).toContain("ticket body has no EXPORT-TO line");
+
+        // Ticket with refused export path -> 400
+        const badPath = join(workdir, "nested-bad");
+        const ticketBadPath = await createTicket(adminActor.id, {
+          projectId: project.id, title: "Bad export path", body: `EXPORT-TO: ${badPath}`,
+        });
+        setScript("plan,work,review-pass", true);
+        const startBad = await app.request("/forge/pipeline", {
+          method: "POST", headers: h,
+          body: JSON.stringify({ ticketId: ticketBadPath.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+        });
+        await pollUntilDone(h, (await startBad.json()).runId);
+        const res400 = await app.request(`/forge/tickets/${ticketBadPath.id}/export`, { method: "POST", headers: h });
+        expect(res400.status).toBe(400);
+        expect((await res400.json()).error).toContain("EXPORT-TO refused");
+
+        // Passing ticket with no commits needed, exports successfully (200)
+        const exportTicket = await createTicket(adminActor.id, {
+          projectId: project.id, title: "Export only ticket", body: `EXPORT-TO: ${exportDest}`,
+        });
+        setScript("plan,work,review-pass", true);
+        const startGood = await app.request("/forge/pipeline", {
+          method: "POST", headers: h,
+          body: JSON.stringify({ ticketId: exportTicket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+        });
+        await pollUntilDone(h, (await startGood.json()).runId);
+
+        const sp = sandbox.sandboxPath(exportTicket.id);
+        const outDir = join(sp, ".forge", "out");
+        mkdirSync(outDir, { recursive: true });
+        writeFileSync(join(outDir, "artifact.png"), "image-bytes");
+
+        const goodRes = await app.request(`/forge/tickets/${exportTicket.id}/export`, { method: "POST", headers: h });
+        expect(goodRes.status).toBe(200);
+        const goodBody = await goodRes.json();
+        expect(goodBody.exported).toBe(1);
+        expect(existsSync(join(exportDest, "artifact.png"))).toBe(true);
+      } finally {
+        rmSync(exportDest, { recursive: true, force: true });
+      }
+    });
+  });
+

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   DEFAULT_PROTECTED_GLOBS, resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths,
-  gateDirectiveLines, stripGateDirectives,
+  gateDirectiveLines, stripGateDirectives, parseExportTo,
 } from "../src/forge/policy.js";
 
 describe("forge protected-path policy", () => {
@@ -46,6 +46,7 @@ describe("forge protected-path policy", () => {
     const body = "intro\n  gate-override: all\nALLOW-FILES: a.ts, b.ts\ntext ALLOW-PROTECTED: not-a-directive\nALLOW-PROTECTED: package.json\n";
     expect(gateDirectiveLines(body)).toEqual(["gate-override: all", "ALLOW-FILES: a.ts, b.ts", "ALLOW-PROTECTED: package.json"]);
     expect(gateDirectiveLines("no directives here")).toEqual([]);
+    expect(gateDirectiveLines("EXPORT-TO: F:/x")).toHaveLength(1);
   });
 
   it("stripGateDirectives removes directive lines and keeps the rest", () => {
@@ -57,5 +58,17 @@ describe("forge protected-path policy", () => {
     expect(odd).not.toMatch(/GATE-OVERRIDE|ALLOW-FILES|\*\*/);
     expect(odd).toContain("a");
     expect(odd).toContain("c");
+
+    const exportOut = stripGateDirectives("header\nEXPORT-TO: F:/x\nfooter");
+    expect(exportOut).not.toMatch(/EXPORT-TO/);
+    expect(exportOut).toContain("header");
+    expect(exportOut).toContain("footer");
+  });
+
+  it("parseExportTo: returns first line trimmed, null when absent, ignores mid-line", () => {
+    expect(parseExportTo("EXPORT-TO: F:/path/to/dest  \nEXPORT-TO: second")).toBe("F:/path/to/dest");
+    expect(parseExportTo("no export directive")).toBeNull();
+    expect(parseExportTo("some prefix EXPORT-TO: /tmp/not-start-of-line")).toBeNull();
+    expect(parseExportTo("  export-to:  /var/out  ")).toBe("/var/out");
   });
 });

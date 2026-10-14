@@ -1,14 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync, existsSync, mkdirSync, rmdirSync, readFileSync, readlinkSync, readdirSync, symlinkSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 import {
   assertTicketId, sandboxPath, sandboxExists, ensureSandbox, branchName,
   forgeCommit, sandboxDiff, sandboxDiffSummary, promoteSandbox, discardSandbox,
   unlinkDeps, hasCommitsToPromote, sandboxActivity, sandboxWorkingDiff,
-  snapshotDeps, detectDepsLeak, listSandboxTicketIds, sandboxSizeBytes, withReadOnlyView
+  snapshotDeps, detectDepsLeak, listSandboxTicketIds, sandboxSizeBytes, withReadOnlyView,
+  validateExportPath, exportOutputs, copyEvidence, EVIDENCE_MAX_BYTES,
 } from "../src/forge/sandbox.js";
+import { vibeopsHome } from "../src/runtime/home.js";
 import { ConflictError } from "../src/services/errors.js";
 
 const TID = "11111111-2222-3333-4444-555555555555";
@@ -653,5 +655,94 @@ describe("withReadOnlyView", () => {
     } finally {
       rmSync(outside, { recursive: true, force: true });
     }
+  });
+
+  it("validateExportPath: refuses invalid or dangerous paths and accepts valid ones", () => {
+    expect(() => validateExportPath("relative/path", workdir)).toThrow();
+    expect(() => validateExportPath(workdir, workdir)).toThrow();
+    expect(() => validateExportPath(join(workdir, "sub"), workdir)).toThrow();
+    expect(() => validateExportPath(dirname(workdir), workdir)).toThrow();
+    expect(() => validateExportPath(join(vibeopsHome(), ".vibeops", "x"), workdir)).toThrow();
+    expect(() => validateExportPath(sandboxRoot, workdir)).toThrow();
+    const fsRoot = process.platform === "win32" ? "C:\\" : "/";
+    expect(() => validateExportPath(fsRoot, workdir)).toThrow();
+
+    const outside = mkdtempSync(join(tmpdir(), "forge-export-target-"));
+    try {
+      const valid = validateExportPath(outside, workdir);
+      expect(valid).toBe(outside);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it.runIf(process.platform === "win32")("validateExportPath: refuses system dirs on win32", () => {
+    expect(() => validateExportPath("C:\\Windows\\System32", workdir)).toThrow();
+  });
+
+  it.runIf(process.platform !== "win32")("validateExportPath: refuses system dirs on posix", () => {
+    expect(() => validateExportPath("/etc/passwd", workdir)).toThrow();
+  });
+
+  it("exportOutputs: copies outputs excluding symlinks", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    const outDir = join(sp, ".forge", "out");
+    mkdirSync(join(outDir, "a"), { recursive: true });
+    writeFileSync(join(outDir, "a", "b.txt"), "output bytes\n");
+
+    const outside = mkdtempSync(join(tmpdir(), "forge-link-src-"));
+    let hasSymlink = false;
+    try {
+      symlinkSync(outside, join(outDir, "link"), process.platform === "win32" ? "junction" : "dir");
+      hasSymlink = true;
+    } catch {}
+
+    const dest = mkdtempSync(join(tmpdir(), "forge-export-dest-"));
+    try {
+      const count = exportOutputs(TID, dest);
+      expect(count).toBe(1);
+      expect(readFileSync(join(dest, "a", "b.txt"), "utf-8")).toBe("output bytes\n");
+      if (hasSymlink) {
+        expect(existsSync(join(dest, "link"))).toBe(false);
+      }
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+      rmSync(dest, { recursive: true, force: true });
+    }
+  });
+
+  it("ensureSandbox: writes .forge/.gitignore and files in .forge/out leave forgeCommit returning false", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    expect(existsSync(join(sp, ".forge", ".gitignore"))).toBe(true);
+    expect(readFileSync(join(sp, ".forge", ".gitignore"), "utf-8")).toBe("*\n");
+
+    const outDir = join(sp, ".forge", "out");
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(join(outDir, "artifact.txt"), "generated artifact\n");
+
+    expect(await forgeCommit(TID, "should not commit .forge")).toBe(false);
+  });
+
+  it("copyEvidence: inside withReadOnlyView copies png, skips oversized and non-image, leaving strayPaths empty", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    const evDir = join(sp, ".forge", "evidence");
+    mkdirSync(evDir, { recursive: true });
+    writeFileSync(join(evDir, "img1.png"), "png1");
+    writeFileSync(join(evDir, "img2.png"), "png2");
+    writeFileSync(join(evDir, "notes.txt"), "text");
+    writeFileSync(join(evDir, "huge.png"), Buffer.alloc(EVIDENCE_MAX_BYTES + 1));
+
+    const { result: evidence, strayPaths } = await withReadOnlyView(workdir, TID, "review", "HEAD", async (view) => {
+      const res = copyEvidence(sp, view);
+      expect(existsSync(join(view, ".forge", "evidence", "img1.png"))).toBe(true);
+      expect(existsSync(join(view, ".forge", "evidence", "img2.png"))).toBe(true);
+      expect(existsSync(join(view, ".forge", "evidence", "notes.txt"))).toBe(false);
+      expect(existsSync(join(view, ".forge", "evidence", "huge.png"))).toBe(false);
+      return res;
+    });
+
+    expect(evidence.paths).toEqual([".forge/evidence/img1.png", ".forge/evidence/img2.png"]);
+    expect(evidence.skipped).toBe(1);
+    expect(strayPaths).toEqual([]);
   });
 });

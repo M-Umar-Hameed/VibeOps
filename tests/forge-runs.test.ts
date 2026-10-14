@@ -1,6 +1,6 @@
 import { runDoctor, type ProbeStatus } from "../src/relay/doctor.js";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync, readFileSync, realpathSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1394,6 +1394,49 @@ const file2 = "run2-output.txt";
     // The leaked file should have been reverted from the base
     expect(existsSync(join(workdir, "node_modules", "LEAK.txt"))).toBe(false);
   });
+
+  it("vitest cache write to node_modules/.vite during work does not fail the run", async () => {
+    mkdirSync(join(workdir, "node_modules", ".vite", "vitest"), { recursive: true });
+    writeFileSync(join(workdir, "node_modules", "marker.txt"), "base\n");
+
+    const { actorId, ticket } = await seedTicket("Deps cache write");
+    setScript("plan,work,review-pass", true);
+    process.env.FAKE_WRITE_DEPS = ".vite/vitest/results.json";
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.status).toBe("passed");
+    expect(output?.chunk).not.toContain("DEPS-LEAK");
+    expect(existsSync(join(workdir, "node_modules", ".vite", "vitest", "results.json"))).toBe(true);
+  }, 20_000);
+
+  it("write to node_modules/<package>/index.js during work still fails the run", async () => {
+    mkdirSync(join(workdir, "node_modules", ".vite"), { recursive: true });
+    const pkg = join(workdir, "node_modules", "some-pkg");
+    mkdirSync(pkg, { recursive: true });
+    // backdate so the new child file deterministically bumps the dir mtime past the baseline
+    const past = new Date(Date.now() - 60_000);
+    utimesSync(pkg, past, past);
+
+    const { actorId, ticket } = await seedTicket("Deps package write");
+    setScript("plan,work,review-pass");
+    process.env.FAKE_WRITE_DEPS = "some-pkg/index.js";
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.status).toBe("failed");
+    expect(output?.chunk).toContain("DEPS-LEAK");
+    expect(output?.chunk).toContain("some-pkg");
+    expect(output?.chunk).not.toContain(".vite");
+  }, 20_000);
 
   it("deps leak in app/node_modules without frontendDeps prints the setting hint", async () => {
     mkdirSync(join(workdir, "app", "node_modules"), { recursive: true });

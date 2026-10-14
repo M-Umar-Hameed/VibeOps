@@ -412,6 +412,37 @@ describe("deps leak guard", () => {
     expect(leaked.some((l) => l.includes(".vite-temp"))).toBe(false);
     expect(existsSync(evilPkg)).toBe(false);
   });
+
+  it.each([".vite", ".vitest", ".cache"])("cache dir %s added into node_modules is not reported", (name) => {
+    const baseline = snapshotDeps(workdir);
+    const dir = join(workdir, "node_modules", name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "results.json"), "{}\n");
+    expect(detectDepsLeak(baseline)).toEqual([]);
+    expect(existsSync(dir)).toBe(true); // a cache is not reverted
+  });
+
+  it("existing node_modules/.vite mtime-bumped is not reported", () => {
+    const dir = join(workdir, "node_modules", ".vite");
+    mkdirSync(dir, { recursive: true });
+    const baseline = snapshotDeps(workdir);
+    const later = new Date(Date.now() + 10_000);
+    utimesSync(dir, later, later);
+    expect(detectDepsLeak(baseline)).toEqual([]);
+  });
+
+  it("new package node_modules/<pkg>/index.js next to a .vite write is still reported and reverted", () => {
+    const baseline = snapshotDeps(workdir);
+    mkdirSync(join(workdir, "node_modules", ".vite"), { recursive: true });
+    const pkg = join(workdir, "node_modules", "evil-pkg");
+    mkdirSync(pkg, { recursive: true });
+    writeFileSync(join(pkg, "index.js"), "bad\n");
+    const leaked = detectDepsLeak(baseline);
+    expect(leaked.length).toBe(1);
+    expect(leaked[0]).toContain("evil-pkg");
+    expect(leaked[0]).toContain("added; reverted");
+    expect(existsSync(pkg)).toBe(false);
+  });
 });
 
 describe("frontend deps mode", () => {

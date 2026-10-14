@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -241,5 +241,17 @@ describe("council engine", () => {
     expect(row).toBeTruthy();
     expect(row.status).toBe("decided");
     expect(row.output).toBeUndefined();
+  });
+
+  it("(l) starts agents when relay workdir does not exist yet", async () => {
+    const { actor } = await createActor({ name: uniq("council-actor"), kind: "human" });
+    setScript("persona,persona,persona,chairman-go");
+    const missing = join(workdir, "not-yet", "sandbox");
+    expect(existsSync(missing)).toBe(false);
+    const { councilId } = await startCouncil(actor.id, { ...relayConfig(), workdir: missing }, { prompt: "a prompt long enough to pass" });
+    const c = await waitForStatus(councilId, ["decided"]);
+    expect((c as any).decision).toBe("GO");
+    expect(existsSync(missing)).toBe(true);
+    expect(getCouncilOutput(councilId, 0)!.chunk).not.toContain("could not be started");
   });
 });

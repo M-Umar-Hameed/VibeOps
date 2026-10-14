@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
 import type { RelayConfig } from "../relay/config.js";
 import { resolveCmd } from "../relay/config.js";
 import { pickAgents } from "../forge/router.js";
@@ -114,6 +115,7 @@ export async function startCouncil(
 }
 
 async function runPersonas(session: Session, config: RelayConfig): Promise<void> {
+  mkdirSync(config.workdir, { recursive: true });
   let briefing = "";
   try {
     const budget = resolveContextBudget(await getSetting("council.contextTokenBudget"));
@@ -190,6 +192,7 @@ async function runChairman(session: Session, config: RelayConfig): Promise<void>
   }) + roleStyle("chairman", (await getSetting("agents.commProfile")) ?? "");
 
   append(session, `\n=== COUNCIL chairman ===\n`);
+  mkdirSync(config.workdir, { recursive: true });
   const res = await runAgent(chairmanAgent, prompt, config.workdir, (chunk) => append(session, chunk));
   if (!res.ok) throw new Error(`chairman failed: ${res.output}`);
 

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { loadRelayConfig, type RelayAgent, type RelayConfig } from "./config.js";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict } from "./prompts.js";
@@ -130,6 +130,7 @@ export async function main(): Promise<void> {
   }
   const args = parseArgs(process.argv.slice(2));
   const config = loadRelayConfig(args.config);
+  mkdirSync(config.workdir, { recursive: true });
   const fn = ROLE_FNS[args.role];
   const opts: RunOpts = { agent: args.agent, ticket: args.ticket };
 

@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs";
 import { runChatTurn, type ChatTurnResult } from "./agent.js";
 import { extractImageAttachments } from "./attachments.js";
 import { buildChatTools, type ToolCall } from "./tools.js";
@@ -212,6 +213,7 @@ export async function runTurn(
         : "";
       if (notice) onData(notice);
       const turnStart = Date.now();
+      mkdirSync(config!.workdir, { recursive: true });
       beginCliTurn(sessionId);
       let out;
       try {

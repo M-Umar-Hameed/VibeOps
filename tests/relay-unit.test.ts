@@ -894,3 +894,12 @@ test("runAgent reports a binary that cannot be started in its output", async () 
   expect(res.ok).toBe(false);
   expect(res.output).toContain("[forge: agent could not be started:");
 });
+
+test("runAgent names a missing working folder instead of a spawn ENOENT", async () => {
+  const missing = join(tmpdir(), `vibeops-missing-${Date.now()}`, "nested");
+  const res = await runAgent({ cmd: [process.execPath, "-e", "0"], roles: [] }, "hi", missing);
+  expect(res.ok).toBe(false);
+  expect(res.output).toContain(`working folder does not exist: ${missing}`);
+  expect(res.output).not.toContain("ENOENT");
+});
+

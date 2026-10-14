@@ -12,6 +12,21 @@ describe("forge checks", () => {
     expect(resolveChecks('["npm run typecheck","npm test"]', "")).toEqual(["npm run typecheck", "npm test"]);
   });
 
+  it("resolveChecks prefers per-project setting over global fallback", () => {
+    expect(resolveChecks('["npm run build"]', "", '["npm test"]')).toEqual(["npm run build"]);
+    expect(resolveChecks("bad", "", '["npm test"]')).toEqual(["npm test"]);
+  });
+
+  it("resolveChecks falls through to detection when both per-project and global are null", () => {
+    const dir = mkdtempSync(join(tmpdir(), "forge-checks-test-"));
+    try {
+      writeFileSync(join(dir, "package.json"), JSON.stringify({ scripts: { typecheck: "node typecheck.js" } }));
+      expect(resolveChecks(null, dir, null)).toEqual(["npm run typecheck"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("resolveChecks falls back to detection on invalid JSON", () => {
     const dir = mkdtempSync(join(tmpdir(), "forge-checks-test-"));
     try {

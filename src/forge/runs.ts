@@ -650,7 +650,7 @@ async function pipeline(
   if (planRegenerated) {
     enterStage(run, "plan");
     append(run, `=== FORGE plan (${run.agents.plan}) ===\n`);
-    const knowledge = await getKnowledgeSafe(ticket.title, ticket.projectId);
+    const knowledge = await getKnowledgeSafe(knowledgeQuery(ticket), ticket.projectId);
     const memory = await getMemorySafe(ticket.title, ticket.projectId);
     const planPrompt = composePlanPrompt({ ticket, knowledge, memory, skillIndex: formatSkillIndex(catalogue) }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra;
     const { result: res, strayPaths: planStray } = await withReadOnlyView(workdir, ticket.id, "plan", "HEAD", (view) =>
@@ -693,7 +693,7 @@ async function pipeline(
   ticket = await setStatus(actorId, ticket.id, "in_progress");
   const { frontendDeps, depsDirs } = await depsConfig(ticket.projectId);
   const sandbox = await ensureSandbox(workdir, ticket.id, frontendDeps, depsDirs);
-  const knowledge = await getKnowledgeSafe(ticket.title, ticket.projectId);
+  const knowledge = await getKnowledgeSafe(knowledgeQuery(ticket), ticket.projectId);
   const memory = await getMemorySafe(ticket.title, ticket.projectId);
   // Rework passes must see why the last review failed, or the worker repeats
   // the same mistakes (live-hit on the first dogfood ticket).
@@ -913,6 +913,7 @@ async function reviewStage(
     projectId: ticket.projectId,
     ...(existsSync(attachmentsDir()) ? { addDirs: [attachmentsDir()] } : {}),
   };
+  const memory = await getMemorySafe(ticket.title, ticket.projectId);
   const { result: reviewResults, strayPaths: reviewStray } = await withReadOnlyView(workdir, ticket.id, "review", branchName(ticket.id), async (view) => {
     const evidence = copyEvidence(sandbox, view);
     if (evidence.paths.length || evidence.skipped) {
@@ -927,6 +928,7 @@ async function reviewStage(
         citations: gate.citations || undefined, skills,
         evidence: evidence.paths.length ? evidence.paths : undefined,
         outputs,
+        memory: memory || undefined,
       }) + roleStyle("review", styleSetting);
       results.push(await track(actorId, ticket.id, "review", run.agents.review, reviewPrompt.length, () => runAgent(
         reviewer,
@@ -1040,8 +1042,23 @@ async function bounce(run: Run, actorId: string, why: string, output: string): P
   } catch { /* never mask the original failure */ }
 }
 
+const KNOWLEDGE_BODY_CHARS = 500;
+const KNOWLEDGE_LIMIT = 5;
+// Wider pool so session transcripts can be pushed out by docs that score slightly lower.
+const KNOWLEDGE_POOL = 10;
+
+export function knowledgeQuery(ticket: { title: string; body?: string | null }): string {
+  const body = (ticket.body ?? "").trim().slice(0, KNOWLEDGE_BODY_CHARS);
+  return redactSecrets(body ? `${ticket.title}\n${body}` : ticket.title);
+}
+
+// Session transcripts rank below notes, vault and repo docs; order within each group is kept.
+export function rankForgeKnowledge<T extends { sourceKind: string }>(hits: T[], limit = KNOWLEDGE_LIMIT): T[] {
+  return [...hits.filter((h) => h.sourceKind !== "session"), ...hits.filter((h) => h.sourceKind === "session")].slice(0, limit);
+}
+
 async function getKnowledgeSafe(q: string, projectId?: string): Promise<{ content: string; citation: string }[]> {
-  try { return await searchKnowledge(q, { limit: 5, projectId, caller: "forge:run" }); } catch { return []; }
+  try { return rankForgeKnowledge(await searchKnowledge(q, { limit: KNOWLEDGE_POOL, projectId, caller: "forge:run" })); } catch { return []; }
 }
 
 async function getMemorySafe(q: string, projectId?: string | null): Promise<string> {

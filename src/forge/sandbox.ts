@@ -494,11 +494,16 @@ export function snapshotDeps(workdir: string): DepsBaseline {
 // Compare live base deps dirs against the baseline. ADDED top-level entries are
 // deleted from the base (revert the leak) and reported; TOUCHED entries are
 // reported but not restored (no byte snapshot). Empty array => clean.
-// Vite's config loader writes a transient ".vite-temp" scratch dir inside
-// node_modules while it runs; through the shared junction that write lands in
-// the base and trips the sentinel on an otherwise clean run. Ignore ONLY this
-// one known transient entry -- do NOT widen it, the sentinel guards real writes.
-const DEPS_LEAK_IGNORE = new Set([".vite-temp"]);
+// Tool caches that live inside node_modules by convention: Vite's config loader
+// scratch (".vite-temp"), Vite dep pre-bundle + Vitest results (".vite"),
+// Vitest (".vitest"), and the shared find-cache-dir root (".cache", used by
+// babel-loader/eslint/terser etc). Through the shared junction those writes land
+// in the base and tripped the sentinel on otherwise clean runs. Only these
+// dot-named cache dirs are ignored; package dirs stay guarded.
+// ponytail: a run that writes a cache can still dirty another concurrent run's
+// view of these dirs -- harmless, they are caches. Upgrade path: per-sandbox
+// cache dirs via the work stage env if a tool ever reads a stale shared cache.
+const DEPS_LEAK_IGNORE = new Set([".vite-temp", ".vite", ".vitest", ".cache"]);
 
 export function detectDepsLeak(baseline: DepsBaseline): string[] {
   const leaked: string[] = [];

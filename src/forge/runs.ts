@@ -9,7 +9,7 @@ import { resolveCmd, loadRelayConfig, type RelayConfig, type RelayAgent } from "
 import { pipelineStartWarnings, pipelineStartBlockingError } from "../relay/doctor.js";
 import { roleStyle } from "../relay/style.js";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted } from "../relay/prompts.js";
-import { listSkills, formatSkillIndex, formatSkillBodies, parseOperatorSkills, parsePlanSkills, type SkillMeta } from "./skills.js";
+import { listSkills, formatSkillIndex, formatSkillBodies, parseOperatorSkills, parsePlanSkills, parseSkillAllowlist, type SkillMeta } from "./skills.js";
 import { recallBlock } from "../services/recall.js";
 import { chunkReviewDiff, mergeReviewVerdicts } from "./review-chunks.js";
 import { killTree, killPidTree, type AgentResult } from "../relay/invoke.js";
@@ -24,7 +24,7 @@ import { addComment, listComments } from "../services/comments.js";
 import { getTicket } from "../services/history.js";
 import { searchKnowledge, indexRepoDocs, repoIndexed } from "../services/knowledge.js";
 import { getSetting } from "../services/settings.js";
-import { projectWorkdir } from "../services/projects.js";
+import { projectWorkdir, getProjectSettings } from "../services/projects.js";
 import { ConflictError, StaleVersionError } from "../services/errors.js";
 import { logAgentUse, startAgentSession, endAgentSession } from "../services/usage.js";
 import { listActors } from "../services/actors.js";
@@ -561,9 +561,14 @@ async function pipeline(
   // Skills catalogue for this run's workdir. listSkills is internally defensive
   // (missing dirs -> []), but a read failure must never fail the run: warn + attach
   // nothing. Text is trusted (admin-installed), so it is not UNTRUSTED-fenced.
+  // The allowlist also limits which operator /name tokens and Skills: names resolve.
   let catalogue: SkillMeta[] = [];
-  try { catalogue = listSkills(workdir); }
-  catch (e) { console.warn(`forge: skills read failed: ${(e as Error).message}`); }
+  try {
+    const projectRaw = ticket.projectId ? (await getProjectSettings(ticket.projectId))["forge.skillAllowlist"] : undefined;
+    catalogue = listSkills(workdir, parseSkillAllowlist(projectRaw ?? (await getSetting("forge.skillAllowlist"))));
+  } catch (e) {
+    console.warn(`forge: skills read failed: ${(e as Error).message}`);
+  }
   const knownSkillNames = catalogue.map((s) => s.name);
   // operator "/name" tokens first, then the planner's "Skills:" line; deduped, cap 3.
   const selectSkills = (plan: string): { names: string[]; bodies: string } => {

@@ -5,7 +5,7 @@ import { join, basename } from "node:path";
 import { execFileSync } from "node:child_process";
 import {
   discoverSkills, addMarketplace, listMarketplaces, removeMarketplace,
-  installSkill, uninstallSkill, listInstalled,
+  installSkill, uninstallSkill, listInstalled, readSkillMeta,
 } from "../src/skills/marketplace.js";
 import { ConflictError, NotFoundError } from "../src/services/errors.js";
 
@@ -212,3 +212,50 @@ describe("install lifecycle (fixture git repos, isolated skills home)", () => {
     rmSync(outside, { recursive: true, force: true });
   });
 });
+
+describe("readSkillMeta: block scalars", () => {
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "skill-meta-"));
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("parses folded block scalar (>) and stops at the next key", () => {
+    const file = join(root, "SKILL.md");
+    writeFileSync(file, "---\ndescription: >\n  Line one\n  line two\nname: x\n---\n# Fallback\n");
+    const meta = readSkillMeta(file, "fallback");
+    expect(meta.description).toBe("Line one line two");
+    expect(meta.name).toBe("x");
+  });
+
+  it("parses literal block scalar (|-) with empty lines", () => {
+    const file = join(root, "SKILL.md");
+    writeFileSync(file, "---\ndescription: |-\n  first\n\n  second\n---\n# Fallback\n");
+    const meta = readSkillMeta(file, "fallback");
+    expect(meta.description).toBe("first second");
+  });
+
+  it("parses folded block scalar (>-) with CRLF line endings", () => {
+    const file = join(root, "SKILL.md");
+    writeFileSync(file, "---\r\ndescription: >-\r\n  Line one\r\n  line two\r\n---\r\n# Fallback\r\n");
+    const meta = readSkillMeta(file, "fallback");
+    expect(meta.description).toBe("Line one line two");
+  });
+
+  it("preserves single-line description", () => {
+    const file = join(root, "SKILL.md");
+    writeFileSync(file, "---\ndescription: plain\n---\n# Fallback\n");
+    const meta = readSkillMeta(file, "fallback");
+    expect(meta.description).toBe("plain");
+  });
+
+  it("falls back to heading when block scalar has no indented lines", () => {
+    const file = join(root, "SKILL.md");
+    writeFileSync(file, "---\ndescription: >\n---\n# Heading\n");
+    const meta = readSkillMeta(file, "fallback");
+    expect(meta.description).toBe("Heading");
+  });
+});
+

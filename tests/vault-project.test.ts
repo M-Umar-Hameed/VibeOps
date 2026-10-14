@@ -94,6 +94,13 @@ test("vault.path project setting is stored raw, not binding-normalized", async (
   expect(s["vault.path"]).toBe("/tmp/some/path/");
 });
 
+test("forge.skillAllowlist project setting is stored raw, not binding-normalized", async () => {
+  const p = await createProject({ key: `fsa-${Date.now()}`, name: "ForgeSkillAllowlist" });
+  await setProjectSetting(p.id, "forge.skillAllowlist", '["digistoq-seo", "digistoq-social-posts"]');
+  const s = await getProjectSettings(p.id);
+  expect(s["forge.skillAllowlist"]).toBe('["digistoq-seo", "digistoq-social-posts"]');
+});
+
 test("default vault dir is created, watched, and searchable for project with no override", async () => {
   await stopProjectVaults();
   // Redirect homedir() to a temp dir so we don't pollute real ~/.vibeops.

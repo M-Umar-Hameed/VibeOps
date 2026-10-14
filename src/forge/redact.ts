@@ -5,8 +5,27 @@ const PATTERNS: RegExp[] = [
 ];
 const KEY_FIELD = /("(?:apiKey|api_key|token|secret)"\s*:\s*")[^"]+(")/gi;
 
+// Literal values of agent env vars named *_PASSWORD/_TOKEN/_SECRET/_KEY, registered
+// at spawn/config load. Values under 4 chars are skipped: masking "1" would shred output.
+// ponytail: process-global, capped at 256 (oldest dropped) since every run adds a
+// fresh VIBEOPS_RUN_TOKEN; a long-lived process forgets old run tokens first.
+const SECRET_ENV_NAME = /_(PASSWORD|TOKEN|SECRET|KEY)$/;
+const ENV_CAP = 256;
+const envValues = new Set<string>();
+
+export function registerEnvSecrets(env: Record<string, string | undefined> | undefined): void {
+  if (!env) return;
+  for (const [k, v] of Object.entries(env)) {
+    if (!SECRET_ENV_NAME.test(k) || !v || v.length < 4) continue;
+    envValues.delete(v);
+    envValues.add(v);
+    if (envValues.size > ENV_CAP) envValues.delete(envValues.values().next().value!);
+  }
+}
+
 export function redactSecrets(chunk: string): string {
   let out = chunk;
+  for (const v of [...envValues].sort((a, b) => b.length - a.length)) out = out.split(v).join("[redacted]");
   for (const p of PATTERNS) out = out.replace(p, "[redacted]");
   return out.replace(KEY_FIELD, "$1[redacted]$2");
 }

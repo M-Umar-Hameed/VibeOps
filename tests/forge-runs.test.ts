@@ -607,6 +607,33 @@ describe("forge run manager", () => {
     expect(bodies).not.toContain("sk-abcdefghij0123456789");
   });
 
+  it("agent env password is redacted from run output, log file and comments", async () => {
+    const { actorId, ticket } = await seedTicket("Env secret leak");
+    const config = relayConfig();
+    config.agents.fake.env = { DEMO_PASSWORD: "demo-pw-7f3a9c" };
+    setScript("env-leak");
+
+    const { runId } = await startPipeline(actorId, config, {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const out = getRunOutput(runId, 0);
+    expect(out?.chunk).toContain("[redacted]");
+    expect(out?.chunk).not.toContain("demo-pw-7f3a9c");
+
+    const comments = await listComments(ticket.id);
+    const bodies = comments.map((c) => c.body).join("\n");
+    expect(bodies).not.toContain("demo-pw-7f3a9c");
+    expect(bodies).toContain("password=[redacted]");
+
+    const row = await waitForPersistedRun(runId);
+    expect(row.logPath).toBeDefined();
+    const logContent = readFileSync(row.logPath!, "utf-8");
+    expect(logContent).not.toContain("demo-pw-7f3a9c");
+    rmSync(row.logPath!, { force: true });
+  });
+
   it("stop kills the in-flight work agent instead of waiting for its timeout", async () => {
     const { actorId, ticket } = await seedTicket("Stop path");
     setScript("plan,slow");

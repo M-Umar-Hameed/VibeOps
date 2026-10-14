@@ -31,6 +31,28 @@ When substituting values into the `cmd` array, VibeOps provides four placeholder
 **Environment Variables (`env`):**
 If you define `env` key-value pairs, these are merged *over* the process environment (agent variables win). The `{workdir}` placeholder is substituted inside `env` values. However, `{prompt}` and `{promptFile}` are intentionally excluded from environment variable substitution to prevent secrets or complex text from leaking into the shell environment.
 
+### Secrets for agents (demo logins)
+
+Add credentials to `relay.json` under `agents.<name>.env`, using names ending with `_PASSWORD`, `_TOKEN`, `_SECRET`, or `_KEY`.
+
+```json
+"agents": {
+  "codex": {
+    "cmd": ["codex", "exec", "{prompt}"],
+    "roles": ["work"],
+    "env": {
+      "DEMO_SHOP_EMAIL": "demo@example.com",
+      "DEMO_SHOP_PASSWORD": "secret-demo-pass"
+    }
+  }
+}
+```
+
+- **Redacted surfaces:** Literal values of variables ending in `_PASSWORD`, `_TOKEN`, `_SECRET`, or `_KEY` are replaced with `[redacted]` in run output, the run log file (rewritten when the run settles), ticket comments (Forge and relay CLI), memory capture, and knowledge ingestion. Values shorter than 4 characters are not redacted. Other environment variable names are not redacted.
+- **Sentinel warning:** Edit `relay.json` only when no Forge work stage is running. The sentinel snapshots `relay.json` and restores it after the stage, so any mid-run edits are silently reverted.
+- **Script usage:** Scripts read the value from `process.env.DEMO_SHOP_PASSWORD`. Never write credentials to a file, a commit, or a prompt. Redaction is best-effort: a value split across output chunks, encoded, or transformed can slip through.
+- **Agent types:** `type: "sdk"` and `type: "http"` agents ignore `env`.
+
 For routing details on how roles are assigned and executed, see [docs/ROUTING.md](ROUTING.md) and [README.md#cross-model-pipeline-relay](../README.md#cross-model-pipeline-relay).
 
 ---

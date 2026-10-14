@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { substituteCmd } from "./invoke.js";
+import { registerEnvSecrets } from "../forge/redact.js";
 
 export type ModelTier = "free" | "cheap" | "expensive";
 export type RelayModel = { name: string; tier: ModelTier; quality: number };
@@ -154,6 +155,7 @@ export function validateRelayConfig(parsed: unknown, configPath: string): RelayC
       }
     }
   }
+  for (const a of Object.values(cfg.agents as Record<string, RelayAgent>)) registerEnvSecrets(a.env);
   return cfg as unknown as RelayConfig;
 }
 

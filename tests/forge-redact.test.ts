@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { redactSecrets, findSecrets } from "../src/forge/redact.js";
+import { redactSecrets, findSecrets, registerEnvSecrets } from "../src/forge/redact.js";
 
 describe("redactSecrets", () => {
   it("redacts common key shapes", () => {
@@ -36,5 +36,25 @@ describe("findSecrets", () => {
   });
   it("returns empty for clean text", () => {
     expect(findSecrets("no secrets here")).toEqual([]);
+  });
+});
+
+describe("registerEnvSecrets", () => {
+  it("redacts values of matching env var names and ignores short/non-secret values", () => {
+    registerEnvSecrets({ DEMO_SHOP_PASSWORD: "hunter2-demo", API_KEY: "k3y-value", PLAIN: "visible-value", SHORT_TOKEN: "abc" });
+    expect(redactSecrets("pw hunter2-demo k3y-value visible-value abc")).toBe("pw [redacted] [redacted] visible-value abc");
+  });
+
+  it("handles undefined without throwing", () => {
+    expect(() => registerEnvSecrets(undefined)).not.toThrow();
+  });
+
+  it("moves re-registered value to newest slot so it survives 300 further registrations", () => {
+    registerEnvSecrets({ INITIAL_TOKEN: "kept-token" });
+    for (let i = 0; i < 100; i++) registerEnvSecrets({ [`PRE_${i}_TOKEN`]: "tok-" + i });
+    registerEnvSecrets({ RE_TOKEN: "kept-token" });
+    for (let i = 100; i < 300; i++) registerEnvSecrets({ [`POST_${i}_TOKEN`]: "tok-" + i });
+    expect(redactSecrets("kept-token")).toBe("[redacted]");
+    expect(redactSecrets("tok-0")).toBe("tok-0");
   });
 });

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { writeFile, unlink } from "node:fs/promises";
-import { mkdirSync, openSync, readSync, fstatSync, closeSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, readSync, fstatSync, closeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import type { RelayAgent, PromptDelivery } from "./config.js";
@@ -84,6 +84,14 @@ export async function runAgent(
   onSpawn?: (child: ChildProcess) => void,
   logPath?: string,
 ): Promise<AgentResult> {
+  // Windows reports a missing cwd as "spawn <exe> ENOENT", which blames the binary
+  // (incident: council 118ebebf). Name the real cause instead.
+  if (!existsSync(workdir)) {
+    const msg = `\n[forge: agent could not be started: working folder does not exist: ${workdir}]\n`;
+    onData?.(msg);
+    return { ok: false, output: msg };
+  }
+
   const wall = await loadWall();
   const cmd = wall.on ? wallCmd(agent.cmd, wall.allowed, agent.write === true) : agent.cmd;
 

@@ -140,6 +140,10 @@ if (mode === "echo-stdin") {
   console.log(`STDIN:${data}`);
   process.exit(0);
 }
+if (mode === "echo-argv") {
+  console.log(`ARGV:${JSON.stringify(process.argv.slice(2))}`);
+  process.exit(0);
+}
 if (mode === "echo-prompt") {
   console.log(`PROMPT:${prompt}`);
   process.exit(0);

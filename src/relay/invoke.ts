@@ -109,7 +109,7 @@ export async function runAgent(
     return { ok: false, output: msg };
   }
 
-  const wall = await loadWall();
+  const wall = await loadWall(agent.projectId);
   const cmd = wall.on ? wallCmd(agent.cmd, wall.allowed, agent.write === true) : agent.cmd;
 
   const promptFile = join(tmpdir(), `vibeops-relay-${randomUUID()}.txt`);

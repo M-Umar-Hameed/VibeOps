@@ -18,7 +18,7 @@ export type RelayModel = { name: string; tier: ModelTier; quality: number };
 //   stdin - written to the child's stdin after it starts (no placeholder)
 export type PromptDelivery = "argv" | "file" | "stdin";
 export const PROMPT_DELIVERIES: PromptDelivery[] = ["argv", "file", "stdin"];
-export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string; write?: boolean; promptDelivery?: PromptDelivery };
+export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string; write?: boolean; promptDelivery?: PromptDelivery; projectId?: string };
 export type RelayConfig = {
   workdir: string; apiKey?: string; baseUrl?: string; pollMs?: number;
   agents: Record<string, RelayAgent>;

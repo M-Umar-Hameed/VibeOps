@@ -1498,6 +1498,26 @@ const file2 = "run2-output.txt";
     expect(output?.chunk).not.toContain("Hint: a frontend build needs forge.frontendDeps set to true");
   });
 
+  it("per-project forge.depsDirs: deps leak in site/node_modules fails the run", async () => {
+    mkdirSync(join(workdir, "site", "node_modules"), { recursive: true });
+    writeFileSync(join(workdir, "site", "node_modules", "marker.txt"), "base\n");
+
+    const { actorId, ticket } = await seedTicket("Deps leak site");
+    setScript("plan,work,review-pass");
+    process.env.FAKE_WRITE_ABS = join(workdir, "site", "node_modules", "LEAK.txt");
+
+    await withSetting(`forge.depsDirs.${ticket.projectId}`, JSON.stringify(["node_modules", "site/node_modules"]), async () => {
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+      const output = getRunOutput(runId, 0);
+      expect(output?.status).toBe("failed");
+      expect(output?.chunk).toContain("DEPS-LEAK");
+      expect(output?.chunk).toContain("LEAK.txt");
+    });
+  });
+
   it("sandbox escape WIP-commits the sandbox edits before failing", async () => {
     const { actorId, ticket } = await seedTicket("Escape WIP commit");
     const sensitive = join(counterDir, "server.mjs");

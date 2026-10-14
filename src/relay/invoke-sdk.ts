@@ -74,7 +74,7 @@ export async function runAgentSdk(
     return { ok: false, output: msg };
   }
 
-  const wall = await loadWall();
+  const wall = await loadWall(agent.projectId);
   const controller = new AbortController();
   onAbort?.(() => controller.abort());
   const timer = setTimeout(() => controller.abort(), agent.timeoutMs ?? DEFAULT_TIMEOUT_MS);

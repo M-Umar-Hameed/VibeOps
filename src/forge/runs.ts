@@ -15,7 +15,7 @@ import { chunkReviewDiff, mergeReviewVerdicts } from "./review-chunks.js";
 import { killTree, killPidTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { redactSecrets } from "./redact.js";
-import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot } from "./sandbox.js";
+import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
 import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, stripGateDirectives } from "./policy.js";
 import { pickAgents, escalate, pairsForRole, resolveStrategy, type Pick, type RoutingStrategy } from "./router.js";
@@ -544,6 +544,13 @@ export async function startPipeline(
   return { runId: run.id, doctorWarnings };
 }
 
+async function depsConfig(projectId: string): Promise<{ frontendDeps: string[]; depsDirs: string[] }> {
+  return {
+    frontendDeps: resolveFrontendDeps(await getSetting(`forge.frontendDeps.${projectId}`), await getSetting("forge.frontendDeps")),
+    depsDirs: resolveDepsDirs(await getSetting(`forge.depsDirs.${projectId}`)),
+  };
+}
+
 async function pipeline(
   run: Run, actorId: string,
   agents: { plan: RelayAgent; work: RelayAgent; review: RelayAgent }, workdir: string, styleSetting: string,
@@ -592,7 +599,8 @@ async function pipeline(
     // change-request comments as amendments (see reviewStage caller below).
     // Upgrade path: thread amendments here too if resume-to-review reworks
     // that add scope start recurring.
-    const sandbox = await ensureSandbox(workdir, ticket.id);
+    const { frontendDeps, depsDirs } = await depsConfig(ticket.projectId);
+    const sandbox = await ensureSandbox(workdir, ticket.id, frontendDeps, depsDirs);
     append(run, `\n=== FORGE resume: straight to review (existing sandbox) ===\n`);
     const resumeSkills = selectSkills(plan);
     if (resumeSkills.names.length) append(run, `\nforge: skills attached: ${resumeSkills.names.join(", ")}\n`);
@@ -639,7 +647,7 @@ async function pipeline(
     const planPrompt = composePlanPrompt({ ticket, knowledge, memory, skillIndex: formatSkillIndex(catalogue) }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra;
     const { result: res, strayPaths: planStray } = await withReadOnlyView(workdir, ticket.id, "plan", "HEAD", (view) =>
       track(actorId, ticket.id, "plan", run.agents.plan, planPrompt.length, () => runAgent(
-        agents.plan, planPrompt, view, onData,
+        { ...agents.plan, projectId: ticket.projectId }, planPrompt, view, onData,
         (child) => recordSpawn(run, child),
         undefined, modelOf(run.agents.plan), run.logPath,
       )));
@@ -675,8 +683,8 @@ async function pipeline(
   enterStage(run, "work");
   append(run, `\n=== FORGE work (${run.agents.work}) ===\n`);
   ticket = await setStatus(actorId, ticket.id, "in_progress");
-  const frontendDeps = (await getSetting("forge.frontendDeps")) === "true";
-  const sandbox = await ensureSandbox(workdir, ticket.id, frontendDeps);
+  const { frontendDeps, depsDirs } = await depsConfig(ticket.projectId);
+  const sandbox = await ensureSandbox(workdir, ticket.id, frontendDeps, depsDirs);
   const knowledge = await getKnowledgeSafe(ticket.title, ticket.projectId);
   const memory = await getMemorySafe(ticket.title, ticket.projectId);
   // Rework passes must see why the last review failed, or the worker repeats
@@ -695,10 +703,10 @@ async function pipeline(
   // gate (which only sees the worktree) cannot catch a write to the installed
   // app or another repo. Detect+restore after work converts a silent compromise
   // into a reverted, visible, run-failing one. See docs/AGENT_CLIS.md.
-  const depsBaseline = snapshotDeps(workdir);
+  const depsBaseline = snapshotDeps(workdir, depsDirs);
   const sentinelSnaps = snapshotSensitive(resolveSensitivePaths(await getSetting("forge.sensitivePaths")));
   const workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
-    runAgent({ ...agents.work, write: true }, workPrompt, sandbox, onData,
+    runAgent({ ...agents.work, write: true, projectId: ticket.projectId }, workPrompt, sandbox, onData,
       (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
       modelOf(run.agents.work), run.logPath));
   run.child = undefined;
@@ -727,7 +735,7 @@ async function pipeline(
       `\n[forge: DEPS-LEAK — the work stage wrote through the shared node_modules ` +
       `link into the base repo; additions reverted, run failed]\n` +
       depsLeak.map((p) => `  - ${p}`).join("\n") + "\n";
-    if (!frontendDeps && depsLeak.some(p => p.includes("app/node_modules") || p.includes("app\\node_modules"))) {
+    if (!frontendDeps.length && depsLeak.some(p => p.includes("app/node_modules") || p.includes("app\\node_modules"))) {
       report += `Hint: a frontend build needs forge.frontendDeps set to true. This costs a per-sandbox copy of app/node_modules.\n`;
     }
     append(run, report);
@@ -813,7 +821,7 @@ async function reviewStage(
   // in front of the reviewer's read time. A failing check force-fails the
   // run mechanically at verdict time, independent of the reviewer's own
   // verdict — see the gate evaluation below.
-  const checkCmds = resolveChecks(await getSetting("forge.checks"), sandbox);
+  const checkCmds = resolveChecks(await getSetting(`forge.checks.${ticket.projectId}`), sandbox, await getSetting("forge.checks"));
 
   // Protected-path policy: deterministic, evaluated on the diff (never the
   // worker's self-report). A touched protected path is an automatic Critical
@@ -890,7 +898,7 @@ async function reviewStage(
       if (run.stopped) break;
       const reviewPrompt = composeReviewPrompt({ ticket, plan, report: reportOutput, diff: chunk.payload, operatorNotes: run.operatorNotes, protectedViolation: protectedFinding, amendments, gate: gate.report || undefined, citations: gate.citations || undefined, skills }) + roleStyle("review", styleSetting);
       results.push(await track(actorId, ticket.id, "review", run.agents.review, reviewPrompt.length, () => runAgent(
-        reviewAgent,
+        { ...reviewAgent, projectId: ticket.projectId },
         reviewPrompt,
         view, onData,
         (child) => recordSpawn(run, child),

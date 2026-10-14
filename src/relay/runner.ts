@@ -6,6 +6,7 @@ import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict
 import { runAgent } from "./invoke.js";
 import { listTickets, getTicket, getComments, updateTicket, addComment, getKnowledge } from "./api.js";
 import type { Ticket, Comment } from "../db/schema.js";
+import { redactSecrets } from "../forge/redact.js";
 
 const DIFF_CAP = 150_000;
 
@@ -51,7 +52,7 @@ export async function runPlan(config: RelayConfig, opts: RunOpts): Promise<void>
     return;
   }
 
-  await addComment(config, ticket.id, result.output, "plan");
+  await addComment(config, ticket.id, redactSecrets(result.output), "plan");
   const updated = await updateTicket(config, ticket.id, ticket.version, { status: "planned" });
   if ("conflict" in updated) console.warn(`relay plan: ticket ${ticket.id} changed before status update`);
 }
@@ -77,12 +78,12 @@ export async function runWork(config: RelayConfig, opts: RunOpts): Promise<void>
   const result = await runAgent({ ...agent, write: true }, prompt, config.workdir);
 
   if (result.ok) {
-    await addComment(config, claimed.id, result.output, "report");
+    await addComment(config, claimed.id, redactSecrets(result.output), "report");
     await updateTicket(config, claimed.id, claimed.version, { status: "review" });
   } else {
     // Never leave a claimed ticket stuck in in_progress: report the failure
     // and bounce it back for another planning/work pass.
-    await addComment(config, claimed.id, `relay: worker failed\n\n${result.output}`, "report");
+    await addComment(config, claimed.id, redactSecrets(`relay: worker failed\n\n${result.output}`), "report");
     await updateTicket(config, claimed.id, claimed.version, { status: "planned" });
   }
 }
@@ -100,7 +101,7 @@ export async function runReview(config: RelayConfig, opts: RunOpts): Promise<voi
   const result = await runAgent(agent, prompt, config.workdir);
   const verdict = parseVerdict(result.output);
 
-  await addComment(config, ticket.id, verdict.raw, "review");
+  await addComment(config, ticket.id, redactSecrets(verdict.raw), "review");
   await updateTicket(config, ticket.id, ticket.version, { status: verdict.pass ? "closed" : "planned" });
 }
 

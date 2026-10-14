@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { substituteCmd } from "./invoke.js";
+import { registerEnvSecrets } from "../forge/redact.js";
 
 export type ModelTier = "free" | "cheap" | "expensive";
 export type RelayModel = { name: string; tier: ModelTier; quality: number };
@@ -18,7 +19,7 @@ export type RelayModel = { name: string; tier: ModelTier; quality: number };
 //   stdin - written to the child's stdin after it starts (no placeholder)
 export type PromptDelivery = "argv" | "file" | "stdin";
 export const PROMPT_DELIVERIES: PromptDelivery[] = ["argv", "file", "stdin"];
-export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string; write?: boolean; promptDelivery?: PromptDelivery; addDirs?: string[] };
+export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string; write?: boolean; promptDelivery?: PromptDelivery; projectId?: string; addDirs?: string[] };
 export type RelayConfig = {
   workdir: string; apiKey?: string; baseUrl?: string; pollMs?: number;
   agents: Record<string, RelayAgent>;
@@ -154,6 +155,7 @@ export function validateRelayConfig(parsed: unknown, configPath: string): RelayC
       }
     }
   }
+  for (const a of Object.values(cfg.agents as Record<string, RelayAgent>)) registerEnvSecrets(a.env);
   return cfg as unknown as RelayConfig;
 }
 

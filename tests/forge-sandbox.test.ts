@@ -9,6 +9,7 @@ import {
   unlinkDeps, hasCommitsToPromote, sandboxActivity, sandboxWorkingDiff,
   snapshotDeps, detectDepsLeak, listSandboxTicketIds, sandboxSizeBytes, withReadOnlyView,
   validateExportPath, exportOutputs, copyEvidence, EVIDENCE_MAX_BYTES,
+  DEPS_DIRS, resolveDepsDirs, resolveFrontendDeps
 } from "../src/forge/sandbox.js";
 import { vibeopsHome } from "../src/runtime/home.js";
 import { ConflictError } from "../src/services/errors.js";
@@ -746,3 +747,96 @@ describe("withReadOnlyView", () => {
     expect(strayPaths).toEqual([]);
   });
 });
+
+describe("per-project deps folders", () => {
+  it("resolveDepsDirs falls back on invalid values and normalizes valid values", () => {
+    expect(resolveDepsDirs(null)).toEqual(DEPS_DIRS);
+    expect(resolveDepsDirs("bad")).toEqual(DEPS_DIRS);
+    expect(resolveDepsDirs('["../x"]')).toEqual(DEPS_DIRS);
+    expect(resolveDepsDirs(JSON.stringify([tmpdir()]))).toEqual(DEPS_DIRS);
+    expect(resolveDepsDirs('["site/node_modules/"]')).toEqual([join("site", "node_modules")]);
+  });
+
+  it("resolveFrontendDeps resolves correctly with fallbacks", () => {
+    expect(resolveFrontendDeps(null, null)).toEqual([]);
+    expect(resolveFrontendDeps(null, "true")).toEqual([join("app", "node_modules")]);
+    expect(resolveFrontendDeps('["site/node_modules"]', "true")).toEqual([join("site", "node_modules")]);
+    expect(resolveFrontendDeps("bad", "true")).toEqual([join("app", "node_modules")]);
+  });
+
+  it("monorepo layout links all three node_modules folders", async () => {
+    mkdirSync(join(workdir, "site", "node_modules"), { recursive: true });
+    writeFileSync(join(workdir, "site", "node_modules", "m.txt"), "site-marker\n");
+    mkdirSync(join(workdir, "mobile", "node_modules"), { recursive: true });
+    writeFileSync(join(workdir, "mobile", "node_modules", "m.txt"), "mobile-marker\n");
+
+    const dirs = resolveDepsDirs('["node_modules","site/node_modules","mobile/node_modules"]');
+    await ensureSandbox(workdir, TID, false, dirs);
+
+    const sbx = sandboxPath(TID);
+    expect(readlinkSync(join(sbx, "node_modules"))).toBeTruthy();
+    expect(readlinkSync(join(sbx, "site", "node_modules"))).toBeTruthy();
+    expect(readlinkSync(join(sbx, "mobile", "node_modules"))).toBeTruthy();
+  });
+
+  it("cleanup with the setting gone keeps the base", async () => {
+    mkdirSync(join(workdir, "site", "node_modules"), { recursive: true });
+    writeFileSync(join(workdir, "site", "node_modules", "m.txt"), "site-marker\n");
+    mkdirSync(join(workdir, "mobile", "node_modules"), { recursive: true });
+    writeFileSync(join(workdir, "mobile", "node_modules", "m.txt"), "mobile-marker\n");
+
+    const dirs = resolveDepsDirs('["node_modules","site/node_modules","mobile/node_modules"]');
+    await ensureSandbox(workdir, TID, false, dirs);
+
+    await discardSandbox(workdir, TID);
+    expect(sandboxExists(TID)).toBe(false);
+    expect(existsSync(join(workdir, "site", "node_modules", "m.txt"))).toBe(true);
+    expect(existsSync(join(workdir, "mobile", "node_modules", "m.txt"))).toBe(true);
+  });
+
+  it("leak caught in each configured folder", async () => {
+    mkdirSync(join(workdir, "site", "node_modules"), { recursive: true });
+    writeFileSync(join(workdir, "site", "node_modules", "m.txt"), "site-marker\n");
+    mkdirSync(join(workdir, "mobile", "node_modules"), { recursive: true });
+    writeFileSync(join(workdir, "mobile", "node_modules", "m.txt"), "mobile-marker\n");
+
+    const dirs = resolveDepsDirs('["node_modules","site/node_modules","mobile/node_modules"]');
+    await ensureSandbox(workdir, TID, false, dirs);
+
+    const baseline = snapshotDeps(workdir, dirs);
+    const sbx = sandboxPath(TID);
+    writeFileSync(join(sbx, "node_modules", "LEAK.txt"), "leak\n");
+    writeFileSync(join(sbx, "site", "node_modules", "LEAK.txt"), "leak\n");
+    writeFileSync(join(sbx, "mobile", "node_modules", "LEAK.txt"), "leak\n");
+
+    const leaked = detectDepsLeak(baseline);
+    expect(leaked).toHaveLength(3);
+    for (const entry of leaked) {
+      expect(entry).toContain("added; reverted");
+    }
+    expect(existsSync(join(workdir, "node_modules", "LEAK.txt"))).toBe(false);
+    expect(existsSync(join(workdir, "site", "node_modules", "LEAK.txt"))).toBe(false);
+    expect(existsSync(join(workdir, "mobile", "node_modules", "LEAK.txt"))).toBe(false);
+  });
+
+  it("copy array copies configured folders while linking others", async () => {
+    mkdirSync(join(workdir, "site", "node_modules"), { recursive: true });
+    writeFileSync(join(workdir, "site", "node_modules", "m.txt"), "site-marker\n");
+    mkdirSync(join(workdir, "mobile", "node_modules"), { recursive: true });
+    writeFileSync(join(workdir, "mobile", "node_modules", "m.txt"), "mobile-marker\n");
+
+    const dirs = resolveDepsDirs('["node_modules","site/node_modules","mobile/node_modules"]');
+    const copy = resolveFrontendDeps('["site/node_modules"]', null);
+    await ensureSandbox(workdir, TID, copy, dirs);
+
+    const sbx = sandboxPath(TID);
+    expect(() => readlinkSync(join(sbx, "site", "node_modules"))).toThrow();
+    expect(readFileSync(join(sbx, "site", "node_modules", "m.txt"), "utf-8")).toBe("site-marker\n");
+    expect(readlinkSync(join(sbx, "node_modules"))).toBeTruthy();
+    expect(readlinkSync(join(sbx, "mobile", "node_modules"))).toBeTruthy();
+
+    await discardSandbox(workdir, TID);
+    expect(existsSync(join(workdir, "site", "node_modules", "m.txt"))).toBe(true);
+  });
+});
+

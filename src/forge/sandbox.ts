@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readlinkSync, rmdirSync, unlinkSync, symlinkSync, statSync, readdirSync, rmSync, cpSync, copyFileSync, writeFileSync, lstatSync } from "node:fs";
-import { dirname, join, resolve, isAbsolute, relative, parse } from "node:path";
+import { existsSync, mkdirSync, readlinkSync, rmdirSync, unlinkSync, symlinkSync, statSync, readdirSync, rmSync, cpSync, copyFileSync, readFileSync, writeFileSync, lstatSync } from "node:fs";
+import { dirname, join, resolve, isAbsolute, normalize, relative, parse } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { ConflictError } from "../services/errors.js";
@@ -13,8 +13,40 @@ export function attachmentsDir(): string {
 
 // Candidate deps dirs to link from the base repo into a sandbox, so work agents
 // (fresh worktree, no install) can run tests without a full npm install per ticket.
-const DEPS_DIRS = ["node_modules", join("app", "node_modules")];
+export const DEPS_DIRS = ["node_modules", join("app", "node_modules")];
 const APP_DEPS = join("app", "node_modules");
+
+// Repo-relative folders only: an absolute or ".." entry could link or delete outside the repo.
+function parseRelDirs(setting: string | null): string[] | null {
+  if (setting === null) return null;
+  try {
+    const parsed: unknown = JSON.parse(setting);
+    if (!Array.isArray(parsed)) return null;
+    const dirs = parsed.map((d) => typeof d === "string" ? normalize(d).replace(/[\\/]+$/, "") : "");
+    if (dirs.every((d) => d && d !== "." && !d.includes(":") && !isAbsolute(d) && !d.split(/[\\/]/).includes(".."))) return dirs;
+  } catch { /* fall through */ }
+  return null;
+}
+
+// forge.depsDirs.<projectId>: folders to link; unset or invalid -> DEPS_DIRS.
+export function resolveDepsDirs(setting: string | null): string[] {
+  return parseRelDirs(setting) ?? DEPS_DIRS;
+}
+
+// forge.frontendDeps.<projectId>: folders to copy instead of link; unset or invalid -> forge.frontendDeps "true" copies app/node_modules.
+export function resolveFrontendDeps(projectSetting: string | null, globalSetting: string | null): string[] {
+  return parseRelDirs(projectSetting) ?? (globalSetting === "true" ? [APP_DEPS] : []);
+}
+
+// Every folder ever linked into a sandbox, so cleanup unlinks it even if forge.depsDirs changed since.
+function linksManifest(ticketId: string): string {
+  return `${sandboxPath(ticketId)}.links.json`;
+}
+function linkedDirs(ticketId: string): string[] {
+  let recorded: string[] = [];
+  try { recorded = JSON.parse(readFileSync(linksManifest(ticketId), "utf-8")); } catch { /* none recorded */ }
+  return [...new Set([...DEPS_DIRS, ...recorded])];
+}
 
 const DIFF_CAP = 150_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -107,6 +139,7 @@ export function deleteOrphanIfLinkFree(ticketId: string): number | null {
   };
   if (scan(root)) return null;
   rmSync(root, { recursive: true, force: true });
+  rmSync(linksManifest(ticketId), { force: true });
   return bytes;
 }
 
@@ -136,19 +169,21 @@ function isLink(p: string): boolean {
 
 // Link (or copy, when frontendDeps) base repo deps into the sandbox.
 // Never throws — a missing/failed link just means the work agent can't run tests, not a broken sandbox.
-export function linkDeps(workdir: string, ticketId: string, frontendDeps = false): void {
+export function linkDeps(workdir: string, ticketId: string, frontendDeps: boolean | string[] = false, depsDirs: string[] = DEPS_DIRS): void {
   const sbx = sandboxPath(ticketId);
-  for (const rel of DEPS_DIRS) {
+  const copy = frontendDeps === true ? [APP_DEPS] : frontendDeps === false ? [] : frontendDeps;
+  const linked: string[] = [];
+  for (const rel of new Set([...depsDirs, ...copy])) {
     const src = resolve(join(workdir, rel));
     const dest = join(sbx, rel);
     if (!existsSync(src)) continue;
     if (existsSync(dest)) {
-      // Reconcile an existing dest with the current mode. Only app/node_modules
+      // Reconcile an existing dest with the current mode. Only a copy folder
       // converts: frontendDeps wants a real copy, but an earlier off-mode run left
       // a junction. Drop the junction (link-safe rmdir, never a recursive delete)
       // so the copy branch below runs. An off-mode real copy is left as-is -- a
       // copy never leaks, and deleting it for disk isn't worth the risk here.
-      if (!(frontendDeps && rel === APP_DEPS && isLink(dest))) continue;
+      if (!(copy.includes(rel) && isLink(dest))) continue;
       try { dropLink(dest); } catch (e) {
         console.warn(`linkDeps: failed to unlink ${rel} for reconcile: ${String(e)}`);
         continue;
@@ -156,7 +191,7 @@ export function linkDeps(workdir: string, ticketId: string, frontendDeps = false
     }
     try {
       mkdirSync(dirname(dest), { recursive: true });
-      if (frontendDeps && rel === APP_DEPS) {
+      if (copy.includes(rel)) {
         // Real per-sandbox copy (deref links) so vite's config-loader ".vite-temp"
         // and any tool cache write lands here, not through a junction into the base.
         // ponytail: full deref copy -- disk-hungry, paid only when forge.frontendDeps
@@ -164,18 +199,20 @@ export function linkDeps(workdir: string, ticketId: string, frontendDeps = false
         cpSync(src, dest, { recursive: true, dereference: true });
       } else {
         symlinkSync(src, dest, process.platform === "win32" ? "junction" : "dir");
+        linked.push(rel);
       }
     } catch (e) {
       console.warn(`linkDeps: failed to link ${rel}: ${String(e)}`);
     }
   }
+  if (linked.length) writeFileSync(linksManifest(ticketId), JSON.stringify([...new Set([...linkedDirs(ticketId), ...linked])]));
 }
 
 // Remove only the links created by linkDeps, never a real directory.
 // Detection: readlink succeeds on junctions/symlinks, throws (EINVAL/ENOENT) on real dirs or missing paths.
 export function unlinkDeps(ticketId: string): void {
   const sbx = sandboxPath(ticketId);
-  for (const rel of DEPS_DIRS) {
+  for (const rel of linkedDirs(ticketId)) {
     const dest = join(sbx, rel);
     try {
       readlinkSync(dest);
@@ -203,11 +240,11 @@ function ignoreForgeDir(tree: string): void {
   writeFileSync(join(dir, ".gitignore"), "*\n");
 }
 
-export async function ensureSandbox(workdir: string, ticketId: string, frontendDeps = false): Promise<string> {
+export async function ensureSandbox(workdir: string, ticketId: string, frontendDeps: boolean | string[] = false, depsDirs: string[] = DEPS_DIRS): Promise<string> {
   const path = sandboxPath(ticketId);
   if (existsSync(path)) {
     ignoreForgeDir(path);
-    linkDeps(workdir, ticketId, frontendDeps);
+    linkDeps(workdir, ticketId, frontendDeps, depsDirs);
     return path;
   } // rework continues in the same tree
   const branch = branchName(ticketId);
@@ -215,7 +252,7 @@ export async function ensureSandbox(workdir: string, ticketId: string, frontendD
   const attach = await git(workdir, "worktree", "add", path, branch);
   if (attach.code !== 0) await must(workdir, "worktree", "add", path, "-b", branch);
   ignoreForgeDir(path);
-  linkDeps(workdir, ticketId, frontendDeps);
+  linkDeps(workdir, ticketId, frontendDeps, depsDirs);
   return path;
 }
 
@@ -448,11 +485,12 @@ async function cleanup(workdir: string, ticketId: string): Promise<void> {
   // removed every deps junction; re-verify none survived, then a recursive delete here
   // is safe because there is no reparse point left to traverse into the base repo.
   if (existsSync(path)) {
-    for (const rel of DEPS_DIRS) {
+    for (const rel of linkedDirs(ticketId)) {
       if (isLink(join(path, rel))) throw new Error(`refusing recursive cleanup of ${ticketId}: ${rel} is still a junction`);
     }
     rmSync(path, { recursive: true, force: true });
   }
+  rmSync(linksManifest(ticketId), { force: true });
   await git(workdir, "branch", "-D", branchName(ticketId));
   await git(workdir, "worktree", "prune");
 }
@@ -493,9 +531,9 @@ export type DepsBaseline = { dir: string; entries: Map<string, number> }[];
 // ponytail: top-level only -- an in-place edit of an existing NESTED file bumps
 // no top-level mtime and is not caught. Upgrade path: full recursive walk if a
 // real postinstall is ever seen deep-writing the base.
-export function snapshotDeps(workdir: string): DepsBaseline {
+export function snapshotDeps(workdir: string, dirs: string[] = DEPS_DIRS): DepsBaseline {
   const out: DepsBaseline = [];
-  for (const rel of DEPS_DIRS) {
+  for (const rel of dirs) {
     const dir = resolve(join(workdir, rel));
     try {
       const entries = new Map<string, number>();

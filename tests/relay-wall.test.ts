@@ -63,6 +63,9 @@ test("resolveAllowedCommands: valid array wins, malformed or unset falls back to
   expect(resolveAllowedCommands("not json")).toEqual(DEFAULT_ALLOWED_COMMANDS);
   expect(resolveAllowedCommands('{"a":1}')).toEqual(DEFAULT_ALLOWED_COMMANDS);
   expect(resolveAllowedCommands(null)).toEqual(DEFAULT_ALLOWED_COMMANDS);
+  expect(resolveAllowedCommands(null, ["x"])).toEqual(["x"]);
+  expect(resolveAllowedCommands("bad", ["x"])).toEqual(["x"]);
+  expect(resolveAllowedCommands('["ffmpeg"]', ["x"])).toEqual(["ffmpeg"]);
 });
 
 test("claude: edit rights only when write is true", () => {
@@ -82,6 +85,21 @@ test("codex: an existing -s, --sandbox= or bypass flag is left alone", () => {
 test("loadWall reads forge.agentWall and forge.allowedCommands", async () => {
   await withSettings({ "forge.agentWall": "false", "forge.allowedCommands": '["make test"]' }, async () => {
     expect(await loadWall()).toEqual({ on: false, allowed: ["make test"] });
+  });
+});
+
+test("loadWall per project", async () => {
+  await withSettings({
+    "forge.allowedCommands": '["make test"]',
+    "forge.allowedCommands.p1": '["ffmpeg","ffprobe","node","npx playwright"]',
+    "forge.allowedCommands.p3": "not json",
+  }, async () => {
+    expect(await loadWall("p1")).toEqual({ on: true, allowed: ["ffmpeg", "ffprobe", "node", "npx playwright"] });
+    expect(await loadWall("p2")).toEqual({ on: true, allowed: ["make test"] });
+    expect(await loadWall("p3")).toEqual({ on: true, allowed: ["make test"] });
+  });
+  await withSettings({ "forge.allowedCommands.p1": '["ffmpeg"]' }, async () => {
+    expect(await loadWall("p2")).toEqual({ on: true, allowed: DEFAULT_ALLOWED_COMMANDS });
   });
 });
 
@@ -137,5 +155,30 @@ test("wallCmd: addDirs for claude and ignored by codex", () => {
   expect(wallCmd(["codex", "exec", "{prompt}"], [], false, ["/att"]))
     .toEqual(["codex", "exec", "--sandbox", "workspace-write", "{prompt}"]);
 });
+
+test("runAgent reaches the claude wall with per-project allowed commands", async () => {
+  const { bin, dir } = fakeClaude();
+  process.env.FAKE_MODE = "echo-argv";
+  try {
+    await withSettings({
+      "forge.agentWall": "true",
+      "forge.allowedCommands": '["make"]',
+      "forge.allowedCommands.p1": '["ffmpeg"]',
+    }, async () => {
+      const res = await runAgent(
+        { cmd: [bin, FIXTURE, "-p"], roles: ["work"], projectId: "p1", timeoutMs: 20_000 },
+        "x", process.cwd(),
+      );
+      expect(res.ok).toBe(true);
+      expect(res.output).toContain("Bash(ffmpeg)");
+      expect(res.output).toContain("PowerShell(ffmpeg *)");
+      expect(res.output).not.toContain("Bash(make)");
+      expect(res.output).toContain("--restricted");
+    });
+  } finally {
+    delete process.env.FAKE_MODE;
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* exe may still be locked on Windows */ }
+  }
+}, 30_000);
 
 

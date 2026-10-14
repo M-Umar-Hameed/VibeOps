@@ -92,12 +92,29 @@ async function cloneOrRefresh(url: string, dir: string): Promise<void> {
   if (clone.code !== 0) throw new Error(`git clone failed: ${clone.out.trim()}`);
 }
 
+// Frontmatter scalar. A folded (">") or literal ("|") block scalar, with an optional
+// chomping/indent indicator (">-", "|+", ">2"), is read from the following indented
+// lines, joined into one line.
+function frontmatterField(block: string, key: string): string | undefined {
+  const lines = block.split(/\r?\n/);
+  const i = lines.findIndex((l) => l.startsWith(`${key}:`));
+  if (i < 0) return undefined;
+  const value = lines[i].slice(key.length + 1).trim();
+  if (!/^[>|][+-]?\d*$/.test(value)) return value || undefined;
+  const parts: string[] = [];
+  for (const l of lines.slice(i + 1)) {
+    if (l.trim() && !/^\s/.test(l)) break;
+    if (l.trim()) parts.push(l.trim());
+  }
+  return parts.join(" ") || undefined;
+}
+
 export function readSkillMeta(skillMdPath: string, fallbackName: string): { name: string; description: string } {
   const text = readFileSync(skillMdPath, "utf-8");
   const frontmatter = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   const block = frontmatter?.[1] ?? "";
-  const name = block.match(/^name:\s*(.+)$/m)?.[1]?.trim();
-  const description = block.match(/^description:\s*(.+)$/m)?.[1]?.trim();
+  const name = frontmatterField(block, "name");
+  const description = frontmatterField(block, "description");
   const heading = text.match(/^#\s+(.+)$/m)?.[1]?.trim();
   return { name: name || fallbackName, description: description || heading || "" };
 }

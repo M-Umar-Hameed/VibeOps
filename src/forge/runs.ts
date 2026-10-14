@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getLessons, lessonsClause } from "./lessons.js";
-import { existsSync, openSync, readSync, fstatSync, closeSync, statSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, openSync, readSync, fstatSync, closeSync, statSync, readdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { vibeopsHome } from "../runtime/home.js";
 import { startTimeReader } from "../runtime/proc-start.js";
@@ -9,13 +9,13 @@ import { resolveCmd, loadRelayConfig, type RelayConfig, type RelayAgent } from "
 import { pipelineStartWarnings, pipelineStartBlockingError } from "../relay/doctor.js";
 import { roleStyle } from "../relay/style.js";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted } from "../relay/prompts.js";
-import { listSkills, formatSkillIndex, formatSkillBodies, parseOperatorSkills, parsePlanSkills, type SkillMeta } from "./skills.js";
+import { listSkills, formatSkillIndex, formatSkillBodies, parseOperatorSkills, parsePlanSkills, parseSkillAllowlist, type SkillMeta } from "./skills.js";
 import { recallBlock } from "../services/recall.js";
 import { chunkReviewDiff, mergeReviewVerdicts } from "./review-chunks.js";
 import { killTree, killPidTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { redactSecrets } from "./redact.js";
-import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES } from "./sandbox.js";
+import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
 import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, stripGateDirectives, parseExportTo } from "./policy.js";
 import { pickAgents, escalate, pairsForRole, resolveStrategy, type Pick, type RoutingStrategy } from "./router.js";
@@ -24,7 +24,7 @@ import { addComment, listComments } from "../services/comments.js";
 import { getTicket } from "../services/history.js";
 import { searchKnowledge, indexRepoDocs, repoIndexed } from "../services/knowledge.js";
 import { getSetting } from "../services/settings.js";
-import { projectWorkdir } from "../services/projects.js";
+import { projectWorkdir, getProjectSettings } from "../services/projects.js";
 import { ConflictError, StaleVersionError } from "../services/errors.js";
 import { logAgentUse, startAgentSession, endAgentSession } from "../services/usage.js";
 import { listActors } from "../services/actors.js";
@@ -552,6 +552,13 @@ export async function startPipeline(
   return { runId: run.id, doctorWarnings };
 }
 
+async function depsConfig(projectId: string): Promise<{ frontendDeps: string[]; depsDirs: string[] }> {
+  return {
+    frontendDeps: resolveFrontendDeps(await getSetting(`forge.frontendDeps.${projectId}`), await getSetting("forge.frontendDeps")),
+    depsDirs: resolveDepsDirs(await getSetting(`forge.depsDirs.${projectId}`)),
+  };
+}
+
 async function pipeline(
   run: Run, actorId: string,
   agents: { plan: RelayAgent; work: RelayAgent; review: RelayAgent }, workdir: string, styleSetting: string,
@@ -569,9 +576,14 @@ async function pipeline(
   // Skills catalogue for this run's workdir. listSkills is internally defensive
   // (missing dirs -> []), but a read failure must never fail the run: warn + attach
   // nothing. Text is trusted (admin-installed), so it is not UNTRUSTED-fenced.
+  // The allowlist also limits which operator /name tokens and Skills: names resolve.
   let catalogue: SkillMeta[] = [];
-  try { catalogue = listSkills(workdir); }
-  catch (e) { console.warn(`forge: skills read failed: ${(e as Error).message}`); }
+  try {
+    const projectRaw = ticket.projectId ? (await getProjectSettings(ticket.projectId))["forge.skillAllowlist"] : undefined;
+    catalogue = listSkills(workdir, parseSkillAllowlist(projectRaw ?? (await getSetting("forge.skillAllowlist"))));
+  } catch (e) {
+    console.warn(`forge: skills read failed: ${(e as Error).message}`);
+  }
   const knownSkillNames = catalogue.map((s) => s.name);
   // operator "/name" tokens first, then the planner's "Skills:" line; deduped, cap 3.
   const selectSkills = (plan: string): { names: string[]; bodies: string } => {
@@ -595,7 +607,8 @@ async function pipeline(
     // change-request comments as amendments (see reviewStage caller below).
     // Upgrade path: thread amendments here too if resume-to-review reworks
     // that add scope start recurring.
-    const sandbox = await ensureSandbox(workdir, ticket.id);
+    const { frontendDeps, depsDirs } = await depsConfig(ticket.projectId);
+    const sandbox = await ensureSandbox(workdir, ticket.id, frontendDeps, depsDirs);
     append(run, `\n=== FORGE resume: straight to review (existing sandbox) ===\n`);
     const resumeSkills = selectSkills(plan);
     if (resumeSkills.names.length) append(run, `\nforge: skills attached: ${resumeSkills.names.join(", ")}\n`);
@@ -642,7 +655,7 @@ async function pipeline(
     const planPrompt = composePlanPrompt({ ticket, knowledge, memory, skillIndex: formatSkillIndex(catalogue) }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra;
     const { result: res, strayPaths: planStray } = await withReadOnlyView(workdir, ticket.id, "plan", "HEAD", (view) =>
       track(actorId, ticket.id, "plan", run.agents.plan, planPrompt.length, () => runAgent(
-        agents.plan, planPrompt, view, onData,
+        { ...agents.plan, projectId: ticket.projectId }, planPrompt, view, onData,
         (child) => recordSpawn(run, child),
         undefined, modelOf(run.agents.plan), run.logPath,
       )));
@@ -678,8 +691,8 @@ async function pipeline(
   enterStage(run, "work");
   append(run, `\n=== FORGE work (${run.agents.work}) ===\n`);
   ticket = await setStatus(actorId, ticket.id, "in_progress");
-  const frontendDeps = (await getSetting("forge.frontendDeps")) === "true";
-  const sandbox = await ensureSandbox(workdir, ticket.id, frontendDeps);
+  const { frontendDeps, depsDirs } = await depsConfig(ticket.projectId);
+  const sandbox = await ensureSandbox(workdir, ticket.id, frontendDeps, depsDirs);
   const knowledge = await getKnowledgeSafe(ticket.title, ticket.projectId);
   const memory = await getMemorySafe(ticket.title, ticket.projectId);
   // Rework passes must see why the last review failed, or the worker repeats
@@ -698,10 +711,10 @@ async function pipeline(
   // gate (which only sees the worktree) cannot catch a write to the installed
   // app or another repo. Detect+restore after work converts a silent compromise
   // into a reverted, visible, run-failing one. See docs/AGENT_CLIS.md.
-  const depsBaseline = snapshotDeps(workdir);
+  const depsBaseline = snapshotDeps(workdir, depsDirs);
   const sentinelSnaps = snapshotSensitive(resolveSensitivePaths(await getSetting("forge.sensitivePaths")));
   const workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
-    runAgent({ ...agents.work, write: true }, workPrompt, sandbox, onData,
+    runAgent({ ...agents.work, write: true, projectId: ticket.projectId }, workPrompt, sandbox, onData,
       (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
       modelOf(run.agents.work), run.logPath));
   run.child = undefined;
@@ -730,7 +743,7 @@ async function pipeline(
       `\n[forge: DEPS-LEAK — the work stage wrote through the shared node_modules ` +
       `link into the base repo; additions reverted, run failed]\n` +
       depsLeak.map((p) => `  - ${p}`).join("\n") + "\n";
-    if (!frontendDeps && depsLeak.some(p => p.includes("app/node_modules") || p.includes("app\\node_modules"))) {
+    if (!frontendDeps.length && depsLeak.some(p => p.includes("app/node_modules") || p.includes("app\\node_modules"))) {
       report += `Hint: a frontend build needs forge.frontendDeps set to true. This costs a per-sandbox copy of app/node_modules.\n`;
     }
     append(run, report);
@@ -790,6 +803,13 @@ function settle(run: Run, status: Status): void {
   run.finishedAt = new Date().toISOString();
   emitEvent("run.settled", { runId: run.id, ticketId: run.ticketId, status });
   run.pid = undefined; // a settled row must never look live (S2-A1)
+  // Child wrote the log raw via fd (invoke.ts ponytail); rewrite it redacted once the run settles.
+  // ponytail: best-effort, whole-file read; live tail before settle reads the raw file but only via append() (redacted).
+  try {
+    const raw = readFileSync(run.logPath, "utf-8");
+    const clean = redactSecrets(raw);
+    if (clean !== raw) writeFileSync(run.logPath, clean);
+  } catch { /* absent/unreadable log: nothing to redact */ }
   // Still never allowed to break a pipeline, but the promise is kept so run.done
   // can await it. hasActiveRun consults the DB after the in-memory map goes quiet,
   // so until this row lands a settled run still reads as active. That gap used to
@@ -816,7 +836,7 @@ async function reviewStage(
   // in front of the reviewer's read time. A failing check force-fails the
   // run mechanically at verdict time, independent of the reviewer's own
   // verdict — see the gate evaluation below.
-  const checkCmds = resolveChecks(await getSetting("forge.checks"), sandbox);
+  const checkCmds = resolveChecks(await getSetting(`forge.checks.${ticket.projectId}`), sandbox, await getSetting("forge.checks"));
 
   // Protected-path policy: deterministic, evaluated on the diff (never the
   // worker's self-report). A touched protected path is an automatic Critical
@@ -888,7 +908,11 @@ async function reviewStage(
   // live child/pid, and chunked review is the rare oversized-diff path.
   run.reviewStartedAt = Date.now();
   const outputs = parseExportTo(ticket.body ?? "") ? listExportOutputs(ticket.id) : undefined;
-  const reviewer = existsSync(attachmentsDir()) ? { ...reviewAgent, addDirs: [attachmentsDir()] } : reviewAgent;
+  const reviewer = {
+    ...reviewAgent,
+    projectId: ticket.projectId,
+    ...(existsSync(attachmentsDir()) ? { addDirs: [attachmentsDir()] } : {}),
+  };
   const { result: reviewResults, strayPaths: reviewStray } = await withReadOnlyView(workdir, ticket.id, "review", branchName(ticket.id), async (view) => {
     const evidence = copyEvidence(sandbox, view);
     if (evidence.paths.length || evidence.skipped) {
@@ -1336,6 +1360,7 @@ export { startTimeReader };
 // continuation is S2-B), so the run settles interrupted with output intact and
 // the existing listInterruptedRuns resume path applies.
 function reattach(row: ForgeRun): void {
+  try { loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG); } catch { /* no config: nothing to register */ }
   const run: Run = {
     id: row.id, ticketId: row.ticketId, stage: row.stage as Stage, status: "running",
     agents: { plan: row.planAgent, work: row.workAgent, review: row.reviewAgent },

@@ -2,14 +2,14 @@ import { binBasename } from "./doctor.js";
 
 export const DEFAULT_ALLOWED_COMMANDS = ["npm test", "npm run", "npx vitest", "npx tsc", "git status", "git diff", "git log", "git show"];
 
-// forge.allowedCommands (JSON string array) wins; unset or malformed falls back to the default.
-export function resolveAllowedCommands(setting: string | null): string[] {
-  if (setting === null) return DEFAULT_ALLOWED_COMMANDS;
+// forge.allowedCommands (JSON string array) wins; unset or malformed falls back.
+export function resolveAllowedCommands(setting: string | null, fallback = DEFAULT_ALLOWED_COMMANDS): string[] {
+  if (setting === null) return fallback;
   try {
     const parsed: unknown = JSON.parse(setting);
     if (Array.isArray(parsed) && parsed.every((c) => typeof c === "string")) return parsed;
   } catch { /* fall through */ }
-  return DEFAULT_ALLOWED_COMMANDS;
+  return fallback;
 }
 
 // Claude runs shell commands through Bash or PowerShell depending on the platform.
@@ -46,13 +46,14 @@ export function wallCmd(cmd: string[], allowed: string[], write = false, addDirs
   return cmd;
 }
 
-// Callers without a database (the standalone relay runner) get the defaults.
-export async function loadWall(): Promise<{ on: boolean; allowed: string[] }> {
+// forge.allowedCommands.<projectId> wins over forge.allowedCommands, then the default.
+export async function loadWall(projectId?: string): Promise<{ on: boolean; allowed: string[] }> {
   try {
     const { getSetting } = await import("../services/settings.js");
+    const global = resolveAllowedCommands(await getSetting("forge.allowedCommands"));
     return {
       on: (await getSetting("forge.agentWall")) !== "false",
-      allowed: resolveAllowedCommands(await getSetting("forge.allowedCommands")),
+      allowed: projectId ? resolveAllowedCommands(await getSetting(`forge.allowedCommands.${projectId}`), global) : global,
     };
   } catch {
     return { on: true, allowed: DEFAULT_ALLOWED_COMMANDS };

@@ -11,17 +11,18 @@ const MAX_CHECKS = 10;
 const OUTPUT_CAP = 200_000;
 const EXIT_DRAIN_MS = 2_000;
 
-// forge.checks setting (JSON array of shell commands) wins; unset or invalid
-// falls back to detection: package.json with a typecheck script in the sandbox
-// -> ["npm run typecheck"], else []. Detected once per run, never persisted.
-export function resolveChecks(setting: string | null, sandbox: string): string[] {
-  if (setting !== null) {
+// forge.checks.<projectId>, then forge.checks (JSON arrays of shell commands) win;
+// unset or invalid falls through to detection: package.json with a typecheck
+// script in the sandbox -> ["npm run typecheck"], else []. Detected once per run, never persisted.
+export function resolveChecks(setting: string | null, sandbox: string, fallback: string | null = null): string[] {
+  for (const s of [setting, fallback]) {
+    if (s === null) continue;
     try {
-      const parsed: unknown = JSON.parse(setting);
+      const parsed: unknown = JSON.parse(s);
       if (Array.isArray(parsed) && parsed.every((c) => typeof c === "string")) {
         return parsed.slice(0, MAX_CHECKS);
       }
-    } catch { /* invalid JSON -> detection */ }
+    } catch { /* invalid JSON -> next */ }
   }
   try {
     const pkg = JSON.parse(readFileSync(join(sandbox, "package.json"), "utf-8"));

@@ -608,6 +608,33 @@ describe("forge run manager", () => {
     expect(bodies).not.toContain("sk-abcdefghij0123456789");
   });
 
+  it("agent env password is redacted from run output, log file and comments", async () => {
+    const { actorId, ticket } = await seedTicket("Env secret leak");
+    const config = relayConfig();
+    config.agents.fake.env = { DEMO_PASSWORD: "demo-pw-7f3a9c" };
+    setScript("env-leak");
+
+    const { runId } = await startPipeline(actorId, config, {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const out = getRunOutput(runId, 0);
+    expect(out?.chunk).toContain("[redacted]");
+    expect(out?.chunk).not.toContain("demo-pw-7f3a9c");
+
+    const comments = await listComments(ticket.id);
+    const bodies = comments.map((c) => c.body).join("\n");
+    expect(bodies).not.toContain("demo-pw-7f3a9c");
+    expect(bodies).toContain("password=[redacted]");
+
+    const row = await waitForPersistedRun(runId);
+    expect(row.logPath).toBeDefined();
+    const logContent = readFileSync(row.logPath!, "utf-8");
+    expect(logContent).not.toContain("demo-pw-7f3a9c");
+    rmSync(row.logPath!, { force: true });
+  });
+
   it("stop kills the in-flight work agent instead of waiting for its timeout", async () => {
     const { actorId, ticket } = await seedTicket("Stop path");
     setScript("plan,slow");
@@ -1497,6 +1524,26 @@ const file2 = "run2-output.txt";
     expect(output?.status).toBe("failed");
     expect(output?.chunk).toContain("DEPS-LEAK");
     expect(output?.chunk).not.toContain("Hint: a frontend build needs forge.frontendDeps set to true");
+  });
+
+  it("per-project forge.depsDirs: deps leak in site/node_modules fails the run", async () => {
+    mkdirSync(join(workdir, "site", "node_modules"), { recursive: true });
+    writeFileSync(join(workdir, "site", "node_modules", "marker.txt"), "base\n");
+
+    const { actorId, ticket } = await seedTicket("Deps leak site");
+    setScript("plan,work,review-pass");
+    process.env.FAKE_WRITE_ABS = join(workdir, "site", "node_modules", "LEAK.txt");
+
+    await withSetting(`forge.depsDirs.${ticket.projectId}`, JSON.stringify(["node_modules", "site/node_modules"]), async () => {
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+      const output = getRunOutput(runId, 0);
+      expect(output?.status).toBe("failed");
+      expect(output?.chunk).toContain("DEPS-LEAK");
+      expect(output?.chunk).toContain("LEAK.txt");
+    });
   });
 
   it("sandbox escape WIP-commits the sandbox edits before failing", async () => {

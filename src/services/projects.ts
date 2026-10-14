@@ -121,16 +121,16 @@ export async function getProjectSettings(projectId: string): Promise<Record<stri
   return result;
 }
 
-const ALLOWED_SETTINGS = new Set(["github.repo", "gitlab.project", "jira.project", "asana.projectGid", "vault.path"]);
+const ALLOWED_SETTINGS = new Set(["github.repo", "gitlab.project", "jira.project", "asana.projectGid", "vault.path", "forge.skillAllowlist"]);
 
 export async function setProjectSetting(projectId: string, key: string, value: string): Promise<void> {
   if (!ALLOWED_SETTINGS.has(key)) throw new Error(`invalid project setting key: ${key}`);
   const [p] = await db.select().from(projects).where(eq(projects.id, projectId));
   if (!p) throw new NotFoundError(`project not found: ${projectId}`);
 
-  // vault.path is a filesystem path; normalizeBinding strips trailing slashes and
-  // scheme/host, which would mangle it. Store trimmed raw.
-  const normalized = key === "vault.path" ? value.trim() : normalizeBinding(value);
+  // vault.path and forge.skillAllowlist are stored raw: vault.path is a filesystem path
+  // (normalizeBinding strips slashes/scheme/host), and forge.skillAllowlist is a JSON array.
+  const normalized = key === "vault.path" || key === "forge.skillAllowlist" ? value.trim() : normalizeBinding(value);
   if (normalized === "") {
     await db.delete(projectSettings).where(and(eq(projectSettings.projectId, projectId), eq(projectSettings.key, key)));
   } else {

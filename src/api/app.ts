@@ -276,8 +276,17 @@ app.post("/projects/import", requireAdmin, async (c) => {
   }
 });
 
+const PROJECT_FORGE_KEYS = ["forge.allowedCommands", "forge.depsDirs", "forge.frontendDeps", "forge.checks"];
+
 app.get("/projects/:id/settings", requireAdmin, async (c) => {
-  return c.json(await getProjectSettings(c.req.param("id")));
+  const id = c.req.param("id");
+  const out = await getProjectSettings(id);
+  // Per-project forge values live in global settings as <key>.<projectId>.
+  for (const k of PROJECT_FORGE_KEYS) {
+    const v = await getSetting(`${k}.${id}`);
+    if (v !== null) out[k] = v;
+  }
+  return c.json(out);
 });
 
 app.put("/projects/:id/settings/:key", requireAdmin, async (c) => {

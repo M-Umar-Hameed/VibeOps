@@ -23,6 +23,19 @@ function extractText(raw: string): string {
   return out.join("\n\n");
 }
 
+// A session Claude Code ran against a local model through a proxy (e.g. qwen via Ollama)
+// records that model's id; its guesses and dead ends must not become retrievable knowledge.
+export function isLocalModelTranscript(raw: string): boolean {
+  for (const line of raw.split("\n")) {
+    if (!line.includes('"assistant"')) continue;
+    let d: any;
+    try { d = JSON.parse(line); } catch { continue; }
+    const model = d?.type === "assistant" ? d.message?.model : undefined;
+    if (typeof model === "string" && !/^(claude-|<synthetic>)/.test(model)) return true;
+  }
+  return false;
+}
+
 export function makeClaudeCodeSource(
   projectsDir = join(homedir(), ".claude", "projects"),
 ): SessionSource {
@@ -42,7 +55,7 @@ export function makeClaudeCodeSource(
           try {
             if (statSync(path).mtimeMs < cutoff) continue;
             const t = readIndexTail(path);
-            if (!t) continue;
+            if (!t || isLocalModelTranscript(t.text)) continue;
             let text = extractText(t.text);
             if (!text) continue;
             // ponytail: cap to the most recent 200k chars per session — full multi-MB

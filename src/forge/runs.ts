@@ -9,7 +9,7 @@ import { resolveCmd, loadRelayConfig, type RelayConfig, type RelayAgent } from "
 import { pipelineStartWarnings, pipelineStartBlockingError } from "../relay/doctor.js";
 import { roleStyle } from "../relay/style.js";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted } from "../relay/prompts.js";
-import { listSkills, formatSkillIndex, formatSkillBodies, parseOperatorSkills, parsePlanSkills, parseSkillAllowlist, type SkillMeta } from "./skills.js";
+import { listSkills, formatSkillIndex, formatSkillBodies, parseOperatorSkills, parsePlanSkills, parseSkillAllowlist, skillsForAgent, type SkillMeta } from "./skills.js";
 import { recallBlock } from "../services/recall.js";
 import { chunkReviewDiff, mergeReviewVerdicts } from "./review-chunks.js";
 import { killTree, killPidTree, type AgentResult } from "../relay/invoke.js";
@@ -586,14 +586,14 @@ async function pipeline(
   }
   const knownSkillNames = catalogue.map((s) => s.name);
   // operator "/name" tokens first, then the planner's "Skills:" line; deduped, cap 3.
-  const selectSkills = (plan: string): { names: string[]; bodies: string } => {
+  const selectSkills = (plan: string, agentAllowlist?: string[]): { names: string[]; bodies: string } => {
     const picked: string[] = [];
     for (const n of [...parseOperatorSkills(extraPrompt ?? "", knownSkillNames), ...parsePlanSkills(plan, knownSkillNames)]) {
       if (!picked.includes(n) && picked.length < 3) picked.push(n);
     }
-    const skills = picked
+    const skills = skillsForAgent(picked
       .map((n) => catalogue.find((s) => s.name.toLowerCase() === n))
-      .filter((s): s is SkillMeta => !!s);
+      .filter((s): s is SkillMeta => !!s), agentAllowlist);
     return { names: skills.map((s) => s.name), bodies: formatSkillBodies(skills) };
   };
 
@@ -610,7 +610,7 @@ async function pipeline(
     const { frontendDeps, depsDirs } = await depsConfig(ticket.projectId);
     const sandbox = await ensureSandbox(workdir, ticket.id, frontendDeps, depsDirs);
     append(run, `\n=== FORGE resume: straight to review (existing sandbox) ===\n`);
-    const resumeSkills = selectSkills(plan);
+    const resumeSkills = selectSkills(plan, agents.review.skillAllowlist);
     if (resumeSkills.names.length) append(run, `\nforge: skills attached: ${resumeSkills.names.join(", ")}\n`);
     return reviewStage(run, actorId, agents.review, workdir, sandbox, ticket, plan, report, styleSetting, config, undefined, resumeSkills.bodies);
   }
@@ -652,7 +652,7 @@ async function pipeline(
     append(run, `=== FORGE plan (${run.agents.plan}) ===\n`);
     const knowledge = await getKnowledgeSafe(knowledgeQuery(ticket), ticket.projectId);
     const memory = await getMemorySafe(ticket.title, ticket.projectId);
-    const planPrompt = composePlanPrompt({ ticket, knowledge, memory, skillIndex: formatSkillIndex(catalogue) }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra;
+    const planPrompt = composePlanPrompt({ ticket, knowledge, memory, skillIndex: formatSkillIndex(skillsForAgent(catalogue, agents.plan.skillAllowlist)) }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra;
     const { result: res, strayPaths: planStray } = await withReadOnlyView(workdir, ticket.id, "plan", "HEAD", (view) =>
       track(actorId, ticket.id, "plan", run.agents.plan, planPrompt.length, () => runAgent(
         { ...agents.plan, projectId: ticket.projectId }, planPrompt, view, onData,
@@ -684,7 +684,7 @@ async function pipeline(
     plan = priorPlan;
   }
 
-  const selectedSkills = selectSkills(plan);
+  const selectedSkills = selectSkills(plan, agents.work.skillAllowlist);
   if (selectedSkills.names.length) append(run, `\nforge: skills attached: ${selectedSkills.names.join(", ")}\n`);
 
   // work — claim, then run inside the sandbox
@@ -794,7 +794,7 @@ async function pipeline(
   // that plan are not reflected in it; pass them to the reviewer as authoritative
   // amendments so supervisor-requested scope is not flagged as scope creep.
   const amendments = !planRegenerated && kept.length ? redactSecrets(commentsText) : undefined;
-  return reviewStage(run, actorId, agents.review, workdir, sandbox, ticket, plan, workRes.output, styleSetting, config, amendments, selectedSkills.bodies);
+  return reviewStage(run, actorId, agents.review, workdir, sandbox, ticket, plan, workRes.output, styleSetting, config, amendments, selectSkills(plan, agents.review.skillAllowlist).bodies);
 }
 
 function settle(run: Run, status: Status): void {

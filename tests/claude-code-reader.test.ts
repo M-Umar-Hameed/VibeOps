@@ -37,3 +37,18 @@ test("transcript reader keeps user/assistant text, strips tool noise, windows by
   expect(docs[0].ref).toBe(join(proj, "session-1.jsonl"));
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("transcript reader skips sessions answered by a proxied local model", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ccode-"));
+  const proj = join(dir, "D--Some-Proj");
+  mkdirSync(proj);
+  const session = (model: string) => [
+    JSON.stringify({ type: "user", message: { role: "user", content: "fix the purchase bug" } }),
+    JSON.stringify({ message: { role: "assistant", model, content: [{ type: "text", text: `answer from ${model}` }] }, type: "assistant" }),
+  ].join("\n");
+  writeFileSync(join(proj, "local.jsonl"), session("qwen3:30b"));
+  writeFileSync(join(proj, "claude.jsonl"), session("claude-opus-5-5"));
+  const docs = await makeClaudeCodeSource(dir).listSessionDocs(30);
+  expect(docs.map((d) => d.text)).toEqual([expect.stringContaining("answer from claude-opus-5-5")]);
+  rmSync(dir, { recursive: true, force: true });
+});

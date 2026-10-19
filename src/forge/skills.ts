@@ -59,6 +59,14 @@ export function parseSkillAllowlist(raw: string | null | undefined): string[] | 
   return undefined;
 }
 
+// An agent's own skillAllowlist (relay.json) narrows the run catalogue for that stage,
+// so a small-context local model is not handed the full index; [] means no skills.
+export function skillsForAgent(skills: SkillMeta[], allowlist?: string[]): SkillMeta[] {
+  if (!allowlist) return skills;
+  const allow = new Set(allowlist.map((n) => n.toLowerCase()));
+  return skills.filter((s) => allow.has(s.name.toLowerCase()));
+}
+
 // SKILL.md body with the leading frontmatter block removed, capped at 16000
 // chars with a trailing "[skill truncated]" line when cut.
 export function readSkillBody(path: string): string {

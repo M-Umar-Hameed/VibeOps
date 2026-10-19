@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import {
   listSkills, readSkillBody, parsePlanSkills, parseOperatorSkills, formatSkillIndex,
-  parseSkillAllowlist,
+  parseSkillAllowlist, skillsForAgent,
 } from "../src/forge/skills.js";
 
 function writeSkill(root: string, dir: string, frontmatter: string, body: string): string {
@@ -103,4 +103,11 @@ test("formatSkillIndex is empty for no skills, else 'name: description' lines", 
   const s = formatSkillIndex([{ name: "demo", description: "d", path: "/x" }]);
   expect(s).toContain("Available skills:");
   expect(s).toContain("- demo: d");
+});
+
+test("skillsForAgent narrows the catalogue to the agent's own allowlist", () => {
+  const all = [{ name: "Debug", description: "d", path: "/a" }, { name: "seo", description: "s", path: "/b" }];
+  expect(skillsForAgent(all)).toBe(all);
+  expect(skillsForAgent(all, ["debug"]).map((s) => s.name)).toEqual(["Debug"]);
+  expect(skillsForAgent(all, [])).toEqual([]);
 });

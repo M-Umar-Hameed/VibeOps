@@ -19,7 +19,7 @@ export type RelayModel = { name: string; tier: ModelTier; quality: number };
 //   stdin - written to the child's stdin after it starts (no placeholder)
 export type PromptDelivery = "argv" | "file" | "stdin";
 export const PROMPT_DELIVERIES: PromptDelivery[] = ["argv", "file", "stdin"];
-export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string; write?: boolean; promptDelivery?: PromptDelivery; projectId?: string; addDirs?: string[] };
+export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string; write?: boolean; promptDelivery?: PromptDelivery; projectId?: string; addDirs?: string[]; skillAllowlist?: string[] };
 export type RelayConfig = {
   workdir: string; apiKey?: string; baseUrl?: string; pollMs?: number;
   agents: Record<string, RelayAgent>;
@@ -136,6 +136,9 @@ export function validateRelayConfig(parsed: unknown, configPath: string): RelayC
           throw new Error(`relay config agent "${name}" env value "${k}" must be a string`);
         }
       }
+    }
+    if (a.skillAllowlist !== undefined && (!Array.isArray(a.skillAllowlist) || !a.skillAllowlist.every((n) => typeof n === "string"))) {
+      throw new Error(`relay config agent "${name}" skillAllowlist must be an array of skill names`);
     }
     if (a.models !== undefined) {
       if (!Array.isArray(a.models) || a.models.length === 0) {

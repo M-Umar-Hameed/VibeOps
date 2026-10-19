@@ -14,6 +14,7 @@ import { hasActGrant, noActGrantReason } from "../browser/grants.js";
 import { humanizeBrowserError } from "../browser/refusal.js";
 import { recordBrowserCall } from "../browser/pending-grants.js";
 import { runMarks, marksAsText } from "../browser/marks-run.js";
+import { ConflictError } from "../services/errors.js";
 export async function buildServer(apiKey: string) {
   const actor = await resolveActor(apiKey);
   const server = new McpServer({ name: "tickets", version: "0.1.0" });
@@ -24,9 +25,16 @@ export async function buildServer(apiKey: string) {
 
   server.registerTool("update_ticket",
     { inputSchema: { id: z.string(), expectedVersion: z.number(), status: z.enum(["open", "in_progress", "closed", "planned", "review"]).optional(), title: z.string().optional() } },
-    async ({ id, expectedVersion, ...patch }) => ({
-      content: [{ type: "text", text: JSON.stringify(await updateTicket(actor.id, id, expectedVersion, patch)) }],
-    }));
+    async ({ id, expectedVersion, ...patch }) => {
+      // A Forge pipeline owns its ticket's status while a run is live (incident:
+      // agy closed its own ticket mid-run, failing a passing work stage). Humans
+      // change status through the REST/UI path, which still stops the run.
+      if (patch.status !== undefined) {
+        const { hasActiveRun } = await import("../forge/runs.js");
+        if (await hasActiveRun(id)) throw new ConflictError(`ticket ${id} has an active Forge run; the pipeline owns its status. Post a comment instead, or stop the run in the VibeOps UI.`);
+      }
+      return { content: [{ type: "text", text: JSON.stringify(await updateTicket(actor.id, id, expectedVersion, patch)) }] };
+    });
 
   server.registerTool("comment",
     { inputSchema: { ticketId: z.string(), body: z.string(), kind: z.enum(["comment", "plan", "report", "review"]).optional() } },

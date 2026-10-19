@@ -35,6 +35,9 @@ import { ConflictError, StaleVersionError } from "../src/services/errors.js";
 import { db } from "../src/db/client.js";
 import { forgeRuns } from "../src/db/schema.js";
 import type { RelayConfig } from "../src/relay/config.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { buildServer } from "../src/mcp/server.js";
 
 process.env.EMBED_PROVIDER = "fake";
 
@@ -55,6 +58,15 @@ function initRepo(): string {
 
 function uniq(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function connectedClient() {
+  const { apiKey } = await createActor({ name: uniq("forge-mcp"), kind: "agent" });
+  const server = await buildServer(apiKey);
+  const [c, s] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "t", version: "0.0.0" });
+  await Promise.all([server.connect(s), client.connect(c)]);
+  return client;
 }
 
 function parseSseFrames(buf: string): { event?: string; data?: unknown }[] {
@@ -1782,6 +1794,60 @@ const file2 = "run2-output.txt";
     expect((await getTicket(ticket.id)).status).toBe("closed");
     const item = (await listRunsWithHistory(ticket.id)).find((r) => r.id === runId);
     expect(item?.failureReason).toBe("pipeline error: ticket was closed during the run");
+  });
+
+  it("an agent's MCP status change during a run is refused and the pipeline still reaches review", async () => {
+    const { actorId, ticket } = await seedTicket("Agent MCP status refused");
+    setScript("slow,work,review-pass", true);
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    const client = await connectedClient();
+    try {
+      const fresh = await getTicket(ticket.id);
+      const res: any = await client.callTool({
+        name: "update_ticket",
+        arguments: { id: ticket.id, expectedVersion: fresh.version, status: "closed" },
+      });
+      expect(res.isError).toBe(true);
+      expect(res.content?.[0]?.text).toMatch(/active Forge run/);
+
+      const renameRes: any = await client.callTool({
+        name: "update_ticket",
+        arguments: { id: ticket.id, expectedVersion: fresh.version, title: "renamed by agent" },
+      });
+      expect(renameRes.isError).toBeFalsy();
+
+      await awaitRun(runId);
+      expect(getRunOutput(runId, 0)?.status).toBe("passed");
+      const freshAfter = await getTicket(ticket.id);
+      expect(freshAfter.status).toBe("review");
+      expect(freshAfter.title).toBe("renamed by agent");
+      const comments = await listComments(ticket.id);
+      expect(comments.some((c) => c.kind === "report")).toBe(true);
+
+      const closedRes: any = await client.callTool({
+        name: "update_ticket",
+        arguments: { id: ticket.id, expectedVersion: freshAfter.version, status: "closed" },
+      });
+      expect(closedRes.isError).toBeFalsy();
+      expect((await getTicket(ticket.id)).status).toBe("closed");
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("the work prompt tells the agent not to change the ticket status", async () => {
+    const { actorId, ticket } = await seedTicket("Prompt no-status-change instruction");
+    await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+    setScript("echo-prompt");
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).toContain("Do not change, close or reopen this ticket");
   });
 });
 

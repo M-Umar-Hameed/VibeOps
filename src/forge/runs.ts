@@ -84,7 +84,8 @@ const NARRATION =
   // approval on D:\...\src, wrote nothing, and reported success anyway).
   "\n\nAll file paths are relative to your current working directory. Never use " +
   "absolute paths and never write outside your working directory, even if the " +
-  "plan shows absolute paths.";
+  "plan shows absolute paths." +
+  "\n\nDo not change, close or reopen this ticket (no update_ticket status changes); the supervisor moves the ticket when you finish. Report through your output only.";
 
 // EXPORT-TO tickets deliver files that live outside git (images, video, posts).
 const EXPORT_NARRATION =

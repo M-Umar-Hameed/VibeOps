@@ -1,8 +1,8 @@
 import { runDoctor, type ProbeStatus } from "../src/relay/doctor.js";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync, readFileSync, realpathSync, utimesSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { tmpdir, homedir } from "node:os";
+import { dirname, join, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { eq } from "drizzle-orm";
@@ -22,6 +22,7 @@ import {
   listInterruptedRuns
 } from "../src/forge/runs.js";
 import { sandboxExists, branchName, promoteSandbox, sandboxDiff, hasCommitsToPromote } from "../src/forge/sandbox.js";
+import { vibeopsHome } from "../src/runtime/home.js";
 import { app } from "../src/api/app.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject, updateProjectRepo } from "../src/services/projects.js";
@@ -2121,6 +2122,51 @@ describe("plan comments from member keys", () => {
 });
 
 describe("forge evidence and EXPORT-TO end to end", () => {
+  it("operator evidence e2e: copies files, lists in plan/work/review prompts, and refuses forbidden paths", async () => {
+    const qa = mkdtempSync(join(tmpdir(), "forge-qa-"));
+    const forbidden = join(vibeopsHome(), ".vibeops", "config.json");
+    try {
+      writeFileSync(join(qa, "confirmed.txt"), "confirmed steps\n");
+      writeFileSync(join(qa, "qa-result.json"), '{"status":"failed"}\n');
+
+      const { actor } = await createActor({ name: uniq("forge-admin"), kind: "human", role: "admin" });
+      const project = await createProject({ key: uniq("forge-proj"), name: "Forge" });
+      const ticket = await createTicket(actor.id, {
+        projectId: project.id,
+        title: "Operator Evidence E2E",
+        body: `spec\nEVIDENCE: ${qa}\nEVIDENCE: ${forbidden}`,
+      });
+
+      setScript("echo-prompt");
+
+      const cfg = relayConfig();
+      cfg.agents.fake.skillAllowlist = ["none"];
+      const { runId } = await startPipeline(actor.id, cfg, {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+      await waitForPersistedRun(runId);
+
+      const output = getRunOutput(runId, 0);
+      const chunk = output?.chunk ?? "";
+
+      const prefix = `.forge/operator-evidence/1-${basename(qa)}`;
+      expect(chunk).toContain(`${prefix}/confirmed.txt`);
+      expect(chunk).toContain(`${prefix}/qa-result.json`);
+      expect(chunk).toContain("before planning");
+      expect(chunk).toContain("before changing code");
+      expect(chunk).toContain("when judging the acceptance criteria");
+      expect(chunk).toContain(`forge: EVIDENCE refused: ${forbidden}`);
+      expect(chunk).toContain("forge: operator evidence: 2 file(s) copied");
+
+      const comments = await listComments(ticket.id);
+      expect(comments.find((c) => c.body.includes("reviewer changed files"))).toBeUndefined();
+      expect(comments.find((c) => c.body.includes("planner changed files"))).toBeUndefined();
+    } finally {
+      rmSync(qa, { recursive: true, force: true });
+    }
+  });
+
   it("evidence end to end: copies evidence, lists in review prompt, and does not trip stray check", async () => {
     const exportTarget = mkdtempSync(join(tmpdir(), "forge-runs-export-"));
     const reviewLsFile = join(tmpdir(), `forge-review-ls-${Date.now()}.txt`);

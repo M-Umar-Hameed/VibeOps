@@ -24,7 +24,7 @@ export const DENY_RULES = ["Bash(git *--output*)", "PowerShell(git *--output*)"]
 // prompt moves to stdin (a prompt file outside the folder would be refused) and
 // --restricted confines its file tools to the working folder, edit rights only
 // when write is true (the work stage); only allow-listed
-// commands run; the reviewer can also read the attachments folder. codex: its own OS sandbox. Other programs are not walled here.
+// commands run; plan/work/review agents can also read the attachments folder (operator evidence, chat attachments). codex: its own OS sandbox. Other programs are not walled here.
 export function wallCmd(cmd: string[], allowed: string[], write = false, addDirs: string[] = []): string[] {
   const bin = binBasename(cmd[0]).toLowerCase();
   if (bin === "claude") {

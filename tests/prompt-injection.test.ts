@@ -226,6 +226,56 @@ describe("Prompt Injection Defenses - Pipeline Level", () => {
     expect(run).toBeDefined();
   });
 
+  it("formats operator evidence in plan, work and review prompts", () => {
+    const evidencePath = ".forge/operator-evidence/1-confirmed.txt";
+    const planWith = composePlanPrompt({
+      ticket: { title: "Title", body: "Body" },
+      knowledge: [],
+      operatorEvidence: [evidencePath],
+    });
+    const workWith = composeWorkPrompt({
+      ticket: { title: "Title", body: "Body" },
+      plan: "Plan",
+      knowledge: [],
+      workdir: "/sandbox",
+      operatorEvidence: [evidencePath],
+    });
+    const reviewWith = composeReviewPrompt({
+      ticket: { title: "Title", body: "Body" },
+      plan: "Plan",
+      report: "Report",
+      diff: "Diff",
+      operatorEvidence: [evidencePath],
+    });
+
+    for (const p of [planWith, workWith, reviewWith]) {
+      expect(p).toContain("Operator evidence files");
+      expect(p).toContain(evidencePath);
+      expect(p).toContain('<UNTRUSTED label="operator-evidence">');
+    }
+
+    const planWithout = composePlanPrompt({
+      ticket: { title: "Title", body: "Body" },
+      knowledge: [],
+    });
+    const workWithout = composeWorkPrompt({
+      ticket: { title: "Title", body: "Body" },
+      plan: "Plan",
+      knowledge: [],
+      workdir: "/sandbox",
+    });
+    const reviewWithout = composeReviewPrompt({
+      ticket: { title: "Title", body: "Body" },
+      plan: "Plan",
+      report: "Report",
+      diff: "Diff",
+    });
+
+    for (const p of [planWithout, workWithout, reviewWithout]) {
+      expect(p).not.toContain("Operator evidence files");
+    }
+  });
+
   it("composeReviewPrompt includes evidence and export outputs when provided", () => {
     const baseInput = {
       ticket: { title: "Title", body: "Body" },

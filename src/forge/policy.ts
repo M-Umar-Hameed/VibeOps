@@ -67,8 +67,8 @@ export function parseGateOverrides(body: string): Set<string> {
 // members, MCP agents and inbound sync can write too, so the service layer only
 // lets an admin add one (src/services/tickets.ts) and the forge strips them from
 // model output before it becomes a spec.
-// (GATE-OVERRIDE, ALLOW-PROTECTED, ALLOW-FILES, EXPORT-TO).
-const DIRECTIVE_RE = /^\s*(GATE-OVERRIDE|ALLOW-PROTECTED|ALLOW-FILES|EXPORT-TO):\s*.*$/gim;
+// (GATE-OVERRIDE, ALLOW-PROTECTED, ALLOW-FILES, EXPORT-TO, EVIDENCE).
+const DIRECTIVE_RE = /^\s*(GATE-OVERRIDE|ALLOW-PROTECTED|ALLOW-FILES|EXPORT-TO|EVIDENCE):\s*.*$/gim;
 
 export function gateDirectiveLines(text: string): string[] {
   return [...text.matchAll(DIRECTIVE_RE)].map((m) => m[0].trim());
@@ -84,6 +84,17 @@ export function parseExportTo(body: string): string | null {
   const m = /^\s*EXPORT-TO:\s*(.+)$/im.exec(body);
   const p = m?.[1].trim();
   return p ? p : null;
+}
+
+// EVIDENCE: <absolute path> — admin-only (same trust rules as ALLOW-FILES). Every line counts;
+// Forge copies the named files/folders into the run's attachments dir before the plan stage.
+export function parseEvidence(body: string): string[] {
+  const out: string[] = [];
+  for (const m of body.matchAll(/^\s*EVIDENCE:\s*(.+)$/gim)) {
+    const p = m[1].trim().replace(/^"(.*)"$/, "$1").trim();
+    if (p && !out.includes(p)) out.push(p);
+  }
+  return out;
 }
 
 // Minimatch-style, full-path anchored. * and ? do not cross "/"; ** does.

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readlinkSync, rmdirSync, unlinkSync, symlinkSync, statSync, readdirSync, rmSync, cpSync, copyFileSync, readFileSync, writeFileSync, lstatSync } from "node:fs";
-import { dirname, join, resolve, isAbsolute, normalize, relative, parse } from "node:path";
+import { existsSync, mkdirSync, readlinkSync, rmdirSync, unlinkSync, symlinkSync, statSync, readdirSync, rmSync, cpSync, copyFileSync, readFileSync, writeFileSync, lstatSync, realpathSync } from "node:fs";
+import { dirname, join, resolve, isAbsolute, normalize, relative, parse, sep } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { ConflictError } from "../services/errors.js";
@@ -718,5 +718,69 @@ export function exportOutputs(ticketId: string, dest: string): number {
     },
   });
   return listExportOutputs(ticketId).length;
+}
+
+const OPERATOR_EVIDENCE_RE = /\.(txt|md|json|png|jpe?g|webp|gif)$/i;
+export const OPERATOR_EVIDENCE_MAX_FILES = 20;
+export const OPERATOR_EVIDENCE_MAX_TOTAL = 25 * 1024 * 1024;
+export const OPERATOR_EVIDENCE_DIR = ".forge/operator-evidence";
+
+// Refuses relative, missing, repo, sandbox, ~/.vibeops and system paths (realpath first so a link cannot point there).
+export function validateEvidencePath(p: string, workdir: string): string {
+  if (!isAbsolute(p)) throw new Error("must be an absolute path");
+  let real: string;
+  try { real = realpathSync(p); } catch { throw new Error("not found"); }
+  validateExportPath(real, workdir);
+  if (overlaps(real, join(homedir(), ".vibeops"))) throw new Error("inside ~/.vibeops");
+  return real;
+}
+
+// Copies EVIDENCE paths into dest (the run's attachments dir), each under "<n>-<basename>".
+// Returns dest-relative forward-slash paths of copied files, refusals and the capped-out count.
+export function stageOperatorEvidence(paths: string[], workdir: string, dest: string): { files: string[]; refused: string[]; skipped: number } {
+  const files: string[] = []; const refused: string[] = []; let skipped = 0; let total = 0;
+  paths.forEach((p, i) => {
+    let real: string;
+    try { real = validateEvidencePath(p, workdir); } catch (e) { refused.push(`${p}: ${(e as Error).message}`); return; }
+    const prefix = `${i + 1}-${parse(real).base}`;
+    const isDir = statSync(real).isDirectory();
+    const found: { src: string; rel: string }[] = [];
+    if (isDir) {
+      const walk = (dir: string) => {
+        let entries: import("node:fs").Dirent[];
+        try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        for (const e of entries) {
+          const full = join(dir, e.name);
+          if (isLink(full)) continue;
+          if (e.isDirectory()) walk(full);
+          else if (e.isFile()) {
+            found.push({ src: full, rel: `${prefix}/${relative(real, full).split(sep).join("/")}` });
+          }
+        }
+      };
+      walk(real);
+      found.sort((a, b) => a.rel.localeCompare(b.rel));
+    } else {
+      found.push({ src: real, rel: prefix });
+    }
+    for (const f of found) {
+      if (!OPERATOR_EVIDENCE_RE.test(f.src)) { skipped++; continue; }
+      const size = statSync(f.src).size;
+      if (size > EVIDENCE_MAX_BYTES || files.length >= OPERATOR_EVIDENCE_MAX_FILES || total + size > OPERATOR_EVIDENCE_MAX_TOTAL) { skipped++; continue; }
+      const to = join(dest, ...f.rel.split("/"));
+      mkdirSync(dirname(to), { recursive: true });
+      copyFileSync(f.src, to);
+      files.push(f.rel); total += size;
+    }
+  });
+  return { files, refused, skipped };
+}
+
+// Mirrors staged evidence into <tree>/.forge/operator-evidence (gitignored) so every lane, agy included, reads it by relative path.
+export function mirrorOperatorEvidence(staged: string, tree: string, files: string[]): string[] {
+  if (!files.length) return [];
+  ignoreForgeDir(tree);
+  cpSync(staged, join(tree, ".forge", "operator-evidence"), { recursive: true, force: true });
+  return files.map((f) => `${OPERATOR_EVIDENCE_DIR}/${f}`);
 }
 

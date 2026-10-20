@@ -9,7 +9,8 @@ import {
   unlinkDeps, hasCommitsToPromote, sandboxActivity, sandboxWorkingDiff,
   snapshotDeps, detectDepsLeak, listSandboxTicketIds, sandboxSizeBytes, withReadOnlyView,
   validateExportPath, exportOutputs, copyEvidence, EVIDENCE_MAX_BYTES,
-  DEPS_DIRS, resolveDepsDirs, resolveFrontendDeps
+  DEPS_DIRS, resolveDepsDirs, resolveFrontendDeps,
+  stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL, OPERATOR_EVIDENCE_DIR
 } from "../src/forge/sandbox.js";
 import { vibeopsHome } from "../src/runtime/home.js";
 import { ConflictError } from "../src/services/errors.js";
@@ -840,3 +841,148 @@ describe("per-project deps folders", () => {
   });
 });
 
+
+
+describe("operator evidence", () => {
+  it("copies a file and a folder", () => {
+    const srcDir = mkdtempSync(join(tmpdir(), "forge-op-src-"));
+    const destDir = mkdtempSync(join(tmpdir(), "forge-op-dest-"));
+    try {
+      const file = join(srcDir, "x.txt");
+      writeFileSync(file, "content x\n");
+      const qaDir = join(srcDir, "qa");
+      mkdirSync(qaDir);
+      writeFileSync(join(qaDir, "a.txt"), "content a\n");
+      writeFileSync(join(qaDir, "b.json"), "{}\n");
+      mkdirSync(join(qaDir, "sub"));
+      writeFileSync(join(qaDir, "sub", "c.md"), "# c\n");
+      writeFileSync(join(qaDir, "d.png"), "fake png\n");
+      writeFileSync(join(qaDir, "e.exe"), "binary\n");
+
+      const res = stageOperatorEvidence([file, qaDir], workdir, destDir);
+      expect(res.files).toEqual([
+        "1-x.txt",
+        "2-qa/a.txt",
+        "2-qa/b.json",
+        "2-qa/d.png",
+        "2-qa/sub/c.md",
+      ]);
+      expect(res.skipped).toBe(1);
+      expect(res.refused).toEqual([]);
+      for (const f of res.files) {
+        expect(existsSync(join(destDir, ...f.split("/")))).toBe(true);
+      }
+      expect(existsSync(join(destDir, "2-qa", "e.exe"))).toBe(false);
+    } finally {
+      rmSync(srcDir, { recursive: true, force: true });
+      rmSync(destDir, { recursive: true, force: true });
+    }
+  });
+
+  it("enforces file count and size caps", () => {
+    const srcDir = mkdtempSync(join(tmpdir(), "forge-op-caps-"));
+    const destDir = mkdtempSync(join(tmpdir(), "forge-op-caps-dest-"));
+    try {
+      const qaDir = join(srcDir, "caps");
+      mkdirSync(qaDir);
+      for (let i = 1; i <= 21; i++) {
+        writeFileSync(join(qaDir, `${String(i).padStart(2, "0")}.txt`), `file ${i}\n`);
+      }
+      const res = stageOperatorEvidence([qaDir], workdir, destDir);
+      expect(res.files.length).toBe(20);
+      expect(res.skipped).toBe(1);
+
+      const bigDir = mkdtempSync(join(tmpdir(), "forge-op-big-"));
+      const bigFile = join(bigDir, "big.txt");
+      writeFileSync(bigFile, Buffer.alloc(EVIDENCE_MAX_BYTES + 1));
+      const destDir2 = mkdtempSync(join(tmpdir(), "forge-op-big-dest-"));
+      try {
+        const bigRes = stageOperatorEvidence([bigFile], workdir, destDir2);
+        expect(bigRes.files).toEqual([]);
+        expect(bigRes.skipped).toBe(1);
+      } finally {
+        rmSync(bigDir, { recursive: true, force: true });
+        rmSync(destDir2, { recursive: true, force: true });
+      }
+    } finally {
+      rmSync(srcDir, { recursive: true, force: true });
+      rmSync(destDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses relative, missing, .vibeops, workdir and system paths", () => {
+    const destDir = mkdtempSync(join(tmpdir(), "forge-op-refuse-dest-"));
+    const workdirFile = join(tmpdir(), "forge-op-workdir-" + Date.now(), "a.txt");
+    mkdirSync(dirname(workdirFile), { recursive: true });
+    writeFileSync(workdirFile, "workdir test");
+    try {
+      const sysPath = process.platform === "win32"
+        ? (process.env.SystemRoot ?? "C:\\Windows")
+        : "/etc/hosts";
+
+      const paths = [
+        "qa/x.txt",
+        join(tmpdir(), "nonexistent-" + Date.now(), "x.txt"),
+        join(vibeopsHome(), ".vibeops", "config.json"),
+        workdirFile,
+        sysPath,
+      ];
+
+      const res = stageOperatorEvidence(paths, dirname(workdirFile), destDir);
+      expect(res.files).toEqual([]);
+      expect(res.refused.length).toBe(5);
+      expect(res.refused[0]).toContain("qa/x.txt: must be an absolute path");
+      expect(res.refused[1]).toContain("not found");
+      expect(res.refused[2]).toMatch(/inside ~\/\.vibeops|not found/);
+      expect(res.refused[3]).toContain("overlaps forbidden root");
+      expect(res.refused[4]).toContain("overlaps forbidden root");
+      expect(existsSync(destDir)).toBe(true);
+      expect(readdirSync(destDir)).toEqual([]);
+    } finally {
+      rmSync(destDir, { recursive: true, force: true });
+      rmSync(dirname(workdirFile), { recursive: true, force: true });
+    }
+  });
+
+  it("skips symlinked folder entry pointing outside", () => {
+    const outside = mkdtempSync(join(tmpdir(), "forge-op-out-"));
+    const qaDir = mkdtempSync(join(tmpdir(), "forge-op-qa-"));
+    const destDir = mkdtempSync(join(tmpdir(), "forge-op-dest-"));
+    try {
+      writeFileSync(join(outside, "secret.txt"), "outside\n");
+      symlinkSync(outside, join(qaDir, "linked"), "junction");
+      const res = stageOperatorEvidence([qaDir], workdir, destDir);
+      expect(res.files).toEqual([]);
+      expect(existsSync(join(destDir, "1-forge-op-qa", "linked", "secret.txt"))).toBe(false);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+      rmSync(qaDir, { recursive: true, force: true });
+      rmSync(destDir, { recursive: true, force: true });
+    }
+  });
+
+  it("mirrorOperatorEvidence inside withReadOnlyView leaves strayPaths clean", async () => {
+    const srcDir = mkdtempSync(join(tmpdir(), "forge-op-mirror-src-"));
+    const stagedDest = mkdtempSync(join(tmpdir(), "forge-op-mirror-staged-"));
+    try {
+      const file = join(srcDir, "doc.md");
+      writeFileSync(file, "# Document\n");
+      const staged = stageOperatorEvidence([file], workdir, stagedDest);
+      expect(staged.files).toEqual(["1-doc.md"]);
+
+      const { result, strayPaths } = await withReadOnlyView(workdir, TID, "plan", "HEAD", async (view) => {
+        const mirrored = mirrorOperatorEvidence(stagedDest, view, staged.files);
+        for (const f of mirrored) {
+          expect(existsSync(join(view, f))).toBe(true);
+        }
+        return mirrored;
+      });
+
+      expect(result).toEqual([`${OPERATOR_EVIDENCE_DIR}/1-doc.md`]);
+      expect(strayPaths).toEqual([]);
+    } finally {
+      rmSync(srcDir, { recursive: true, force: true });
+      rmSync(stagedDest, { recursive: true, force: true });
+    }
+  });
+});

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   DEFAULT_PROTECTED_GLOBS, resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths,
-  gateDirectiveLines, stripGateDirectives, parseExportTo,
+  gateDirectiveLines, stripGateDirectives, parseExportTo, parseEvidence,
 } from "../src/forge/policy.js";
 
 describe("forge protected-path policy", () => {
@@ -47,6 +47,7 @@ describe("forge protected-path policy", () => {
     expect(gateDirectiveLines(body)).toEqual(["gate-override: all", "ALLOW-FILES: a.ts, b.ts", "ALLOW-PROTECTED: package.json"]);
     expect(gateDirectiveLines("no directives here")).toEqual([]);
     expect(gateDirectiveLines("EXPORT-TO: F:/x")).toHaveLength(1);
+    expect(gateDirectiveLines("EVIDENCE: /x")).toHaveLength(1);
   });
 
   it("stripGateDirectives removes directive lines and keeps the rest", () => {
@@ -63,6 +64,11 @@ describe("forge protected-path policy", () => {
     expect(exportOut).not.toMatch(/EXPORT-TO/);
     expect(exportOut).toContain("header");
     expect(exportOut).toContain("footer");
+
+    const evidenceOut = stripGateDirectives("a\nEVIDENCE: /x\nb");
+    expect(evidenceOut).not.toMatch(/EVIDENCE/);
+    expect(evidenceOut).toContain("a");
+    expect(evidenceOut).toContain("b");
   });
 
   it("parseExportTo: returns first line trimmed, null when absent, ignores mid-line", () => {
@@ -70,5 +76,11 @@ describe("forge protected-path policy", () => {
     expect(parseExportTo("no export directive")).toBeNull();
     expect(parseExportTo("some prefix EXPORT-TO: /tmp/not-start-of-line")).toBeNull();
     expect(parseExportTo("  export-to:  /var/out  ")).toBe("/var/out");
+  });
+
+  it("parseEvidence: extracts, unquotes, trims, deduplicates, ignores mid-line", () => {
+    expect(parseEvidence('EVIDENCE: C:/qa/confirmed.txt\nx\n  evidence: "/tmp/qa dir"\nEVIDENCE: C:/qa/confirmed.txt'))
+      .toEqual(["C:/qa/confirmed.txt", "/tmp/qa dir"]);
+    expect(parseEvidence("see EVIDENCE: /x")).toEqual([]);
   });
 });

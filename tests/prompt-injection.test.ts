@@ -302,4 +302,14 @@ describe("Prompt Injection Defenses - Pipeline Level", () => {
     expect(withNeither).not.toContain("Evidence images, open each with Read:");
     expect(withNeither).not.toContain("EXPORT OUTPUTS");
   });
+
+  it("composeReviewPrompt names the checks still running when their results are not in yet", () => {
+    const input = { ticket: { title: "T", body: "B" }, plan: "P", report: "R", diff: "D" };
+    const pending = composeReviewPrompt({ ...input, pendingChecks: ["npm run lint", "npm test"] });
+    expect(pending).toContain("CHECKS RUNNING NOW");
+    expect(pending).toContain("npm run lint\nnpm test");
+    expect(pending).toContain("Do not fail the change only because the worker report lacks output");
+    expect(composeReviewPrompt(input)).not.toContain("CHECKS RUNNING NOW");
+    expect(composeReviewPrompt({ ...input, checks: "$ npm test\nexit 0", pendingChecks: ["npm test"] })).not.toContain("CHECKS RUNNING NOW");
+  });
 });

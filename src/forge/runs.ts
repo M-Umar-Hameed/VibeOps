@@ -979,6 +979,7 @@ async function reviewStage(
       if (run.stopped || run.stallReason) break;
       const reviewPrompt = composeReviewPrompt({
         ticket, plan, report: reportOutput, diff: chunk.payload, operatorNotes: run.operatorNotes,
+        pendingChecks: checkCmds.length ? checkCmds : undefined,
         protectedViolation: protectedFinding, amendments, gate: gate.report || undefined,
         citations: gate.citations || undefined, skills,
         evidence: evidence.paths.length ? evidence.paths : undefined,

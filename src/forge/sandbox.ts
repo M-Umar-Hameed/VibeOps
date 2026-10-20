@@ -288,6 +288,21 @@ export async function withReadOnlyView<T>(
   }
 }
 
+// A shell redirect such as `2>nul` from Git Bash creates a real file named "nul",
+// which Windows git cannot index ("short read while indexing nul"), so `add -A`
+// fails the whole run. Such files are never work, so delete untracked ones first.
+const RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+
+export async function dropReservedNames(path: string): Promise<string[]> {
+  const { out } = await git(path, "ls-files", "--others", "--exclude-standard", "-z");
+  const dropped = out.split("\0").filter((f) => f && RESERVED_NAME.test(f.split("/").pop() ?? ""));
+  for (const f of dropped) {
+    const abs = resolve(path, f);
+    rmSync(process.platform === "win32" ? `\\\\?\\${abs}` : abs, { force: true });
+  }
+  return dropped;
+}
+
 export async function forgeCommit(ticketId: string, title: string): Promise<boolean> {
   const path = sandboxPath(ticketId);
   // The exclude pathspec is required on BOTH commands. .gitignore says
@@ -306,6 +321,7 @@ export async function forgeCommit(ticketId: string, title: string): Promise<bool
   // ignores it; a POSIX symlink is a file, so without this it gets committed.
   // .forge holds outputs/evidence that live outside git; never committed even if its .gitignore was removed.
   const DEPS = ["node_modules", "app/node_modules", ".forge"];
+  await dropReservedNames(path);
   await must(path, "add", "-A");
   await git(path, "rm", "-r", "--cached", "--quiet", "--ignore-unmatch", ...DEPS);
   // The empty-check has to skip the deps too, or an unstaged link reads as a change.

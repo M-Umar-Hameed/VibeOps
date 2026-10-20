@@ -22,6 +22,7 @@ import {
   listInterruptedRuns
 } from "../src/forge/runs.js";
 import { sandboxExists, branchName, promoteSandbox, sandboxDiff, hasCommitsToPromote } from "../src/forge/sandbox.js";
+import { vibeopsHome } from "../src/runtime/home.js";
 import { app } from "../src/api/app.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject, updateProjectRepo } from "../src/services/projects.js";
@@ -2042,8 +2043,7 @@ describe("plan comments from member keys", () => {
 describe("forge evidence and EXPORT-TO end to end", () => {
   it("operator evidence e2e: copies files, lists in plan/work/review prompts, and refuses forbidden paths", async () => {
     const qa = mkdtempSync(join(tmpdir(), "forge-qa-"));
-    const vHome = process.env.VIBEOPS_HOME ?? homedir();
-    const forbidden = join(vHome, ".vibeops", "secret.txt");
+    const forbidden = join(vibeopsHome(), ".vibeops", "secret.txt");
     try {
       writeFileSync(join(qa, "confirmed.txt"), "confirmed steps\n");
       writeFileSync(join(qa, "qa-result.json"), '{"status":"failed"}\n');

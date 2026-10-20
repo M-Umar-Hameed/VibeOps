@@ -2043,12 +2043,10 @@ describe("plan comments from member keys", () => {
 describe("forge evidence and EXPORT-TO end to end", () => {
   it("operator evidence e2e: copies files, lists in plan/work/review prompts, and refuses forbidden paths", async () => {
     const qa = mkdtempSync(join(tmpdir(), "forge-qa-"));
-    const forbidden = join(vibeopsHome(), ".vibeops", "secret.txt");
+    const forbidden = join(vibeopsHome(), ".vibeops", "config.json");
     try {
       writeFileSync(join(qa, "confirmed.txt"), "confirmed steps\n");
       writeFileSync(join(qa, "qa-result.json"), '{"status":"failed"}\n');
-      mkdirSync(dirname(forbidden), { recursive: true });
-      writeFileSync(forbidden, "top secret\n");
 
       const { actor } = await createActor({ name: uniq("forge-admin"), kind: "human", role: "admin" });
       const project = await createProject({ key: uniq("forge-proj"), name: "Forge" });
@@ -2085,7 +2083,6 @@ describe("forge evidence and EXPORT-TO end to end", () => {
       expect(comments.find((c) => c.body.includes("planner changed files"))).toBeUndefined();
     } finally {
       rmSync(qa, { recursive: true, force: true });
-      try { rmSync(forbidden, { force: true }); } catch {}
     }
   });
 

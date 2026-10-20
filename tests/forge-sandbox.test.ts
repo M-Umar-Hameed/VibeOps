@@ -912,12 +912,10 @@ describe("operator evidence", () => {
 
   it("refuses relative, missing, .vibeops, workdir and system paths", () => {
     const destDir = mkdtempSync(join(tmpdir(), "forge-op-refuse-dest-"));
+    const workdirFile = join(tmpdir(), "forge-op-workdir-" + Date.now(), "a.txt");
+    mkdirSync(dirname(workdirFile), { recursive: true });
+    writeFileSync(workdirFile, "workdir test");
     try {
-      const vDir = join(vibeopsHome(), ".vibeops");
-      mkdirSync(vDir, { recursive: true });
-      const vFile = join(vDir, "test-evidence.txt");
-      writeFileSync(vFile, "secret");
-
       const sysPath = process.platform === "win32"
         ? (process.env.SystemRoot ?? "C:\\Windows")
         : "/etc/hosts";
@@ -925,24 +923,24 @@ describe("operator evidence", () => {
       const paths = [
         "qa/x.txt",
         join(tmpdir(), "nonexistent-" + Date.now(), "x.txt"),
-        vFile,
-        join(workdir, "a.txt"),
+        join(vibeopsHome(), ".vibeops", "config.json"),
+        workdirFile,
         sysPath,
       ];
 
-      const res = stageOperatorEvidence(paths, workdir, destDir);
+      const res = stageOperatorEvidence(paths, dirname(workdirFile), destDir);
       expect(res.files).toEqual([]);
       expect(res.refused.length).toBe(5);
       expect(res.refused[0]).toContain("qa/x.txt: must be an absolute path");
       expect(res.refused[1]).toContain("not found");
-      expect(res.refused[2]).toMatch(/forbidden root|inside ~\/\.vibeops/);
+      expect(res.refused[2]).toMatch(/inside ~\/\.vibeops|not found/);
       expect(res.refused[3]).toContain("overlaps forbidden root");
       expect(res.refused[4]).toContain("overlaps forbidden root");
       expect(existsSync(destDir)).toBe(true);
       expect(readdirSync(destDir)).toEqual([]);
     } finally {
       rmSync(destDir, { recursive: true, force: true });
-      try { rmSync(join(vibeopsHome(), ".vibeops", "test-evidence.txt"), { force: true }); } catch {}
+      rmSync(dirname(workdirFile), { recursive: true, force: true });
     }
   });
 

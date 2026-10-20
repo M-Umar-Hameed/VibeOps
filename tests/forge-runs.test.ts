@@ -583,6 +583,87 @@ describe("forge run manager", () => {
     expect(comments.filter((c) => c.kind === "plan")).toHaveLength(1);
   });
 
+  it("planned ticket whose body changed after its plan re-plans", async () => {
+    const { actorId, ticket } = await seedTicket("Body edit re-plans");
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+    const fresh = await updateTicket(actorId, ticket.id, ticket.version, { body: "Owner decision: new requirement" });
+    await updateTicket(actorId, ticket.id, fresh.version, { status: "planned" });
+    setScript("plan,work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).toContain("=== FORGE plan");
+    expect(output?.chunk).toContain("=== FORGE ticket title/body changed since the last plan: re-planning ===");
+    const comments = await listComments(ticket.id);
+    expect(comments.filter((c) => c.kind === "plan")).toHaveLength(2);
+  });
+
+  it("planned ticket whose title changed after its plan re-plans", async () => {
+    const { actorId, ticket } = await seedTicket("Title edit re-plans");
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+    const fresh = await updateTicket(actorId, ticket.id, ticket.version, { title: "Renamed after plan" });
+    await updateTicket(actorId, ticket.id, fresh.version, { status: "planned" });
+    setScript("plan,work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).toContain("=== FORGE plan");
+    expect(output?.chunk).toContain("=== FORGE ticket title/body changed since the last plan: re-planning ===");
+    const comments = await listComments(ticket.id);
+    expect(comments.filter((c) => c.kind === "plan")).toHaveLength(2);
+  });
+
+  it("planned ticket with no edit since its plan reuses it", async () => {
+    const { actorId, ticket } = await seedTicket("No edit reuse");
+    const fresh1 = await updateTicket(actorId, ticket.id, ticket.version, { body: "spec written before planning" });
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+    await updateTicket(actorId, ticket.id, fresh1.version, { status: "planned" });
+    setScript("work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).not.toContain("=== FORGE plan");
+    const comments = await listComments(ticket.id);
+    expect(comments.filter((c) => c.kind === "plan")).toHaveLength(1);
+  });
+
+  it("the plan stage's own spec seed does not force a re-plan", async () => {
+    const { actorId, ticket } = await seedTicket("Spec seed no re-plan");
+    setScript("plan,work,review-fail", true);
+
+    const { runId: run1 } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(run1);
+
+    const after1 = await getTicket(ticket.id);
+    expect(after1.status).toBe("planned");
+    expect(after1.body).toBeTruthy();
+
+    setScript("work,review-pass", true);
+    const { runId: run2 } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(run2);
+
+    const output2 = getRunOutput(run2, 0);
+    expect(output2?.chunk).not.toContain("=== FORGE plan");
+    const comments = await listComments(ticket.id);
+    expect(comments.filter((c) => c.kind === "plan")).toHaveLength(1);
+  });
+
   it("output polling with offset", async () => {
     const { actorId, ticket } = await seedTicket("Polling path");
     setScript("plan,work,review-pass", true);

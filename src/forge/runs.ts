@@ -21,7 +21,7 @@ import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, str
 import { pickAgents, escalate, pairsForRole, resolveStrategy, type Pick, type RoutingStrategy } from "./router.js";
 import { updateTicket } from "../services/tickets.js";
 import { addComment, listComments } from "../services/comments.js";
-import { getTicket } from "../services/history.js";
+import { getTicket, getTicketHistory } from "../services/history.js";
 import { searchKnowledge, indexRepoDocs, repoIndexed } from "../services/knowledge.js";
 import { getSetting } from "../services/settings.js";
 import { projectWorkdir, getProjectSettings } from "../services/projects.js";
@@ -159,6 +159,16 @@ async function writeSpecFromPlan(actorId: string, ticketId: string, body: string
     return write(); // retry once against a fresh version
   }
 }
+// A title/body edit after the latest plan makes that plan stale. updatedAt can't
+// tell (status writes bump it too), so read the append-only events. The plan
+// stage's own spec seed (writeSpecFromPlan) writes stripGateDirectives(plan) and
+// is not an edit.
+async function specEditedSince(ticketId: string, since: Date, seededSpec: string): Promise<boolean> {
+  return (await getTicketHistory(ticketId)).some((e) => e.action === "ticket.updated"
+    && e.at.getTime() > since.getTime()
+    && (e.changes?.title !== undefined || (e.changes?.body !== undefined && e.changes.body.to !== seededSpec)));
+}
+
 
 // Status writes land minutes after the ticket was last read (a stage ran in
 // between), and any edit meanwhile (spec edit, MCP update, sync) made that
@@ -647,7 +657,12 @@ async function pipeline(
   // plan
   let plan: string;
   const priorPlan = planCommentIndex === -1 ? "" : allComments[planCommentIndex].body;
-  const planRegenerated = ticket.status === "open" || !priorPlan.trim();
+  // Rework (and interrupted-run resume) are scoped to review findings: resumeStage
+  // "work" keeps the existing plan even if the spec changed since.
+  const specChanged = planCommentIndex !== -1 && !!priorPlan.trim() && ticket.status !== "open" && resumeStage !== "work"
+    && await specEditedSince(ticket.id, allComments[planCommentIndex].createdAt, stripGateDirectives(priorPlan));
+  if (specChanged) append(run, `=== FORGE ticket title/body changed since the last plan: re-planning ===\n`);
+  const planRegenerated = ticket.status === "open" || !priorPlan.trim() || specChanged;
   if (planRegenerated) {
     enterStage(run, "plan");
     append(run, `=== FORGE plan (${run.agents.plan}) ===\n`);

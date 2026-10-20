@@ -77,3 +77,16 @@ test("a member cannot add an EXPORT-TO directive; an admin can", async () => {
   const withExport = await updateTicket(admin.id, t.id, t.version, { body: "plain\nEXPORT-TO: /tmp/x" });
   expect(withExport.body).toContain("EXPORT-TO: /tmp/x");
 });
+
+test("a member cannot add an EVIDENCE directive; an admin can", async () => {
+  const { admin, member, project } = await setup();
+  const t = await createTicket(member.id, { projectId: project.id, title: "t", body: "plain" });
+  await expect(updateTicket(member.id, t.id, t.version, { body: "plain\nEVIDENCE: /tmp/qa" }))
+    .rejects.toBeInstanceOf(ForbiddenError);
+  const fresh = await getTicket(t.id);
+  expect(fresh.version).toBe(t.version);
+  expect(fresh.body).toBe("plain");
+
+  const withEvidence = await updateTicket(admin.id, t.id, t.version, { body: "plain\nEVIDENCE: /tmp/qa" });
+  expect(withEvidence.body).toContain("EVIDENCE: /tmp/qa");
+});

@@ -53,6 +53,21 @@ function forgeConfig() {
   return loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG);
 }
 
+// Optional agent/model picks for rework/resume. Omitted agents stay "auto" (today's
+// behaviour); supplied values get the same shape checks as /forge/pipeline, and
+// unknown agent/model names are rejected by startPipeline (caught -> 400).
+function agentPicks(body: Record<string, unknown>):
+  { error: string } | { planAgent: string; workAgent: string; reviewAgent: string; planModel?: string; workModel?: string; reviewModel?: string } {
+  const { planAgent = "auto", workAgent = "auto", reviewAgent = "auto", planModel, workModel, reviewModel } = body;
+  for (const [key, val] of Object.entries({ planAgent, workAgent, reviewAgent })) {
+    if (typeof val !== "string" || !val) return { error: `${key} must be a non-empty string` };
+  }
+  for (const [key, val] of Object.entries({ planModel, workModel, reviewModel })) {
+    if (val !== undefined && typeof val !== "string") return { error: `${key} must be a string` };
+  }
+  return { planAgent, workAgent, reviewAgent, planModel, workModel, reviewModel } as { planAgent: string; workAgent: string; reviewAgent: string; planModel?: string; workModel?: string; reviewModel?: string };
+}
+
 // The promote gate is a security control: only ADMIN-authored review comments
 // count, or any member key could post "VERDICT: PASS" and unlock Promote for
 // unreviewed sandbox code. (Forge itself writes reviews as the admin who
@@ -270,12 +285,19 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     if (!resumeStage && ticket.status !== "open" && ticket.status !== "planned") {
       return c.json({ error: "ticket must be open or planned to resume" }, 409);
     }
-    const body = await c.req.json().catch(() => ({}));
+    const body = (await c.req.json().catch(() => null)) ?? {};
+    const picks = agentPicks(body);
+    if ("error" in picks) return c.json({ error: picks.error }, 400);
     const operatorNotes = typeof body.operatorNotes === "string" ? body.operatorNotes : undefined;
-    const { runId, doctorWarnings } = await startPipeline(c.get("actor").id, config, {
-      ticketId, planAgent: "auto", workAgent: "auto", reviewAgent: "auto", operatorNotes, resumeStage,
-    });
-    return c.json({ runId, doctorWarnings }, 201);
+    try {
+      const { runId, doctorWarnings } = await startPipeline(c.get("actor").id, config, {
+        ticketId, ...picks, operatorNotes, resumeStage,
+      });
+      return c.json({ runId, doctorWarnings }, 201);
+    } catch (e) {
+      if (e instanceof ConflictError || e instanceof NotFoundError) throw e;
+      return c.json({ error: (e as Error).message }, 400);
+    }
   });
 
   app.get("/forge/tickets/:id/diff", requireAdmin, async (c) => {
@@ -524,12 +546,15 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     if (!sandboxExists(ticketId)) {
       return c.json({ error: "no sandbox to rework: the rejected run's sandbox is gone; start a new run instead" }, 409);
     }
+    const body = (await c.req.json().catch(() => null)) ?? {};
+    const picks = agentPicks(body);
+    if ("error" in picks) return c.json({ error: picks.error }, 400);
     const reworkInstruction =
       "This is a rework pass on an existing sandbox with prior commits. Address ONLY the review " +
       "findings shown above; do not add scope, refactor unrelated code, or re-architect. Keep the diff minimal.";
     try {
       const { runId, doctorWarnings } = await startPipeline(c.get("actor").id, forgeConfig(), {
-        ticketId, planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+        ticketId, ...picks,
         resumeStage: "work", extraPrompt: reworkInstruction,
       });
       return c.json({ runId, doctorWarnings }, 201);

@@ -202,6 +202,32 @@ describe("POST /forge/tickets/:id/rework", () => {
     expect(getRunOutput(runId, 0)?.chunk).not.toContain("=== FORGE plan");
   });
 
+  it("rework skips planning even when the body changed after the plan", async () => {
+    const { actorId, apiKey, ticket } = await seedTicket("Rework skips plan even with body edit");
+    await ensureSandbox(workdir, ticket.id);
+    writeFileSync(join(sandboxRoot, ticket.id, "result.txt"), "first pass");
+    await forgeCommit(ticket.id, "first work");
+    await addComment(actorId, ticket.id, "The plan\nFiles: result.txt", "plan");
+    await addComment(actorId, ticket.id, "- Critical: bug\nVERDICT: FAIL", "review");
+    const t1 = await getTicket(ticket.id);
+    await updateTicket(actorId, ticket.id, t1.version, { body: "Owner decision appended after plan" });
+    const t2 = await getTicket(ticket.id);
+    await updateTicket(actorId, ticket.id, t2.version, { status: "planned" });
+    await db.insert(forgeRuns).values({
+      id: randomUUID(), ticketId: ticket.id, status: "rejected", stage: "review",
+      planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+      startedAt: new Date(), finishedAt: new Date(),
+    });
+    setScript("work,review-pass", true);
+
+    const h = { Authorization: `Bearer ${apiKey}` };
+    const res = await app.request(`/forge/tickets/${ticket.id}/rework`, { method: "POST", headers: h });
+    expect(res.status).toBe(201);
+    const { runId } = await res.json();
+    await awaitRun(runId);
+    expect(getRunOutput(runId, 0)?.chunk).not.toContain("=== FORGE plan");
+  });
+
   it("rework with explicit workAgent/workModel uses them", async () => {
     enableSmartModel();
     await withSetting("forge.defaultModel.work", "fake:fast", async () => {

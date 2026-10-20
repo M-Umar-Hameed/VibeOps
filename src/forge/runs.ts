@@ -15,9 +15,9 @@ import { chunkReviewDiff, mergeReviewVerdicts } from "./review-chunks.js";
 import { killTree, killPidTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { redactSecrets } from "./redact.js";
-import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES } from "./sandbox.js";
+import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES, stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
-import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, stripGateDirectives, parseExportTo } from "./policy.js";
+import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, stripGateDirectives, parseExportTo, parseEvidence } from "./policy.js";
 import { pickAgents, escalate, pairsForRole, resolveStrategy, type Pick, type RoutingStrategy } from "./router.js";
 import { updateTicket } from "../services/tickets.js";
 import { addComment, listComments } from "../services/comments.js";
@@ -560,6 +560,8 @@ async function depsConfig(projectId: string): Promise<{ frontendDeps: string[]; 
   };
 }
 
+type OperatorEvidence = { dir: string; files: string[] };
+
 async function pipeline(
   run: Run, actorId: string,
   agents: { plan: RelayAgent; work: RelayAgent; review: RelayAgent }, workdir: string, styleSetting: string,
@@ -568,6 +570,19 @@ async function pipeline(
   let extra = extraPrompt ? `\n\nOperator instructions:\n${extraPrompt}` : "";
   const onData = (c: string) => append(run, c);
   let ticket = await getTicket(run.ticketId);
+
+  // EVIDENCE: lines (admin-only directive) -> run attachments dir, before any stage reads them.
+  let operatorEvidence: OperatorEvidence | undefined;
+  const evidencePaths = parseEvidence(ticket.body ?? "");
+  if (evidencePaths.length) {
+    const dir = join(attachmentsDir(), "forge", run.id);
+    const staged = stageOperatorEvidence(evidencePaths, workdir, dir);
+    for (const r of staged.refused) append(run, `\nforge: EVIDENCE refused: ${r}\n`);
+    append(run, `\nforge: operator evidence: ${staged.files.length} file(s) copied${staged.skipped ? `, ${staged.skipped} skipped (type, over ${OPERATOR_EVIDENCE_MAX_FILES} files, ${EVIDENCE_MAX_BYTES / 1024 / 1024}MB per file or ${OPERATOR_EVIDENCE_MAX_TOTAL / 1024 / 1024}MB total)` : ""}\n`);
+    if (staged.files.length) operatorEvidence = { dir, files: staged.files };
+  }
+  const evidenceDirs = operatorEvidence ? { addDirs: [operatorEvidence.dir] } : {};
+  // ponytail: per-run copies are kept like chat attachments; upgrade: delete join(attachmentsDir(), "forge", run.id) on settle.
   // Only an admin-authored plan is the plan: a member key can post kind "plan"
   // too, and that text would become the file-set gate's declared set and reach
   // the work and review prompts unfenced. Same trust rule as lastVerdict().
@@ -613,7 +628,7 @@ async function pipeline(
     append(run, `\n=== FORGE resume: straight to review (existing sandbox) ===\n`);
     const resumeSkills = selectSkills(plan, agents.review.skillAllowlist);
     if (resumeSkills.names.length) append(run, `\nforge: skills attached: ${resumeSkills.names.join(", ")}\n`);
-    return reviewStage(run, actorId, agents.review, workdir, sandbox, ticket, plan, report, styleSetting, config, undefined, resumeSkills.bodies);
+    return reviewStage(run, actorId, agents.review, workdir, sandbox, ticket, plan, report, styleSetting, config, undefined, resumeSkills.bodies, operatorEvidence);
   }
 
   const allComments = await listComments(ticket.id);
@@ -653,13 +668,19 @@ async function pipeline(
     append(run, `=== FORGE plan (${run.agents.plan}) ===\n`);
     const knowledge = await getKnowledgeSafe(knowledgeQuery(ticket), ticket.projectId);
     const memory = await getMemorySafe(ticket.title, ticket.projectId);
-    const planPrompt = composePlanPrompt({ ticket, knowledge, memory, skillIndex: formatSkillIndex(skillsForAgent(catalogue, agents.plan.skillAllowlist)) }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra;
-    const { result: res, strayPaths: planStray } = await withReadOnlyView(workdir, ticket.id, "plan", "HEAD", (view) =>
-      track(actorId, ticket.id, "plan", run.agents.plan, planPrompt.length, () => runAgent(
-        { ...agents.plan, projectId: ticket.projectId }, planPrompt, view, onData,
+    const { result: res, strayPaths: planStray } = await withReadOnlyView(workdir, ticket.id, "plan", "HEAD", (view) => {
+      const opEv = operatorEvidence ? mirrorOperatorEvidence(operatorEvidence.dir, view, operatorEvidence.files) : [];
+      const planPrompt = composePlanPrompt({
+        ticket, knowledge, memory,
+        skillIndex: formatSkillIndex(skillsForAgent(catalogue, agents.plan.skillAllowlist)),
+        operatorEvidence: opEv.length ? opEv : undefined,
+      }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra;
+      return track(actorId, ticket.id, "plan", run.agents.plan, planPrompt.length, () => runAgent(
+        { ...agents.plan, projectId: ticket.projectId, ...evidenceDirs }, planPrompt, view, onData,
         (child) => recordSpawn(run, child),
         undefined, modelOf(run.agents.plan), run.logPath,
-      )));
+      ));
+    });
     if (planStray.length) append(run, `\n[forge: planner changed files in its read-only copy; discarded: ${planStray.join(", ")}]\n`);
     run.child = undefined;
     if (run.stopped) return settle(run, "stopped");
@@ -694,13 +715,18 @@ async function pipeline(
   ticket = await setStatus(actorId, ticket.id, "in_progress");
   const { frontendDeps, depsDirs } = await depsConfig(ticket.projectId);
   const sandbox = await ensureSandbox(workdir, ticket.id, frontendDeps, depsDirs);
+  const workEv = operatorEvidence ? mirrorOperatorEvidence(operatorEvidence.dir, sandbox, operatorEvidence.files) : [];
   const knowledge = await getKnowledgeSafe(knowledgeQuery(ticket), ticket.projectId);
   const memory = await getMemorySafe(ticket.title, ticket.projectId);
   // Rework passes must see why the last review failed, or the worker repeats
   // the same mistakes (live-hit on the first dogfood ticket).
   const lastReview = [...(await listComments(ticket.id))].reverse().find((c) => c.kind === "review");
   const findings = lastReview ? `\n\nPrevious review findings (address ALL of these):\n${fenceUntrusted("prior-review-findings", lastReview.body)}` : "";
-  const workPrompt = composeWorkPrompt({ ticket, plan, knowledge, workdir: sandbox, memory, skills: selectedSkills.bodies })
+  const workPrompt = composeWorkPrompt({
+    ticket, plan, knowledge, workdir: sandbox, memory,
+    skills: selectedSkills.bodies,
+    operatorEvidence: workEv.length ? workEv : undefined,
+  })
     // No lessons clause here: A/B'd 2026-08-12 (docs/findings/2026-08-12-lessons-clause-ab.md).
     // On work prompts the doc measured inert - identical output on a control task, same
     // defect rate on a task its own "test isolation" line targets. Most of its lines
@@ -715,7 +741,7 @@ async function pipeline(
   const depsBaseline = snapshotDeps(workdir, depsDirs);
   const sentinelSnaps = snapshotSensitive(resolveSensitivePaths(await getSetting("forge.sensitivePaths")));
   const workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
-    runAgent({ ...agents.work, write: true, projectId: ticket.projectId }, workPrompt, sandbox, onData,
+    runAgent({ ...agents.work, write: true, projectId: ticket.projectId, ...evidenceDirs }, workPrompt, sandbox, onData,
       (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
       modelOf(run.agents.work), run.logPath));
   run.child = undefined;
@@ -795,7 +821,7 @@ async function pipeline(
   // that plan are not reflected in it; pass them to the reviewer as authoritative
   // amendments so supervisor-requested scope is not flagged as scope creep.
   const amendments = !planRegenerated && kept.length ? redactSecrets(commentsText) : undefined;
-  return reviewStage(run, actorId, agents.review, workdir, sandbox, ticket, plan, workRes.output, styleSetting, config, amendments, selectSkills(plan, agents.review.skillAllowlist).bodies);
+  return reviewStage(run, actorId, agents.review, workdir, sandbox, ticket, plan, workRes.output, styleSetting, config, amendments, selectSkills(plan, agents.review.skillAllowlist).bodies, operatorEvidence);
 }
 
 function settle(run: Run, status: Status): void {
@@ -823,6 +849,7 @@ async function reviewStage(
   run: Run, actorId: string, reviewAgent: RelayAgent, workdir: string,
   sandbox: string, ticket: Ticket, plan: string, reportOutput: string,
   styleSetting: string, config: RelayConfig, amendments?: string, skills?: string,
+  operatorEvidence?: OperatorEvidence,
 ): Promise<void> {
   enterStage(run, "review");
   append(run, `\n=== FORGE review (${run.agents.review}) ===\n`);
@@ -920,6 +947,7 @@ async function reviewStage(
     if (evidence.paths.length || evidence.skipped) {
       append(run, `\nforge: evidence images for review: ${evidence.paths.length}${evidence.skipped ? `, ${evidence.skipped} skipped (over ${EVIDENCE_MAX_FILES} files or ${EVIDENCE_MAX_BYTES / 1024 / 1024}MB)` : ""}\n`);
     }
+    const opEv = operatorEvidence ? mirrorOperatorEvidence(operatorEvidence.dir, view, operatorEvidence.files) : [];
     const results: AgentResult[] = [];
     for (const chunk of chunks) {
       if (run.stopped) break;
@@ -930,6 +958,7 @@ async function reviewStage(
         evidence: evidence.paths.length ? evidence.paths : undefined,
         outputs,
         memory: memory || undefined,
+        operatorEvidence: opEv.length ? opEv : undefined,
       }) + roleStyle("review", styleSetting);
       results.push(await track(actorId, ticket.id, "review", run.agents.review, reviewPrompt.length, () => runAgent(
         reviewer,

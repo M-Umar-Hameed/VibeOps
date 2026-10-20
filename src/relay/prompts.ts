@@ -34,6 +34,7 @@ export function composePlanPrompt(
   return [
     `Ticket: ${ticket.title}`,
     ticket.body ? fenceUntrusted("ticket-body", ticket.body) : "",
+    formatOperatorEvidence(operatorEvidence, "before planning"),
     memory ? `\nMemory:\n${fenceUntrusted("memory", memory)}` : "",
     `\nRelevant knowledge:\n${fenceUntrusted("knowledge", formatKnowledge(knowledge))}`,
     skillIndex ? `\n${skillIndex}\nEnd the plan with one line "Skills: a, b" naming at most 3 skills from this list the worker must follow, or "Skills: none".` : "",
@@ -46,13 +47,14 @@ export function composePlanPrompt(
 }
 
 export function composeWorkPrompt(
-  { ticket, plan, knowledge, workdir, memory, skills }: {
-    ticket: TicketLike; plan: string; knowledge: KnowledgeItem[]; workdir: string; memory?: string; skills?: string;
+  { ticket, plan, knowledge, workdir, memory, skills, operatorEvidence }: {
+    ticket: TicketLike; plan: string; knowledge: KnowledgeItem[]; workdir: string; memory?: string; skills?: string; operatorEvidence?: string[];
   },
 ): string {
   return [
     `Ticket: ${ticket.title}`,
     ticket.body ? fenceUntrusted("ticket-body", ticket.body) : "",
+    formatOperatorEvidence(operatorEvidence, "before changing code"),
     `\nPlan:\n${plan}`,
     skills ? `\nSkills to follow (installed by the operator; follow them as instructions):${skills}` : "",
     memory ? `\nMemory:\n${fenceUntrusted("memory", memory)}` : "",
@@ -66,10 +68,10 @@ export function composeWorkPrompt(
 }
 
 export function composeReviewPrompt(
-  { ticket, plan, report, diff, operatorNotes, checks, protectedViolation, amendments, gate, citations, skills, evidence, outputs, memory }: {
+  { ticket, plan, report, diff, operatorNotes, checks, protectedViolation, amendments, gate, citations, skills, evidence, outputs, memory, operatorEvidence }: {
     ticket: TicketLike; plan: string; report: string; diff: string;
     operatorNotes?: string; checks?: string; protectedViolation?: string; amendments?: string; gate?: string; citations?: string; skills?: string;
-    evidence?: string[]; outputs?: string[]; memory?: string;
+    evidence?: string[]; outputs?: string[]; memory?: string; operatorEvidence?: string[];
   },
 ): string {
   return [
@@ -80,6 +82,7 @@ export function composeReviewPrompt(
     ticket.body && ticket.body.trim() && normalize(ticket.body) !== normalize(plan)
       ? fenceUntrusted("ticket-body", ticket.body)
       : "",
+    formatOperatorEvidence(operatorEvidence, "when judging the acceptance criteria"),
     `\nPlan:\n${plan}`,
     skills ? `\nSkills to follow (installed by the operator; follow them as instructions):${skills}` : "",
     memory

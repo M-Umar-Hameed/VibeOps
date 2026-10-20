@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { treeCpuReader } from "../src/runtime/proc-tree-cpu.js";
+import { hasCommitsToPromote } from "../src/forge/sandbox.js";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +14,7 @@ import {
 import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
 import { createTicket } from "../src/services/tickets.js";
+import { getTicket } from "../src/services/history.js";
 import { listComments } from "../src/services/comments.js";
 import { db } from "../src/db/client.js";
 import { forgeRuns } from "../src/db/schema.js";
@@ -81,9 +84,17 @@ async function waitForPid(runId: string, timeoutMs = 5000) {
     await new Promise((r) => setTimeout(r, 20));
   }
 }
+async function waitForFile(path: string, timeoutMs = 5000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (existsSync(path)) return;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  throw new Error(`timed out waiting for file "${path}"`);
+}
 
 describe("forge stall detection", () => {
-  it("settles failed with a stall reason when the log stops growing past the window", async () => {
+  it("a silent run with no activity is swept, WIP-committed and reported with the stall reason", async () => {
     const { actorId, ticket } = await seedTicket("stall detect");
     setScript("plan,work-hang");
     const { runId } = await startPipeline(actorId, relayConfig(), {
@@ -91,25 +102,60 @@ describe("forge stall detection", () => {
     });
     await waitForStage(runId, "work");
     await waitForPid(runId); // run.child now set -> sweep's killTree(child) branch fires
+    await waitForFile(join(sandboxRoot, ticket.id, "partial.txt"));
 
-    const orig = logSizeReader.read;
+    const origLog = logSizeReader.read;
+    const origCpu = treeCpuReader.read;
     logSizeReader.read = () => 100; // constant: never grows
+    treeCpuReader.read = () => 5;
     try {
       const t0 = 1_700_000_000_000;
       expect(await sweepStalledRuns(t0, WINDOW)).toEqual([]);            // first sight: seed only
       expect(getRunOutput(runId, 0)?.status).toBe("running");
       expect(await sweepStalledRuns(t0 + WINDOW + 60_000, WINDOW)).toEqual([runId]); // 31m silent
-    } finally { logSizeReader.read = orig; }
+    } finally {
+      logSizeReader.read = origLog;
+      treeCpuReader.read = origCpu;
+    }
 
     await awaitRun(runId);
     expect(getRunOutput(runId, 0)?.status).toBe("failed");
+    expect((await getTicket(ticket.id)).status).toBe("planned");
+    expect(await hasCommitsToPromote(workdir, ticket.id)).toBe(true);
     const report = [...(await listComments(ticket.id))].reverse()
-      .find((c) => c.kind === "report" && c.body.includes("stalled: no output"));
+      .find((c) => c.kind === "report" && c.body.includes("stopped by the stall timer after"));
     expect(report).toBeTruthy();
     expect(report!.body).toContain("work stage");
+    expect(report!.body).toContain("uncommitted work was saved to the sandbox branch as a WIP commit");
     const item = (await listRunsWithHistory(ticket.id)).find((r) => r.id === runId);
-    expect(item?.failureReason).toMatch(/^stalled: no output for \d+m in work stage/);
+    expect(item?.failureReason).toMatch(/^stopped by the stall timer after \d+ minutes without activity in work stage/);
   }, 20_000);
+
+  it("a silent run with a live busy child process is not swept", async () => {
+    const { actorId, ticket } = await seedTicket("busy child silent");
+    setScript("plan,work-busy-silent");
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await waitForStage(runId, "work");
+    await waitForPid(runId);
+
+    const origLog = logSizeReader.read;
+    logSizeReader.read = () => 100;
+    try {
+      const t0 = 1_700_000_000_000;
+      expect(await sweepStalledRuns(t0, WINDOW)).toEqual([]);
+      await new Promise((r) => setTimeout(r, 2500));
+      expect(await sweepStalledRuns(t0 + WINDOW + 60_000, WINDOW)).toEqual([]);
+      await new Promise((r) => setTimeout(r, 2500));
+      expect(await sweepStalledRuns(t0 + 2 * WINDOW + 120_000, WINDOW)).toEqual([]);
+      expect(getRunOutput(runId, 0)?.status).toBe("running");
+    } finally {
+      logSizeReader.read = origLog;
+      expect(await stopRun(runId)).toBe(true);
+      await awaitRun(runId);
+    }
+  }, 30_000);
 
   it("does NOT kill a run whose log is still growing, even far past the window", async () => {
     const { actorId, ticket } = await seedTicket("still growing");

@@ -5,6 +5,7 @@
 // (clamped to the last entry once the script is exhausted).
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmdirSync, appendFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { spawn } from "node:child_process";
 
 const prompt = process.argv[2] ?? "";
 void prompt;
@@ -123,6 +124,12 @@ if (mode === "review-hang") {
   await new Promise(() => { setInterval(() => {}, 1 << 30); }); // hang forever (the timer holds the event loop open; a bare pending promise exits with code 13)
 }
 if (mode === "plan-hang") {
+  await new Promise(() => { setInterval(() => {}, 1 << 30); }); // hang forever (the timer holds the event loop open; a bare pending promise exits with code 13)
+}
+if (mode === "work-busy-silent") {
+  // Silent worker whose own child burns CPU (a test runner). The spinner self-exits:
+  // non-win killTree only kills the direct child, so a leaked grandchild must not spin forever.
+  spawn(process.execPath, ["-e", "const end=Date.now()+15000;while(Date.now()<end){}"], { stdio: "ignore" });
   await new Promise(() => { setInterval(() => {}, 1 << 30); }); // hang forever (the timer holds the event loop open; a bare pending promise exits with code 13)
 }
 if (mode === "work-hang") {

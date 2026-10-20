@@ -4,6 +4,7 @@ import { existsSync, openSync, readSync, fstatSync, closeSync, statSync, readdir
 import { join } from "node:path";
 import { vibeopsHome } from "../runtime/home.js";
 import { startTimeReader } from "../runtime/proc-start.js";
+import { treeCpuReader } from "../runtime/proc-tree-cpu.js";
 import type { ChildProcess } from "node:child_process";
 import { resolveCmd, loadRelayConfig, type RelayConfig, type RelayAgent } from "../relay/config.js";
 import { pipelineStartWarnings, pipelineStartBlockingError } from "../relay/doctor.js";
@@ -120,7 +121,9 @@ type Run = {
   reviewStartedAt?: number;   // epoch ms the review loop began
   pid?: number;        // OS pid of the current stage's agent child; cleared on settle
   lastLogSize?: number;      // last observed logPath size (stall detection)
-  lastLogGrowthAt?: number;  // epoch ms the log last grew; the stall clock resets here
+  lastActivityAt?: number;  // epoch ms of last log growth or busy CPU; the stall clock resets here
+  lastCpuMs?: number;       // last process-tree CPU reading
+  stallReason?: string;     // set by the sweep; the pipeline posts it as the report
   logPath: string;     // stable per-run log path (recorded only; reattach ticket writes it)
   runToken: string;    // value of env VIBEOPS_RUN_TOKEN handed to every stage child
   procStartedAt?: string; // child OS start time at spawn; boot compares to prove same process
@@ -135,11 +138,11 @@ type Run = {
 
 const runs = new Map<string, Run>();
 
-export type RunSummary = Omit<Run, "output" | "child" | "checksChild" | "abort" | "stopped" | "done" | "persisted" | "pid" | "logPath" | "runToken" | "procStartedAt" | "lastLogSize" | "lastLogGrowthAt">;
+export type RunSummary = Omit<Run, "output" | "child" | "checksChild" | "abort" | "stopped" | "done" | "persisted" | "pid" | "logPath" | "runToken" | "procStartedAt" | "lastLogSize" | "lastActivityAt" | "lastCpuMs" | "stallReason">;
 
 function summarize(r: Run): RunSummary {
-  const { output, child, checksChild, abort, stopped, done, persisted, pid, logPath, runToken, procStartedAt, lastLogSize, lastLogGrowthAt, ...rest } = r;
-  void output; void child; void checksChild; void abort; void stopped; void done; void persisted; void pid; void logPath; void runToken; void procStartedAt; void lastLogSize; void lastLogGrowthAt;
+  const { output, child, checksChild, abort, stopped, done, persisted, pid, logPath, runToken, procStartedAt, lastLogSize, lastActivityAt, lastCpuMs, stallReason, ...rest } = r;
+  void output; void child; void checksChild; void abort; void stopped; void done; void persisted; void pid; void logPath; void runToken; void procStartedAt; void lastLogSize; void lastActivityAt; void lastCpuMs; void stallReason;
   return rest;
 }
 
@@ -678,6 +681,7 @@ async function pipeline(
     if (planStray.length) append(run, `\n[forge: planner changed files in its read-only copy; discarded: ${planStray.join(", ")}]\n`);
     run.child = undefined;
     if (run.stopped) return settle(run, "stopped");
+    if (run.stallReason) { await bounce(run, actorId, run.stallReason, ""); return settle(run, "failed"); }
     applyVerification(res, run.agents.plan, run, config);
     if (!res.ok) { await bounce(run, actorId, "planner failed", res.output); return settle(run, "failed"); }
     if (!res.output.trim()) { await bounce(run, actorId, "planner returned an empty plan", ""); return settle(run, "failed"); }
@@ -770,6 +774,13 @@ async function pipeline(
       ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]"
       : "";
     await bounce(run, actorId, "deps leak: wrote through shared node_modules link", report + note);
+    return settle(run, "failed");
+  }
+  if (run.stallReason) {
+    // Same preservation as the stop path: the sweep killed a silent worker; save whatever it wrote.
+    const saved = await forgeCommit(ticket.id, `WIP (stalled) ${ticket.title}`);
+    const note = saved ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]" : "";
+    await bounce(run, actorId, run.stallReason, note);
     return settle(run, "failed");
   }
   if (run.stopped) {
@@ -937,7 +948,7 @@ async function reviewStage(
     }
     const results: AgentResult[] = [];
     for (const chunk of chunks) {
-      if (run.stopped) break;
+      if (run.stopped || run.stallReason) break;
       const reviewPrompt = composeReviewPrompt({
         ticket, plan, report: reportOutput, diff: chunk.payload, operatorNotes: run.operatorNotes,
         protectedViolation: protectedFinding, amendments, gate: gate.report || undefined,
@@ -960,6 +971,7 @@ async function reviewStage(
     .catch(async (e) => { await checksPromise.catch(() => {}); throw e; });
   run.child = undefined;
   if (run.stopped) return settle(run, "stopped");
+  if (run.stallReason) { await checksPromise.catch(() => {}); await bounce(run, actorId, run.stallReason, ""); return settle(run, "failed"); }
   const checkResults = await checksPromise;
   if (run.checksStartedAt !== undefined) run.checksDurationMs = Date.now() - run.checksStartedAt;
   if (run.stopped) return settle(run, "stopped");
@@ -1307,15 +1319,16 @@ export async function stopRun(id: string): Promise<boolean> {
   return true;
 }
 
-// Server-side stall detector. Silence, not elapsed time, is the signal: a run
-// whose log file has not grown for windowMs is wedged (agent alive but blocked,
-// typically on a child `npm test` that never exits), while a legitimately long
-// stage narrates and keeps the log growing so its clock keeps resetting. The
-// per-child setTimeout in invoke.ts cannot cover this — it dies with the API
-// process on restart and is never re-armed for a reattached run (tailUntilExit
-// only polls pidAlive), so a wedged survivor runs forever. Settle such runs
-// FAILED with a reason naming the stall, NOT interrupted (interrupted offers
-// resume as if nothing were wrong).
+// Server-side stall detector. Silence in both the log and process-tree CPU is
+// the signal: a run whose log file has not grown and whose process tree used no
+// CPU for windowMs is wedged (agent alive but blocked, typically on a child `npm
+// test` that never exits), while a legitimately long stage narrates or runs tests
+// so its clock keeps resetting. The per-child setTimeout in invoke.ts cannot
+// cover this — it dies with the API process on restart and is never re-armed for
+// a reattached run (tailUntilExit only polls pidAlive), so a wedged survivor runs
+// forever. Settle such runs FAILED with a reason naming the stall, save WIP
+// work in the sandbox, NOT interrupted (interrupted offers resume as if nothing
+// were wrong).
 const DEFAULT_STALL_WINDOW_MS = 30 * 60_000;
 
 export function resolveStallWindowMs(setting: string | null): number {
@@ -1332,34 +1345,47 @@ export const logSizeReader = {
   },
 };
 
+// At least 1s of tree CPU since the previous sweep (60s cadence in server.ts,
+// so about 1.7% of one core) counts as activity. An idle agent blocked on a
+// wedged child stays under it.
+const BUSY_CPU_MS = 1000;
+
 export async function sweepStalledRuns(now: number, windowMs: number): Promise<string[]> {
   const stalled: string[] = [];
   for (const run of activeRuns()) {
     try {
+      if (run.stallReason) { settle(run, "failed"); continue; } // pipeline never resumed after the kill (child refused to die): force terminal
       const size = logSizeReader.read(run.logPath);
-      // No log yet (or sdk lane, which writes none): seed the clock, never judge.
-      if (size === null) { run.lastLogGrowthAt ??= now; continue; }
-      if (run.lastLogSize === undefined || size > run.lastLogSize) {
-        run.lastLogSize = size;
-        run.lastLogGrowthAt = now;
-        continue; // grew (or first sight) -> reset the stall clock
-      }
-      const since = run.lastLogGrowthAt ?? now;
-      if (now - since <= windowMs) continue; // silent, but not long enough yet
+      if (size === null) { run.lastActivityAt ??= now; continue; }
+      const cpu = run.pid != null ? treeCpuReader.read(run.pid) : null;
+      const grew = run.lastLogSize === undefined || size > run.lastLogSize;
+      const busy = cpu !== null && (run.lastCpuMs === undefined || cpu - run.lastCpuMs >= BUSY_CPU_MS);
+      run.lastLogSize = size;
+      if (cpu !== null) run.lastCpuMs = cpu;
+      if (grew || busy) { run.lastActivityAt = now; continue; }
+      const since = run.lastActivityAt ?? now;
+      if (now - since <= windowMs) continue;
       const mins = Math.round((now - since) / 60_000);
       const iso = new Date(since).toISOString().replace(/\.\d{3}Z$/, "Z");
-      const reason = `stalled: no output for ${mins}m in ${run.stage} stage (last output ${iso})`;
+      const reason = `stopped by the stall timer after ${mins} minutes without activity in ${run.stage} stage (last activity ${iso})`;
       const pid = run.pid;
       const child = run.child;
-      // Record the reason durably, then settle BEFORE killing: a reattached run's
-      // tailUntilExit would otherwise settle it `interrupted` when the pid dies, but
-      // the row is already terminal so its settle() no-ops on the first-wins guard.
-      const admin = (await listActors()).find((a) => a.role === "admin");
-      if (admin) await bounce(run, admin.id, reason, "");
-      else append(run, `\nforge: ${reason}\n`);
-      settle(run, "failed");
-      if (child) await killTree(child);
-      else if (pid) await killPidTree(pid);
+      run.stallReason = reason;
+      if (child) {
+        // In-process pipeline awaits this child: it WIP-commits, reports and settles (bounce lands inside the run window).
+        await killTree(child);
+        if (run.checksChild) await killTree(run.checksChild);
+      } else {
+        // Reattached survivor: no pipeline left to save its work. tailUntilExit holds off settling while stallReason is set.
+        try {
+          if (pid) await killPidTree(pid);
+          let note = "";
+          if (run.stage === "work" && await forgeCommit(run.ticketId, `WIP (stalled) ${(await getTicket(run.ticketId)).title}`)) note = "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]";
+          const admin = (await listActors()).find((a) => a.role === "admin");
+          if (admin) await bounce(run, admin.id, reason, note);
+          else append(run, `\nforge: ${reason}\n`);
+        } finally { settle(run, "failed"); }
+      }
       stalled.push(run.id);
     } catch (e) {
       // One run's failure must never abort the sweep and starve every other run of
@@ -1430,6 +1456,7 @@ function tailUntilExit(run: Run): Promise<void> {
       } catch { /* log rotated/removed under us */ }
     };
     const timer = setInterval(() => {
+      if (run.stallReason && !run.finishedAt) { drain(); return; } // the stall sweep is saving work; it settles
       drain();
       if (run.stopped || pid === undefined || !pidAlive(pid)) {
         clearInterval(timer);

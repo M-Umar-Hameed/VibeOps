@@ -1,15 +1,18 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { mkdtempSync, cpSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 import { db } from "../src/db/client.js";
 import { settings } from "../src/db/schema.js";
-import { readAccountState, markExhausted, markUsed, stateKey, resolveCooldownMs } from "../src/relay/account-state.js";
+import { readAccountState, markExhausted, stateKey, resolveCooldownMs } from "../src/relay/account-state.js";
 import { availableAccount, chooseAccount } from "../src/relay/accounts.js";
 import { runAgent } from "../src/relay/dispatch.js";
 import type { RelayAgent } from "../src/relay/config.js";
 import { withSetting } from "./helpers/settings.js";
+
+const FAKE_AGENT = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "fake-agent.mjs");
 
 describe("relay-account-state", () => {
   const now = new Date(2026, 9, 24, 12, 0, 0);
@@ -18,13 +21,13 @@ describe("relay-account-state", () => {
   let dirB: string;
 
   beforeAll(() => {
-    bin = process.execPath;
-    const ext = process.platform === "win32" ? ".exe" : "";
-    const dest = join(tmpdir(), `codex-test-${Date.now()}${ext}`);
-    cpSync(bin, dest);
-    if (process.platform !== "win32") chmodSync(dest, 0o755);
-    bin = dest;
+    const binDir = mkdtempSync(join(tmpdir(), "acct-bin-"));
+    bin = join(binDir, process.platform === "win32" ? "codex.exe" : "codex");
+    cpSync(process.execPath, bin);
+    if (process.platform !== "win32") chmodSync(bin, 0o755);
+  });
 
+  beforeEach(() => {
     dirA = mkdtempSync(join(tmpdir(), "account-a-"));
     dirB = mkdtempSync(join(tmpdir(), "account-b-"));
   });
@@ -134,7 +137,6 @@ describe("relay-account-state", () => {
   });
 
   it("runAgent: limit detection and retry", async () => {
-    const FAKE_AGENT = "tests/fixtures/fake-agent.mjs";
     const agent: RelayAgent = {
       cmd: [bin, FAKE_AGENT, "{prompt}"],
       roles: ["work"],
@@ -165,7 +167,6 @@ describe("relay-account-state", () => {
     await markExhausted(acctA, new Date(now.getTime() + 7200_000), "e", now);
     await markExhausted(acctB, bReset, "e", now);
 
-    const FAKE_AGENT = "tests/fixtures/fake-agent.mjs";
     const agent: RelayAgent = {
       cmd: [bin, FAKE_AGENT, "{prompt}"],
       roles: ["work"],

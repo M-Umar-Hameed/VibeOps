@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 import { db } from "../src/db/client.js";
 import { settings } from "../src/db/schema.js";
-import { readAccountState, markExhausted, stateKey, resolveCooldownMs } from "../src/relay/account-state.js";
+import { readAccountState, markExhausted, markLogin, stateKey, resolveCooldownMs } from "../src/relay/account-state.js";
 import { availableAccount, chooseAccount } from "../src/relay/accounts.js";
 import { runAgent } from "../src/relay/dispatch.js";
 import type { RelayAgent } from "../src/relay/config.js";
@@ -178,5 +178,19 @@ describe("relay-account-state", () => {
     expect(res.ok).toBe(false);
     expect(res.account).toBeUndefined();
     expect(res.output).toContain(`earliest reset ${bReset.toISOString()}`);
+  });
+
+  it("limit hits are counted", async () => {
+    const acct = { id: "a", label: "A", configDir: dirA, priority: 1 };
+    await markExhausted(acct, undefined, "e", now);
+    await markExhausted(acct, undefined, "e", now);
+    expect((await readAccountState(dirA)).limitHits).toBe(2);
+  });
+
+  it("markLogin stores the probe result", async () => {
+    await markLogin(dirA, false, now);
+    const s = await readAccountState(dirA);
+    expect(s.loginOk).toBe(false);
+    expect(s.loginCheckedAt).toBe(now.toISOString());
   });
 });

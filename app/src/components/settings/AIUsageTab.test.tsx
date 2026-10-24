@@ -158,3 +158,13 @@ test("renders By Ticket list when perTicket data is present", async () => {
   expect(screen.getByText("5.0K tokens")).toBeInTheDocument();
   expect(screen.getByText("2 calls")).toBeInTheDocument();
 });
+
+test("subscription accounts show runs and limit hits per account", async () => {
+  const base = apiFetch.getMockImplementation()!;
+  apiFetch.mockImplementation((path: string, opts?: any) => path === "/relay/accounts"
+    ? Promise.resolve({ runsActive: false, lanes: [{ agent: "claude", kind: "claude", canCheckLogin: true, copiesClaudeSettings: true, recent: [], accounts: [{ id: "main", label: "Main", configDir: "C:/a", priority: 1, state: { limitHits: 1 }, runs: 3, lastRunAt: null }] }] })
+    : base(path, opts));
+  render(wrap(<AIUsageTab />));
+  await waitFor(() => expect(screen.getByText("claude • Main")).toBeInTheDocument());
+  expect(screen.getByText("3 runs · 1 limit hits")).toBeInTheDocument();
+});

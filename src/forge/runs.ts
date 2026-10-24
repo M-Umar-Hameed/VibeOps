@@ -1214,6 +1214,11 @@ export function activeStageForTicket(ticketId: string): Stage | undefined {
   return activeRuns().find((r) => r.ticketId === ticketId)?.stage;
 }
 
+// Settings account edits write relay.json, which the sentinel restores around a work stage.
+export function hasAnyActiveRun(): boolean {
+  return activeRuns().length > 0;
+}
+
 export async function hasActiveRun(ticketId: string): Promise<boolean> {
   if (activeRuns().some((r) => r.ticketId === ticketId)) return true;
   const [row] = await db.select({ id: forgeRuns.id }).from(forgeRuns)

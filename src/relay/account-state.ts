@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import type { RelayAccount } from "./config.js";
 import { redactSecrets } from "../forge/redact.js";
 
-export type AccountState = { exhaustedUntil?: string; lastError?: string; lastUsed?: string };
+export type AccountState = { exhaustedUntil?: string; lastError?: string; lastUsed?: string; loginOk?: boolean; loginCheckedAt?: string; limitHits?: number };
 const DEFAULT_COOLDOWN_MS = 60 * 60_000;
 
 // One settings row per login folder: two lanes on one folder (claude + claude-sdk)
@@ -41,10 +41,16 @@ export async function markExhausted(acct: RelayAccount, resetAt: Date | undefine
     try { raw = await (await import("../services/settings.js")).getSetting("forge.accountCooldownMs"); } catch { /* default */ }
     until = new Date(now.getTime() + resolveCooldownMs(raw));
   }
-  await writeAccountState(acct.configDir, { exhaustedUntil: until.toISOString(), lastError: redactSecrets(error.slice(-500)) });
+  const prev = await readAccountState(acct.configDir);
+  await writeAccountState(acct.configDir, { exhaustedUntil: until.toISOString(), lastError: redactSecrets(error.slice(-500)), limitHits: (prev.limitHits ?? 0) + 1 });
   return until;
 }
 
 export async function markUsed(acct: RelayAccount, now = new Date()): Promise<void> {
   await writeAccountState(acct.configDir, { lastUsed: now.toISOString() });
+}
+
+// Result of the Settings "Check login" probe; the only login status VibeOps shows.
+export async function markLogin(configDir: string, ok: boolean, now = new Date()): Promise<void> {
+  await writeAccountState(configDir, { loginOk: ok, loginCheckedAt: now.toISOString() });
 }

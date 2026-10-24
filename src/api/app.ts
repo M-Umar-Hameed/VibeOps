@@ -37,6 +37,7 @@ import { registerSkillsRoutes } from "./skills-routes.js";
 import { registerCouncilRoutes } from "./council-routes.js";
 import { registerExportRoutes } from "./export-routes.js";
 import { registerBrowserRoutes } from "./browser-routes.js";
+import { registerRelayAccountsRoutes } from "./relay-accounts-routes.js";
 import { registerChatRoutes } from "./chat-routes.js";
 import { armExport } from "../services/export-debounce.js";
 
@@ -567,6 +568,7 @@ app.post("/relay/bootstrap", requireAdmin, async (c) => {
 
 registerMcpRoutes(app);
 registerForgeRoutes(app);
+registerRelayAccountsRoutes(app);
 registerSkillsRoutes(app);
 registerCouncilRoutes(app);
 registerExportRoutes(app);

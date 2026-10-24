@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { api } from "../../lib/api.js";
+import { fetchAccounts, ACCOUNTS_KEY } from "./AccountsCard.js";
 
 type AgentTokens = {
   inputTokens: number; outputTokens: number; totalTokens: number; sessions: number;
@@ -41,6 +42,9 @@ export function AIUsageTab() {
   });
   const agents: AgentInfo[] = agentsData?.agents ?? [];
   const sinceDays = agentsData?.sinceDays ?? 7;
+
+  const { data: accountsData } = useQuery({ queryKey: ACCOUNTS_KEY, queryFn: fetchAccounts });
+  const accountLanes = (accountsData?.lanes ?? []).filter((l) => l.accounts.length > 0);
 
   const usageLogs = realUsageData?.usage ?? [];
   const observedTotal = agents.reduce((s, a) => s + (a.tokens?.totalTokens ?? 0), 0);
@@ -162,6 +166,20 @@ export function AIUsageTab() {
       <p className="text-xs text-on-surface-variant/60 italic mt-3 ml-1">
         Usage observed by VibeOps from local session logs, across ALL projects (per-work-order now available). Provider quotas and reset limits live with each provider and aren't visible here.
       </p>
+
+      <h3 className="font-code-sm uppercase tracking-widest text-on-surface-variant/70 text-xs mb-4 ml-1 mt-8">Subscription Accounts</h3>
+      {accountLanes.length === 0 ? (
+        <div className="text-sm text-on-surface-variant italic ml-1">No accounts</div>
+      ) : (
+        <div className="space-y-2">
+          {accountLanes.flatMap((lane) => lane.accounts.map((a) => (
+            <div key={`${lane.agent}-${a.id}`} className="glass-card rounded-lg p-4 border border-white/5 flex justify-between items-center text-sm">
+              <span className="text-on-surface">{lane.agent} • {a.label || a.id}</span>
+              <span className="font-code-sm text-on-surface-variant">{a.runs} runs · {a.state.limitHits ?? 0} limit hits</span>
+            </div>
+          )))}
+        </div>
+      )}
 
       <h3 className="font-code-sm uppercase tracking-widest text-on-surface-variant/70 text-xs mb-4 ml-1 mt-8">Logged AI Usage</h3>
 

@@ -5,7 +5,7 @@ import type { RelayAgent } from "./config.js";
 import type { AgentResult } from "./invoke.js";
 import { query, type PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import { loadWall, allowRules, DENY_RULES } from "./wall.js";
-import { accountEnv } from "./accounts.js";
+import { chooseAccount, allExhaustedResult, settleAccountResult } from "./accounts.js";
 
 const OUTPUT_CAP = 100_000;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
@@ -69,7 +69,8 @@ export async function runAgentSdk(
   onAbort?: (abort: () => void) => void,
   model?: string,
 ): Promise<AgentResult> {
-  const acct = accountEnv(agent);
+  const acct = await chooseAccount(agent);
+  if (acct.allExhaustedUntil) return allExhaustedResult(acct.allExhaustedUntil, onData);
   if (!hasCredentials(acct.env.CLAUDE_CONFIG_DIR)) {
     const msg = "\n[forge: SDK lane has no Claude credentials on this machine. Run `claude setup-token` (or `claude login`) and retry.]\n";
     onData?.(msg);
@@ -128,5 +129,5 @@ export async function runAgentSdk(
   } finally {
     clearTimeout(timer);
   }
-  return { ok, output: output.slice(0, OUTPUT_CAP), usage, ...(acct.account ? { account: acct.account } : {}) };
+  return settleAccountResult(agent, { ok, output: output.slice(0, OUTPUT_CAP), usage }, acct.account);
 }

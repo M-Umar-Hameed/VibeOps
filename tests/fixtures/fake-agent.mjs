@@ -77,6 +77,14 @@ if (process.env.FAKE_CWD_OUT) {
   appendFileSync(process.env.FAKE_CWD_OUT, `${mode}\t${process.cwd()}\n`);
 }
 
+// Test hook: act as a subscription account at its usage limit. FAKE_LIMIT_HOME is a
+// "|" list of CODEX_HOME folders that are limited; FAKE_LIMIT_MODE limits only that step.
+if (process.env.FAKE_LIMIT_HOME && process.env.FAKE_LIMIT_HOME.split("|").includes(process.env.CODEX_HOME ?? "")
+    && (!process.env.FAKE_LIMIT_MODE || process.env.FAKE_LIMIT_MODE === mode)) {
+  console.error("You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), or try again in 2 hours.");
+  process.exit(1);
+}
+
 // Test hook: record the WORK-stage prompt this child received (argv[2]; the
 // forge-api config delivers via {prompt}). Lets a test assert an attached skill
 // body reached the worker. Mode-gated so plan/review invocations don't overwrite it.

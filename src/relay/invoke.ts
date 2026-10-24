@@ -9,7 +9,7 @@ import { pidAlive } from "../db/lifecycle.js";
 import { winCommand } from "./win-bin.js";
 import { loadWall, wallCmd } from "./wall.js";
 import { registerEnvSecrets } from "../forge/redact.js";
-import { accountEnv } from "./accounts.js";
+import { chooseAccount, allExhaustedResult, settleAccountResult } from "./accounts.js";
 
 const OUTPUT_CAP = 100_000;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
@@ -43,7 +43,7 @@ const CONSOLE_HOST_JS =
   `c.on("exit",(code)=>setTimeout(()=>process.exit(code??1),${EXIT_DRAIN_MS}).unref());` +
   `c.on("close",(code)=>process.exit(code??1));`;
 
-export type AgentResult = { ok: boolean; output: string; usage?: { tokens: number; cost: number }; account?: string };
+export type AgentResult = { ok: boolean; output: string; usage?: { tokens: number; cost: number }; account?: string; limit?: { until: string } };
 
 // Pure: only replaces placeholders present as keys in `vars`; anything else
 // in the cmd array passes through untouched.
@@ -157,8 +157,9 @@ export async function runAgent(
     childEnv = { ...process.env };
     keys.forEach((k, i) => { childEnv![k] = vals[i]; });
   }
-  // Subscription account (relay.json accounts): its provider env goes on top of agent.env.
-  const acct = accountEnv(agent);
+  // Subscription account (relay.json accounts): logins still at their usage limit are skipped; its provider env goes on top of agent.env.
+  const acct = await chooseAccount(agent);
+  if (acct.allExhaustedUntil) return allExhaustedResult(acct.allExhaustedUntil, onData);
   if (acct.account) childEnv = { ...(childEnv ?? process.env), ...acct.env };
   // forge stages routinely idle >5 min between plan and work, so the 1h cache
   // window is the one that matters. Only meaningful under API-key auth; a no-op
@@ -311,7 +312,7 @@ export async function runAgent(
         exitTimer.unref();
       });
     });
-    return acct.account ? { ...res, account: acct.account } : res;
+    return await settleAccountResult(agent, res, acct.account);
   } finally {
     if (readFd !== undefined) closeSync(readFd);
     if (outFd !== undefined) closeSync(outFd);

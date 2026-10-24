@@ -9,6 +9,7 @@ import { pidAlive } from "../db/lifecycle.js";
 import { winCommand } from "./win-bin.js";
 import { loadWall, wallCmd } from "./wall.js";
 import { registerEnvSecrets } from "../forge/redact.js";
+import { accountEnv } from "./accounts.js";
 
 const OUTPUT_CAP = 100_000;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
@@ -42,7 +43,7 @@ const CONSOLE_HOST_JS =
   `c.on("exit",(code)=>setTimeout(()=>process.exit(code??1),${EXIT_DRAIN_MS}).unref());` +
   `c.on("close",(code)=>process.exit(code??1));`;
 
-export type AgentResult = { ok: boolean; output: string; usage?: { tokens: number; cost: number } };
+export type AgentResult = { ok: boolean; output: string; usage?: { tokens: number; cost: number }; account?: string };
 
 // Pure: only replaces placeholders present as keys in `vars`; anything else
 // in the cmd array passes through untouched.
@@ -156,6 +157,9 @@ export async function runAgent(
     childEnv = { ...process.env };
     keys.forEach((k, i) => { childEnv![k] = vals[i]; });
   }
+  // Subscription account (relay.json accounts): its provider env goes on top of agent.env.
+  const acct = accountEnv(agent);
+  if (acct.account) childEnv = { ...(childEnv ?? process.env), ...acct.env };
   // forge stages routinely idle >5 min between plan and work, so the 1h cache
   // window is the one that matters. Only meaningful under API-key auth; a no-op
   // noise var under subscription auth, so set it only when ANTHROPIC_API_KEY is set.
@@ -186,7 +190,7 @@ export async function runAgent(
     // Written inside try so the finally unlinks it on every exit path (spawn
     // throw, agent failure, timeout/kill), never only the happy return.
     if (needsFile) await writeFile(promptFile, prompt, { encoding: "utf-8", mode: 0o600 });
-    return await new Promise((resolve) => {
+    const res: AgentResult = await new Promise((resolve) => {
       // stdin ignored unless piping the prompt: headless CLIs (codex exec)
       // otherwise block reading an open stdin.
       const { file, args, verbatim } = winCommand(cmd0, rest);
@@ -307,6 +311,7 @@ export async function runAgent(
         exitTimer.unref();
       });
     });
+    return acct.account ? { ...res, account: acct.account } : res;
   } finally {
     if (readFd !== undefined) closeSync(readFd);
     if (outFd !== undefined) closeSync(outFd);

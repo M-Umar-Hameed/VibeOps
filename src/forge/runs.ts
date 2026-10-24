@@ -127,6 +127,7 @@ type Run = {
   logPath: string;     // stable per-run log path (recorded only; reattach ticket writes it)
   runToken: string;    // value of env VIBEOPS_RUN_TOKEN handed to every stage child
   procStartedAt?: string; // child OS start time at spawn; boot compares to prove same process
+  accounts?: { plan?: string; work?: string; review?: string }; // subscription account id per stage
   output: string; startedAt: string; finishedAt?: string;
   child?: ChildProcess; // the in-flight agent CLI for the current stage, if any
   checksChild?: ChildProcess; // the concurrently-running checks command, if any
@@ -239,6 +240,12 @@ async function track(
     promptChars, outputChars: res.output.length, durationMs: Date.now() - startedAt, ok: res.ok,
     tokens: res.usage?.tokens, cost: res.usage?.cost,
   });
+  return res;
+}
+
+// Records which subscription account a stage ran on (lanes with relay.json accounts only).
+function noteAccount(run: Run, role: "plan" | "work" | "review", res: AgentResult): AgentResult {
+  if (res.account) run.accounts = { ...run.accounts, [role]: res.account };
   return res;
 }
 
@@ -697,7 +704,7 @@ async function pipeline(
         { ...agents.plan, projectId: ticket.projectId, ...evidenceDirs }, planPrompt, view, onData,
         (child) => recordSpawn(run, child),
         undefined, modelOf(run.agents.plan), run.logPath,
-      ));
+      ).then((r) => noteAccount(run, "plan", r)));
     });
     if (planStray.length) append(run, `\n[forge: planner changed files in its read-only copy; discarded: ${planStray.join(", ")}]\n`);
     run.child = undefined;
@@ -762,7 +769,7 @@ async function pipeline(
   const workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
     runAgent({ ...agents.work, write: true, projectId: ticket.projectId, ...evidenceDirs }, workPrompt, sandbox, onData,
       (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
-      modelOf(run.agents.work), run.logPath));
+      modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r)));
   run.child = undefined;
   run.abort = undefined;
   const tampered = detectAndRestore(sentinelSnaps);
@@ -993,7 +1000,7 @@ async function reviewStage(
         view, onData,
         (child) => recordSpawn(run, child),
         undefined, modelOf(run.agents.review), run.logPath,
-      )));
+      ).then((r) => noteAccount(run, "review", r))));
     }
     return results;
   })
@@ -1081,11 +1088,12 @@ async function persistRun(run: Run): Promise<void> {
       logPath: run.logPath,
       runToken: run.runToken,
       procStartedAt: run.procStartedAt ?? null,
+      accounts: run.accounts ?? null,
       startedAt: new Date(run.startedAt),
       finishedAt,
     }).onConflictDoUpdate({
       target: forgeRuns.id,
-      set: { status: run.status, stage: run.stage, finishedAt, protectedViolations: run.protectedViolations ?? null, checksDurationMs: run.checksDurationMs ?? null, pid: run.pid ?? null, procStartedAt: run.procStartedAt ?? null }
+      set: { status: run.status, stage: run.stage, finishedAt, protectedViolations: run.protectedViolations ?? null, checksDurationMs: run.checksDurationMs ?? null, pid: run.pid ?? null, procStartedAt: run.procStartedAt ?? null, accounts: run.accounts ?? null }
     });
   } catch (e) {
     console.warn(`forge: failed to persist run ${run.id}:`, (e as Error).message);
@@ -1459,6 +1467,7 @@ function reattach(row: ForgeRun): void {
     pid: row.pid ?? undefined,
     logPath: row.logPath!, runToken: row.runToken!,
     procStartedAt: row.procStartedAt ?? undefined,
+    accounts: row.accounts ?? undefined,
     output: "", startedAt: row.startedAt.toISOString(), stopped: false,
     done: Promise.resolve(),
   };

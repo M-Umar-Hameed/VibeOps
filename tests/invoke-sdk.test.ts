@@ -1,8 +1,8 @@
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect } from "vitest";
-import { checkToolPermission, runAgentSdk } from "../src/relay/invoke-sdk.js";
+import { checkToolPermission, runAgentSdk, hasCredentials } from "../src/relay/invoke-sdk.js";
 
 describe("checkToolPermission", () => {
   const sandbox = mkdtempSync(join(tmpdir(), "sdk-sbx-"));
@@ -45,6 +45,33 @@ describe("checkToolPermission", () => {
     expect(checkToolPermission("Bash", { command: "node -e 1" }, sandbox, (c) => marks.push(c), true).behavior).toBe("deny");
     expect(marks.join("")).toContain("permission-denied Bash");
     expect(checkToolPermission("Bash", { command: "node -e 1" }, sandbox).behavior).toBe("allow");
+  });
+});
+
+describe("hasCredentials", () => {
+  it("returns false when no env token and no .credentials.json", () => {
+    const prevTok = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    try {
+      const dir = mkdtempSync(join(tmpdir(), "cred-"));
+      expect(hasCredentials(dir)).toBe(false);
+      rmSync(dir, { recursive: true, force: true });
+    } finally {
+      if (prevTok !== undefined) process.env.CLAUDE_CODE_OAUTH_TOKEN = prevTok;
+    }
+  });
+
+  it("returns true when .credentials.json exists", () => {
+    const prevTok = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    try {
+      const dir = mkdtempSync(join(tmpdir(), "cred-"));
+      writeFileSync(join(dir, ".credentials.json"), "{}");
+      expect(hasCredentials(dir)).toBe(true);
+      rmSync(dir, { recursive: true, force: true });
+    } finally {
+      if (prevTok !== undefined) process.env.CLAUDE_CODE_OAUTH_TOKEN = prevTok;
+    }
   });
 });
 

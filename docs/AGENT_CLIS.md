@@ -12,12 +12,21 @@ type RelayAgent = {
   env?: Record<string, string>;
   type?: "cli" | "sdk";
   mcp?: boolean; // written by auto-wiring as a record that the lane is registered; set false to opt out
+  accounts?: RelayAccount[];
 };
 
 type RelayModel = {
   name: string;
   tier: "free" | "cheap" | "expensive";
   quality: number; // 1-5
+};
+
+type RelayAccount = {
+  id: string;
+  label: string;
+  configDir: string;
+  priority: number;
+  disabled?: boolean;
 };
 ```
 
@@ -54,6 +63,48 @@ Add credentials to `relay.json` under `agents.<name>.env`, using names ending wi
 - **Agent types:** `type: "sdk"` and `type: "http"` agents ignore `env`.
 
 For routing details on how roles are assigned and executed, see [docs/ROUTING.md](ROUTING.md) and [README.md#cross-model-pipeline-relay](../README.md#cross-model-pipeline-relay).
+
+### Accounts
+
+Multi-account subscription support lets a single relay lane use several logged-in accounts of the same provider. Each run uses the highest-priority enabled account; automatic failover to a backup account is not implemented yet.
+
+**Lane Kind Derivation:**
+- `type: "sdk"` → `claude-sdk`
+- `type: "http"` → not supported
+- Otherwise: the lowercase base name of `cmd[0]` (e.g., `C:\x\Codex.exe` → `codex`)
+
+**Provider Config Directory:**
+| Lane Kind    | Environment Override                                        |
+|--------------|-------------------------------------------------------------|
+| `claude`     | `CLAUDE_CONFIG_DIR`                                         |
+| `claude-sdk` | `CLAUDE_CONFIG_DIR`                                         |
+| `codex`      | `CODEX_HOME`                                                |
+| `agy`        | `USERPROFILE`, `HOME`, `APPDATA`, `LOCALAPPDATA` (profile override) |
+
+**Selection:** VibeOps picks the account with the lowest `priority` number that is not `disabled`. Ties use file order (stable sort). When all accounts are disabled or the lane has no `accounts`, the lane runs as before (default login, no account env, no account ID in `forge_runs.accounts`).
+
+**Environment Merge:** Account env overrides `agent.env`. Merge order: `process.env` → `agent.env` → account env.
+
+**Database:** The `forge_runs.accounts` JSONB column holds `{plan?, work?, review?}` account IDs. Nullable for lanes without accounts and legacy rows.
+
+**Placement Rule:** A `configDir` must be outside the workdir and the forge sandbox folder. This is validated at config load. Account folders are **not** snapshotted by the sentinel: the CLI rewrites its login file mid-run when refreshing a token, and restoring old bytes would log the account out, causing a clean run to fail as SANDBOX-ESCAPE.
+
+**Antigravity Note:** No `agy` config-dir switch was verified, so the account folder stands in for the entire user profile (home + roaming/local app data). See the provider table above. Agy is not OS-jailed by VibeOps (see Sandbox containment).
+
+**Hand-Made Lanes:** A copied lane like `"claude-b"` with `env: { CLAUDE_CONFIG_DIR: "C:\\Users\\Admin\\.claude-b" }` and no `accounts` field keeps working unchanged. VibeOps never rewrites `relay.json`.
+
+**Example:**
+```json
+"claude": {
+  "cmd": ["claude", "-p", "{promptFile}"],
+  "roles": ["plan", "review"],
+  "mcp": true,
+  "accounts": [
+    { "id": "primary", "label": "Account 1 (85% usage)", "configDir": "C:\\Users\\Admin\\.claude", "priority": 1 },
+    { "id": "backup", "label": "Account 2 (40% usage)", "configDir": "C:\\Users\\Admin\\.claude-b", "priority": 2 }
+  ]
+}
+```
 
 ---
 

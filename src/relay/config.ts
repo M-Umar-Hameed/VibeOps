@@ -1,8 +1,10 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { substituteCmd } from "./invoke.js";
 import { registerEnvSecrets } from "../forge/redact.js";
+import { ACCOUNT_ENV, laneKind } from "./accounts.js";
+import { vibeopsHome } from "../runtime/home.js";
 
 export type ModelTier = "free" | "cheap" | "expensive";
 export type RelayModel = { name: string; tier: ModelTier; quality: number };
@@ -19,7 +21,8 @@ export type RelayModel = { name: string; tier: ModelTier; quality: number };
 //   stdin - written to the child's stdin after it starts (no placeholder)
 export type PromptDelivery = "argv" | "file" | "stdin";
 export const PROMPT_DELIVERIES: PromptDelivery[] = ["argv", "file", "stdin"];
-export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string; write?: boolean; promptDelivery?: PromptDelivery; projectId?: string; addDirs?: string[]; skillAllowlist?: string[] };
+export type RelayAccount = { id: string; label: string; configDir: string; priority: number; disabled?: boolean };
+export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string; write?: boolean; promptDelivery?: PromptDelivery; projectId?: string; addDirs?: string[]; skillAllowlist?: string[]; accounts?: RelayAccount[] };
 export type RelayConfig = {
   workdir: string; apiKey?: string; baseUrl?: string; pollMs?: number;
   agents: Record<string, RelayAgent>;
@@ -62,6 +65,13 @@ export function loadRelayConfig(path?: string): RelayConfig {
     throw new Error(`relay config at ${configPath} is not valid JSON: ${(e as Error).message}`);
   }
   return validateRelayConfig(parsed, configPath);
+}
+
+// child is parent or inside it; case-insensitive on win32 like forge/sandbox.ts inside().
+function under(child: string, parent: string): boolean {
+  const norm = (p: string) => (process.platform === "win32" ? resolve(p).toLowerCase() : resolve(p));
+  const rel = relative(norm(parent), norm(child));
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 // Split out of loadRelayConfig so the writers can check a config against the
@@ -155,6 +165,32 @@ export function validateRelayConfig(parsed: unknown, configPath: string): RelayC
         if (!Number.isInteger(model.quality) || (model.quality as number) < 1 || (model.quality as number) > 5) {
           throw new Error(`relay config agent "${name}" model "${model.name}" quality must be an integer 1-5`);
         }
+      }
+    }
+    if (a.accounts !== undefined) {
+      const kind = laneKind(a as RelayAgent);
+      if (!kind || !ACCOUNT_ENV[kind]) {
+        throw new Error(`relay config agent "${name}" accounts are not supported for this lane kind (supported: ${Object.keys(ACCOUNT_ENV).join(", ")})`);
+      }
+      if (!Array.isArray(a.accounts) || a.accounts.length === 0) {
+        throw new Error(`relay config agent "${name}" accounts must be a non-empty array if present`);
+      }
+      // Account folders hold login credentials: a work agent may write anywhere in
+      // its sandbox, and sandboxes are copies of the workdir.
+      const sandboxRoot = process.env.VIBEOPS_SANDBOX_ROOT ?? join(vibeopsHome(), ".vibeops", "sandbox");
+      const ids = new Set<string>();
+      for (const x of a.accounts as unknown[]) {
+        const acc = x as Record<string, unknown>;
+        if (typeof acc.id !== "string" || !acc.id) throw new Error(`relay config agent "${name}" has an account with an invalid id`);
+        if (ids.has(acc.id)) throw new Error(`relay config agent "${name}" account id "${acc.id}" is used twice`);
+        ids.add(acc.id);
+        if (typeof acc.label !== "string") throw new Error(`relay config agent "${name}" account "${acc.id}" label must be a string`);
+        if (typeof acc.configDir !== "string" || !acc.configDir.trim()) throw new Error(`relay config agent "${name}" account "${acc.id}" needs a non-empty configDir`);
+        if (under(acc.configDir, cfg.workdir as string) || under(cfg.workdir as string, acc.configDir) || under(acc.configDir, sandboxRoot)) {
+          throw new Error(`relay config agent "${name}" account "${acc.id}" configDir must be outside the workdir and the forge sandbox folder`);
+        }
+        if (!Number.isInteger(acc.priority)) throw new Error(`relay config agent "${name}" account "${acc.id}" priority must be an integer`);
+        if (acc.disabled !== undefined && typeof acc.disabled !== "boolean") throw new Error(`relay config agent "${name}" account "${acc.id}" disabled must be a boolean`);
       }
     }
   }

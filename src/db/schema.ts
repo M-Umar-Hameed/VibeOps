@@ -209,6 +209,9 @@ export const forgeRuns = pgTable('forge_runs', {
   // start time, so pid+startTime together prove "still our child" where the
   // Linux-only env-token read could not (win32/darwin). Nullable: legacy/sdk rows.
   procStartedAt: text('proc_started_at'),
+  // Subscription account id each stage ran on (relay.json accounts). Nullable:
+  // lanes without accounts and legacy rows.
+  accounts: jsonb('accounts').$type<{ plan?: string; work?: string; review?: string }>(),
   startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
 });

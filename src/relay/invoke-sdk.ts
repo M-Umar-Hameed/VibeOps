@@ -5,6 +5,7 @@ import type { RelayAgent } from "./config.js";
 import type { AgentResult } from "./invoke.js";
 import { query, type PermissionResult } from "@anthropic-ai/claude-agent-sdk";
 import { loadWall, allowRules, DENY_RULES } from "./wall.js";
+import { accountEnv } from "./accounts.js";
 
 const OUTPUT_CAP = 100_000;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
@@ -57,9 +58,9 @@ export function checkToolPermission(
 
 // ponytail: env token OR the CLI login file. macOS Keychain-only logins aren't
 // file-checkable here and fall through to the SDK auth error at run time.
-export function hasCredentials(): boolean {
+export function hasCredentials(configDir = path.join(homedir(), ".claude")): boolean {
   if (process.env.CLAUDE_CODE_OAUTH_TOKEN) return true;
-  return existsSync(path.join(homedir(), ".claude", ".credentials.json"));
+  return existsSync(path.join(configDir, ".credentials.json"));
 }
 
 export async function runAgentSdk(
@@ -68,7 +69,8 @@ export async function runAgentSdk(
   onAbort?: (abort: () => void) => void,
   model?: string,
 ): Promise<AgentResult> {
-  if (!hasCredentials()) {
+  const acct = accountEnv(agent);
+  if (!hasCredentials(acct.env.CLAUDE_CONFIG_DIR)) {
     const msg = "\n[forge: SDK lane has no Claude credentials on this machine. Run `claude setup-token` (or `claude login`) and retry.]\n";
     onData?.(msg);
     return { ok: false, output: msg };
@@ -91,6 +93,7 @@ export async function runAgentSdk(
         cwd: workdir,
         ...(model ? { model } : {}),
         abortController: controller,
+        ...(acct.account ? { env: Object.fromEntries(Object.entries({ ...process.env, ...acct.env }).filter((e): e is [string, string] => e[1] !== undefined)) } : {}),
         ...(wall.on ? { settingSources: [], allowedTools: allowRules(wall.allowed), disallowedTools: DENY_RULES } : {}),
         canUseTool: async (toolName, toolInput) =>
           checkToolPermission(toolName, toolInput as Record<string, unknown>, workdir, onData, wall.on),
@@ -125,5 +128,5 @@ export async function runAgentSdk(
   } finally {
     clearTimeout(timer);
   }
-  return { ok, output: output.slice(0, OUTPUT_CAP), usage };
+  return { ok, output: output.slice(0, OUTPUT_CAP), usage, ...(acct.account ? { account: acct.account } : {}) };
 }

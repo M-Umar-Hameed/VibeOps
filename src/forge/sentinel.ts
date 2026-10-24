@@ -6,6 +6,11 @@ import { vibeopsHome } from "../runtime/home.js";
 
 export type Snapshot = { path: string; hash: string; bytes: Buffer };
 
+// Subscription account folders (~/.claude, relay.json accounts[].configDir) are
+// deliberately not listed: the CLI rewrites its login file there when it refreshes
+// a token mid-run, and restoring the old bytes would log the account out and fail
+// a clean run as SANDBOX-ESCAPE. config.ts keeps them out of reach instead (a
+// configDir inside the workdir or the sandbox folder is refused).
 // Command-execution config that a later run's argv is read from. Cross-platform,
 // under ~/.vibeops (VIBEOPS_HOME-overridable for tests). snapshotSensitive()
 // skips any that don't exist, so always-including is harmless on dev/CI.

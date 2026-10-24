@@ -152,11 +152,13 @@ describe("forge usage-limit failover", () => {
 
   it("lane without accounts not retried", async () => {
     const { actorId, ticket } = await seedTicket("no accounts");
-    const { runId } = await startPipeline(actorId, config(undefined, { FAKE_SCRIPT: "plan,work", FAKE_LIMIT_HOME: "", FAKE_LIMIT_MODE: "work" }), {
+    const { runId } = await startPipeline(actorId, config(undefined, { FAKE_SCRIPT: "plan,work", FAKE_LIMIT_HOME: "|", FAKE_LIMIT_MODE: "work" }), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
     });
     await awaitRun(runId);
     const rows = await runsFor(ticket.id);
     expect(rows.length).toBe(1);
+    expect(getRunOutput(runId, 0)?.chunk).toContain("usage limit");
+    expect(getRunOutput(runId, 0)?.chunk).not.toContain("continuing on");
   }, 30_000);
 });

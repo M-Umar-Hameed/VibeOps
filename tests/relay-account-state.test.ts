@@ -163,9 +163,10 @@ describe("relay-account-state", () => {
     const acctA = { id: "a", label: "A", configDir: dirA, priority: 1 };
     const acctB = { id: "b", label: "B", configDir: dirB, priority: 2 };
 
-    const bReset = new Date(now.getTime() + 3600_000);
-    await markExhausted(acctA, new Date(now.getTime() + 7200_000), "e", now);
-    await markExhausted(acctB, bReset, "e", now);
+    const t = new Date();
+    const bReset = new Date(t.getTime() + 3600_000);
+    await markExhausted(acctA, new Date(t.getTime() + 7200_000), "e", t);
+    await markExhausted(acctB, bReset, "e", t);
 
     const agent: RelayAgent = {
       cmd: [bin, FAKE_AGENT, "{prompt}"],

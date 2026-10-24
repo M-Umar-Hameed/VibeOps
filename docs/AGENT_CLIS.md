@@ -66,7 +66,7 @@ For routing details on how roles are assigned and executed, see [docs/ROUTING.md
 
 ### Accounts
 
-Multi-account subscription support lets a single relay lane use multiple logged-in accounts of the same provider with primary/backup failover.
+Multi-account subscription support lets a single relay lane use several logged-in accounts of the same provider. Each run uses the highest-priority enabled account; automatic failover to a backup account is not implemented yet.
 
 **Lane Kind Derivation:**
 - `type: "sdk"` → `claude-sdk`

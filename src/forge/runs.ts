@@ -15,6 +15,7 @@ import { recallBlock } from "../services/recall.js";
 import { chunkReviewDiff, mergeReviewVerdicts } from "./review-chunks.js";
 import { killTree, killPidTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
+import { availableAccount } from "../relay/accounts.js";
 import { redactSecrets } from "./redact.js";
 import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES, stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
@@ -128,6 +129,7 @@ type Run = {
   runToken: string;    // value of env VIBEOPS_RUN_TOKEN handed to every stage child
   procStartedAt?: string; // child OS start time at spawn; boot compares to prove same process
   accounts?: { plan?: string; work?: string; review?: string }; // subscription account id per stage
+  limit?: { role: "plan" | "work" | "review"; account: string }; // usage limit hit this run (memory only)
   output: string; startedAt: string; finishedAt?: string;
   child?: ChildProcess; // the in-flight agent CLI for the current stage, if any
   checksChild?: ChildProcess; // the concurrently-running checks command, if any
@@ -246,6 +248,7 @@ async function track(
 // Records which subscription account a stage ran on (lanes with relay.json accounts only).
 function noteAccount(run: Run, role: "plan" | "work" | "review", res: AgentResult): AgentResult {
   if (res.account) run.accounts = { ...run.accounts, [role]: res.account };
+  if (res.account && res.limit) run.limit = { role, account: res.account };
   return res;
 }
 
@@ -410,7 +413,7 @@ export async function startPipeline(
   opts: {
     ticketId: string; planAgent: string; workAgent: string; reviewAgent: string; extraPrompt?: string; operatorNotes?: string;
     planModel?: string; workModel?: string; reviewModel?: string; force?: boolean; effort?: Effort;
-    resumeStage?: Stage;
+    resumeStage?: Stage; limitRetry?: boolean;
   },
 ): Promise<{ runId: string; doctorWarnings: string[] }> {
   if ((opts.extraPrompt ?? "").length > MAX_EXTRA_PROMPT) throw new Error("extraPrompt too long");
@@ -569,8 +572,39 @@ export async function startPipeline(
     // (forgeCommit/addComment failures land here, after the claim).
     await bounce(run, actorId, `pipeline error: ${(e as Error).message}`, "");
     settle(run, "failed");
-  }).then(() => run.persisted).catch(() => {});
+  }).then(() => run.persisted).catch(() => {})
+    .then(() => opts.limitRetry ? undefined : retryOnNextAccount(run, actorId, config, agents, {
+      ...opts, planAgent: planPick.agent, planModel: planPick.model, workAgent: workPick.agent, workModel: workPick.model,
+      reviewAgent: reviewPick.agent, reviewModel: reviewPick.model,
+    }))
+    .catch((e) => append(run, `\nforge: usage-limit retry not started: ${(e as Error).message}\n`));
   return { runId: run.id, doctorWarnings };
+}
+
+// A run that failed because its account hit a usage limit is resumed once on the
+// next account of the SAME lane and model (accounts.ts skips the exhausted login).
+// Resume mode comes from listInterruptedRuns: a work commit goes straight to review.
+// Every account exhausted: the failure stands. Never switches provider or model.
+async function retryOnNextAccount(
+  run: Run, actorId: string, config: RelayConfig,
+  agents: { plan: RelayAgent; work: RelayAgent; review: RelayAgent },
+  opts: Parameters<typeof startPipeline>[2],
+): Promise<void> {
+  if (run.status !== "failed" || run.stopped || !run.limit) return;
+  const { role, account } = run.limit;
+  const agent = agents[role];
+  const next = (await availableAccount(agent)).account;
+  if (!next) return;
+  const item = (await listInterruptedRuns(config, run.ticketId))[0];
+  if (!item || item.runId !== run.id || !item.resumable || !item.resumeMode) return;
+  const from = agent.accounts?.find((a) => a.id === account)?.label ?? account;
+  const line = `\nforge: usage limit on account ${from}, continuing on ${next.label}\n`;
+  append(run, line);
+  const { runId } = await startPipeline(actorId, config, {
+    ...opts, resumeStage: item.resumeMode === "plan" ? undefined : item.resumeMode, limitRetry: true,
+  });
+  const retry = runs.get(runId);
+  if (retry) append(retry, line);
 }
 
 async function depsConfig(projectId: string): Promise<{ frontendDeps: string[]; depsDirs: string[] }> {

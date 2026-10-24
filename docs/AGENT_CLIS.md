@@ -66,7 +66,9 @@ For routing details on how roles are assigned and executed, see [docs/ROUTING.md
 
 ### Accounts
 
-Multi-account subscription support lets a single relay lane use several logged-in accounts of the same provider. Each run uses the highest-priority enabled account; automatic failover to a backup account is not implemented yet.
+Multi-account subscription support lets a single relay lane use several logged-in accounts of the same provider. Each run uses the highest-priority enabled account that is not at its usage limit.
+
+**Failover:** When a run on an account fails with usage-limit or rate-limit text (claude/claude-sdk: "usage limit", "limit reached", "resets <time>", 429, overloaded; codex: "usage limit", "rate limit", 429/Too Many Requests; agy: RESOURCE_EXHAUSTED, quota, 429), VibeOps marks that account exhausted until the reset time in the text, or for `forge.accountCooldownMs` (default 3600000, 1 hour) when the text has none. The state is kept in the settings row `relay.accountState.<configDir>` (`exhaustedUntil`, `lastError`, `lastUsed`) and survives a restart. Later runs, resumes and reworks skip exhausted accounts and go back to the primary after its reset. A forge run that fails this way is retried once on the next account of the same lane and model, with resume semantics: a work commit goes to review. The run log shows `usage limit on account <label>, continuing on <label>`. If every account of the lane is exhausted, the run fails with the earliest reset time. VibeOps never switches provider or model automatically.
 
 **Lane Kind Derivation:**
 - `type: "sdk"` → `claude-sdk`

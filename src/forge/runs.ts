@@ -17,7 +17,7 @@ import { killTree, killPidTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { availableAccount } from "../relay/accounts.js";
 import { redactSecrets } from "./redact.js";
-import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES, stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL } from "./sandbox.js";
+import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES, stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL, syncSandboxWithBase, type BaseSync } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
 import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, stripGateDirectives, parseExportTo, parseEvidence } from "./policy.js";
 import { pickAgents, escalate, pairsForRole, resolveStrategy, type Pick, type RoutingStrategy } from "./router.js";
@@ -317,9 +317,15 @@ function applyVerification(res: { ok: boolean; output: string }, compositeName: 
   }
 }
 
+const BASE_CONFLICT = "[forge: base conflict]";
+
+function baseSyncLine(s: BaseSync): string {
+  return `\n=== FORGE base sync: ${s.state}${s.files?.length ? ` (${s.files.join(", ")})` : ""} ===\n`;
+}
+
 async function countFailedReviews(ticketId: string): Promise<number> {
   const comments = await listComments(ticketId);
-  return comments.filter((c) => c.kind === "review" && !parseVerdict(c.body).pass).length;
+  return comments.filter((c) => c.kind === "review" && !c.body.startsWith(BASE_CONFLICT) && !parseVerdict(c.body).pass).length;
 }
 
 // Ticket's project repo if set and still on disk, else config.workdir (Inbox and
@@ -781,14 +787,18 @@ async function pipeline(
   append(run, `\n=== FORGE work (${run.agents.work}) ===\n`);
   ticket = await setStatus(actorId, ticket.id, "in_progress");
   const { frontendDeps, depsDirs } = await depsConfig(ticket.projectId);
+  const existed = sandboxExists(ticket.id);
   const sandbox = await ensureSandbox(workdir, ticket.id, frontendDeps, depsDirs);
+  const sync = existed ? await syncSandboxWithBase(workdir, ticket.id, true) : undefined;
+  if (sync) append(run, baseSyncLine(sync));
   const workEv = operatorEvidence ? mirrorOperatorEvidence(operatorEvidence.dir, sandbox, operatorEvidence.files) : [];
   const knowledge = await getKnowledgeSafe(knowledgeQuery(ticket), ticket.projectId);
   const memory = await getMemorySafe(ticket.title, ticket.projectId);
   // Rework passes must see why the last review failed, or the worker repeats
   // the same mistakes (live-hit on the first dogfood ticket).
   const lastReview = [...(await listComments(ticket.id))].reverse().find((c) => c.kind === "review");
-  const findings = lastReview ? `\n\nPrevious review findings (address ALL of these):\n${fenceUntrusted("prior-review-findings", lastReview.body)}` : "";
+  const conflictNote = sync?.state === "conflict" ? `\n\nResolve the merge conflicts in ${(sync.files ?? []).join(", ")}; keep both sides' intent.` : "";
+  const findings = conflictNote + (lastReview ? `\n\nPrevious review findings (address ALL of these):\n${fenceUntrusted("prior-review-findings", lastReview.body)}` : "");
   const workPrompt = composeWorkPrompt({
     ticket, plan, knowledge, workdir: sandbox, memory,
     skills: selectedSkills.bodies,
@@ -951,6 +961,19 @@ async function reviewStage(
   const onData = (c: string) => append(run, c);
 
   if (run.stopped) return settle(run, "stopped");
+
+  const sync = await syncSandboxWithBase(workdir, ticket.id);
+  append(run, baseSyncLine(sync));
+  if (sync.state === "conflict") {
+    const files = sync.files ?? [];
+    await addComment(actorId, ticket.id,
+      `${BASE_CONFLICT} ${branchName(ticket.id)} conflicts with the base ${sync.base.slice(0, 12)} in ${files.length} file(s):\n` +
+      `${files.map((f) => `  - ${f}`).join("\n")}\n` +
+      `Resolve the merge conflicts in ${files.join(", ")}; keep both sides' intent.\nVERDICT: FAIL`, "review");
+    await setStatus(actorId, ticket.id, "planned");
+    run.cause = "base_conflict";
+    return settle(run, "rejected");
+  }
 
   // Checks: project static gates run in the SANDBOX (T17 shipped a tsc break —
   // reviewer reads diffs, vitest transpiles without typechecking). Resolved

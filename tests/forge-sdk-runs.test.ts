@@ -17,9 +17,14 @@ process.env.EMBED_PROVIDER = "fake";
 
 // Controllable stub of the SDK. Hoisted so the vi.mock factory can close over it.
 const sdkState = vi.hoisted(() => ({
-  mode: "success" as "success" | "hang",
+  mode: "success" as "success" | "hang" | "crash",
   aborted: false,
   started: false,
+  writeFile: false,
+  workerText: "REPORT: did the work",
+  sdkErrors: ["only prompt commands are supported in streaming mode"] as string[],
+  limit: false,
+  reviewReports: [] as string[],
 }));
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
@@ -29,6 +34,9 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
     signal?.addEventListener("abort", () => { sdkState.aborted = true; });
     return {
       async *[Symbol.asyncIterator]() {
+        if (sdkState.writeFile) {
+          writeFileSync(join(args.options.cwd, "forge-made.txt"), "sdk wrote\n");
+        }
         if (sdkState.mode === "hang") {
           await new Promise<void>((resolve) => {
             if (signal?.aborted) return resolve();
@@ -36,7 +44,16 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
           });
           return;
         }
-        yield { type: "assistant", message: { content: [{ type: "text", text: "REPORT: did the work" }] } };
+        if (sdkState.mode === "crash") {
+          yield { type: "assistant", message: { content: [{ type: "text", text: sdkState.workerText }] } };
+          yield {
+            type: "result", subtype: "error_during_execution", is_error: true,
+            errors: sdkState.sdkErrors, permission_denials: [],
+            usage: { input_tokens: 10, output_tokens: 1 }, total_cost_usd: 0,
+          };
+          return;
+        }
+        yield { type: "assistant", message: { content: [{ type: "text", text: sdkState.workerText }] } };
         yield {
           type: "result", subtype: "success", is_error: false,
           usage: { input_tokens: 900, output_tokens: 100 }, total_cost_usd: 0.0123,
@@ -45,6 +62,19 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
     };
   },
 }));
+
+vi.mock("../src/relay/prompts.js", async (orig) => {
+  const m = await orig<typeof import("../src/relay/prompts.js")>();
+  return { ...m, composeReviewPrompt: (a: Parameters<typeof m.composeReviewPrompt>[0]) => { sdkState.reviewReports.push(a.report); return m.composeReviewPrompt(a); } };
+});
+
+vi.mock("../src/relay/accounts.js", async (orig) => {
+  const m = await orig<typeof import("../src/relay/accounts.js")>();
+  return { ...m, settleAccountResult: async (...a: Parameters<typeof m.settleAccountResult>) => {
+    const r = await m.settleAccountResult(...a);
+    return sdkState.limit ? { ...r, limit: { until: "2099-01-01T00:00:00.000Z" } } : r;
+  } };
+});
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FAKE_AGENT = join(__dirname, "fixtures", "fake-agent.mjs");
@@ -92,6 +122,11 @@ beforeEach(() => {
   sdkState.mode = "success";
   sdkState.aborted = false;
   sdkState.started = false;
+  sdkState.writeFile = false;
+  sdkState.workerText = "REPORT: did the work";
+  sdkState.sdkErrors = ["only prompt commands are supported in streaming mode"];
+  sdkState.limit = false;
+  sdkState.reviewReports.length = 0;
 });
 
 afterEach(() => {
@@ -167,5 +202,64 @@ describe("forge SDK lane (integration through runs.ts)", () => {
 
     expect(sdkState.aborted).toBe(true);           // abort path fired (not killTree; sdk has no child)
     expect(getRunOutput(runId, 0)?.status).toBe("stopped");
+  }, 15_000);
+
+  it("benign sdk error with saved diff continues to review with crash notice", async () => {
+    const { actorId, ticket } = await seedTicket("SDK benign crash recovery");
+    sdkState.mode = "crash";
+    sdkState.writeFile = true;
+
+    const { runId } = await startPipeline(actorId, relayConfig("plan,review-pass"), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "sdkw", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    expect(getRunOutput(runId, 0)?.status).toBe("passed");
+    expect(sdkState.reviewReports.some(r => r.startsWith("WORKER CRASHED before finishing (only prompt commands are supported in streaming mode)"))).toBe(true);
+  }, 15_000);
+
+  it("benign sdk error with limit set fails without review", async () => {
+    const { actorId, ticket } = await seedTicket("SDK crash with limit");
+    sdkState.mode = "crash";
+    sdkState.writeFile = true;
+    sdkState.limit = true;
+
+    const { runId } = await startPipeline(actorId, relayConfig("plan,review-pass"), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "sdkw", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    expect(getRunOutput(runId, 0)?.status).toBe("failed");
+    expect(sdkState.reviewReports.length).toBe(0);
+  }, 15_000);
+
+  it("benign sdk error without saved diff fails without review", async () => {
+    const { actorId, ticket } = await seedTicket("SDK crash no diff");
+    sdkState.mode = "crash";
+    sdkState.writeFile = false;
+
+    const { runId } = await startPipeline(actorId, relayConfig("plan,review-pass"), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "sdkw", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    expect(getRunOutput(runId, 0)?.status).toBe("failed");
+    expect(sdkState.reviewReports.length).toBe(0);
+  }, 15_000);
+
+  it("phrase in worker text without marker line fails without review", async () => {
+    const { actorId, ticket } = await seedTicket("SDK crash marker required");
+    sdkState.mode = "crash";
+    sdkState.writeFile = true;
+    sdkState.workerText = "only prompt commands are supported in streaming mode";
+    sdkState.sdkErrors = ["something else"];
+
+    const { runId } = await startPipeline(actorId, relayConfig("plan,review-pass"), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "sdkw", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    expect(getRunOutput(runId, 0)?.status).toBe("failed");
+    expect(sdkState.reviewReports.length).toBe(0);
   }, 15_000);
 });

@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { startPipeline, awaitRun, getRunOutput, listRunsWithHistory, hasActiveRun } from "../src/forge/runs.js";
+import { startPipeline, awaitRun, getRunOutput, listRunsWithHistory, hasActiveRun, listRuns } from "../src/forge/runs.js";
 import { ensureSandbox, forgeCommit } from "../src/forge/sandbox.js";
-import { addComment } from "../src/services/comments.js";
+import { addComment, listComments } from "../src/services/comments.js";
 import { clearSetting, withSetting } from "./helpers/settings.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
@@ -16,6 +16,7 @@ import { getTicket } from "../src/services/history.js";
 import { app } from "../src/api/app.js";
 import { db } from "../src/db/client.js";
 import { forgeRuns } from "../src/db/schema.js";
+import { loadRelayConfig } from "../src/relay/config.js";
 
 process.env.EMBED_PROVIDER = "fake";
 
@@ -109,6 +110,7 @@ afterEach(() => {
   delete process.env.VIBEOPS_RELAY_CONFIG;
   delete process.env.FAKE_SCRIPT;
   delete process.env.FAKE_COUNTER_FILE;
+  delete process.env.FAKE_WRITE_PATH;
   delete process.env.FAKE_WRITE;
   rmSync(workdir, { recursive: true, force: true });
   rmSync(sandboxRoot, { recursive: true, force: true });
@@ -315,5 +317,44 @@ describe("POST /forge/tickets/:id/rework", () => {
     await awaitRun(runId);
     const runs = await listRunsWithHistory(ticket.id);
     expect(runs.find((r) => r.id === runId)!.agents.plan).toBe("fake:smart");
+  });
+
+  it("base conflict rejects before the review agent runs; rework commits a merge and the next review passes", async () => {
+    enableSmartModel();
+    await withSetting("forge.defaultModel.work", "fake:fast", async () => {
+      const { actorId, apiKey, ticket } = await seedRejected("Rework base conflict");
+      writeFileSync(join(workdir, "result.txt"), "parallel ticket\n");
+      execFileSync("git", ["add", "result.txt"], { cwd: workdir });
+      execFileSync("git", ["commit", "-m", "parallel promote"], { cwd: workdir });
+      const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: workdir }).toString().trim();
+
+      setScript("review-pass");
+      const first = await startPipeline(actorId, loadRelayConfig(process.env.VIBEOPS_RELAY_CONFIG!), {
+        ticketId: ticket.id, planAgent: "auto", workAgent: "auto", reviewAgent: "auto", resumeStage: "review",
+      });
+      await awaitRun(first.runId);
+      expect(getRunOutput(first.runId, 0)?.status).toBe("rejected");
+      expect(existsSync(counterFile)).toBe(false);
+      const comments = await listComments(ticket.id);
+      const last = comments[comments.length - 1];
+      expect(last.kind).toBe("review");
+      expect(last.body).toContain("result.txt");
+      expect(last.body.trimEnd()).toMatch(/VERDICT: FAIL$/);
+      expect((await getTicket(ticket.id)).status).toBe("planned");
+      expect(listRuns().find((r) => r.id === first.runId)?.cause).toBe("base_conflict");
+
+      process.env.FAKE_WRITE_PATH = "result.txt";
+      setScript("work,review-pass");
+      const res = await app.request(`/forge/tickets/${ticket.id}/rework`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}` } });
+      expect(res.status).toBe(201);
+      const { runId } = await res.json();
+      await awaitRun(runId);
+      const out = getRunOutput(runId, 0);
+      expect(out?.chunk).toContain("=== FORGE base sync: conflict (result.txt) ===");
+      expect(out?.status).toBe("passed");
+      expect(execFileSync("git", ["merge-base", "HEAD", `forge/${ticket.id}`], { cwd: workdir }).toString().trim()).toBe(base);
+      expect(execFileSync("git", ["rev-list", "--parents", "-n", "1", "HEAD"], { cwd: join(sandboxRoot, ticket.id) }).toString().trim().split(" ")).toHaveLength(3);
+      expect(listRuns().find((r) => r.id === runId)!.agents.work).toBe("fake:fast");
+    });
   });
 });

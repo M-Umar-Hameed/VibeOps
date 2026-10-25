@@ -10,7 +10,8 @@ import {
   snapshotDeps, detectDepsLeak, listSandboxTicketIds, sandboxSizeBytes, withReadOnlyView,
   validateExportPath, exportOutputs, copyEvidence, EVIDENCE_MAX_BYTES,
   DEPS_DIRS, resolveDepsDirs, resolveFrontendDeps,
-  stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL, OPERATOR_EVIDENCE_DIR
+  stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL, OPERATOR_EVIDENCE_DIR,
+  syncSandboxWithBase
 } from "../src/forge/sandbox.js";
 import { vibeopsHome } from "../src/runtime/home.js";
 import { ConflictError } from "../src/services/errors.js";
@@ -750,6 +751,17 @@ describe("withReadOnlyView", () => {
     expect(await forgeCommit(TID, "should not commit .forge")).toBe(false);
   });
 
+  it("forgeCommit leaves files under .forge/tmp out of the commit tree", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    mkdirSync(join(sp, ".forge", "tmp"), { recursive: true });
+    writeFileSync(join(sp, ".forge", "tmp", "notes.md"), "scratch\n");
+    writeFileSync(join(sp, "real.txt"), "real\n");
+    expect(await forgeCommit(TID, "real")).toBe(true);
+    const tree = execFileSync("git", ["ls-tree", "-r", "--name-only", "HEAD"], { cwd: sp, encoding: "utf-8" });
+    expect(tree).toContain("real.txt");
+    expect(tree).not.toContain(".forge/tmp");
+  });
+
   it("copyEvidence: inside withReadOnlyView copies png, skips oversized and non-image, leaving strayPaths empty", async () => {
     const sp = await ensureSandbox(workdir, TID);
     const evDir = join(sp, ".forge", "evidence");
@@ -1009,5 +1021,54 @@ describe("operator evidence", () => {
       rmSync(srcDir, { recursive: true, force: true });
       rmSync(stagedDest, { recursive: true, force: true });
     }
+  });
+});
+
+describe("syncSandboxWithBase", () => {
+  it("reports a conflict with the file after a parallel ticket is promoted, touching nothing", async () => {
+    const spA = await ensureSandbox(workdir, TID);
+    const spB = await ensureSandbox(workdir, TID2);
+    writeFileSync(join(spA, "a.txt"), "ticket A\n");
+    await forgeCommit(TID, "A");
+    writeFileSync(join(spB, "a.txt"), "ticket B\n");
+    await forgeCommit(TID2, "B");
+    await promoteSandbox(workdir, TID, "A");
+    const headB = git(workdir, "rev-parse", branchName(TID2)).trim();
+    const res = await syncSandboxWithBase(workdir, TID2);
+    expect(res).toEqual({ state: "conflict", files: ["a.txt"], base: git(workdir, "rev-parse", "HEAD").trim() });
+    expect(git(workdir, "rev-parse", branchName(TID2)).trim()).toBe(headB);
+    expect(git(spB, "status", "--porcelain").trim()).toBe("");
+    expect(git(workdir, "status", "--porcelain").trim()).toBe("");
+  });
+
+  it("keepConflict leaves markers and MERGE_HEAD; committing concludes the merge", async () => {
+    const spA = await ensureSandbox(workdir, TID);
+    const spB = await ensureSandbox(workdir, TID2);
+    writeFileSync(join(spA, "a.txt"), "ticket A\n");
+    await forgeCommit(TID, "A");
+    writeFileSync(join(spB, "a.txt"), "ticket B\n");
+    await forgeCommit(TID2, "B");
+    await promoteSandbox(workdir, TID, "A");
+    expect((await syncSandboxWithBase(workdir, TID2, true)).state).toBe("conflict");
+    expect(readFileSync(join(spB, "a.txt"), "utf-8")).toContain("<<<<<<<");
+    expect(git(spB, "rev-parse", "-q", "--verify", "MERGE_HEAD").trim()).toBeTruthy();
+    writeFileSync(join(spB, "a.txt"), "ticket A and B\n");
+    expect(await forgeCommit(TID2, "resolve")).toBe(true);
+    expect(git(workdir, "merge-base", "HEAD", branchName(TID2)).trim()).toBe(git(workdir, "rev-parse", "HEAD").trim());
+  });
+
+  it("merges a non-conflicting base commit, moves the merge-base, then reports current", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    writeFileSync(join(sp, "b.txt"), "b\n");
+    await forgeCommit(TID, "b");
+    writeFileSync(join(workdir, "c.txt"), "c\n");
+    git(workdir, "add", "c.txt");
+    git(workdir, "commit", "-m", "base moves");
+    const base = git(workdir, "rev-parse", "HEAD").trim();
+    expect(await syncSandboxWithBase(workdir, TID)).toEqual({ state: "merged", base });
+    expect(git(workdir, "merge-base", "HEAD", branchName(TID)).trim()).toBe(base);
+    expect(existsSync(join(sp, "c.txt"))).toBe(true);
+    expect(git(workdir, "status", "--porcelain").trim()).toBe("");
+    expect((await syncSandboxWithBase(workdir, TID)).state).toBe("current");
   });
 });

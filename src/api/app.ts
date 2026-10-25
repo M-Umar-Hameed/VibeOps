@@ -20,13 +20,15 @@ import { syncProject } from "../sync/run.js";
 import { listActors, createActor, revokeActor } from "../services/actors.js";
 import { requireAdmin } from "./auth.js";
 import { bump, snapshot } from "../services/metrics.js";
-import { getSystemMetrics, getSystemLogs, getSystemTopology, getAiUsage, getSystemStatus, getKnowledgeUsage } from "../services/system.js";
+import { getSystemMetrics, getSystemLogs, getSystemTopology, getAiUsage, getSystemStatus, getKnowledgeUsage, recordError } from "../services/system.js";
 import { getSetting, setSetting } from "../services/settings.js";
 import { getCorsOrigins } from "../services/settings-cache.js";
 import { getVaultStatus, startWatcher, stopWatcher, rescanProjectVaults, getProjectVaultStatus } from "../ingest/watch.js";
 import { fetchDocs } from "../knowledge/docs.js";
 import { getEmbedder } from "../knowledge/embedder.js";
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { redactSecrets } from "../forge/redact.js";
 import { loadRelayConfig } from "../relay/config.js";
 import { db } from "../db/client.js";
 import { projects, type Actor } from "../db/schema.js";
@@ -49,7 +51,21 @@ app.onError((err, c) => {
   if (err instanceof ForbiddenError) return c.json({ error: err.message }, 403);
   if (err instanceof NotFoundError) return c.json({ error: err.message }, 404);
   if (err instanceof ConflictError) return c.json({ error: err.message }, 409);
-  return c.json({ error: "internal error" }, 500);
+  const errorId = randomUUID().slice(0, 8);
+  try {
+    const e = err as Error & { cause?: unknown };
+    let line = errorId + " " + c.req.method + " " + c.req.path + " " + redactSecrets(String(e?.stack ?? e));
+    if (e?.cause) {
+      const cause = e.cause as { stack?: unknown };
+      line += " cause: " + redactSecrets(String(cause?.stack ?? cause));
+    }
+    console.error(line);
+    bump("err.500");
+    recordError(line);
+  } catch {
+    // logging must never replace the 500
+  }
+  return c.json({ error: "internal error", errorId }, 500);
 });
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

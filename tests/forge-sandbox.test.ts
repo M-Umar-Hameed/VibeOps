@@ -726,6 +726,17 @@ describe("withReadOnlyView", () => {
     expect(await forgeCommit(TID, "should not commit .forge")).toBe(false);
   });
 
+  it("forgeCommit leaves files under .forge/tmp out of the commit tree", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    mkdirSync(join(sp, ".forge", "tmp"), { recursive: true });
+    writeFileSync(join(sp, ".forge", "tmp", "notes.md"), "scratch\n");
+    writeFileSync(join(sp, "real.txt"), "real\n");
+    expect(await forgeCommit(TID, "real")).toBe(true);
+    const tree = execFileSync("git", ["ls-tree", "-r", "--name-only", "HEAD"], { cwd: sp, encoding: "utf-8" });
+    expect(tree).toContain("real.txt");
+    expect(tree).not.toContain(".forge/tmp");
+  });
+
   it("copyEvidence: inside withReadOnlyView copies png, skips oversized and non-image, leaving strayPaths empty", async () => {
     const sp = await ensureSandbox(workdir, TID);
     const evDir = join(sp, ".forge", "evidence");

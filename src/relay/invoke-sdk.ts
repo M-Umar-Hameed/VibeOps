@@ -16,6 +16,7 @@ const WRITE_TOOLS = new Set(["Edit", "Write"]);
 const BASH_TIMEOUT_MS = "1200000";
 const NO_BACKGROUND_TOOLS = ["SlashCommand", "Skill", "Task", "Agent", "BashOutput", "TaskOutput", "KillShell"];
 const SDK_TRANSPORT_CODES = new Set(["EPIPE", "ECONNRESET", "ERR_STREAM_DESTROYED"]);
+const STDERR_CAP = 4000;
 
 // Realpath the nearest existing ancestor, then rejoin the missing tail, so a
 // not-yet-created Write target and any symlinked ancestor both resolve
@@ -95,15 +96,24 @@ const denyBackground: HookCallback = async (input) => {
 
 export function buildSdkOptions(
   env: Record<string, string>, workdir: string, wallOn: boolean, allowed: string[],
-  onData?: (chunk: string) => void, model?: string,
+  onData?: (chunk: string) => void, model?: string, agent?: Pick<RelayAgent, "executable">,
 ) {
+  const exe = agent?.executable;
+  let stderrLeft = STDERR_CAP;
   return {
     cwd: workdir,
     ...(model ? { model } : {}),
+    ...(exe && existsSync(exe) ? { pathToClaudeCodeExecutable: exe } : {}),
     env,
     ...(wallOn ? { settingSources: [], allowedTools: allowRules(allowed) } : {}),
     disallowedTools: [...DENY_RULES, ...NO_BACKGROUND_TOOLS],
     hooks: { PreToolUse: [{ matcher: "Bash|PowerShell", hooks: [denyBackground] }] },
+    stderr: (data: string) => {
+      if (stderrLeft <= 0) return;
+      const s = data.slice(0, stderrLeft);
+      stderrLeft -= s.length;
+      onData?.(`[sdk stderr] ${s}`);
+    },
     canUseTool: async (toolName: string, toolInput: Record<string, unknown>) =>
       checkToolPermission(toolName, toolInput, workdir, onData, wallOn),
   };
@@ -137,7 +147,7 @@ export async function runAgentSdk(
   try {
     const response = query({
       prompt,
-      options: { ...buildSdkOptions(env, workdir, wall.on, wall.allowed, onData, model), abortController: controller },
+      options: { ...buildSdkOptions(env, workdir, wall.on, wall.allowed, onData, model, agent), abortController: controller },
     });
     for await (const message of response) {
       if (message.type === "assistant") {

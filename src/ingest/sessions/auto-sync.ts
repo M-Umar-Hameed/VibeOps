@@ -10,6 +10,7 @@ export interface AutoSyncOptions {
   sources?: SessionSource[];
   embedder?: Embedder;
   runNow?: boolean;
+  isBusy?: () => boolean;
 }
 
 async function defaultSources(): Promise<SessionSource[]> {
@@ -28,8 +29,10 @@ export async function startSessionAutoSync(opts: AutoSyncOptions = {}): Promise<
     ?? (Number(await getSetting("sessions.autoSyncIntervalMs")) || DEFAULT_INTERVAL_MS);
   const sources = opts.sources ?? (await defaultSources());
   const embedder = opts.embedder ?? getEmbedder();
+  const isBusy = opts.isBusy ?? (await import("../../forge/runs.js")).hasAnyActiveRun;
 
   const sweep = async () => {
+    if (isBusy()) return;
     // 1-day incremental window; hash-gated so a quiet sweep is near-free.
     const summary = await ingestSessionsSerialized(sources, embedder, 1);
     if (summary && Object.values(summary).some((s) => s.indexed > 0)) {

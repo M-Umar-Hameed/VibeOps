@@ -10,6 +10,7 @@ import { resolveCmd, loadRelayConfig, type RelayConfig, type RelayAgent } from "
 import { pipelineStartWarnings, pipelineStartBlockingError } from "../relay/doctor.js";
 import { roleStyle } from "../relay/style.js";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted } from "../relay/prompts.js";
+import { loadWall } from "../relay/wall.js";
 import { listSkills, formatSkillIndex, formatSkillBodies, parseOperatorSkills, parsePlanSkills, parseSkillAllowlist, skillsForAgent, type SkillMeta } from "./skills.js";
 import { recallBlock } from "../services/recall.js";
 import { chunkReviewDiff, mergeReviewVerdicts } from "./review-chunks.js";
@@ -77,7 +78,7 @@ export function reviewDiffPayload(fullDiff: string, stat: string, cap = DIFF_PRO
   return `[diff too large: showing stat + first ${cap / 1000}k chars]\n${stat}\n\n${diff.slice(0, cap)}`;
 }
 
-const NARRATION =
+export const NARRATION =
   "\n\nNarrate your reasoning out loud as you work: before each step, print what " +
   "you are about to do and why. Your narration is read live by the supervisor " +
   "and by the reviewing model." +
@@ -88,6 +89,7 @@ const NARRATION =
   "absolute paths and never write outside your working directory, even if the " +
   "plan shows absolute paths." +
   "\n\nDo not change, close or reopen this ticket (no update_ticket status changes); the supervisor moves the ticket when you finish. Report through your output only." +
+  "\n\nWrite every scratch, helper, patch or notes file under .forge/tmp/ (relative to your working directory); it is never committed and never reviewed, so nothing the deliverable or its tests depend on may live there." +
   "\n\nRun every command in the foreground; never use run_in_background, slash commands or sub-agents.";
 
 // EXPORT-TO tickets deliver files that live outside git (images, video, posts).
@@ -800,10 +802,13 @@ async function pipeline(
   const lastReview = [...(await listComments(ticket.id))].reverse().find((c) => c.kind === "review");
   const conflictNote = sync?.state === "conflict" ? `\n\nResolve the merge conflicts in ${(sync.files ?? []).join(", ")}; keep both sides' intent.` : "";
   const findings = conflictNote + (lastReview ? `\n\nPrevious review findings (address ALL of these):\n${fenceUntrusted("prior-review-findings", lastReview.body)}` : "");
+  const workChecks = resolveChecks(await getSetting(`forge.checks.${ticket.projectId}`), sandbox, await getSetting("forge.checks"));
   const workPrompt = composeWorkPrompt({
     ticket, plan, knowledge, workdir: sandbox, memory,
     skills: selectedSkills.bodies,
     operatorEvidence: workEv.length ? workEv : undefined,
+    allowedCommands: (await loadWall(ticket.projectId, true, sandbox)).allowed,
+    checks: workChecks,
   })
     // No lessons clause here: A/B'd 2026-08-12 (docs/findings/2026-08-12-lessons-clause-ab.md).
     // On work prompts the doc measured inert - identical output on a control task, same

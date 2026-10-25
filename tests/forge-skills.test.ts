@@ -98,6 +98,13 @@ test("parseOperatorSkills finds known /tokens, dedupes and caps at 3", () => {
   expect(parseOperatorSkills("no tokens", known)).toEqual([]);
 });
 
+test("parseOperatorSkills ignores /name inside paths and URLs, allows trailing punctuation", () => {
+  const known = ["demo", "forge", "plan", "skills", "y"];
+  expect(parseOperatorSkills("Review: src/plan/x.ts breaks; see /skills/y and https://h/forge/demo", known)).toEqual([]);
+  expect(parseOperatorSkills("use /demo, then (/forge).", known)).toEqual(["demo", "forge"]);
+  expect(parseOperatorSkills("/demo.", known)).toEqual(["demo"]);
+});
+
 test("formatSkillIndex is empty for no skills, else 'name: description' lines", () => {
   expect(formatSkillIndex([])).toBe("");
   const s = formatSkillIndex([{ name: "demo", description: "d", path: "/x" }]);

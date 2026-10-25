@@ -19,10 +19,13 @@ import {
   awaitRun,
   latestRunPolicy,
   resolveMaxActive,
-  listInterruptedRuns
+  listInterruptedRuns,
+  sweepStalledRuns,
+  logSizeReader
 } from "../src/forge/runs.js";
 import { sandboxExists, branchName, promoteSandbox, sandboxDiff, hasCommitsToPromote } from "../src/forge/sandbox.js";
 import { vibeopsHome } from "../src/runtime/home.js";
+import { treeCpuReader } from "../src/runtime/proc-tree-cpu.js";
 import { app } from "../src/api/app.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject, updateProjectRepo } from "../src/services/projects.js";
@@ -1930,6 +1933,115 @@ const file2 = "run2-output.txt";
     await awaitRun(runId);
     const output = getRunOutput(runId, 0);
     expect(output?.chunk).toContain("Do not change, close or reopen this ticket");
+  });
+
+  it("maxConcurrentChecks=1 serialises check suites across runs and the queued run is not stall-killed", async () => {
+    const { actorId: a1, ticket: t1 } = await seedTicket("Check concurrency 1");
+    const { actorId: a2, ticket: t2 } = await seedTicket("Check concurrency 2");
+
+    const counter1 = join(counterDir, "counter1.txt");
+    const counter2 = join(counterDir, "counter2.txt");
+    const file1 = "run1-output.txt";
+    const file2 = "run2-output.txt";
+
+    const config1 = (): RelayConfig => ({
+      workdir,
+      agents: {
+        fake: {
+          cmd: [process.execPath, FAKE_AGENT, "{prompt}", "--model", "{model}"],
+          roles: ["plan", "work", "review"],
+          models: [{ name: "fast", tier: "free", quality: 2 }, { name: "smart", tier: "expensive", quality: 5 }],
+          env: {
+            FAKE_SCRIPT: "plan,work,review-pass",
+            FAKE_COUNTER_FILE: counter1,
+            FAKE_WRITE_PATH: file1,
+          },
+        },
+      },
+    });
+    const config2 = (): RelayConfig => ({
+      workdir,
+      agents: {
+        fake: {
+          cmd: [process.execPath, FAKE_AGENT, "{prompt}", "--model", "{model}"],
+          roles: ["plan", "work", "review"],
+          models: [{ name: "fast", tier: "free", quality: 2 }, { name: "smart", tier: "expensive", quality: 5 }],
+          env: {
+            FAKE_SCRIPT: "plan,work,review-pass",
+            FAKE_COUNTER_FILE: counter2,
+            FAKE_WRITE_PATH: file2,
+          },
+        },
+      },
+    });
+
+    await withSettings({
+      "forge.checks": JSON.stringify([`node "${join(__dirname, "fixtures", "check-slow.mjs")}"`]),
+      "forge.maxConcurrentChecks": "1"
+    }, async () => {
+      const origLogRead = logSizeReader.read;
+      const origCpuRead = treeCpuReader.read;
+      try {
+        logSizeReader.read = () => 100;
+        treeCpuReader.read = () => null;
+
+        const r1 = await startPipeline(a1, config1(), {
+          ticketId: t1.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+        });
+        const r2 = await startPipeline(a2, config2(), {
+          ticketId: t2.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+        });
+
+        let waiter = "";
+        for (let i = 0; i < 1000; i++) {
+          const out1 = getRunOutput(r1.runId, 0)?.chunk ?? "";
+          const out2 = getRunOutput(r2.runId, 0)?.chunk ?? "";
+          if (out1.includes("forge: waiting for a check slot (1 ahead)")) { waiter = r1.runId; break; }
+          if (out2.includes("forge: waiting for a check slot (1 ahead)")) { waiter = r2.runId; break; }
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        expect(waiter).not.toBe("");
+
+        await sweepStalledRuns(Date.now(), 1000);
+        await new Promise((r) => setTimeout(r, 1200));
+        const killed = await sweepStalledRuns(Date.now(), 1000);
+        expect(killed).not.toContain(waiter);
+
+        await Promise.all([awaitRun(r1.runId), awaitRun(r2.runId)]);
+
+        expect(getRunOutput(r1.runId, 0)?.status).toBe("passed");
+        expect(getRunOutput(r2.runId, 0)?.status).toBe("passed");
+
+        const a = getRunTimings(r1.runId);
+        const b = getRunTimings(r2.runId);
+        expect(a!.checksEndedAt! <= b!.checksStartedAt! || b!.checksEndedAt! <= a!.checksStartedAt!).toBe(true);
+      } finally {
+        logSizeReader.read = origLogRead;
+        treeCpuReader.read = origCpuRead;
+      }
+    });
+  }, 30_000);
+
+  it("path-scoped check skipped when no changed path matches", async () => {
+    const { actorId, ticket } = await seedTicket("Scoped check skip");
+    await withSetting("forge.checks", JSON.stringify([{ cmd: `node "${join(__dirname, "fixtures", "check-fail.mjs")}"`, paths: ["mobile/**"] }]), async () => {
+      setScript("plan,work,review-pass", true);
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+
+      const output = getRunOutput(runId, 0);
+      expect(output?.status).toBe("passed");
+      const chunk = output?.chunk ?? "";
+      expect(chunk).toContain("=== FORGE checks ===");
+      expect(chunk).toContain("skipped (no changed path matches mobile/**)");
+
+      const comments = await listComments(ticket.id);
+      const review = comments.find((c) => c.kind === "review")?.body ?? "";
+      expect(review).toContain("[forge: checks skipped]");
+      expect(review).not.toContain("[forge: checks passed]");
+    });
   });
 });
 

@@ -17,7 +17,7 @@ import { killTree, killPidTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { availableAccount } from "../relay/accounts.js";
 import { redactSecrets } from "./redact.js";
-import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES, stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL } from "./sandbox.js";
+import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxDiffNamesNoRenames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES, stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
 import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, stripGateDirectives, parseExportTo, parseEvidence } from "./policy.js";
 import { pickAgents, escalate, pairsForRole, resolveStrategy, type Pick, type RoutingStrategy } from "./router.js";
@@ -37,7 +37,7 @@ import { db } from "../db/client.js";
 import { pidAlive } from "../db/lifecycle.js";
 import { forgeRuns, aiUsageLogs, tickets, type Ticket, type ForgeRun } from "../db/schema.js";
 import { verifyModel, MISMATCH_WARNING, computeVerificationStatus } from "./verify.js";
-import { resolveChecks, runChecks, formatChecks, type CheckResult } from "./checks.js";
+import { resolveChecks, runChecks, formatChecks, selectChecks, type CheckResult } from "./checks.js";
 import { runGate, resolveMutationCmd } from "./gate.js";
 import { emitEvent } from "../api/events.js";
 
@@ -51,6 +51,34 @@ export function resolveMaxActive(setting: string | null): number {
   const n = parseInt(setting ?? "", 10);
   return Number.isInteger(n) && n >= 1 ? n : DEFAULT_MAX_ACTIVE;
 }
+
+export function resolveMaxConcurrentChecks(setting: string | null): number {
+  const n = parseInt(setting ?? "", 10);
+  return Number.isInteger(n) && n >= 1 ? n : Infinity;
+}
+let checkSlotsHeld = 0;
+const checkSlotQueue: Run[] = [];
+const CHECK_SLOT_POLL_MS = 500;
+
+async function acquireCheckSlot(run: Run): Promise<boolean> {
+  checkSlotQueue.push(run);
+  let lastAhead = -1;
+  try {
+    for (;;) {
+      if (run.stopped || run.stallReason) return false;
+      const max = resolveMaxConcurrentChecks(await getSetting("forge.maxConcurrentChecks"));
+      const pos = checkSlotQueue.indexOf(run);
+      if (pos === 0 && checkSlotsHeld < max) { checkSlotsHeld++; return true; }
+      run.lastActivityAt = Date.now();
+      const ahead = checkSlotsHeld + pos;
+      if (ahead !== lastAhead) { append(run, `\nforge: waiting for a check slot (${ahead} ahead)\n`); lastAhead = ahead; }
+      await new Promise((r) => setTimeout(r, CHECK_SLOT_POLL_MS));
+    }
+  } finally {
+    checkSlotQueue.splice(checkSlotQueue.indexOf(run), 1);
+  }
+}
+
 const MAX_EXTRA_PROMPT = 10_000;
 const MAX_OPERATOR_NOTES = 2000;
 // Was 2000 and shared across all requests, which was smaller than a single
@@ -959,7 +987,7 @@ async function reviewStage(
   // in front of the reviewer's read time. A failing check force-fails the
   // run mechanically at verdict time, independent of the reviewer's own
   // verdict — see the gate evaluation below.
-  const checkCmds = resolveChecks(await getSetting(`forge.checks.${ticket.projectId}`), sandbox, await getSetting("forge.checks"));
+  const checkEntries = resolveChecks(await getSetting(`forge.checks.${ticket.projectId}`), sandbox, await getSetting("forge.checks"));
 
   // Protected-path policy: deterministic, evaluated on the diff (never the
   // worker's self-report). A touched protected path is an automatic Critical
@@ -970,6 +998,9 @@ async function reviewStage(
   const changedPaths = await sandboxDiffNames(workdir, ticket.id);
   const violations = evaluateProtectedPaths(changedPaths, protectedGlobs, allowGlobs);
   run.protectedViolations = violations.length ? violations : undefined;
+
+  const { run: checkCmds, skipped: skippedChecks } = selectChecks(checkEntries, await sandboxDiffNamesNoRenames(workdir, ticket.id).catch(() => null));
+  const skippedText = skippedChecks.map((s) => `$ ${s.cmd}\nskipped (no changed path matches ${s.paths.join(", ")})`).join("\n\n");
   let protectedFinding: string | undefined;
   {
     const lines: string[] = [];
@@ -1019,12 +1050,22 @@ async function reviewStage(
   // reviewer only needs check RESULTS at verdict time. Checks execute in
   // `sandbox`; the review agent runs in its own read-only view, so no
   // filesystem race.
-  if (checkCmds.length) run.checksStartedAt = Date.now();
   const checksPromise: Promise<CheckResult[]> = checkCmds.length
-    ? runChecks(checkCmds, sandbox, undefined, (child) => {
-        run.checksChild = child;
-        if (run.stopped) void killTree(child);
-      }).then((results) => { run.checksChild = undefined; run.checksEndedAt = Date.now(); return results; })
+    ? (async () => {
+        if (!await acquireCheckSlot(run)) return [];
+        try {
+          run.checksStartedAt = Date.now();
+          const results = await runChecks(checkCmds, sandbox, undefined, (child) => {
+            run.checksChild = child;
+            if (run.stopped) void killTree(child);
+          });
+          run.checksChild = undefined;
+          run.checksEndedAt = Date.now();
+          return results;
+        } finally {
+          checkSlotsHeld--;
+        }
+      })()
     : Promise.resolve<CheckResult[]>([]);
 
   // One review invocation per chunk, sequential: recordSpawn tracks a single
@@ -1074,6 +1115,7 @@ async function reviewStage(
   const checkResults = await checksPromise;
   if (run.checksStartedAt !== undefined) run.checksDurationMs = Date.now() - run.checksStartedAt;
   if (run.stopped) return settle(run, "stopped");
+  if (run.stallReason) { await bounce(run, actorId, run.stallReason, ""); return settle(run, "failed"); }
 
   // A reviewer that never produced a verdict (non-zero exit, thrown error, an
   // API/transport error surfaced in output, or empty output) is "could not be reached", NOT
@@ -1097,8 +1139,9 @@ async function reviewStage(
   if (checkCmds.length) {
     checksText = redactSecrets(formatChecks(checkResults));
     checksFailed = checkResults.some((r) => r.code !== 0);
-    append(run, `\n=== FORGE checks ===\n${checksText}\n`);
   }
+  const checksLog = [checksText, skippedText].filter(Boolean).join("\n\n");
+  if (checksLog) append(run, `\n=== FORGE checks ===\n${checksLog}\n`);
 
   for (const res of reviewResults) applyVerification(res, run.agents.review, run, config);
   const verdict = mergeReviewVerdicts(chunks, reviewResults.map((r) => r.output));
@@ -1114,9 +1157,10 @@ async function reviewStage(
   const checksPassedNote = (checkCmds.length && !checksFailed)
     ? `\n\n[forge: checks passed]\n${checkResults.map((r) => `$ ${r.command}\nexit ${r.code}`).join("\n")}`
     : "";
+  const checksSkippedNote = skippedChecks.length ? `\n\n[forge: checks skipped]\n${skippedText}` : "";
   const reviewBody = gateBlocked
-    ? `${verdict.raw}${checksBlockNote}${checksPassedNote}\n\n[forge: mechanical gate BLOCK — verdict forced to FAIL]\n${gate.report}\nVERDICT: FAIL`
-    : `${verdict.raw}${checksBlockNote}${checksPassedNote}`;
+    ? `${verdict.raw}${checksBlockNote}${checksPassedNote}${checksSkippedNote}\n\n[forge: mechanical gate BLOCK — verdict forced to FAIL]\n${gate.report}\nVERDICT: FAIL`
+    : `${verdict.raw}${checksBlockNote}${checksPassedNote}${checksSkippedNote}`;
   await addComment(actorId, ticket.id, redactSecrets(reviewBody), "review");
 
   if (!pass) {

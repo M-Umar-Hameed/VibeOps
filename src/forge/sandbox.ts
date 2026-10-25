@@ -348,6 +348,12 @@ export async function sandboxDiffNames(workdir: string, ticketId: string): Promi
   return out.split("\n").map((l) => l.replace(/\r$/, "").trim()).filter(Boolean);
 }
 
+export async function sandboxDiffNamesNoRenames(workdir: string, ticketId: string): Promise<string[] | null> {
+  const { code, out } = await git(workdir, "diff", "--name-only", "--no-renames", `HEAD...${branchName(ticketId)}`);
+  if (code !== 0) return null;
+  return out.split("\n").map((l) => l.replace(/\r$/, "").trim()).filter(Boolean);
+}
+
 export type SandboxActivityFile = { path: string; status: "A" | "M" | "D"; additions: number; deletions: number };
 export type SandboxActivity = {
   files: SandboxActivityFile[];

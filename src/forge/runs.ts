@@ -17,7 +17,7 @@ import { killTree, killPidTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { availableAccount } from "../relay/accounts.js";
 import { redactSecrets } from "./redact.js";
-import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES, stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL } from "./sandbox.js";
+import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES, stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL, checkSandboxDisk, diskFullMessage, DiskFullError } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
 import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, stripGateDirectives, parseExportTo, parseEvidence } from "./policy.js";
 import { pickAgents, escalate, pairsForRole, resolveStrategy, type Pick, type RoutingStrategy } from "./router.js";
@@ -50,6 +50,12 @@ const DEFAULT_MAX_ACTIVE = 3;
 export function resolveMaxActive(setting: string | null): number {
   const n = parseInt(setting ?? "", 10);
   return Number.isInteger(n) && n >= 1 ? n : DEFAULT_MAX_ACTIVE;
+}
+
+const DEFAULT_MIN_FREE_MB = 2048;
+export function resolveMinFreeBytes(setting: string | null): number {
+  const n = Number(setting);
+  return (Number.isFinite(n) && n > 0 ? n : DEFAULT_MIN_FREE_MB) * 1024 * 1024;
 }
 const MAX_EXTRA_PROMPT = 10_000;
 const MAX_OPERATOR_NOTES = 2000;
@@ -546,6 +552,9 @@ export async function startPipeline(
     }
   }
 
+  const minFreeBytes = resolveMinFreeBytes(await getSetting("forge.minFreeDiskMb"));
+  const disk = checkSandboxDisk(minFreeBytes);
+  if (!disk.ok) throw new ConflictError(diskFullMessage(disk, minFreeBytes));
 
   const id = randomUUID();
   const runToken = randomUUID();
@@ -575,6 +584,7 @@ export async function startPipeline(
   await persistRun(run);
   run.done = pipeline(run, actorId, agents, workdir, styleSetting ?? "", lessons, config, opts.extraPrompt, opts.resumeStage).catch(async (e) => {
     append(run, `\nforge: pipeline error: ${(e as Error).message}\n`);
+    if (e instanceof DiskFullError) { run.cause = "disk_full"; run.causeDetail = e.message; }
     // Uphold the never-stuck-in_progress invariant even for unexpected throws
     // (forgeCommit/addComment failures land here, after the claim).
     await bounce(run, actorId, `pipeline error: ${(e as Error).message}`, "");
@@ -614,10 +624,11 @@ async function retryOnNextAccount(
   if (retry) append(retry, line);
 }
 
-async function depsConfig(projectId: string): Promise<{ frontendDeps: string[]; depsDirs: string[] }> {
+async function depsConfig(projectId: string): Promise<{ frontendDeps: string[]; depsDirs: string[]; minFreeBytes: number }> {
   return {
     frontendDeps: resolveFrontendDeps(await getSetting(`forge.frontendDeps.${projectId}`), await getSetting("forge.frontendDeps")),
     depsDirs: resolveDepsDirs(await getSetting(`forge.depsDirs.${projectId}`)),
+    minFreeBytes: resolveMinFreeBytes(await getSetting("forge.minFreeDiskMb")),
   };
 }
 
@@ -684,8 +695,8 @@ async function pipeline(
     // change-request comments as amendments (see reviewStage caller below).
     // Upgrade path: thread amendments here too if resume-to-review reworks
     // that add scope start recurring.
-    const { frontendDeps, depsDirs } = await depsConfig(ticket.projectId);
-    const sandbox = await ensureSandbox(workdir, ticket.id, frontendDeps, depsDirs);
+    const { frontendDeps, depsDirs, minFreeBytes } = await depsConfig(ticket.projectId);
+    const sandbox = await ensureSandbox(workdir, ticket.id, frontendDeps, depsDirs, minFreeBytes);
     append(run, `\n=== FORGE resume: straight to review (existing sandbox) ===\n`);
     const resumeSkills = selectSkills(plan, agents.review.skillAllowlist);
     if (resumeSkills.names.length) append(run, `\nforge: skills attached: ${resumeSkills.names.join(", ")}\n`);
@@ -780,8 +791,8 @@ async function pipeline(
   enterStage(run, "work");
   append(run, `\n=== FORGE work (${run.agents.work}) ===\n`);
   ticket = await setStatus(actorId, ticket.id, "in_progress");
-  const { frontendDeps, depsDirs } = await depsConfig(ticket.projectId);
-  const sandbox = await ensureSandbox(workdir, ticket.id, frontendDeps, depsDirs);
+  const { frontendDeps, depsDirs, minFreeBytes } = await depsConfig(ticket.projectId);
+  const sandbox = await ensureSandbox(workdir, ticket.id, frontendDeps, depsDirs, minFreeBytes);
   const workEv = operatorEvidence ? mirrorOperatorEvidence(operatorEvidence.dir, sandbox, operatorEvidence.files) : [];
   const knowledge = await getKnowledgeSafe(knowledgeQuery(ticket), ticket.projectId);
   const memory = await getMemorySafe(ticket.title, ticket.projectId);
@@ -1661,7 +1672,9 @@ export async function listInterruptedRuns(config: RelayConfig, ticketId?: string
     const commits = await hasCommitsToPromote(workdir, r.ticketId).catch(() => false);
     const stage = r.stage as Stage;
     let resumeMode: RecoveryItem["resumeMode"] = null, resumable = false, reason = "";
-    if (stage === "plan") {
+    if (r.cause === "disk_full") {
+      reason = "disk full on the sandbox volume; free space, then start again";
+    } else if (stage === "plan") {
       resumeMode = "plan"; resumable = true;
       reason = "died during planning; no sandbox exists yet — resume restarts the pipeline from planning";
     } else if (stage === "work") {

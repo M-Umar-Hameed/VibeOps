@@ -19,9 +19,10 @@ import {
   awaitRun,
   latestRunPolicy,
   resolveMaxActive,
-  listInterruptedRuns
+  listInterruptedRuns,
+  resolveMinFreeBytes
 } from "../src/forge/runs.js";
-import { sandboxExists, branchName, promoteSandbox, sandboxDiff, hasCommitsToPromote } from "../src/forge/sandbox.js";
+import { sandboxExists, branchName, promoteSandbox, sandboxDiff, hasCommitsToPromote, diskSpaceReader } from "../src/forge/sandbox.js";
 import { vibeopsHome } from "../src/runtime/home.js";
 import { app } from "../src/api/app.js";
 import { createActor } from "../src/services/actors.js";
@@ -100,12 +101,15 @@ let sandboxRoot: string;
 let counterDir: string;
 let counterFile: string;
 
+const realDiskRead = diskSpaceReader.read;
+
 beforeEach(() => {
   workdir = initRepo();
   sandboxRoot = mkdtempSync(join(tmpdir(), "forge-run-sbx-"));
   process.env.VIBEOPS_SANDBOX_ROOT = sandboxRoot;
   counterDir = mkdtempSync(join(tmpdir(), "forge-run-ctr-"));
   counterFile = join(counterDir, "counter.txt");
+  diskSpaceReader.read = () => ({ freeBytes: 1e12, totalBytes: 2e12 });
 });
 
 afterEach(() => {
@@ -118,6 +122,7 @@ afterEach(() => {
   delete process.env.FAKE_WRITE_DEPS;
   delete process.env.FAKE_TOKEN_OUT;
   delete process.env.FAKE_REVIEW_LS;
+  diskSpaceReader.read = realDiskRead;
   rmSync(workdir, { recursive: true, force: true });
   rmSync(sandboxRoot, { recursive: true, force: true });
   rmSync(counterDir, { recursive: true, force: true });
@@ -2220,5 +2225,50 @@ describe("forge evidence and EXPORT-TO end to end", () => {
     const output = getRunOutput(runId, 0);
     const chunk = output?.chunk ?? "";
     expect(chunk).not.toContain(".forge/out/");
+  });
+});
+
+describe("sandbox disk guard", () => {
+  const MB = 1024 * 1024;
+
+  describe("resolveMinFreeBytes", () => {
+    it("defaults to 2048 MB", () => {
+      expect(resolveMinFreeBytes(null)).toBe(2048 * MB);
+      expect(resolveMinFreeBytes("abc")).toBe(2048 * MB);
+      expect(resolveMinFreeBytes("0")).toBe(2048 * MB);
+      expect(resolveMinFreeBytes("-5")).toBe(2048 * MB);
+    });
+
+    it("parses valid numeric setting", () => {
+      expect(resolveMinFreeBytes("100")).toBe(100 * MB);
+    });
+  });
+
+  it("startPipeline refuses with ConflictError and creates no run when the sandbox volume is low", async () => {
+    const { actorId, ticket } = await seedTicket("Disk full start");
+    diskSpaceReader.read = () => ({ freeBytes: 100 * MB, totalBytes: 1000 * MB });
+    await expect(startPipeline(actorId, relayConfig(), { ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" })).rejects.toThrow(ConflictError);
+    await expect(startPipeline(actorId, relayConfig(), { ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" })).rejects.toThrow(/disk full/);
+    const rows = await db.select().from(forgeRuns).where(eq(forgeRuns.ticketId, ticket.id));
+    expect(rows.length).toBe(0);
+    expect((await getTicket(ticket.id)).status).toBe("open");
+  });
+
+  it("DiskFullError mid-pipeline settles failed with cause disk_full and is not resumable", async () => {
+    const { actorId, ticket } = await seedTicket("Disk full mid");
+    setScript("plan,work,review-pass", true);
+    let calls = 0;
+    diskSpaceReader.read = () => ({ freeBytes: ++calls === 1 ? 1e12 : 100 * MB, totalBytes: 2e12 });
+    const { runId } = await startPipeline(actorId, relayConfig(), { ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" });
+    await awaitRun(runId);
+    const row = await waitForPersistedRun(runId);
+    expect(row.status).toBe("failed");
+    expect(row.cause).toBe("disk_full");
+    expect(row.causeDetail).toMatch(/disk full/);
+    const [item] = await listInterruptedRuns(relayConfig(), ticket.id);
+    expect(item.resumable).toBe(false);
+    expect(item.resumeMode).toBe(null);
+    expect(item.reason).toBe("disk full on the sandbox volume; free space, then start again");
+    expect(sandboxExists(ticket.id)).toBe(false);
   });
 });

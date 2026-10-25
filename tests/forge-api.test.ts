@@ -863,6 +863,34 @@ describe("forge API", () => {
     expect(typeof body.reclaimedBytes).toBe("number");
   });
 
+  it("sandbox usage route enforces authz and returns disk fields", async () => {
+    const { apiKey: memberKey } = await createActor({ name: uniq("forge-api-usage-member"), kind: "agent" });
+    const memberH = { Authorization: `Bearer ${memberKey}`, "Content-Type": "application/json" };
+
+    const memberRes = await app.request("/forge/sandboxes/usage", { method: "GET", headers: memberH });
+    expect(memberRes.status).toBe(403);
+
+    const h = await adminHeaders();
+    const adminRes = await app.request("/forge/sandboxes/usage", { method: "GET", headers: h });
+    expect(adminRes.status).toBe(200);
+    const body = await adminRes.json();
+    expect(typeof body.root).toBe("string");
+    expect(typeof body.freeBytes).toBe("number");
+    expect(typeof body.totalBytes).toBe("number");
+    expect(typeof body.minFreeBytes).toBe("number");
+    expect(body.minFreeBytes).toBe(2048 * 1024 * 1024);
+    expect(Array.isArray(body.sandboxes)).toBe(true);
+
+    const ticket = await seedTicket();
+    await sandbox.ensureSandbox(workdir, ticket.id);
+    const adminRes2 = await app.request("/forge/sandboxes/usage", { method: "GET", headers: h });
+    const body2 = await adminRes2.json();
+    const sbx = body2.sandboxes.find((s: { ticketId: string }) => s.ticketId === ticket.id);
+    expect(sbx).toBeTruthy();
+    expect(typeof sbx.bytes).toBe("number");
+    expect(sbx.bytes).toBeGreaterThan(0);
+  });
+
   it("gate block forces promote 409", async () => {
     const h = await adminHeaders();
     const ticket = await seedTicket();

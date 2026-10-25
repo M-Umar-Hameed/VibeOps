@@ -8,10 +8,10 @@ import { loadRelayConfig } from "../relay/config.js";
 import { relayConfigPath, writeRelayConfig } from "../relay/bootstrap-config.js";
 import { runDoctor } from "../relay/doctor.js";
 import { parseVerdict } from "../relay/prompts.js";
-import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, latestRunStatus, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes } from "../forge/runs.js";
+import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, latestRunStatus, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes, resolveMinFreeBytes } from "../forge/runs.js";
 import {
   sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash, sandboxActivity, sandboxWorkingDiff, withReadOnlyView,
-  attachmentsDir, exportOutputs, validateExportPath,
+  attachmentsDir, exportOutputs, validateExportPath, checkSandboxDisk, listSandboxTicketIds, sandboxSizeBytes,
 } from "../forge/sandbox.js";
 import { listSkillDir } from "../forge/skills.js";
 import { indexRepoDocs } from "../services/knowledge.js";
@@ -567,6 +567,13 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
   app.post("/forge/sandboxes/cleanup", requireAdmin, async (c) => {
     const result = await cleanupMergedSandboxes(forgeConfig());
     return c.json(result);
+  });
+
+  app.get("/forge/sandboxes/usage", requireAdmin, async (c) => {
+    const minFreeBytes = resolveMinFreeBytes(await getSetting("forge.minFreeDiskMb"));
+    const { root, freeBytes, totalBytes } = checkSandboxDisk(minFreeBytes);
+    const sandboxes = listSandboxTicketIds().map((ticketId) => ({ ticketId, bytes: sandboxSizeBytes(ticketId) }));
+    return c.json({ root, freeBytes, totalBytes, minFreeBytes, sandboxes });
   });
 
   app.patch("/relay/agents/:name", requireAdmin, async (c) => {

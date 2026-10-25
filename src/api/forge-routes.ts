@@ -8,7 +8,7 @@ import { loadRelayConfig } from "../relay/config.js";
 import { relayConfigPath, writeRelayConfig } from "../relay/bootstrap-config.js";
 import { runDoctor } from "../relay/doctor.js";
 import { parseVerdict } from "../relay/prompts.js";
-import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, latestRunStatus, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes } from "../forge/runs.js";
+import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, latestRunStatus, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes, RUN_STATUSES, type RunListOpts } from "../forge/runs.js";
 import {
   sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash, sandboxActivity, sandboxWorkingDiff, withReadOnlyView,
   attachmentsDir, exportOutputs, validateExportPath,
@@ -46,6 +46,7 @@ const ATTACHMENT_FILE_RE = /^[0-9a-f-]{36}\.(png|jpg|gif|webp)$/;
 const ATTACHMENT_CONTENT_TYPE: Record<string, string> = {
   png: "image/png", jpg: "image/jpeg", gif: "image/gif", webp: "image/webp",
 };
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type AppEnv = { Variables: { actor: Actor } };
 
@@ -216,7 +217,29 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     }
   });
 
-  app.get("/forge/runs", requireAdmin, async (c) => c.json(await listRunsWithHistory(c.req.query("ticketId") || undefined)));
+  app.get("/forge/runs", requireAdmin, async (c) => {
+    const q = c.req.query();
+    const opts: RunListOpts = {};
+    if (q.limit !== undefined) {
+      const n = Number(q.limit);
+      if (!Number.isInteger(n) || n < 1 || n > 200) return c.json({ error: "limit must be an integer 1..200" }, 400);
+      opts.limit = n;
+    }
+    if (q.before !== undefined) {
+      if (Number.isNaN(Date.parse(q.before))) return c.json({ error: "before must be an ISO timestamp" }, 400);
+      opts.before = { startedAt: new Date(q.before).toISOString(), id: q.beforeId || undefined };
+    }
+    if (q.status !== undefined) {
+      if (!(RUN_STATUSES as readonly string[]).includes(q.status)) return c.json({ error: `status must be one of ${RUN_STATUSES.join(", ")}` }, 400);
+      opts.status = q.status as RunListOpts["status"];
+    }
+    if (q.projectId !== undefined) {
+      if (!UUID.test(q.projectId)) return c.json({ error: "projectId must be a uuid" }, 400);
+      opts.projectId = q.projectId;
+    }
+    if (q.summary === "1") opts.summary = true;
+    return c.json(await listRunsWithHistory(q.ticketId || undefined, opts));
+  });
 
   app.get("/forge/recovery", requireAdmin, async (c) => {
     return c.json({ interrupted: await listInterruptedRuns(forgeConfig()) });

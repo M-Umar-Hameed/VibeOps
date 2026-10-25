@@ -55,7 +55,7 @@ export function assertTicketId(id: string): void {
   if (!UUID.test(id)) throw new Error(`invalid ticket id "${id}"`);
 }
 
-function sandboxRoot(): string {
+export function sandboxRoot(): string {
   return process.env.VIBEOPS_SANDBOX_ROOT ?? join(vibeopsHome(), ".vibeops", "sandbox");
 }
 
@@ -707,7 +707,7 @@ export function listExportOutputs(ticketId: string): string[] {
   }
 }
 
-function inside(child: string, parent: string): boolean {
+export function inside(child: string, parent: string): boolean {
   const c = process.platform === "win32" ? child.toLowerCase() : child;
   const p = process.platform === "win32" ? parent.toLowerCase() : parent;
   const rel = relative(p, c);

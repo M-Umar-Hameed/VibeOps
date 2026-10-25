@@ -12,6 +12,7 @@ import { resolveSyncActor } from "../src/sync/actor.js";
 import { addComment } from "../src/services/comments.js";
 
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, fenceUntrusted, UNTRUSTED_CLAUSE } from "../src/relay/prompts.js";
+import { NARRATION } from "../src/forge/runs.js";
 
 process.env.EMBED_PROVIDER = "fake";
 
@@ -311,5 +312,16 @@ describe("Prompt Injection Defenses - Pipeline Level", () => {
     expect(pending).toContain("Do not fail the change only because the worker report lacks output");
     expect(composeReviewPrompt(input)).not.toContain("CHECKS RUNNING NOW");
     expect(composeReviewPrompt({ ...input, checks: "$ npm test\nexit 0", pendingChecks: ["npm test"] })).not.toContain("CHECKS RUNNING NOW");
+  });
+
+  it("work prompt lists allowed commands and checks; narration names .forge/tmp", () => {
+    const p = composeWorkPrompt({ ticket: { title: "T", body: "B" }, plan: "P", knowledge: [], workdir: "/sandbox",
+      allowedCommands: ["npx vitest", "git rm"], checks: ["npm run typecheck"] });
+    expect(p).toContain("Shell commands you may run: npx vitest, git rm.");
+    expect(p).toContain("do not write helper scripts");
+    expect(p).toContain("The pipeline runs these checks after you finish: npm run typecheck.");
+    expect(p).toContain("never run the full suite");
+    expect(NARRATION).toContain(".forge/tmp/");
+    expect(composeWorkPrompt({ ticket: { title: "T", body: "B" }, plan: "P", knowledge: [], workdir: "/sandbox" })).not.toContain("Shell commands you may run");
   });
 });

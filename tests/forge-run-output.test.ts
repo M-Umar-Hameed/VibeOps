@@ -106,7 +106,7 @@ afterEach(async () => {
 describe("forge run output", () => {
   it("settled run from log", async () => {
     const h = await adminHeaders();
-    const { ticketId } = await seedTicket();
+    const { id: ticketId } = await seedTicket();
     const row = mkRow(ticketId, null);
     const logPath = join(runsDir, `${row.id}.log`);
     row.logPath = logPath;
@@ -135,7 +135,7 @@ describe("forge run output", () => {
 
   it("path outside the runs dir", async () => {
     const h = await adminHeaders();
-    const { ticketId } = await seedTicket();
+    const { id: ticketId } = await seedTicket();
     const outsideDir = mkdtempSync(join(tmpdir(), "forge-out-outside-"));
     const logPath = join(outsideDir, `${randomUUID()}.log`);
     writeFileSync(logPath, "outside\n");
@@ -150,7 +150,7 @@ describe("forge run output", () => {
 
   it("missing file", async () => {
     const h = await adminHeaders();
-    const { ticketId } = await seedTicket();
+    const { id: ticketId } = await seedTicket();
     const logPath = join(runsDir, `${randomUUID()}.log`);
     const row = mkRow(ticketId, logPath);
     await db.insert(forgeRuns).values(row);
@@ -161,33 +161,29 @@ describe("forge run output", () => {
 
   it("live run", async () => {
     const h = await adminHeaders();
-    const { ticketId } = await seedTicket();
-    process.env.FAKE_SCRIPT = "exit 0";
+    const { id: ticketId } = await seedTicket();
+    process.env.FAKE_SCRIPT = "plan,work,review-pass";
+    process.env.FAKE_WRITE = "1";
 
     const startRes = await app.request("/forge/pipeline", {
       method: "POST", headers: h,
       body: JSON.stringify({ ticketId, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
     });
-    const { runId } = await startRes.json();
+    expect(startRes.status).toBe(201);
+    const { runId } = JSON.parse(await startRes.text());
 
-    let final;
+    let after = 0;
+    let body;
     for (let i = 0; i < 100; i++) {
       await new Promise(r => setTimeout(r, 100));
-      const pollRes = await app.request(`/forge/runs/${runId}`, { method: "GET", headers: h });
-      const poll = await pollRes.json();
-      if (poll.status !== "running") {
-        final = poll;
-        break;
-      }
+      const pollRes = await app.request(`/forge/runs/${runId}/output?after=${after}`, { method: "GET", headers: h });
+      body = JSON.parse(await pollRes.text());
+      if (body.status !== "running") break;
+      after = body.next;
     }
-    expect(final).toBeDefined();
-    expect(final.status).toBe("passed");
-
-    const outRes = await app.request(`/forge/runs/${runId}/output?after=0`, { method: "GET", headers: h });
-    expect(outRes.status).toBe(200);
-    const body = await outRes.json();
-    expect(body.source).toBeUndefined();
+    expect(body).toBeDefined();
     expect(body.status).toBe("passed");
+    expect(body.source).toBeUndefined();
 
     delete process.env.FAKE_SCRIPT;
   }, 30000);

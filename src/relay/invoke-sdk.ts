@@ -15,6 +15,7 @@ const READ_ONLY = new Set(["Read", "Grep", "Glob"]);
 const WRITE_TOOLS = new Set(["Edit", "Write"]);
 const BASH_TIMEOUT_MS = "1200000";
 const NO_BACKGROUND_TOOLS = ["SlashCommand", "Skill", "Task", "Agent", "BashOutput", "TaskOutput", "KillShell"];
+const SDK_TRANSPORT_CODES = new Set(["EPIPE", "ECONNRESET", "ERR_STREAM_DESTROYED"]);
 
 // Realpath the nearest existing ancestor, then rejoin the missing tail, so a
 // not-yet-created Write target and any symlinked ancestor both resolve
@@ -168,4 +169,26 @@ export async function runAgentSdk(
     clearTimeout(timer);
   }
   return settleAccountResult(agent, { ok, output: output.slice(0, OUTPUT_CAP), usage }, acct.account);
+}
+
+export function isSdkTransportClosedError(err: unknown): boolean {
+  const e = err as { code?: unknown; stack?: unknown } | null | undefined;
+  return typeof e?.code === "string" && SDK_TRANSPORT_CODES.has(e.code)
+    && typeof e.stack === "string" && e.stack.includes("claude-agent-sdk");
+}
+
+type GuardProc = {
+  on: (event: "uncaughtException", listener: (err: Error) => void) => unknown;
+  exit: (code: number) => unknown;
+};
+
+export function installSdkTransportGuard(proc: GuardProc = process): void {
+  proc.on("uncaughtException", (err: Error) => {
+    if (isSdkTransportClosedError(err)) {
+      console.warn(`sdk transport closed: ${(err as NodeJS.ErrnoException).code}`);
+      return;
+    }
+    console.error(err);
+    proc.exit(1);
+  });
 }

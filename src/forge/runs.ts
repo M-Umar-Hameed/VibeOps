@@ -901,15 +901,6 @@ async function pipeline(
     // silently throwing away finished-but-uncommitted work. Never auto-promoted;
     // the ticket still bounces to `planned`. forgeCommit no-ops on a clean tree.
     const saved = await forgeCommit(ticket.id, `WIP (worker failed) ${ticket.title}`);
-<<<<<<< HEAD
-    const note = saved
-      ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]"
-      : "";
-    await bounce(run, actorId, "worker failed", workRes.output + note);
-    if (run.limit || workRes.limit) setCause(run, "usage_limit", "worker failed: usage limit");
-    else setCause(run, "crash", "worker failed");
-    return settle(run, "failed");
-=======
     // A known-benign SDK error after this run saved a diff: review the diff instead of wasting the run.
     if (saved && !run.limit && !workRes.limit && !run.stopped && !run.stallReason
       && (await getSetting("forge.reviewAfterBenignWorkerError")) !== "false") {
@@ -920,10 +911,11 @@ async function pipeline(
         ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]"
         : "";
       await bounce(run, actorId, "worker failed", workRes.output + note);
+      if (run.limit || workRes.limit) setCause(run, "usage_limit", "worker failed: usage limit");
+      else setCause(run, "crash", "worker failed");
       return settle(run, "failed");
     }
     append(run, `\nforge: worker crashed (${crashed}) after saving a diff; continuing to review\n`);
->>>>>>> 0c9a113c40e415c3d2401ff21f84eccf7a6932d2
   }
   if (!crashed) await forgeCommit(ticket.id, ticket.title);
   await addComment(actorId, ticket.id, redactSecrets(workRes.output), "report");

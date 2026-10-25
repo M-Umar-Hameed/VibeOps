@@ -58,7 +58,7 @@ Add credentials to `relay.json` under `agents.<name>.env`, using names ending wi
 ```
 
 - **Redacted surfaces:** Literal values of variables ending in `_PASSWORD`, `_TOKEN`, `_SECRET`, or `_KEY` are replaced with `[redacted]` in run output, the run log file (rewritten when the run settles), ticket comments (Forge and relay CLI), memory capture, and knowledge ingestion. Values shorter than 4 characters are not redacted. Other environment variable names are not redacted.
-- **Sentinel warning:** Edit `relay.json` only when no Forge work stage is running. The sentinel snapshots `relay.json` and restores it after the stage, so any mid-run edits are silently reverted.
+- **Sentinel warning:** Edit `relay.json` only when no Forge work stage is running. The sentinel snapshots `relay.json` and restores it after the stage, so any mid-run edits are silently reverted. While a run is active, every VibeOps write to `relay.json` (PATCH /relay/agents/:name, POST /relay/bootstrap, account edits, MCP auto-wiring) is refused, PATCH with 409.
 - **Script usage:** Scripts read the value from `process.env.DEMO_SHOP_PASSWORD`. Never write credentials to a file, a commit, or a prompt. Redaction is best-effort: a value split across output chunks, encoded, or transformed can slip through.
 - **Agent types:** `type: "sdk"` and `type: "http"` agents ignore `env`.
 

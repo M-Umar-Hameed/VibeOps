@@ -1106,6 +1106,36 @@ it("PATCH /relay/agents/:name updates relay.json while keeping cmd untouched", a
   expect(agent.models).toEqual([{ name: "fast", tier: "free", quality: 2 }]);
 });
 
+it("PATCH /relay/agents/:name returns 409 while a run is active and leaves relay.json unchanged", async () => {
+  const h = await adminHeaders();
+  const ticket = await seedTicket();
+  setScript("plan,slow");
+  const startRes = await app.request("/forge/pipeline", {
+    method: "POST", headers: h,
+    body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+  });
+  const { runId } = await startRes.json();
+  const body = JSON.stringify({ roles: ["plan", "work"] });
+  try {
+    const deadline = Date.now() + 10_000;
+    while (activeStageForTicket(ticket.id) !== "work") {
+      if (Date.now() > deadline) throw new Error("run never reached work stage");
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const before = readFileSync(relayConfigPath, "utf-8");
+    const res = await app.request("/relay/agents/fake", { method: "PATCH", headers: h, body });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain("relay.json is locked");
+    expect(readFileSync(relayConfigPath, "utf-8")).toBe(before);
+  } finally {
+    await stopRun(runId);
+    await awaitRun(runId);
+  }
+  const ok = await app.request("/relay/agents/fake", { method: "PATCH", headers: h, body });
+  expect(ok.status).toBe(200);
+  expect(JSON.parse(readFileSync(relayConfigPath, "utf-8")).agents.fake.roles).toEqual(["plan", "work"]);
+}, 15000);
+
 it("PATCH /relay/agents/:name with models: [] drops the models key instead of writing an empty array", async () => {
   const h = await adminHeaders();
   const { readFileSync } = await import("node:fs");

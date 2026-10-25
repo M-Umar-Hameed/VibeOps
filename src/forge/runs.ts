@@ -175,11 +175,17 @@ async function writeSpecFromPlan(actorId: string, ticketId: string, body: string
 // A title/body edit after the latest plan makes that plan stale. updatedAt can't
 // tell (status writes bump it too), so read the append-only events. The plan
 // stage's own spec seed (writeSpecFromPlan) writes stripGateDirectives(plan) and
-// is not an edit.
+// is not an edit, and an edit that only adds or changes gate directive lines is
+// not one either.
+const gateDirectiveLine = /^\s*(GATE-OVERRIDE|ALLOW-PROTECTED|ALLOW-FILES|EXPORT-TO):.*$/gim;
+// EVIDENCE is left out on purpose: the planner reads it, so an EVIDENCE edit re-plans.
+const withoutGateDirectives = (t: unknown) => String(t ?? "").replace(gateDirectiveLine, "")
+  .split("\n").map((l) => l.trimEnd()).filter((l) => l).join("\n");
 async function specEditedSince(ticketId: string, since: Date, seededSpec: string): Promise<boolean> {
   return (await getTicketHistory(ticketId)).some((e) => e.action === "ticket.updated"
     && e.at.getTime() > since.getTime()
-    && (e.changes?.title !== undefined || (e.changes?.body !== undefined && e.changes.body.to !== seededSpec)));
+    && (e.changes?.title !== undefined || (e.changes?.body !== undefined && e.changes.body.to !== seededSpec
+      && withoutGateDirectives(e.changes.body.from) !== withoutGateDirectives(e.changes.body.to))));
 }
 
 

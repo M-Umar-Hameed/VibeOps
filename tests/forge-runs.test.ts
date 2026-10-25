@@ -622,6 +622,106 @@ describe("forge run manager", () => {
     expect(comments.filter((c) => c.kind === "plan")).toHaveLength(2);
   });
 
+  it("gate override after a plan does not re-plan", async () => {
+    const { actorId, ticket } = await seedTicket("Override no re-plan");
+    const { apiKey } = await createActor({ name: uniq("forge-admin"), kind: "human", role: "admin" });
+    const fresh = await updateTicket(actorId, ticket.id, ticket.version, { body: "spec before plan" });
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+    const fresh2 = await updateTicket(actorId, ticket.id, fresh.version, { status: "planned" });
+    const res = await app.request(`/forge/tickets/${ticket.id}/override-gate`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}` } });
+    expect(res.status).toBe(200);
+    expect((await getTicket(ticket.id)).body).toContain("GATE-OVERRIDE: all");
+    setScript("work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).not.toContain("re-planning");
+    expect(output?.chunk).not.toContain("=== FORGE plan");
+    const comments = await listComments(ticket.id);
+    expect(comments.filter((c) => c.kind === "plan")).toHaveLength(1);
+  });
+
+  it("appending an ALLOW-FILES line does not re-plan", async () => {
+    const { actorId, ticket } = await seedTicket("ALLOW-FILES no re-plan");
+    const fresh = await updateTicket(actorId, ticket.id, ticket.version, { body: "spec before plan" });
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+    const fresh2 = await updateTicket(actorId, ticket.id, fresh.version, { body: "spec before plan\n\nALLOW-FILES: x" });
+    await updateTicket(actorId, ticket.id, fresh2.version, { status: "planned" });
+    setScript("work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).not.toContain("re-planning");
+    expect(output?.chunk).not.toContain("=== FORGE plan");
+    const comments = await listComments(ticket.id);
+    expect(comments.filter((c) => c.kind === "plan")).toHaveLength(1);
+  });
+
+  it("a null body gaining a directive does not throw or re-plan", async () => {
+    const { actorId, ticket } = await seedTicket("Null body directive");
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+    const fresh = await updateTicket(actorId, ticket.id, ticket.version, { body: "GATE-OVERRIDE: all" });
+    await updateTicket(actorId, ticket.id, fresh.version, { status: "planned" });
+    setScript("work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.status).toBe("passed");
+    expect(output?.chunk).not.toContain("re-planning");
+    const comments = await listComments(ticket.id);
+    expect(comments.filter((c) => c.kind === "plan")).toHaveLength(1);
+  });
+
+  it("adding an EVIDENCE line re-plans", async () => {
+    const { actorId, ticket } = await seedTicket("EVIDENCE re-plans");
+    const fresh = await updateTicket(actorId, ticket.id, ticket.version, { body: "spec before plan" });
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+    const fresh2 = await updateTicket(actorId, ticket.id, fresh.version, { body: "spec before plan\nEVIDENCE: qa.png" });
+    await updateTicket(actorId, ticket.id, fresh2.version, { status: "planned" });
+    setScript("plan,work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).toContain("=== FORGE ticket title/body changed since the last plan: re-planning ===");
+    const comments = await listComments(ticket.id);
+    expect(comments.filter((c) => c.kind === "plan")).toHaveLength(2);
+  });
+
+  it("real text changed together with a directive re-plans", async () => {
+    const { actorId, ticket } = await seedTicket("Text+directive re-plans");
+    const fresh = await updateTicket(actorId, ticket.id, ticket.version, { body: "spec before plan" });
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+    const fresh2 = await updateTicket(actorId, ticket.id, fresh.version, { body: "new requirement\nALLOW-FILES: x" });
+    await updateTicket(actorId, ticket.id, fresh2.version, { status: "planned" });
+    setScript("plan,work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).toContain("=== FORGE ticket title/body changed since the last plan: re-planning ===");
+    const comments = await listComments(ticket.id);
+    expect(comments.filter((c) => c.kind === "plan")).toHaveLength(2);
+  });
+
   it("planned ticket with no edit since its plan reuses it", async () => {
     const { actorId, ticket } = await seedTicket("No edit reuse");
     const fresh1 = await updateTicket(actorId, ticket.id, ticket.version, { body: "spec written before planning" });

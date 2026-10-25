@@ -129,6 +129,13 @@ type Run = {
   runToken: string;    // value of env VIBEOPS_RUN_TOKEN handed to every stage child
   procStartedAt?: string; // child OS start time at spawn; boot compares to prove same process
   accounts?: { plan?: string; work?: string; review?: string }; // subscription account id per stage
+  cause?: string; causeDetail?: string;
+  workBaseSha?: string; baseBranch?: string;
+  stageTimes?: { stage: string; attempt: number; startedAt: string; endedAt?: string }[];
+  resumeAt?: string;
+  limitWaits?: number;
+  promoteOnPass?: boolean;
+  allowPaths?: string[]; gateOnlyPaths?: string[]; gateOnlySha?: string;
   limit?: { role: "plan" | "work" | "review"; account: string }; // usage limit hit this run (memory only)
   output: string; startedAt: string; finishedAt?: string;
   child?: ChildProcess; // the in-flight agent CLI for the current stage, if any
@@ -1107,6 +1114,7 @@ async function reviewStage(
 async function persistRun(run: Run): Promise<void> {
   try {
     const finishedAt = run.finishedAt ? new Date(run.finishedAt) : undefined;
+    const resumeAt = run.resumeAt ? new Date(run.resumeAt) : null;
     await db.insert(forgeRuns).values({
       id: run.id,
       ticketId: run.ticketId,
@@ -1123,11 +1131,22 @@ async function persistRun(run: Run): Promise<void> {
       runToken: run.runToken,
       procStartedAt: run.procStartedAt ?? null,
       accounts: run.accounts ?? null,
+      cause: run.cause ?? null,
+      causeDetail: run.causeDetail ?? null,
+      workBaseSha: run.workBaseSha ?? null,
+      baseBranch: run.baseBranch ?? null,
+      stageTimes: run.stageTimes ?? null,
+      resumeAt,
+      limitWaits: run.limitWaits ?? null,
+      promoteOnPass: run.promoteOnPass ?? null,
+      allowPaths: run.allowPaths ?? null,
+      gateOnlyPaths: run.gateOnlyPaths ?? null,
+      gateOnlySha: run.gateOnlySha ?? null,
       startedAt: new Date(run.startedAt),
       finishedAt,
     }).onConflictDoUpdate({
       target: forgeRuns.id,
-      set: { status: run.status, stage: run.stage, finishedAt, protectedViolations: run.protectedViolations ?? null, checksDurationMs: run.checksDurationMs ?? null, pid: run.pid ?? null, procStartedAt: run.procStartedAt ?? null, accounts: run.accounts ?? null }
+      set: { status: run.status, stage: run.stage, finishedAt, protectedViolations: run.protectedViolations ?? null, checksDurationMs: run.checksDurationMs ?? null, pid: run.pid ?? null, procStartedAt: run.procStartedAt ?? null, accounts: run.accounts ?? null, cause: run.cause ?? null, causeDetail: run.causeDetail ?? null, workBaseSha: run.workBaseSha ?? null, baseBranch: run.baseBranch ?? null, stageTimes: run.stageTimes ?? null, resumeAt, limitWaits: run.limitWaits ?? null, promoteOnPass: run.promoteOnPass ?? null, allowPaths: run.allowPaths ?? null, gateOnlyPaths: run.gateOnlyPaths ?? null, gateOnlySha: run.gateOnlySha ?? null }
     });
   } catch (e) {
     console.warn(`forge: failed to persist run ${run.id}:`, (e as Error).message);

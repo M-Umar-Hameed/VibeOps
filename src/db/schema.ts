@@ -34,10 +34,14 @@ export const tickets = pgTable("tickets", {
   priority: ticketPriority("priority").notNull().default("normal"),
   assigneeId: uuid("assignee_id").references(() => actors.id),
   requiresVerification: boolean("requires_verification").notNull().default(false),
+  sourceKey: text("source_key"),
   version: integer("version").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => ({ projectIdx: index("tickets_project_idx").on(t.projectId) }));
+}, (t) => ({
+  projectIdx: index("tickets_project_idx").on(t.projectId),
+  sourceKeyUniq: uniqueIndex("tickets_source_key_uniq").on(t.projectId, t.sourceKey),
+}));
 
 export const comments = pgTable("comments", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -212,11 +216,38 @@ export const forgeRuns = pgTable('forge_runs', {
   // Subscription account id each stage ran on (relay.json accounts). Nullable:
   // lanes without accounts and legacy rows.
   accounts: jsonb('accounts').$type<{ plan?: string; work?: string; review?: string }>(),
+  cause: text('cause'),
+  causeDetail: text('cause_detail'),
+  workBaseSha: text('work_base_sha'),
+  baseBranch: text('base_branch'),
+  stageTimes: jsonb('stage_times').$type<{ stage: string; attempt: number; startedAt: string; endedAt?: string }[]>(),
+  resumeAt: timestamp('resume_at', { withTimezone: true }),
+  limitWaits: integer('limit_waits'),
+  promoteOnPass: boolean('promote_on_pass'),
+  allowPaths: jsonb('allow_paths').$type<string[]>(),
+  gateOnlyPaths: jsonb('gate_only_paths').$type<string[]>(),
+  gateOnlySha: text('gate_only_sha'),
   startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
 });
 
 export type ForgeRun = typeof forgeRuns.$inferSelect;
+
+export const forgeQueue = pgTable('forge_queue', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  ticketId: uuid('ticket_id').notNull(),
+  projectId: uuid('project_id').notNull(),
+  picks: jsonb('picks'),
+  extraPrompt: text('extra_prompt'),
+  afterTicketIds: jsonb('after_ticket_ids').$type<string[]>(),
+  status: text('status').notNull().default('queued'),
+  runId: uuid('run_id'),
+  error: text('error'),
+  position: integer('position').notNull().default(0),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  queuedTicketUniq: uniqueIndex('forge_queue_queued_ticket_uniq').on(t.ticketId).where(sql`${t.status} = 'queued'`),
+}));
 
 export const chatSessions = pgTable("chat_sessions", {
   id: uuid("id").primaryKey().defaultRandom(),

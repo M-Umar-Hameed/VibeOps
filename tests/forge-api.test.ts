@@ -909,6 +909,34 @@ describe("forge API", () => {
     expect(promoteClean.status).toBe(200);
     expect((await promoteClean.json()).status).toBe("closed");
   });
+
+  it("promote with a dirty tracked file returns 409 with files; ticket untouched", async () => {
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+    setScript("plan,work,review-pass", true);
+    await runToPassed(h, ticket.id);
+    writeFileSync(join(workdir, "readme.md"), "dirty\n");
+    const res = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
+    expect(res.status).toBe(409);
+    expect((await res.json()).files).toContain("readme.md");
+    expect((await getTicket(ticket.id)).status).toBe("review");
+    expect((await listComments(ticket.id)).some((cm) => cm.body === "forge: promoted")).toBe(false);
+  });
+
+  it("two concurrent promotes of one ticket: one 200, one 409, one promoted comment", async () => {
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+    setScript("plan,work,review-pass", true);
+    await runToPassed(h, ticket.id);
+    const url = `/forge/tickets/${ticket.id}/promote`;
+    const [a, b] = await Promise.all([
+      app.request(url, { method: "POST", headers: h }),
+      app.request(url, { method: "POST", headers: h }),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    expect((await listComments(ticket.id)).filter((cm) => cm.body === "forge: promoted").length).toBe(1);
+    expect((await getTicket(ticket.id)).status).toBe("closed");
+  });
 });
 
 it("GET /forge/doctor returns per-agent probe/auth status for the configured relay agents", async () => {

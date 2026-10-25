@@ -130,6 +130,31 @@ describe("forge sandbox", () => {
     expect(await hasCommitsToPromote(workdir, TID)).toBe(true);
   });
 
+  it("promote ignores an untracked file in the base", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    writeFileSync(join(sp, "b.txt"), "x\n");
+    await forgeCommit(TID, "b");
+    writeFileSync(join(workdir, "untracked.txt"), "u\n");
+    await promoteSandbox(workdir, TID, "untracked ok");
+    expect(existsSync(join(workdir, "b.txt"))).toBe(true);
+  });
+
+  it("promote reports a held index.lock as busy, not a 0-file conflict", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    writeFileSync(join(sp, "b.txt"), "x\n");
+    await forgeCommit(TID, "b");
+    writeFileSync(join(workdir, ".git", "index.lock"), "");
+    let err: any;
+    try { await promoteSandbox(workdir, TID, "busy", true, 0); } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(ConflictError);
+    expect(err.message).toContain("repository busy: .git/index.lock held");
+    expect(err.message).not.toContain("0 file(s)");
+    expect(existsSync(join(workdir, ".git", "index.lock"))).toBe(true);
+    expect(sandboxExists(TID)).toBe(true);
+    rmSync(join(workdir, ".git", "index.lock"));
+  });
+
   it("discard removes tree and branch, base repo untouched", async () => {
     const sp = await ensureSandbox(workdir, TID);
     writeFileSync(join(sp, "b.txt"), "x\n");

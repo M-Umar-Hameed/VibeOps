@@ -11,7 +11,7 @@ import { parseVerdict } from "../relay/prompts.js";
 import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, latestRunStatus, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes } from "../forge/runs.js";
 import {
   sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash, sandboxActivity, sandboxWorkingDiff, withReadOnlyView,
-  attachmentsDir, exportOutputs, validateExportPath,
+  attachmentsDir, exportOutputs, validateExportPath, workdirDirtyFiles,
 } from "../forge/sandbox.js";
 import { listSkillDir } from "../forge/skills.js";
 import { indexRepoDocs } from "../services/knowledge.js";
@@ -66,6 +66,15 @@ function agentPicks(body: Record<string, unknown>):
     if (val !== undefined && typeof val !== "string") return { error: `${key} must be a string` };
   }
   return { planAgent, workAgent, reviewAgent, planModel, workModel, reviewModel } as { planAgent: string; workAgent: string; reviewAgent: string; planModel?: string; workModel?: string; reviewModel?: string };
+}
+
+const workdirLocks = new Map<string, Promise<unknown>>();
+
+async function withWorkdirLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const run = (workdirLocks.get(key) ?? Promise.resolve()).catch(() => {}).then(fn);
+  const tail = run.catch(() => {});
+  workdirLocks.set(key, tail);
+  try { return await run; } finally { if (workdirLocks.get(key) === tail) workdirLocks.delete(key); }
 }
 
 // The promote gate is a security control: only ADMIN-authored review comments
@@ -371,75 +380,89 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
 
   app.post("/forge/tickets/:id/promote", requireAdmin, async (c) => {
     const ticketId = c.req.param("id");
-    if (await hasActiveRun(ticketId)) return c.json({ error: "run in progress for this ticket" }, 409);
-    const policy = await latestRunPolicy(ticketId);
-    if (policy && policy.paths.length && !policy.waived) {
-      return c.json({
-        error: `protected-path policy violation must be waived before promoting: ${policy.paths.join(", ")}`,
-        paths: policy.paths,
-      }, 409);
-    }
-    const verdict = await lastVerdict(ticketId);
-    if (!sandboxExists(ticketId) || verdict !== "pass") {
-      return c.json({ error: "sandbox must exist and have a passing review before promoting" }, 409);
-    }
+    const gate = async () => {
+      if (await hasActiveRun(ticketId)) return c.json({ error: "run in progress for this ticket" }, 409);
+      const policy = await latestRunPolicy(ticketId);
+      if (policy && policy.paths.length && !policy.waived) {
+        return c.json({
+          error: `protected-path policy violation must be waived before promoting: ${policy.paths.join(", ")}`,
+          paths: policy.paths,
+        }, 409);
+      }
+      const verdict = await lastVerdict(ticketId);
+      if (!sandboxExists(ticketId) || verdict !== "pass") {
+        return c.json({ error: "sandbox must exist and have a passing review before promoting" }, 409);
+      }
+      return null;
+    };
+    const blocked = await gate();
+    if (blocked) return blocked;
     const ticket = await getTicket(ticketId);
     const workdir = await resolveWorkdir(ticket.projectId, forgeConfig());
-    if (!(await hasCommitsToPromote(workdir, ticketId))) {
-      return c.json({ error: "sandbox has no commits to promote" }, 409);
-    }
-    const exportTo = parseExportTo(ticket.body ?? "");
-    if (exportTo) {
-      let dest: string;
-      try { dest = validateExportPath(exportTo, workdir); }
-      catch (e) { return c.json({ error: `EXPORT-TO refused: ${(e as Error).message}` }, 409); }
-      const n = exportOutputs(ticketId, dest);
-      await addComment(c.get("actor").id, ticketId, `forge: exported ${n} file(s) from .forge/out to ${dest}`, "comment");
-    }
-    // Default: discard the sandbox once the merge lands (reclaims the worktree +
-    // any frontendDeps node_modules copy). Set forge.discardOnPromote=false to keep
-    // the tree for debugging a promote.
-    const discardAfter = (await getSetting("forge.discardOnPromote")) !== "false";
-    // Reorder for the lost-close race: write the DB effects (promote comment + close)
-    // BEFORE the merge. The merge is the only step that rewrites workdir files, which
-    // restarts the dev file-watcher and can kill everything after it. DB writes are
-    // cheap and cannot trigger a restart, so they land first.
-    await addComment(c.get("actor").id, ticketId, "forge: promoted", "comment");
-    const beforeMerge = await getTicket(ticketId);
-    const updated = await updateTicket(c.get("actor").id, ticketId, beforeMerge.version, { status: "closed" });
-    try {
-      // Merge only. The post-merge sandbox discard is a SEPARATE step below with its own
-      // failure handling: a discard-time fault (e.g. Windows EBUSY worktree lock) must not
-      // masquerade as a merge failure and wrongly reopen a ticket whose code already landed.
-      await promoteSandbox(workdir, ticketId, ticket.title, false);
-    } catch (e) {
-      // Merge failed after we already closed the ticket. A closed ticket whose code
-      // never landed is worse than the race, so compensate: bounce it back to review
-      // with a comment naming the failure, then surface the error (onError -> 409).
-      const closed = await getTicket(ticketId);
-      await addComment(c.get("actor").id, ticketId,
-        `forge: promote merge failed, ticket reopened to review — ${(e as Error).message}`, "comment");
-      await updateTicket(c.get("actor").id, ticketId, closed.version, { status: "review" });
-      throw e;
-    }
-    // Merge landed — the code is on the base branch and the ticket stays CLOSED. Discarding
-    // the sandbox is best-effort cleanup; on Windows an EBUSY lock (e.g. a test runner still
-    // holding the worktree) can make it fail. That is NOT a promote failure: WARN and leave
-    // the ticket closed. The leftover sandbox is reclaimable via /forge/sandboxes/cleanup;
-    // a wrongly-reopened ticket is not self-correcting.
-    if (discardAfter) {
-      try {
-        await discardSandbox(workdir, ticketId);
-      } catch (e) {
-        console.warn(`forge: ${ticketId} merged but sandbox ${branchName(ticketId)} cleanup failed: ${(e as Error).message}`);
+    const lockKey = process.platform === "win32" ? resolve(workdir).toLowerCase() : resolve(workdir);
+    return withWorkdirLock(lockKey, async () => {
+      const again = await gate();
+      if (again) return again;
+      if (!(await hasCommitsToPromote(workdir, ticketId))) {
+        return c.json({ error: "sandbox has no commits to promote" }, 409);
       }
-    }
-    // Repo files just changed on disk (sandbox merged into the project repo); refresh the
-    // doc index so stale README/CLAUDE/AGENTS text stops feeding plan/work prompts. Only this
-    // project. Non-blocking, swallow failures — matches the first-time index at runs.ts:316.
-    indexRepoDocs(ticket.projectId)
-      .catch((e) => console.warn(`repo re-index after promote failed: ${(e as Error).message}`));
-    return c.json(updated);
+      const dirty = await workdirDirtyFiles(workdir);
+      if (dirty.length) {
+        return c.json({ error: `workdir has uncommitted changes; commit or stash before promoting: ${dirty.join(", ")}`, files: dirty }, 409);
+      }
+      const exportTo = parseExportTo(ticket.body ?? "");
+      if (exportTo) {
+        let dest: string;
+        try { dest = validateExportPath(exportTo, workdir); }
+        catch (e) { return c.json({ error: `EXPORT-TO refused: ${(e as Error).message}` }, 409); }
+        const n = exportOutputs(ticketId, dest);
+        await addComment(c.get("actor").id, ticketId, `forge: exported ${n} file(s) from .forge/out to ${dest}`, "comment");
+      }
+      // Default: discard the sandbox once the merge lands (reclaims the worktree +
+      // any frontendDeps node_modules copy). Set forge.discardOnPromote=false to keep
+      // the tree for debugging a promote.
+      const discardAfter = (await getSetting("forge.discardOnPromote")) !== "false";
+      // Reorder for the lost-close race: write the DB effects (promote comment + close)
+      // BEFORE the merge. The merge is the only step that rewrites workdir files, which
+      // restarts the dev file-watcher and can kill everything after it. DB writes are
+      // cheap and cannot trigger a restart, so they land first.
+      await addComment(c.get("actor").id, ticketId, "forge: promoted", "comment");
+      const beforeMerge = await getTicket(ticketId);
+      const updated = await updateTicket(c.get("actor").id, ticketId, beforeMerge.version, { status: "closed" });
+      try {
+        // Merge only. The post-merge sandbox discard is a SEPARATE step below with its own
+        // failure handling: a discard-time fault (e.g. Windows EBUSY worktree lock) must not
+        // masquerade as a merge failure and wrongly reopen a ticket whose code already landed.
+        await promoteSandbox(workdir, ticketId, ticket.title, false);
+      } catch (e) {
+        // Merge failed after we already closed the ticket. A closed ticket whose code
+        // never landed is worse than the race, so compensate: bounce it back to review
+        // with a comment naming the failure, then surface the error (onError -> 409).
+        const closed = await getTicket(ticketId);
+        await addComment(c.get("actor").id, ticketId,
+          `forge: promote merge failed, ticket reopened to review — ${(e as Error).message}`, "comment");
+        await updateTicket(c.get("actor").id, ticketId, closed.version, { status: "review" });
+        throw e;
+      }
+      // Merge landed — the code is on the base branch and the ticket stays CLOSED. Discarding
+      // the sandbox is best-effort cleanup; on Windows an EBUSY lock (e.g. a test runner still
+      // holding the worktree) can make it fail. That is NOT a promote failure: WARN and leave
+      // the ticket closed. The leftover sandbox is reclaimable via /forge/sandboxes/cleanup;
+      // a wrongly-reopened ticket is not self-correcting.
+      if (discardAfter) {
+        try {
+          await discardSandbox(workdir, ticketId);
+        } catch (e) {
+          console.warn(`forge: ${ticketId} merged but sandbox ${branchName(ticketId)} cleanup failed: ${(e as Error).message}`);
+        }
+      }
+      // Repo files just changed on disk (sandbox merged into the project repo); refresh the
+      // doc index so stale README/CLAUDE/AGENTS text stops feeding plan/work prompts. Only this
+      // project. Non-blocking, swallow failures — matches the first-time index at runs.ts:316.
+      indexRepoDocs(ticket.projectId)
+        .catch((e) => console.warn(`repo re-index after promote failed: ${(e as Error).message}`));
+      return c.json(updated);
+    });
   });
 
   app.post("/forge/tickets/:id/export", requireAdmin, async (c) => {

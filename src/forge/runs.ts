@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { getLessons, lessonsClause } from "./lessons.js";
 import { existsSync, openSync, readSync, fstatSync, closeSync, statSync, readdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
+import { readFile } from "node:fs/promises";
 import { vibeopsHome } from "../runtime/home.js";
 import { startTimeReader } from "../runtime/proc-start.js";
 import { treeCpuReader } from "../runtime/proc-tree-cpu.js";
@@ -1437,6 +1438,18 @@ export function getRunOutput(id: string, after: number) {
   if (!r) return undefined;
   const from = Math.max(0, Math.min(after, r.output.length));
   return { chunk: r.output.slice(from), next: r.output.length, stage: r.stage, status: r.status };
+}
+
+export async function getSettledRunOutput(id: string, after: number) {
+  const [row] = await db.select().from(forgeRuns).where(eq(forgeRuns.id, id)).limit(1);
+  if (!row?.logPath) return undefined;
+  const path = resolve(row.logPath);
+  if (!path.startsWith(resolve(join(vibeopsHome(), ".vibeops", "runs")) + sep)) return undefined;
+  let text: string;
+  try { text = redactSecrets(await readFile(path, "utf-8")); } catch { return undefined; }
+  const from = Math.max(0, Math.min(after, text.length));
+  const chunk = text.slice(from, from + OUTPUT_CAP);
+  return { chunk, next: from + chunk.length, stage: row.stage, status: row.status, source: "log" as const };
 }
 
 // Test/introspection accessor: absolute timestamps for the checks-vs-review

@@ -8,7 +8,7 @@ import { loadRelayConfig } from "../relay/config.js";
 import { relayConfigPath, writeRelayConfig } from "../relay/bootstrap-config.js";
 import { runDoctor } from "../relay/doctor.js";
 import { parseVerdict } from "../relay/prompts.js";
-import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, latestRunStatus, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes } from "../forge/runs.js";
+import { startPipeline, listRunsWithHistory, getRunOutput, getSettledRunOutput, stopRun, resolveWorkdir, hasActiveRun, latestRunStatus, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes } from "../forge/runs.js";
 import {
   sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash, sandboxActivity, sandboxWorkingDiff, withReadOnlyView,
   attachmentsDir, exportOutputs, validateExportPath,
@@ -224,7 +224,8 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
 
   app.get("/forge/runs/:id/output", requireAdmin, async (c) => {
     const after = Number(c.req.query("after")) || 0;
-    const out = getRunOutput(c.req.param("id"), after);
+    const id = c.req.param("id");
+    const out = getRunOutput(id, after) ?? await getSettledRunOutput(id, after);
     if (!out) return c.json({ error: "run not found" }, 404);
     return c.json(out);
   });

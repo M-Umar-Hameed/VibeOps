@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { readIndexTail } from "./tail.js";
 import type { SessionSource, SessionDoc } from "./source.js";
+import { sandboxRoot, inside } from "../../forge/sandbox.js";
 
 function extractText(raw: string): string {
   const out: string[] = [];
@@ -36,8 +37,19 @@ export function isLocalModelTranscript(raw: string): boolean {
   return false;
 }
 
+export function sessionCwd(raw: string): string | undefined {
+  for (const line of raw.split("\n")) {
+    if (!line.includes('"cwd"')) continue;
+    let d: any;
+    try { d = JSON.parse(line); } catch { continue; }
+    if (typeof d?.cwd === "string" && d.cwd) return d.cwd;
+  }
+  return undefined;
+}
+
 export function makeClaudeCodeSource(
   projectsDir = join(homedir(), ".claude", "projects"),
+  sandboxDir = sandboxRoot(),
 ): SessionSource {
   return {
     source: "claude-code",
@@ -56,6 +68,9 @@ export function makeClaudeCodeSource(
             if (statSync(path).mtimeMs < cutoff) continue;
             const t = readIndexTail(path);
             if (!t || isLocalModelTranscript(t.text)) continue;
+            // Forge worker transcripts run inside the sandbox root; they are not user sessions.
+            const cwd = sessionCwd(t.text);
+            if (cwd && inside(cwd, sandboxDir)) continue;
             let text = extractText(t.text);
             if (!text) continue;
             // ponytail: cap to the most recent 200k chars per session — full multi-MB

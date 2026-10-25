@@ -68,9 +68,9 @@ export function composeWorkPrompt(
 }
 
 export function composeReviewPrompt(
-  { ticket, plan, report, diff, operatorNotes, checks, pendingChecks, protectedViolation, amendments, gate, citations, skills, evidence, outputs, memory, operatorEvidence }: {
+  { ticket, plan, report, diff, operatorNotes, checks, checksFailed, protectedViolation, amendments, gate, citations, skills, evidence, outputs, memory, operatorEvidence }: {
     ticket: TicketLike; plan: string; report: string; diff: string;
-    operatorNotes?: string; checks?: string; pendingChecks?: string[]; protectedViolation?: string; amendments?: string; gate?: string; citations?: string; skills?: string;
+    operatorNotes?: string; checks?: string; checksFailed?: boolean; protectedViolation?: string; amendments?: string; gate?: string; citations?: string; skills?: string;
     evidence?: string[]; outputs?: string[]; memory?: string; operatorEvidence?: string[];
   },
 ): string {
@@ -105,13 +105,8 @@ export function composeReviewPrompt(
         `A non-zero exit code in any check above is an automatic Critical finding and requires VERDICT: FAIL, ` +
         `unless the ticket body explicitly waives that check.`
       : "",
-    // Checks run concurrently with the review (runs.ts), so their results are not
-    // available yet; a failing check forces FAIL after the verdict regardless.
-    !checks && pendingChecks?.length
-      ? `\nCHECKS RUNNING NOW: the pipeline is running these commands in the worker's sandbox while you review:\n` +
-        `${fenceUntrusted("pending-checks", pendingChecks.join("\n"))}\n` +
-        `Any non-zero exit forces VERDICT: FAIL automatically after your review. Do not fail the change only because ` +
-        `the worker report lacks output from these commands; judge whether the tests the plan asks for exist and test the real code.`
+    checks && checksFailed
+      ? `The verdict is already FAIL because of the check output above. List every other Critical or Major finding so the rework fixes everything in one pass.`
       : "",
     protectedViolation
       ? `\nPROTECTED-PATH POLICY (evaluated deterministically by the pipeline on the diff):\n` +

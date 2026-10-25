@@ -994,17 +994,25 @@ async function reviewStage(
 
   if (run.stopped) return settle(run, "stopped");
 
-  // Checks run CONCURRENTLY with the whole review (single or chunked): the
-  // reviewer only needs check RESULTS at verdict time. Checks execute in
-  // `sandbox`; the review agent runs in its own read-only view, so no
-  // filesystem race.
+  // Checks run BEFORE the review so the reviewer judges real results, not the diff alone.
   if (checkCmds.length) run.checksStartedAt = Date.now();
-  const checksPromise: Promise<CheckResult[]> = checkCmds.length
-    ? runChecks(checkCmds, sandbox, undefined, (child) => {
+  const checkResults: CheckResult[] = checkCmds.length
+    ? await runChecks(checkCmds, sandbox, undefined, (child) => {
         run.checksChild = child;
         if (run.stopped) void killTree(child);
       }).then((results) => { run.checksChild = undefined; run.checksEndedAt = Date.now(); return results; })
-    : Promise.resolve<CheckResult[]>([]);
+    : [];
+  if (run.checksStartedAt !== undefined) run.checksDurationMs = Date.now() - run.checksStartedAt;
+  if (run.stopped) return settle(run, "stopped");
+  if (run.stallReason) { await bounce(run, actorId, run.stallReason, ""); return settle(run, "failed"); }
+
+  let checksText: string | undefined;
+  let checksFailed = false;
+  if (checkCmds.length) {
+    checksText = redactSecrets(formatChecks(checkResults));
+    checksFailed = checkResults.some((r) => r.code !== 0);
+    append(run, `\n=== FORGE checks ===\n${checksText}\n`);
+  }
 
   // One review invocation per chunk, sequential: recordSpawn tracks a single
   // live child/pid, and chunked review is the rare oversized-diff path.
@@ -1027,7 +1035,7 @@ async function reviewStage(
       if (run.stopped || run.stallReason) break;
       const reviewPrompt = composeReviewPrompt({
         ticket, plan, report: reportOutput, diff: chunk.payload, operatorNotes: run.operatorNotes,
-        pendingChecks: checkCmds.length ? checkCmds : undefined,
+        checks: checksText, checksFailed,
         protectedViolation: protectedFinding, amendments, gate: gate.report || undefined,
         citations: gate.citations || undefined, skills,
         evidence: evidence.paths.length ? evidence.paths : undefined,
@@ -1044,15 +1052,10 @@ async function reviewStage(
       ).then((r) => noteAccount(run, "review", r))));
     }
     return results;
-  })
-    // Never settle while checks still run in the sandbox; a resume would start a second set.
-    .catch(async (e) => { await checksPromise.catch(() => {}); throw e; });
+  });
   run.child = undefined;
   if (run.stopped) return settle(run, "stopped");
-  if (run.stallReason) { await checksPromise.catch(() => {}); await bounce(run, actorId, run.stallReason, ""); return settle(run, "failed"); }
-  const checkResults = await checksPromise;
-  if (run.checksStartedAt !== undefined) run.checksDurationMs = Date.now() - run.checksStartedAt;
-  if (run.stopped) return settle(run, "stopped");
+  if (run.stallReason) { await bounce(run, actorId, run.stallReason, ""); return settle(run, "failed"); }
 
   // A reviewer that never produced a verdict (non-zero exit, thrown error, an
   // API/transport error surfaced in output, or empty output) is "could not be reached", NOT
@@ -1069,14 +1072,6 @@ async function reviewStage(
   if (reviewStray.length) {
     await bounce(run, actorId, "reviewer changed files in its read-only copy", reviewStray.join("\n"));
     return settle(run, "failed");
-  }
-
-  let checksText: string | undefined;
-  let checksFailed = false;
-  if (checkCmds.length) {
-    checksText = redactSecrets(formatChecks(checkResults));
-    checksFailed = checkResults.some((r) => r.code !== 0);
-    append(run, `\n=== FORGE checks ===\n${checksText}\n`);
   }
 
   for (const res of reviewResults) applyVerification(res, run.agents.review, run, config);
@@ -1389,8 +1384,7 @@ export function getRunOutput(id: string, after: number) {
   return { chunk: r.output.slice(from), next: r.output.length, stage: r.stage, status: r.status };
 }
 
-// Test/introspection accessor: absolute timestamps for the checks-vs-review
-// overlap. reviewStartedAt < checksEndedAt proves the two ran concurrently.
+// Test/introspection accessor: absolute timestamps for checks and review. checksEndedAt <= reviewStartedAt proves checks finished before review began.
 export function getRunTimings(id: string) {
   const r = runs.get(id);
   if (!r) return undefined;
@@ -1465,12 +1459,12 @@ export async function sweepStalledRuns(now: number, windowMs: number): Promise<s
       const iso = new Date(since).toISOString().replace(/\.\d{3}Z$/, "Z");
       const reason = `stopped by the stall timer after ${mins} minutes without activity in ${run.stage} stage (last activity ${iso})`;
       const pid = run.pid;
-      const child = run.child;
+      const child = run.child ?? run.checksChild;
       run.stallReason = reason;
       if (child) {
         // In-process pipeline awaits this child: it WIP-commits, reports and settles (bounce lands inside the run window).
         await killTree(child);
-        if (run.checksChild) await killTree(run.checksChild);
+        if (run.checksChild && run.checksChild !== child) await killTree(run.checksChild);
       } else {
         // Reattached survivor: no pipeline left to save its work. tailUntilExit holds off settling while stallReason is set.
         try {

@@ -303,13 +303,15 @@ describe("Prompt Injection Defenses - Pipeline Level", () => {
     expect(withNeither).not.toContain("EXPORT OUTPUTS");
   });
 
-  it("composeReviewPrompt names the checks still running when their results are not in yet", () => {
+  it("composeReviewPrompt shows check results and, on a failed check, asks for every other finding", () => {
     const input = { ticket: { title: "T", body: "B" }, plan: "P", report: "R", diff: "D" };
-    const pending = composeReviewPrompt({ ...input, pendingChecks: ["npm run lint", "npm test"] });
-    expect(pending).toContain("CHECKS RUNNING NOW");
-    expect(pending).toContain("npm run lint\nnpm test");
-    expect(pending).toContain("Do not fail the change only because the worker report lacks output");
-    expect(composeReviewPrompt(input)).not.toContain("CHECKS RUNNING NOW");
-    expect(composeReviewPrompt({ ...input, checks: "$ npm test\nexit 0", pendingChecks: ["npm test"] })).not.toContain("CHECKS RUNNING NOW");
+    const passed = composeReviewPrompt({ ...input, checks: "$ npm test\nexit 0\nok" });
+    expect(passed).toContain("CHECKS (project check commands");
+    expect(passed).toContain("$ npm test\nexit 0\nok");
+    expect(passed).not.toContain("The verdict is already FAIL");
+    const failed = composeReviewPrompt({ ...input, checks: "$ npm test\nexit 1\nboom", checksFailed: true });
+    expect(failed).toContain("The verdict is already FAIL because of the check output above. List every other Critical or Major finding so the rework fixes everything in one pass.");
+    expect(composeReviewPrompt(input)).not.toContain("CHECKS (project check commands");
+    expect(composeReviewPrompt({ ...input, checksFailed: true })).not.toContain("The verdict is already FAIL");
   });
 });

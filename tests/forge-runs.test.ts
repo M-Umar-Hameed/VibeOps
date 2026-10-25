@@ -450,28 +450,49 @@ describe("forge run manager", () => {
     expect((await getTicket(ticket.id)).status).toBe("planned");
   });
 
-  it("checks run concurrently with review: review starts before the slow check finishes", async () => {
-    const { actorId, ticket } = await seedTicket("Concurrent checks");
+  it("checks finish before review starts and the review prompt carries the check tail", async () => {
+    const { actorId, ticket } = await seedTicket("Checks before review");
     await withSetting("forge.checks", JSON.stringify([`node "${join(__dirname, "fixtures", "check-slow.mjs")}"`]), async () => {
-      setScript("plan,work,review-pass-slow");
+      setScript("plan,work,echo-prompt");
       const { runId } = await startPipeline(actorId, relayConfig(), {
         ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
       });
       await awaitRun(runId);
 
-      // Causality, not wall clock: the review loop must START before the
-      // concurrent check FINISHES -- that overlap is what "runs concurrently"
-      // means, and it is immune to CPU scheduling drift. Serializing checks
-      // before review (await checksPromise first) lands reviewStartedAt after
-      // checksEndedAt and fails this.
       const t = getRunTimings(runId);
       expect(t?.checksStartedAt).toBeDefined();
       expect(t?.checksEndedAt).toBeDefined();
       expect(t?.reviewStartedAt).toBeDefined();
-      expect(t!.reviewStartedAt!).toBeLessThan(t!.checksEndedAt!);
+      expect(t!.checksEndedAt!).toBeLessThanOrEqual(t!.reviewStartedAt!);
+
+      const chunk = getRunOutput(runId, 0)?.chunk ?? "";
+      const prompt = chunk.slice(chunk.indexOf("PROMPT:"));
+      expect(prompt).toContain("CHECKS (project check commands");
+      expect(prompt).toContain("check finished");
+      expect(prompt).not.toContain("CHECKS RUNNING NOW");
+    });
+  });
+
+  it("failing check still runs the reviewer with the FAIL line and settles rejected with the check tail", async () => {
+    const { actorId, ticket } = await seedTicket("Failing check reviewed");
+    await withSetting("forge.checks", JSON.stringify([`node "${join(__dirname, "fixtures", "check-fail.mjs")}"`]), async () => {
+      setScript("plan,work,echo-prompt");
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
 
       const output = getRunOutput(runId, 0);
-      expect(output?.status).toBe("passed");
+      expect(output?.status).toBe("rejected");
+      const prompt = (output?.chunk ?? "").slice((output?.chunk ?? "").indexOf("PROMPT:"));
+      expect(prompt).toContain("TSCHECK-ERROR");
+      expect(prompt).toContain("The verdict is already FAIL because of the check output above.");
+
+      const review = (await listComments(ticket.id)).filter((c) => c.kind === "review").pop();
+      expect(review?.body).toContain("check(s) failed");
+      expect(review?.body).toContain("TSCHECK-ERROR");
+      expect(review?.body).toMatch(/VERDICT:\s*FAIL\s*$/);
+      expect((await getTicket(ticket.id)).status).toBe("planned");
     });
   });
 

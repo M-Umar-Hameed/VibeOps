@@ -1,6 +1,6 @@
 import { binBasename } from "./doctor.js";
 
-export const DEFAULT_ALLOWED_COMMANDS = ["npm test", "npm run", "npx vitest", "npx tsc", "git status", "git diff", "git log", "git show"];
+export const DEFAULT_ALLOWED_COMMANDS = ["npm test", "npm run", "npx vitest", "npx tsc", "git status", "git diff", "git log", "git show", "git rm"];
 
 // forge.allowedCommands (JSON string array) wins; unset or malformed falls back.
 export function resolveAllowedCommands(setting: string | null, fallback = DEFAULT_ALLOWED_COMMANDS): string[] {
@@ -46,15 +46,26 @@ export function wallCmd(cmd: string[], allowed: string[], write = false, addDirs
   return cmd;
 }
 
+const SHELL_CONTROL = /&&|\|\||;|\||>|<|`|\$\(/;
+const warnedChecks = new Set<string>();
+
 // forge.allowedCommands.<projectId> wins over forge.allowedCommands, then the default.
-export async function loadWall(projectId?: string): Promise<{ on: boolean; allowed: string[] }> {
+// Work lanes (write) may also run the project's single-command checks.
+export async function loadWall(projectId?: string, write = false, workdir = ""): Promise<{ on: boolean; allowed: string[] }> {
   try {
     const { getSetting } = await import("../services/settings.js");
     const global = resolveAllowedCommands(await getSetting("forge.allowedCommands"));
-    return {
-      on: (await getSetting("forge.agentWall")) !== "false",
-      allowed: projectId ? resolveAllowedCommands(await getSetting(`forge.allowedCommands.${projectId}`), global) : global,
-    };
+    const allowed = projectId ? resolveAllowedCommands(await getSetting(`forge.allowedCommands.${projectId}`), global) : global;
+    const on = (await getSetting("forge.agentWall")) !== "false";
+    if (!write) return { on, allowed };
+    const { resolveChecks } = await import("../forge/checks.js");
+    const checks = resolveChecks(projectId ? await getSetting(`forge.checks.${projectId}`) : null, workdir, await getSetting("forge.checks"));
+    const simple = checks.filter((c) => {
+      if (!SHELL_CONTROL.test(c)) return true;
+      if (!warnedChecks.has(c)) { warnedChecks.add(c); console.warn(`forge: wall skips compound check (use a single command): ${c}`); }
+      return false;
+    });
+    return { on, allowed: [...new Set([...allowed, ...simple])] };
   } catch {
     return { on: true, allowed: DEFAULT_ALLOWED_COMMANDS };
   }

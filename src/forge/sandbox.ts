@@ -333,6 +333,31 @@ export async function forgeCommit(ticketId: string, title: string): Promise<bool
   return true;
 }
 
+export type BaseSync = { state: "merged" | "current" | "conflict" | "unknown"; files?: string[]; base: string };
+
+export async function syncSandboxWithBase(workdir: string, ticketId: string, keepConflict = false): Promise<BaseSync> {
+  const branch = branchName(ticketId);
+  const base = (await must(workdir, "rev-parse", "HEAD")).trim();
+  if ((await git(workdir, "merge-base", "--is-ancestor", base, branch)).code === 0) return { state: "current", base };
+  const path = sandboxPath(ticketId);
+  const id = ["-c", "user.email=forge@vibeops.local", "-c", "user.name=VibeOps Forge"];
+  const lines = (s: string) => s.split("\n").map((l) => stripCR(l).trim()).filter(Boolean);
+  const tree = await git(workdir, "merge-tree", "--write-tree", "--name-only", "--no-messages", base, branch);
+  let files: string[];
+  if (tree.code === 1) files = lines(tree.out).slice(1);
+  else if (tree.code !== 0) {
+    console.warn(`syncSandboxWithBase: merge-tree failed for ${ticketId}: ${tree.out.trim()}`);
+    return { state: "unknown", base };
+  } else {
+    const merge = await git(path, ...id, "merge", "--no-ff", "--no-edit", base);
+    if (merge.code === 0) return { state: "merged", base };
+    files = lines((await git(path, "diff", "--name-only", "--diff-filter=U")).out);
+    await git(path, "merge", "--abort");
+  }
+  if (keepConflict) await git(path, ...id, "merge", "--no-commit", base);
+  return { state: "conflict", files, base };
+}
+
 export async function sandboxDiff(workdir: string, ticketId: string): Promise<string> {
   const { out } = await git(workdir, "diff", `HEAD...${branchName(ticketId)}`);
   return out.slice(0, DIFF_CAP);

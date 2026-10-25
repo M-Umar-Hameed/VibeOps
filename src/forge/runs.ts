@@ -992,7 +992,7 @@ async function reviewStage(
       `${files.map((f) => `  - ${f}`).join("\n")}\n` +
       `Resolve the merge conflicts in ${files.join(", ")}; keep both sides' intent.\nVERDICT: FAIL`, "review");
     await setStatus(actorId, ticket.id, "planned");
-    run.cause = "base_conflict";
+    setCause(run, "base_conflict", "base conflict");
     return settle(run, "rejected");
   }
 

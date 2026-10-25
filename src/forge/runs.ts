@@ -871,6 +871,7 @@ async function pipeline(
     return settle(run, "stopped");
   }
   applyVerification(workRes, run.agents.work, run, config);
+  let crashed: string | undefined;
   if (!workRes.ok) {
     // Work stage failed after the agent may have written a complete tree (agy's
     // own request timeout self-exits non-zero; the child is already dead here).
@@ -879,13 +880,21 @@ async function pipeline(
     // silently throwing away finished-but-uncommitted work. Never auto-promoted;
     // the ticket still bounces to `planned`. forgeCommit no-ops on a clean tree.
     const saved = await forgeCommit(ticket.id, `WIP (worker failed) ${ticket.title}`);
-    const note = saved
-      ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]"
-      : "";
-    await bounce(run, actorId, "worker failed", workRes.output + note);
-    return settle(run, "failed");
+    // A known-benign SDK error after this run saved a diff: review the diff instead of wasting the run.
+    if (saved && !run.limit && !workRes.limit && !run.stopped && !run.stallReason
+      && (await getSetting("forge.reviewAfterBenignWorkerError")) !== "false") {
+      crashed = benignWorkerError(workRes.output);
+    }
+    if (!crashed) {
+      const note = saved
+        ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]"
+        : "";
+      await bounce(run, actorId, "worker failed", workRes.output + note);
+      return settle(run, "failed");
+    }
+    append(run, `\nforge: worker crashed (${crashed}) after saving a diff; continuing to review\n`);
   }
-  await forgeCommit(ticket.id, ticket.title);
+  if (!crashed) await forgeCommit(ticket.id, ticket.title);
   await addComment(actorId, ticket.id, redactSecrets(workRes.output), "report");
   void captureMemory({ actorId, text: redactSecrets(reportTail(workRes.output)), projectId: ticket.projectId ?? undefined });
   ticket = await setStatus(actorId, ticket.id, "review");
@@ -895,7 +904,10 @@ async function pipeline(
   // that plan are not reflected in it; pass them to the reviewer as authoritative
   // amendments so supervisor-requested scope is not flagged as scope creep.
   const amendments = !planRegenerated && kept.length ? redactSecrets(commentsText) : undefined;
-  return reviewStage(run, actorId, agents.review, workdir, sandbox, ticket, plan, workRes.output, styleSetting, config, amendments, selectSkills(plan, agents.review.skillAllowlist).bodies, operatorEvidence);
+  const report = crashed
+    ? `WORKER CRASHED before finishing (${crashed}). The diff may be incomplete: check every plan step and acceptance criterion against the diff, not against the report; FAIL if any step is missing.\n\n${workRes.output}`
+    : workRes.output;
+  return reviewStage(run, actorId, agents.review, workdir, sandbox, ticket, plan, report, styleSetting, config, amendments, selectSkills(plan, agents.review.skillAllowlist).bodies, operatorEvidence);
 }
 
 function settle(run: Run, status: Status): void {
@@ -916,6 +928,15 @@ function settle(run: Run, status: Status): void {
   // so until this row lands a settled run still reads as active. That gap used to
   // be covered by the analyzer's extra await; deleting the analyzer exposed it.
   run.persisted = persistRun(run).catch(() => {});
+}
+
+// Known-benign SDK worker errors: matched only on the supervisor marker lines from invoke-sdk.ts, never worker text.
+const BENIGN_SDK_ERRORS = ["only prompt commands are supported in streaming mode"];
+function benignWorkerError(output: string): string | undefined {
+  const lines = output.split("\n");
+  if (!lines.some((l) => l.startsWith("[forge: sdk result error_during_execution "))) return undefined;
+  const errLine = lines.find((l) => l.startsWith("[forge: sdk errors: "));
+  return errLine ? BENIGN_SDK_ERRORS.find((e) => errLine.includes(e)) : undefined;
 }
 
 // Extracted for resume-to-review: runs the review stage against an existing sandbox.

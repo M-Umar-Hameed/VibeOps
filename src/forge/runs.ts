@@ -87,7 +87,8 @@ const NARRATION =
   "\n\nAll file paths are relative to your current working directory. Never use " +
   "absolute paths and never write outside your working directory, even if the " +
   "plan shows absolute paths." +
-  "\n\nDo not change, close or reopen this ticket (no update_ticket status changes); the supervisor moves the ticket when you finish. Report through your output only.";
+  "\n\nDo not change, close or reopen this ticket (no update_ticket status changes); the supervisor moves the ticket when you finish. Report through your output only." +
+  "\n\nRun every command in the foreground; never use run_in_background, slash commands or sub-agents.";
 
 // EXPORT-TO tickets deliver files that live outside git (images, video, posts).
 const EXPORT_NARRATION =

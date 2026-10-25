@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect } from "vitest";
-import { checkToolPermission, runAgentSdk, hasCredentials } from "../src/relay/invoke-sdk.js";
+import { checkToolPermission, runAgentSdk, hasCredentials, buildSdkOptions, sdkEnv } from "../src/relay/invoke-sdk.js";
 
 describe("checkToolPermission", () => {
   const sandbox = mkdtempSync(join(tmpdir(), "sdk-sbx-"));
@@ -78,8 +78,10 @@ describe("hasCredentials", () => {
 describe("runAgentSdk credentials", () => {
   it("fails with an actionable message when no credentials and no login file", async () => {
     const prevTok = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    const prevCfg = process.env.CLAUDE_CONFIG_DIR;
     const prevHome = process.env.HOME, prevUP = process.env.USERPROFILE;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    delete process.env.CLAUDE_CONFIG_DIR;
     const emptyHome = mkdtempSync(join(tmpdir(), "sdk-home-"));
     process.env.HOME = emptyHome; process.env.USERPROFILE = emptyHome;
     try {
@@ -88,9 +90,51 @@ describe("runAgentSdk credentials", () => {
       expect(res.output).toContain("claude setup-token");
     } finally {
       if (prevTok !== undefined) process.env.CLAUDE_CODE_OAUTH_TOKEN = prevTok;
+      if (prevCfg !== undefined) process.env.CLAUDE_CONFIG_DIR = prevCfg;
       if (prevHome !== undefined) process.env.HOME = prevHome; else delete process.env.HOME;
       if (prevUP !== undefined) process.env.USERPROFILE = prevUP; else delete process.env.USERPROFILE;
       rmSync(emptyHome, { recursive: true, force: true });
     }
+  });
+});
+
+describe("buildSdkOptions", () => {
+  const names = ["SlashCommand", "Skill", "Task", "Agent", "BashOutput", "TaskOutput", "KillShell"];
+  it("disallows background and sub-agent tools with the wall on and off", () => {
+    for (const on of [true, false]) {
+      const o = buildSdkOptions({}, tmpdir(), on, ["npm test"]);
+      for (const n of names) expect(o.disallowedTools).toContain(n);
+      expect(o.disallowedTools).toContain("Bash(git *--output*)");
+    }
+  });
+
+  it("hook denies run_in_background for Bash and PowerShell and allows a plain call", async () => {
+    const hook = buildSdkOptions({}, tmpdir(), true, []).hooks.PreToolUse[0].hooks[0];
+    const sig = { signal: new AbortController().signal };
+    for (const tool of ["Bash", "PowerShell"]) {
+      const r: any = await hook({ hook_event_name: "PreToolUse", tool_name: tool, tool_input: { command: "npx vitest run", run_in_background: true } } as any, undefined, sig);
+      expect(r.hookSpecificOutput.permissionDecision).toBe("deny");
+      expect(r.hookSpecificOutput.permissionDecisionReason).toContain("run it in the foreground");
+    }
+    const ok: any = await hook({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "npx vitest run" } } as any, undefined, sig);
+    expect(ok.hookSpecificOutput).toBeUndefined();
+  });
+});
+
+describe("sdkEnv", () => {
+  it("adds BASH_MAX_TIMEOUT_MS and BASH_DEFAULT_TIMEOUT_MS", () => {
+    const env = sdkEnv({ type: "sdk", roles: ["work"], cmd: [] }, tmpdir(), {});
+    expect(env.BASH_MAX_TIMEOUT_MS).toBe(process.env.BASH_MAX_TIMEOUT_MS ?? "1200000");
+    expect(env.BASH_DEFAULT_TIMEOUT_MS).toBe(process.env.BASH_DEFAULT_TIMEOUT_MS ?? "1200000");
+  });
+
+  it("passes agent.env CLAUDE_CONFIG_DIR with no account and substitutes {workdir}", () => {
+    const env = sdkEnv({ type: "sdk", roles: ["work"], cmd: [], env: { CLAUDE_CONFIG_DIR: "{workdir}/.claude-b" } }, "/w", {});
+    expect(env.CLAUDE_CONFIG_DIR).toBe("/w/.claude-b");
+  });
+
+  it("account env overrides agent.env", () => {
+    const env = sdkEnv({ type: "sdk", roles: ["work"], cmd: [], env: { CLAUDE_CONFIG_DIR: "/lane" } }, "/w", { CLAUDE_CONFIG_DIR: "/acct" });
+    expect(env.CLAUDE_CONFIG_DIR).toBe("/acct");
   });
 });

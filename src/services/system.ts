@@ -45,9 +45,16 @@ export async function getSystemTopology() {
 
 const BOOT_TIME = new Date().toISOString();
 
+const errorRing: { at: string; level: string; message: string }[] = [];
+export function recordError(message: string): void {
+  errorRing.push({ at: new Date().toISOString(), level: "error", message: message.slice(0, 2000) });
+  if (errorRing.length > 50) errorRing.shift();
+}
+
 export async function getSystemLogs() {
   const logs: { at: string; level: string; message: string }[] = [];
   logs.push({ at: BOOT_TIME, level: "info", message: "Server booted" });
+  logs.push(...errorRing);
   
   try {
     const runs = await listRunsWithHistory();

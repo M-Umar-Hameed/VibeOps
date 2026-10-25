@@ -94,10 +94,10 @@ export function parsePlanSkills(plan: string, known: string[]): string[] {
   );
 }
 
-// Every /name token whose name is known (what the "/" autocomplete inserts).
+// Every standalone /name token whose name is known (what the "/" autocomplete inserts).
 export function parseOperatorSkills(extra: string, known: string[]): string[] {
   const knownLower = new Set(known.map((k) => k.toLowerCase()));
-  const tokens = [...extra.matchAll(/\/([A-Za-z0-9._:-]+)/g)].map((m) => m[1].toLowerCase());
+  const tokens = [...extra.matchAll(/(?<![\w./:-])\/([A-Za-z0-9_:-]+(?:\.[A-Za-z0-9_:-]+)*)(?![\w/:-]|\.\w)/g)].map((m) => m[1].toLowerCase());
   return dedupeCap(tokens.filter((t) => knownLower.has(t)));
 }
 

@@ -56,6 +56,7 @@ function writeRelayConfig(relayConfigPath: string, workdir: string): void {
 let workdir: string;
 let sandboxRoot: string;
 let relayConfigPath: string;
+let counterFile: string;
 let runsDir: string;
 let logFiles: string[];
 
@@ -78,6 +79,7 @@ beforeEach(() => {
   workdir = initRepo();
   sandboxRoot = mkdtempSync(join(tmpdir(), "forge-out-sbx-"));
   relayConfigPath = join(mkdtempSync(join(tmpdir(), "forge-out-cfg-")), "relay.json");
+  counterFile = join(mkdtempSync(join(tmpdir(), "forge-out-ctr-")), "counter.txt");
   runsDir = join(vibeopsHome(), ".vibeops", "runs");
   mkdirSync(runsDir, { recursive: true });
   logFiles = [];
@@ -90,6 +92,9 @@ afterEach(async () => {
   await settleAll();
   delete process.env.VIBEOPS_SANDBOX_ROOT;
   delete process.env.VIBEOPS_RELAY_CONFIG;
+  delete process.env.FAKE_SCRIPT;
+  delete process.env.FAKE_COUNTER_FILE;
+  delete process.env.FAKE_WRITE;
   const wts = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: workdir, encoding: "utf8" });
   for (const line of wts.split("\n")) {
     if (!line.startsWith("worktree ")) continue;
@@ -100,6 +105,7 @@ afterEach(async () => {
   rmSync(sandboxRoot, { recursive: true, force: true });
   rmSync(workdir, { recursive: true, force: true });
   rmSync(dirname(relayConfigPath), { recursive: true, force: true });
+  rmSync(dirname(counterFile), { recursive: true, force: true });
   for (const f of logFiles) rmSync(f, { force: true });
 });
 
@@ -163,6 +169,7 @@ describe("forge run output", () => {
     const h = await adminHeaders();
     const { id: ticketId } = await seedTicket();
     process.env.FAKE_SCRIPT = "plan,work,review-pass";
+    process.env.FAKE_COUNTER_FILE = counterFile;
     process.env.FAKE_WRITE = "1";
 
     const startRes = await app.request("/forge/pipeline", {
@@ -184,7 +191,5 @@ describe("forge run output", () => {
     expect(body).toBeDefined();
     expect(body.status).toBe("passed");
     expect(body.source).toBeUndefined();
-
-    delete process.env.FAKE_SCRIPT;
   }, 30000);
 });

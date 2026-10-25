@@ -60,7 +60,7 @@ Add credentials to `relay.json` under `agents.<name>.env`, using names ending wi
 - **Redacted surfaces:** Literal values of variables ending in `_PASSWORD`, `_TOKEN`, `_SECRET`, or `_KEY` are replaced with `[redacted]` in run output, the run log file (rewritten when the run settles), ticket comments (Forge and relay CLI), memory capture, and knowledge ingestion. Values shorter than 4 characters are not redacted. Other environment variable names are not redacted.
 - **Sentinel warning:** Edit `relay.json` only when no Forge work stage is running. The sentinel snapshots `relay.json` and restores it after the stage, so any mid-run edits are silently reverted.
 - **Script usage:** Scripts read the value from `process.env.DEMO_SHOP_PASSWORD`. Never write credentials to a file, a commit, or a prompt. Redaction is best-effort: a value split across output chunks, encoded, or transformed can slip through.
-- **Agent types:** `type: "sdk"` and `type: "http"` agents ignore `env`.
+- **Agent types:** `type: "http"` agents ignore `env`. `type: "sdk"` agents merge it in the documented order: `process.env` → `agent.env` → account env (`{workdir}` substituted). The sdk lane also sets `BASH_DEFAULT_TIMEOUT_MS` and `BASH_MAX_TIMEOUT_MS` to `1200000` unless they are already set.
 
 For routing details on how roles are assigned and executed, see [docs/ROUTING.md](ROUTING.md) and [README.md#cross-model-pipeline-relay](../README.md#cross-model-pipeline-relay).
 

@@ -12,8 +12,11 @@ import { markInterruptedRuns, reconcileMergedTickets, sweepStalledRunsWithConfig
 import { restoreCouncilSessions } from "../council/runs.js";
 import { configureExport } from "../services/export-debounce.js";
 import { timing } from "../services/metrics.js";
+import { installSdkTransportGuard } from "../relay/invoke-sdk.js";
 
 const port = Number(process.env.PORT ?? 8787);
+
+installSdkTransportGuard();
 
 if (embeddedDbLockError) {
   console.error(embeddedDbLockError.message);

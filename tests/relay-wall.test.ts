@@ -181,4 +181,21 @@ test("runAgent reaches the claude wall with per-project allowed commands", async
   }
 }, 30_000);
 
+test("loadWall write adds simple checks, skips compound ones", async () => {
+  await withSettings({ "forge.checks.p1": '["npx tsc -p mobile --noEmit","cd mobile && npm run lint","node a.mjs | tee x","npm --prefix mobile run lint"]' }, async () => {
+    const w = await loadWall("p1", true);
+    expect(w.allowed).toContain("npx tsc -p mobile --noEmit");
+    expect(w.allowed).toContain("npm --prefix mobile run lint");
+    expect(w.allowed).not.toContain("cd mobile && npm run lint");
+    expect(w.allowed).not.toContain("node a.mjs | tee x");
+    expect(new Set(w.allowed).size).toBe(w.allowed.length);
+    expect((await loadWall("p1")).allowed).toEqual(DEFAULT_ALLOWED_COMMANDS);
+    expect((await loadWall("p1", false)).allowed).not.toContain("npx tsc -p mobile --noEmit");
+  });
+});
+
+test("git rm is allowed by default", () => {
+  expect(DEFAULT_ALLOWED_COMMANDS).toContain("git rm");
+  expect(allowRules(DEFAULT_ALLOWED_COMMANDS)).toContain("Bash(git rm *)");
+});
 

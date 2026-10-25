@@ -21,7 +21,7 @@ import {
   resolveMaxActive,
   listInterruptedRuns
 } from "../src/forge/runs.js";
-import { sandboxExists, branchName, promoteSandbox, sandboxDiff, hasCommitsToPromote } from "../src/forge/sandbox.js";
+import { sandboxExists, branchName, promoteSandbox, sandboxDiff, hasCommitsToPromote, ensureSandbox, forgeCommit } from "../src/forge/sandbox.js";
 import { vibeopsHome } from "../src/runtime/home.js";
 import { app } from "../src/api/app.js";
 import { createActor } from "../src/services/actors.js";
@@ -358,7 +358,7 @@ describe("forge run manager", () => {
 
   it("FAIL verdict settles rejected, bounces to planned, sandbox kept", async () => {
     const { actorId, ticket } = await seedTicket("Fail path");
-    setScript("plan,work,review-fail");
+    setScript("plan,work,review-fail", true);
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
@@ -428,7 +428,7 @@ describe("forge run manager", () => {
     g("add", "-A");
     g("commit", "-m", "add check");
 
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",

@@ -60,7 +60,7 @@ Process flaws found in the 2026-09-05 audit of the 200 closed tickets, and what 
 
 - Reviewers raised syntax or JSX-balance findings by counting hunks in the diff (12 tickets carried a finding later shown false). The review prompt now requires CHECKS output or a quoted compiler run for any compile-class finding.
 - Planners stated numbers they had not measured (baseline test counts, line numbers). The plan prompt now requires every number to come from something run or read in the session, else the word unmeasured.
-- Worker tool failures (headless permission auto-deny, ENAMETOOLONG, a broken command line) produced empty diffs that still consumed a review round in 19 tickets; those spawn paths were fixed in July, and an empty diff is still failed by the reviewer rather than short-circuited (20 tests depend on a non-writing worker reaching review).
+- Worker tool failures (headless permission auto-deny, ENAMETOOLONG, a broken command line) produced empty diffs that still consumed a review round in 19 tickets; those spawn paths were fixed in July, and since 2026-10-25 a work stage that leaves no new commit and no change (EXPORT-TO tickets excepted when .forge/out has files) is short-circuited: the run settles failed with cause no_changes before checks and review.
 - No UI guideline existed anywhere, so UI tickets took two to three rounds to converge on the app's own conventions. `docs/UI_GUIDELINES.md` now states them and CLAUDE.md/AGENTS.md point every agent at it for `app/` work.
 Known limits worth stating plainly:
 

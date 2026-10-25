@@ -84,6 +84,32 @@ describe("forge checks", () => {
       expect(results).toHaveLength(1);
       expect(results[0].code).not.toBe(0);
       expect(results[0].tail).toContain("check timed out");
+      expect(results[0].timedOut).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("runChecks keeps rolling tail of large output", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "forge-checks-test-"));
+    try {
+      const results = await runChecks([`node -e "process.stdout.write('x'.repeat(250000)+'\\n');console.log('SUMMARY-LINE')"`], tmp);
+      expect(results).toHaveLength(1);
+      expect(results[0].code).toBe(0);
+      expect(results[0].timedOut).toBe(false);
+      expect(results[0].tail).toContain("SUMMARY-LINE");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("runChecks plain failure gives timedOut false", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "forge-checks-test-"));
+    try {
+      const results = await runChecks([`node "${join(__dirname, "fixtures", "check-fail.mjs")}"`], tmp);
+      expect(results).toHaveLength(1);
+      expect(results[0].code).toBe(1);
+      expect(results[0].timedOut).toBe(false);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

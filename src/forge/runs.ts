@@ -32,12 +32,12 @@ import { logAgentUse, startAgentSession, endAgentSession } from "../services/usa
 import { listActors } from "../services/actors.js";
 import { bump } from "../services/metrics.js";
 import { captureMemory, reportTail } from "../services/memory-capture.js";
-import { desc, isNull, sum, eq, gte, lte, and, inArray } from "drizzle-orm";
+import { desc, isNull, sum, eq, gte, lte, and, inArray, ne } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { pidAlive } from "../db/lifecycle.js";
 import { forgeRuns, aiUsageLogs, tickets, type Ticket, type ForgeRun } from "../db/schema.js";
 import { verifyModel, MISMATCH_WARNING, computeVerificationStatus } from "./verify.js";
-import { resolveChecks, runChecks, formatChecks, type CheckResult } from "./checks.js";
+import { resolveChecks, runChecks, formatChecks, CHECK_TIMEOUT_MS, type CheckResult } from "./checks.js";
 import { runGate, resolveMutationCmd } from "./gate.js";
 import { emitEvent } from "../api/events.js";
 
@@ -918,6 +918,23 @@ function settle(run: Run, status: Status): void {
   run.persisted = persistRun(run).catch(() => {});
 }
 
+async function previousRunTimedOut(run: Run): Promise<boolean> {
+  const [row] = await db.select({ cause: forgeRuns.cause }).from(forgeRuns)
+    .where(and(eq(forgeRuns.ticketId, run.ticketId), ne(forgeRuns.id, run.id)))
+    .orderBy(desc(forgeRuns.startedAt)).limit(1);
+  return row?.cause === "check_timeout";
+}
+
+const CHECK_TIMEOUT_MIN_MS = 60_000;
+const CHECK_TIMEOUT_MAX_MS = 3_600_000;
+function resolveCheckTimeoutMs(...settings: (string | null)[]): number {
+  for (const s of settings) {
+    const n = s === null ? NaN : Number(s.trim());
+    if (Number.isInteger(n) && n > 0) return Math.min(CHECK_TIMEOUT_MAX_MS, Math.max(CHECK_TIMEOUT_MIN_MS, n));
+  }
+  return CHECK_TIMEOUT_MS;
+}
+
 // Extracted for resume-to-review: runs the review stage against an existing sandbox.
 async function reviewStage(
   run: Run, actorId: string, reviewAgent: RelayAgent, workdir: string,
@@ -939,6 +956,7 @@ async function reviewStage(
   // run mechanically at verdict time, independent of the reviewer's own
   // verdict — see the gate evaluation below.
   const checkCmds = resolveChecks(await getSetting(`forge.checks.${ticket.projectId}`), sandbox, await getSetting("forge.checks"));
+  const checkTimeoutMs = resolveCheckTimeoutMs(await getSetting(`forge.checkTimeoutMs.${ticket.projectId}`), await getSetting("forge.checkTimeoutMs"));
 
   // Protected-path policy: deterministic, evaluated on the diff (never the
   // worker's self-report). A touched protected path is an automatic Critical
@@ -1000,7 +1018,7 @@ async function reviewStage(
   // filesystem race.
   if (checkCmds.length) run.checksStartedAt = Date.now();
   const checksPromise: Promise<CheckResult[]> = checkCmds.length
-    ? runChecks(checkCmds, sandbox, undefined, (child) => {
+    ? runChecks(checkCmds, sandbox, checkTimeoutMs, (child) => {
         run.checksChild = child;
         if (run.stopped) void killTree(child);
       }).then((results) => { run.checksChild = undefined; run.checksEndedAt = Date.now(); return results; })
@@ -1081,6 +1099,16 @@ async function reviewStage(
 
   for (const res of reviewResults) applyVerification(res, run.agents.review, run, config);
   const verdict = mergeReviewVerdicts(chunks, reviewResults.map((r) => r.output));
+
+  const failedChecks = checkResults.filter((r) => r.code !== 0);
+  const checksTimedOutOnly = checksFailed && failedChecks.every((r) => r.timedOut);
+  if (verdict.pass && !gateBlocked && checksTimedOutOnly && !(await previousRunTimedOut(run))) {
+    const timedOutCmds = failedChecks.map((r) => r.command).join(", ");
+    await addComment(actorId, ticket.id, redactSecrets(`${verdict.raw}\n\n[forge: check(s) timed out (infra) - verdict forced to FAIL]\n${checksText}\nVERDICT: FAIL`), "review");
+    await bounce(run, actorId, `checks timed out: ${timedOutCmds}`, checksText ?? "");
+    run.cause = "check_timeout";
+    return settle(run, "failed");
+  }
 
   // Gate block or a failing check forces FAIL regardless of the model's verdict.
   // The comment is the durable record (run output dies with the process), so it

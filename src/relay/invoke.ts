@@ -9,7 +9,8 @@ import { pidAlive } from "../db/lifecycle.js";
 import { winCommand } from "./win-bin.js";
 import { loadWall, wallCmd, denyOnlyCmd, agyDenyCmd } from "./wall.js";
 import { registerEnvSecrets } from "../forge/redact.js";
-import { chooseAccount, allExhaustedResult, settleAccountResult } from "./accounts.js";
+import { chooseAccount, allExhaustedResult, settleAccountResult, laneKind } from "./accounts.js";
+import { parseUsageJson } from "./usage-json.js";
 
 const OUTPUT_CAP = 100_000;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
@@ -114,6 +115,9 @@ export async function runAgent(
   const wall = await loadWall(agent.projectId, agent.write === true, workdir);
   let cmd = wall.on ? wallCmd(agent.cmd, wall.allowed, agent.write === true, agent.addDirs, agent.liftedRules) : denyOnlyCmd(agent.cmd, agent.liftedRules);
   cmd = agyDenyCmd(cmd, agent.liftedRules);
+  const kind = laneKind(agent);
+  const exact = agent.usage === "exact";
+  if (exact && (kind === "claude" || kind === "agy") && !cmd.includes("--output-format")) cmd = [...cmd, "--output-format", "json"];
 
   const promptFile = join(tmpdir(), `vibeops-relay-${randomUUID()}.txt`);
   // Declared delivery wins while the cmd still carries its placeholder. The wall
@@ -233,8 +237,8 @@ export async function runAgent(
       let tailPos = tailStart;
 
       const push = (s: string) => {
-        if (output.length < OUTPUT_CAP) output += s;
-        onData?.(s);
+        if (output.length < (exact ? OUTPUT_CAP * 4 : OUTPUT_CAP)) output += s;
+        if (!exact) onData?.(s);
       };
 
       const timeoutMs = agent.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -293,6 +297,13 @@ export async function runAgent(
         if (exitTimer) clearTimeout(exitTimer);
         if (pollTimer) clearInterval(pollTimer);
         drainTail();
+        if (exact) {
+          // ponytail: the raw run log file keeps the JSON; only the parsed text reaches onData and output
+          const parsed = parseUsageJson(output);
+          onData?.(parsed ? parsed.text : output);
+          resolve({ ok, output: (parsed ? parsed.text : output).slice(0, OUTPUT_CAP), ...(parsed && { usage: parsed.usage }) });
+          return;
+        }
         resolve({ ok, output: output.slice(0, OUTPUT_CAP) });
       };
       child.on("close", (code) => finish(code === 0));

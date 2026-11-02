@@ -22,7 +22,7 @@ export type RelayModel = { name: string; tier: ModelTier; quality: number };
 export type PromptDelivery = "argv" | "file" | "stdin";
 export const PROMPT_DELIVERIES: PromptDelivery[] = ["argv", "file", "stdin"];
 export type RelayAccount = { id: string; label: string; configDir: string; priority: number; disabled?: boolean };
-export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string; write?: boolean; promptDelivery?: PromptDelivery; projectId?: string; addDirs?: string[]; liftedRules?: string[]; skillAllowlist?: string[]; accounts?: RelayAccount[] };
+export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string; write?: boolean; promptDelivery?: PromptDelivery; projectId?: string; addDirs?: string[]; liftedRules?: string[]; skillAllowlist?: string[]; accounts?: RelayAccount[]; usage?: "exact" };
 export type RelayConfig = {
   workdir: string; apiKey?: string; baseUrl?: string; pollMs?: number;
   agents: Record<string, RelayAgent>;
@@ -165,6 +165,12 @@ export function validateRelayConfig(parsed: unknown, configPath: string): RelayC
         if (!Number.isInteger(model.quality) || (model.quality as number) < 1 || (model.quality as number) > 5) {
           throw new Error(`relay config agent "${name}" model "${model.name}" quality must be an integer 1-5`);
         }
+      }
+    }
+    if (a.usage !== undefined) {
+      const k = a.type === "sdk" || a.type === "http" ? undefined : laneKind(a as RelayAgent);
+      if (a.usage !== "exact" || (k !== "claude" && k !== "agy")) {
+        throw new Error(`relay config agent "${name}" usage "exact" is only supported on claude and agy cli lanes`);
       }
     }
     if (a.accounts !== undefined) {

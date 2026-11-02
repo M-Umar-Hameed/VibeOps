@@ -161,6 +161,7 @@ export const aiUsageLogs = pgTable('ai_usage_logs', {
   ticketId: uuid('ticket_id'),
   actorId: uuid('actor_id'),
   durationMs: integer('duration_ms'),
+  exact: boolean('exact'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

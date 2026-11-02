@@ -17,14 +17,34 @@ test("already-human and unknown errors pass through unchanged; empty gets a reas
   expect(humanizeBrowserError(undefined)).toBe("the browser returned no reason");
 });
 
-test("codes win over reworded text and match the legacy rule wording", () => {
-  expect(humanizeBrowserError("reworded", "stale_ref")).toBe(humanizeBrowserError("unknown ref"));
-  expect(humanizeBrowserError("reworded", "unsupported_verb")).toContain("update the extension");
-  for (const code of ["no_grant", "origin_mismatch", "navigation_timeout", "screenshot_failed", "out_of_viewport", "no_element", "no_page", "page_navigated", "wait_timeout"]) {
-    const m = humanizeBrowserError("reworded", code);
-    expect(m).not.toBe("reworded");
-    expect(m).toMatch(/^[a-z]/);
+const MSGS: Record<string, string> = {
+  stale_ref: "that element reference is stale - take a fresh snapshot and use its refs",
+  unsupported_verb: "this extension build does not support that action - update the extension from the latest release",
+  no_grant: "the agent has no act grant for this site - grant it from the VibeOps browser panel and retry",
+  origin_mismatch: "the page is on a different site than the one granted - grant the new site or navigate back",
+  navigation_timeout: "the page did not finish loading in time - retry or check the site is reachable",
+  screenshot_failed: "the screenshot could not be taken",
+  out_of_viewport: "that point is outside the visible page - scroll or take a fresh snapshot",
+  no_element: "there is no element at that point - take a fresh snapshot and retry",
+  no_page: "the agent window has no page yet - navigate to a URL first",
+  page_navigated: "the page navigated away before the remaining steps could run - take a fresh snapshot and retry them",
+  wait_timeout: "the text did not appear on the page in time - take a snapshot to see what the page shows",
+};
+
+test("a known code prefixes its message and keeps the raw detail", () => {
+  for (const [code, msg] of Object.entries(MSGS)) {
+    expect(humanizeBrowserError("totally reworded text", code)).toBe(`${msg}: totally reworded text`);
   }
+});
+
+test("legacy rule wording wins when the original text comes with a code", () => {
+  expect(humanizeBrowserError("unknown ref", "stale_ref")).toBe(humanizeBrowserError("unknown ref"));
+  expect(humanizeBrowserError("unknown verb: x", "unsupported_verb"))
+    .toBe(humanizeBrowserError("unknown verb: x"));
+});
+
+test("empty raw with a code gives the bare message", () => {
+  expect(humanizeBrowserError("", "no_grant")).toBe(MSGS.no_grant);
 });
 
 test("unknown code falls back to the text rules", () => {

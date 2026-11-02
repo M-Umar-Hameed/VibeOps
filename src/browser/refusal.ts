@@ -16,7 +16,7 @@ const CODES: Record<string, string> = {
   no_grant: "the agent has no act grant for this site - grant it from the VibeOps browser panel and retry",
   origin_mismatch: "the page is on a different site than the one granted - grant the new site or navigate back",
   navigation_timeout: "the page did not finish loading in time - retry or check the site is reachable",
-  screenshot_failed: "the screenshot could not be taken - make sure the VibeOps window is visible and retry",
+  screenshot_failed: "the screenshot could not be taken",
   out_of_viewport: "that point is outside the visible page - scroll or take a fresh snapshot",
   no_element: "there is no element at that point - take a fresh snapshot and retry",
   no_page: "the agent window has no page yet - navigate to a URL first",
@@ -25,7 +25,14 @@ const CODES: Record<string, string> = {
 };
 
 export function humanizeBrowserError(raw: string | undefined, code?: string): string {
-  if (code && CODES[code]) return CODES[code];
+  if (code && CODES[code]) {
+    const t = (raw ?? "").trim();
+    for (const [re, fn] of RULES) {
+      const m = t.match(re);
+      if (m) return fn(m);
+    }
+    return t ? `${CODES[code]}: ${t}` : CODES[code];
+  }
   const s = (raw ?? "").trim();
   if (!s) return "the browser returned no reason";
   for (const [re, fn] of RULES) {

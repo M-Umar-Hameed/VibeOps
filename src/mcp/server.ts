@@ -180,6 +180,11 @@ export async function buildServer(apiKey: string) {
       inputSchema: { instanceId: z.string().optional(), ref: z.string() } },
     async ({ instanceId, ref }) => ({ content: [{ type: "text", text: await readOnly("browser_read", instanceId, { verb: "read", ref }) }] }));
 
+  server.registerTool("browser_wait",
+    { description: "Wait until text appears on the page, up to a few seconds (read-only). Use after a click or navigate that loads content asynchronously. instanceId optional when one browser is connected.",
+      inputSchema: { instanceId: z.string().optional(), text: z.string() } },
+    async ({ instanceId, text }) => ({ content: [{ type: "text", text: await readOnly("browser_wait", instanceId, { verb: "wait", text }) }] }));
+
   server.registerTool("browser_marks",
     { description: "Screenshot the connected browser with numbered boxes over every interactive element; returns the mark table as text plus a file path to the annotated PNG. Choose a target by MARK NUMBER and act on its ref with browser_act. Works without vision: each mark lists its role and name.",
       inputSchema: { instanceId: z.string().optional() } },
@@ -199,7 +204,7 @@ refs: ${refs}` }] };
     });
 
   server.registerTool("browser_act",
-    { description: "Run mutating steps (click/type/select/press/navigate/newTab) on a browser instance; requires an act grant for targetOrigin. navigate and newTab need an act grant for the DESTINATION origin (http/https only); newTab {url} opens it in a new active tab, and later steps in the same batch run there.",
+    { description: "Run mutating steps (click/type/select/press/navigate/newTab/wait) on a browser instance; requires an act grant for targetOrigin. navigate and newTab need an act grant for the DESTINATION origin (http/https only); newTab {url} opens it in a new active tab, and later steps in the same batch run there.",
       inputSchema: { instanceId: z.string().optional(), targetOrigin: z.string(), steps: z.array(z.any()) } },
     async ({ instanceId, targetOrigin, steps }) => {
       const { id, err } = resolveInstance(instanceId);

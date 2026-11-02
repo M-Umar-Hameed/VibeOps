@@ -48,6 +48,18 @@ export function parseAllowFiles(body: string): string[] {
   return globs;
 }
 
+// ALLOW-COMMAND: <risk-id>, <risk-id> lines in the ticket body lift those command-risk rules for the run.
+export function parseAllowCommand(body: string): string[] {
+  const ids: string[] = [];
+  for (const m of body.matchAll(/^\s*ALLOW-COMMAND:\s*(.+)$/gim)) {
+    for (const g of m[1].split(",")) {
+      const t = g.trim();
+      if (t) ids.push(t);
+    }
+  }
+  return ids;
+}
+
 // GATE-OVERRIDE: <check>, <check> lines in the ticket body downgrade those gate
 // blocks to warnings on every run, not just the current one. `all` covers every
 // check. History-scanning checks (secret, citation) can never be cleared by

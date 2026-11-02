@@ -44,6 +44,31 @@ describe("commandRisk", () => {
       expect(commandRisk(c, WD), c).toBeNull();
     }
   });
+  it("git push evasions: -C/-c options, subshell, single & separator", () => {
+    for (const c of ["git -C . push", "git -c k=v push", "(git push)", "sleep 1 & git push", "{ git push; }"]) {
+      expect(id(c), c).toBe("git-push");
+    }
+  });
+  it("PowerShell recursive deletes count as rm", () => {
+    expect(id("Remove-Item -Recurse -Force ../x")).toBe("rm-outside");
+    expect(id("ri -r ../x")).toBe("rm-outside");
+    expect(id("rd /s /q ../x")).toBe("rm-outside");
+    expect(commandRisk("Remove-Item -Recurse build", WD)).toBeNull();
+    expect(commandRisk("Remove-Item build", WD)).toBeNull();
+  });
+  it.runIf(process.platform === "win32")("PowerShell backslash target", () => {
+    expect(id("Remove-Item -Recurse -Force ..\\x")).toBe("rm-outside");
+  });
+  it("ssh rule skips ssh-keygen and ssh-add; plain commands and 2>&1 are fine", () => {
+    expect(commandRisk("ssh-keygen -t ed25519", WD)).toBeNull();
+    expect(commandRisk("ssh-add k", WD)).toBeNull();
+    expect(id("ssh host")).toBe("ssh");
+    expect(commandRisk("npm test 2>&1", WD)).toBeNull();
+  });
+  it("find -delete on the workdir itself is allowed, outside is not", () => {
+    expect(commandRisk("find . -name '*.log' -delete", WD)).toBeNull();
+    expect(id("find .. -delete")).toBe("find-delete-outside");
+  });
   it("lifting", () => {
     expect(commandRisk("git push", WD, ["git-push"])).toBeNull();
     expect(id("npm publish", ["git-push"])).toBe("npm-publish");
@@ -57,6 +82,15 @@ describe("denyPatterns", () => {
     expect(p).toContain("Bash(git push*)");
     expect(p).toContain("PowerShell(git push*)");
     expect(p).toContain("Bash(rm -rf /*)");
+  });
+  it("git -C push is denied for claude", () => {
+    expect(denyPatterns()).toContain("Bash(git -C * push*)");
+  });
+  it("drive globs follow the supplied drives, both cases", () => {
+    const p = denyPatterns([], ["G:"]);
+    expect(p).toContain("Bash(rm -rf G:*)");
+    expect(p).toContain("Bash(rm -rf g:*)");
+    expect(denyPatterns([], []).some((g) => /rm -rf [A-Za-z]:/.test(g))).toBe(false);
   });
   it("lifted ids drop their patterns", () => {
     const p = denyPatterns(["git-push"]);

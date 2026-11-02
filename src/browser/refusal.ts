@@ -24,20 +24,21 @@ const CODES: Record<string, string> = {
   wait_timeout: "the text did not appear on the page in time - take a snapshot to see what the page shows",
 };
 
-export function humanizeBrowserError(raw: string | undefined, code?: string): string {
-  if (code && CODES[code]) {
-    const t = (raw ?? "").trim();
-    for (const [re, fn] of RULES) {
-      const m = t.match(re);
-      if (m) return fn(m);
-    }
-    return t ? `${CODES[code]}: ${t}` : CODES[code];
-  }
-  const s = (raw ?? "").trim();
-  if (!s) return "the browser returned no reason";
+const rewrite = (s: string) => {
   for (const [re, fn] of RULES) {
     const m = s.match(re);
     if (m) return fn(m);
   }
-  return s;
+  return null;
+};
+
+export function humanizeBrowserError(raw: string | undefined, code?: string): string {
+  const s = (raw ?? "").trim();
+  if (code && CODES[code]) {
+    if (!s || s === CODES[code]) return CODES[code];
+    if (code === "unsupported_verb" && s.startsWith("this extension build does not support")) return s;
+    return rewrite(s) ?? `${CODES[code]}: ${s}`;
+  }
+  if (!s) return "the browser returned no reason";
+  return rewrite(s) ?? s;
 }

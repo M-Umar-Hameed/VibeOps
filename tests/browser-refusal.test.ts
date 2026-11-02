@@ -51,3 +51,14 @@ test("unknown code falls back to the text rules", () => {
   expect(humanizeBrowserError("unknown ref", "nope")).toBe(humanizeBrowserError("unknown ref"));
   expect(humanizeBrowserError("something new", "nope")).toBe("something new");
 });
+
+test("real extension strings with a code are not doubled", () => {
+  const stale = "that element reference is stale - take a fresh snapshot and use its refs";
+  expect(humanizeBrowserError(stale, "stale_ref")).toBe(stale);
+  const unsupported = 'this extension build does not support the action "wait" - update the extension from the latest release';
+  expect(humanizeBrowserError(unsupported, "unsupported_verb")).toBe(unsupported);
+  const noPage = "the agent window has no page yet - navigate to a URL first";
+  expect(humanizeBrowserError(noPage, "no_page")).toBe(noPage);
+  const nav = "the page navigated away before the remaining steps could run - take a fresh snapshot and retry them";
+  expect(humanizeBrowserError(nav, "page_navigated")).toBe(nav);
+});

@@ -3,10 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { runAgent } from "../src/relay/invoke.js";
-import { wallCmd, allowRules, resolveAllowedCommands, DEFAULT_ALLOWED_COMMANDS, DENY_RULES, loadWall } from "../src/relay/wall.js";
+import { wallCmd, denyOnlyCmd, allowRules, resolveAllowedCommands, DEFAULT_ALLOWED_COMMANDS, DENY_RULES, loadWall } from "../src/relay/wall.js";
+import { denyPatterns } from "../src/relay/risk.js";
 import { withSettings } from "./helpers/settings.js";
 
-const SETTINGS = JSON.stringify({ permissions: { allow: [...allowRules(["npm test"]), "mcp__vibeops"], deny: DENY_RULES } });
+const SETTINGS = JSON.stringify({ permissions: { allow: [...allowRules(["npm test"]), "mcp__vibeops"], deny: [...DENY_RULES, ...denyPatterns([])] } });
 const CLAUDE_FLAGS = ["--restricted", "--permission-prompts", "none",
   "--tools", "Read,Edit,Write,Glob,Grep,Bash,PowerShell", "--settings", SETTINGS];
 
@@ -199,3 +200,22 @@ test("git rm is allowed by default", () => {
   expect(allowRules(DEFAULT_ALLOWED_COMMANDS)).toContain("Bash(git rm *)");
 });
 
+
+const denyOf = (cmd: string[]) => JSON.parse(cmd[cmd.indexOf("--settings") + 1]).permissions;
+
+test("wallCmd: a lifted rule leaves the deny list, others stay", () => {
+  const deny: string[] = denyOf(wallCmd(["claude", "-p"], ["npm run"], false, [], ["git-push"])).deny;
+  expect(deny).not.toContain("Bash(git push*)");
+  expect(deny).toContain("Bash(npm run deploy*)");
+});
+
+test("denyOnlyCmd: claude gets a deny-only settings, others and settings-bearing cmds are unchanged", () => {
+  const out = denyOnlyCmd(["claude", "-p"]);
+  expect(out[out.length - 2]).toBe("--settings");
+  const perms = denyOf(out);
+  expect(perms.deny).toContain("Bash(git push*)");
+  expect(perms.allow).toBeUndefined();
+  const withSettings = ["claude", "-p", "--settings", "{}"];
+  expect(denyOnlyCmd(withSettings)).toEqual(withSettings);
+  expect(denyOnlyCmd(["codex", "exec"])).toEqual(["codex", "exec"]);
+});

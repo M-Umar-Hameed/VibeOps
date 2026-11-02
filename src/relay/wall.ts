@@ -1,4 +1,5 @@
 import { binBasename } from "./doctor.js";
+import { denyPatterns } from "./risk.js";
 
 export const DEFAULT_ALLOWED_COMMANDS = ["npm test", "npm run", "npx vitest", "npx tsc", "git status", "git diff", "git log", "git show", "git rm"];
 
@@ -24,8 +25,8 @@ export const DENY_RULES = ["Bash(git *--output*)", "PowerShell(git *--output*)"]
 // prompt moves to stdin (a prompt file outside the folder would be refused) and
 // --restricted confines its file tools to the working folder, edit rights only
 // when write is true (the work stage); only allow-listed
-// commands run; plan/work/review agents can also read the attachments folder (operator evidence, chat attachments). codex: its own OS sandbox. Other programs are not walled here.
-export function wallCmd(cmd: string[], allowed: string[], write = false, addDirs: string[] = []): string[] {
+// commands run; claude also gets the deny list when the wall is off (denyOnlyCmd); plan/work/review agents can also read the attachments folder (operator evidence, chat attachments). codex: its own OS sandbox. Other programs are not walled here.
+export function wallCmd(cmd: string[], allowed: string[], write = false, addDirs: string[] = [], lifted: readonly string[] = []): string[] {
   const bin = binBasename(cmd[0]).toLowerCase();
   if (bin === "claude") {
     if (cmd.includes("--restricted")) return cmd;
@@ -35,7 +36,7 @@ export function wallCmd(cmd: string[], allowed: string[], write = false, addDirs
       ...(write ? ["--permission-mode", "acceptEdits"] : []),
       "--permission-prompts", "none",
       "--tools", "Read,Edit,Write,Glob,Grep,Bash,PowerShell",
-      "--settings", JSON.stringify({ permissions: { allow: [...allowRules(allowed), "mcp__vibeops"], deny: DENY_RULES } }),
+      "--settings", JSON.stringify({ permissions: { allow: [...allowRules(allowed), "mcp__vibeops"], deny: [...DENY_RULES, ...denyPatterns(lifted)] } }),
       ...addDirs.flatMap((d) => ["--add-dir", d])];
   }
   if (bin === "codex") {
@@ -44,6 +45,11 @@ export function wallCmd(cmd: string[], allowed: string[], write = false, addDirs
     return [...cmd.slice(0, i + 1), "--sandbox", "workspace-write", ...cmd.slice(i + 1)];
   }
   return cmd;
+}
+
+export function denyOnlyCmd(cmd: string[], lifted: readonly string[] = []): string[] {
+  if (binBasename(cmd[0]).toLowerCase() !== "claude" || cmd.includes("--settings")) return cmd;
+  return [...cmd, "--settings", JSON.stringify({ permissions: { deny: [...DENY_RULES, ...denyPatterns(lifted)] } })];
 }
 
 const SHELL_CONTROL = /&&|\|\||;|\||>|<|`|\$\(/;

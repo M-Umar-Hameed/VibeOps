@@ -40,7 +40,7 @@ import { pidAlive } from "../db/lifecycle.js";
 import { forgeRuns, aiUsageLogs, tickets, type Ticket, type ForgeRun } from "../db/schema.js";
 import { verifyModel, MISMATCH_WARNING, computeVerificationStatus } from "./verify.js";
 import { resolveChecks, runChecks, formatChecks, type CheckResult } from "./checks.js";
-import { runGate, resolveMutationCmd } from "./gate.js";
+import { runGate, resolveMutationCmd, declaredFullPaths, overlappingDeclared } from "./gate.js";
 import { emitEvent } from "../api/events.js";
 
 const OUTPUT_CAP = 400_000;
@@ -141,6 +141,7 @@ type Run = {
   promoteOnPass?: boolean;
   allowPaths?: string[]; gateOnlyPaths?: string[]; gateOnlySha?: string;
   limit?: { role: "plan" | "work" | "review"; account: string }; // usage limit hit this run (memory only)
+  projectId?: string; title?: string; declared?: string[]; // plan overlap check (memory only)
   output: string; startedAt: string; finishedAt?: string;
   child?: ChildProcess; // the in-flight agent CLI for the current stage, if any
   checksChild?: ChildProcess; // the concurrently-running checks command, if any
@@ -152,7 +153,7 @@ type Run = {
 
 const runs = new Map<string, Run>();
 
-export type RunSummary = Omit<Run, "output" | "child" | "checksChild" | "abort" | "stopped" | "done" | "persisted" | "pid" | "logPath" | "runToken" | "procStartedAt" | "lastLogSize" | "lastActivityAt" | "lastCpuMs" | "stallReason">;
+export type RunSummary = Omit<Run, "output" | "child" | "checksChild" | "abort" | "stopped" | "done" | "persisted" | "pid" | "logPath" | "runToken" | "procStartedAt" | "lastLogSize" | "lastActivityAt" | "lastCpuMs" | "stallReason" | "declared">;
 
 function summarize(r: Run): RunSummary {
   const { output, child, checksChild, abort, stopped, done, persisted, pid, logPath, runToken, procStartedAt, lastLogSize, lastActivityAt, lastCpuMs, stallReason, ...rest } = r;
@@ -781,6 +782,18 @@ async function pipeline(
     }
   } else {
     plan = priorPlan;
+  }
+
+  run.projectId = ticket.projectId;
+  run.title = ticket.title;
+  run.declared = declaredFullPaths(plan);
+  const others = activeRuns()
+    .filter((r) => r.id !== run.id && r.projectId === run.projectId && r.declared)
+    .map((r) => ({ ticketId: r.ticketId, title: r.title ?? "", declared: r.declared! }));
+  for (const o of overlappingDeclared(run.declared, others)) {
+    const line = `forge: WARN plan overlaps ticket ${o.ticketId.slice(0, 8)} "${o.title}" on ${o.files.join(", ")}`;
+    append(run, "\n" + line + "\n");
+    addComment(actorId, ticket.id, line, "comment").catch(() => {});
   }
 
   const selectedSkills = selectSkills(plan, agents.work.skillAllowlist);

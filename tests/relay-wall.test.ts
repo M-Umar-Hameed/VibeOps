@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { runAgent } from "../src/relay/invoke.js";
-import { wallCmd, denyOnlyCmd, allowRules, resolveAllowedCommands, DEFAULT_ALLOWED_COMMANDS, DENY_RULES, loadWall } from "../src/relay/wall.js";
-import { denyPatterns } from "../src/relay/risk.js";
+import { wallCmd, denyOnlyCmd, agyDenyCmd, allowRules, resolveAllowedCommands, DEFAULT_ALLOWED_COMMANDS, DENY_RULES, loadWall } from "../src/relay/wall.js";
+import { agyPatterns, denyPatterns } from "../src/relay/risk.js";
 import { withSettings } from "./helpers/settings.js";
 
 const SETTINGS = JSON.stringify({ permissions: { allow: [...allowRules(["npm test"]), "mcp__vibeops"], deny: [...DENY_RULES, ...denyPatterns([])] } });
@@ -218,4 +218,13 @@ test("denyOnlyCmd: claude gets a deny-only settings, others and settings-bearing
   const withSettings = ["claude", "-p", "--settings", "{}"];
   expect(denyOnlyCmd(withSettings)).toEqual(withSettings);
   expect(denyOnlyCmd(["codex", "exec"])).toEqual(["codex", "exec"]);
+});
+
+test("agyDenyCmd: agy gets per-run deny rules, others and settings-bearing cmds are unchanged", () => {
+  const out = agyDenyCmd(["C:\\x\\agy.exe", "--model", "m"]);
+  expect(out[out.length - 2]).toBe("--settings");
+  expect(denyOf(out).deny).toEqual(agyPatterns());
+  const withSettings = ["agy", "--settings", "{}"];
+  expect(agyDenyCmd(withSettings)).toEqual(withSettings);
+  expect(agyDenyCmd(["claude", "-p"])).toEqual(["claude", "-p"]);
 });

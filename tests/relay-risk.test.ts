@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { commandRisk, denyPatterns, RISK_IDS } from "../src/relay/risk.js";
+import { commandRisk, denyPatterns, agyPatterns, RISK_IDS } from "../src/relay/risk.js";
 
 const WD = process.platform === "win32" ? "C:\\w\\sb" : "/w/sb";
 const id = (c: string, lifted: string[] = []) => commandRisk(c, WD, lifted)?.id;
@@ -67,5 +67,13 @@ describe("denyPatterns", () => {
   it("every id contributes a pattern", () => {
     const all = denyPatterns().length;
     for (const rid of RISK_IDS) expect(denyPatterns([rid]).length, rid).toBeLessThan(all);
+  });
+});
+
+describe("agyPatterns", () => {
+  it("maps rules and honours lifted ids", () => {
+    expect(agyPatterns()).toContain("command(git push)");
+    expect(agyPatterns()).toContain("command(npm run deploy)");
+    expect(agyPatterns(["git-push"])).not.toContain("command(git push)");
   });
 });

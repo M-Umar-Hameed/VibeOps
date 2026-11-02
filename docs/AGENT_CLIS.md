@@ -138,6 +138,8 @@ Install: Follow Antigravity installation docs.
 
 Login Flow: Sign in through the Antigravity CLI/app's own sign-in flow (no single flag — see Antigravity's docs). VibeOps only invokes agy once it's authenticated.
 
+Deny list: agy lanes receive the deny list (git push, npm publish, vercel, ssh and similar) as per-run `--settings` permission rules, with or without the wall. The `find-delete-outside` and `curl-pipe` rules are not covered on agy, because its token-prefix rules cannot express them.
+
 MCP Wiring: Run once to reach VibeOps tools:
 `agy mcp add --header "Authorization: Bearer <key>" vibeops http://127.0.0.1:8787/mcp`
 VibeOps does this for you: `ensureMcpWiring` (src/mcp/autowire.ts) registers the server at startup and records it as `"mcp": true` in `relay.json`. The command above is the manual fallback. Set `"mcp": false` to opt a lane out -- auto-wiring skips it and chat never nags about it.

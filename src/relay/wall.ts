@@ -1,5 +1,5 @@
 import { binBasename } from "./doctor.js";
-import { denyPatterns } from "./risk.js";
+import { agyPatterns, denyPatterns } from "./risk.js";
 
 export const DEFAULT_ALLOWED_COMMANDS = ["npm test", "npm run", "npx vitest", "npx tsc", "git status", "git diff", "git log", "git show", "git rm"];
 
@@ -50,6 +50,11 @@ export function wallCmd(cmd: string[], allowed: string[], write = false, addDirs
 export function denyOnlyCmd(cmd: string[], lifted: readonly string[] = []): string[] {
   if (binBasename(cmd[0]).toLowerCase() !== "claude" || cmd.includes("--settings")) return cmd;
   return [...cmd, "--settings", JSON.stringify({ permissions: { deny: [...DENY_RULES, ...denyPatterns(lifted)] } })];
+}
+
+export function agyDenyCmd(cmd: string[], lifted: readonly string[] = []): string[] {
+  if (binBasename(cmd[0]).toLowerCase() !== "agy" || cmd.includes("--settings")) return cmd;
+  return [...cmd, "--settings", JSON.stringify({ permissions: { deny: agyPatterns(lifted) } })];
 }
 
 const SHELL_CONTROL = /&&|\|\||;|\||>|<|`|\$\(/;

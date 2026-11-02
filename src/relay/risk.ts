@@ -99,3 +99,22 @@ export function denyPatterns(lifted: readonly string[] = []): string[] {
   const skip = new Set(lifted);
   return RULES.filter((r) => !skip.has(r.id)).flatMap((r) => r.globs.flatMap((g) => [`Bash(${g})`, `PowerShell(${g})`]));
 }
+
+const AGY: Record<string, string[]> = {
+  "git-push": ["git push"],
+  "git-remote": ["git remote add", "git remote set-url"],
+  "git-reset-origin": ["regex:git reset --hard origin.*"],
+  "rm-outside": ["regex:rm -[a-zA-Z]*[rR][a-zA-Z]* (/|~|\\.\\.|\\$HOME|[A-Za-z]:).*"],
+  "npm-publish": ["npm publish"],
+  "npm-deploy": ["npm run deploy", "npm run publish", "npm run release"],
+  vercel: ["vercel", "npx vercel"],
+  "gh-write": ["gh pr", "gh issue", "gh release", "gh repo"],
+  ssh: ["ssh", "scp"],
+  "docker-push": ["docker push"],
+  dd: ["dd"],
+};
+
+export function agyPatterns(lifted: readonly string[] = []): string[] {
+  const skip = new Set(lifted);
+  return Object.entries(AGY).filter(([id]) => !skip.has(id)).flatMap(([, ps]) => ps.map((p) => `command(${p})`));
+}

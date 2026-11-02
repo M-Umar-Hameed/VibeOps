@@ -7,7 +7,7 @@ import { join, dirname } from "node:path";
 import type { RelayAgent, PromptDelivery } from "./config.js";
 import { pidAlive } from "../db/lifecycle.js";
 import { winCommand } from "./win-bin.js";
-import { loadWall, wallCmd, denyOnlyCmd } from "./wall.js";
+import { loadWall, wallCmd, denyOnlyCmd, agyDenyCmd } from "./wall.js";
 import { registerEnvSecrets } from "../forge/redact.js";
 import { chooseAccount, allExhaustedResult, settleAccountResult } from "./accounts.js";
 
@@ -112,7 +112,8 @@ export async function runAgent(
   }
 
   const wall = await loadWall(agent.projectId, agent.write === true, workdir);
-  const cmd = wall.on ? wallCmd(agent.cmd, wall.allowed, agent.write === true, agent.addDirs, agent.liftedRules) : denyOnlyCmd(agent.cmd, agent.liftedRules);
+  let cmd = wall.on ? wallCmd(agent.cmd, wall.allowed, agent.write === true, agent.addDirs, agent.liftedRules) : denyOnlyCmd(agent.cmd, agent.liftedRules);
+  cmd = agyDenyCmd(cmd, agent.liftedRules);
 
   const promptFile = join(tmpdir(), `vibeops-relay-${randomUUID()}.txt`);
   // Declared delivery wins while the cmd still carries its placeholder. The wall

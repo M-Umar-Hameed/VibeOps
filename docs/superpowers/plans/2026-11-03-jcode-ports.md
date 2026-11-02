@@ -141,6 +141,41 @@ Done by the controller, not a cheap implementer, because the agy settings format
 - [ ] **Step 3a (works):** write a one-task addendum to this plan in the Task 3 shape: `agyDenyCmd(cmd, lifted)` in `wall.ts`, called for agy cmds in `invoke.ts` on both wall paths, with a `relay-wall` test. Dispatch it.
 - [ ] **Step 3b (does not work):** in `invoke.ts`, when `laneKind(agent) === "agy"`, emit `\n[forge: agy lane is not covered by the command deny list]\n` through `onData` once per stage, with a test in `tests/relay-unit.test.ts` using a fake cmd named `agy`; add one paragraph to `docs/AGENT_CLIS.md`.
 
+### Task 4 addendum (spike result): agy per-run deny rules
+
+Spike result: agy 1.4.12 reads `permissions.deny` from settings, and `--settings` takes the same keys inline for one session. Rules use `command(<token prefix>)` or `command(regex:<pattern>)`, where each whitespace-separated token is matched as an anchored regex. Per https://antigravity.google/docs/permissions, deny rules take precedence over `--dangerously-skip-permissions`. A live check was blocked by the controller's auto mode and is deferred to after reinstall.
+
+**Files:**
+- Modify: `src/relay/risk.ts` (add `agyPatterns`), `src/relay/wall.ts` (add `agyDenyCmd`), `src/relay/invoke.ts` (apply on both wall paths), `docs/AGENT_CLIS.md` (one paragraph)
+- Test: `tests/relay-risk.test.ts`, `tests/relay-wall.test.ts`
+
+**Interfaces:**
+- Produces: `export function agyPatterns(lifted: readonly string[] = []): string[]` in `risk.ts`; `export function agyDenyCmd(cmd: string[], lifted: readonly string[] = []): string[]` in `wall.ts`.
+
+agy patterns per rule id. Rules with no agy form are left out and named in the doc paragraph. The patterns are exact strings; the backslashes are literal regex escapes.
+
+- `git-push`: `command(git push)`
+- `git-remote`: `command(git remote add)`, `command(git remote set-url)`
+- `git-reset-origin`: `command(regex:git reset --hard origin.*)`
+- `rm-outside`: `command(regex:rm -[a-zA-Z]*[rR][a-zA-Z]* (/|~|\.\.|\$HOME|[A-Za-z]:).*)`
+- `npm-publish`: `command(npm publish)`
+- `npm-deploy`: `command(npm run deploy)`, `command(npm run publish)`, `command(npm run release)`
+- `vercel`: `command(vercel)`, `command(npx vercel)`
+- `gh-write`: `command(gh pr)`, `command(gh issue)`, `command(gh release)`, `command(gh repo)`
+- `ssh`: `command(ssh)`, `command(scp)`
+- `docker-push`: `command(docker push)`
+- `dd`: `command(dd)`
+- `find-delete-outside`, `curl-pipe`: none (token-prefix rules cannot express them)
+
+- [ ] **Step 1: Write the failing tests.**
+  - `agyPatterns()` contains `"command(git push)"` and `"command(npm run deploy)"`; `agyPatterns(["git-push"])` lacks `"command(git push)"`.
+  - `agyDenyCmd(["C:\\x\\agy.exe","--model","m"])` ends with `"--settings"` and a JSON whose `permissions.deny` equals `agyPatterns()`.
+  - `agyDenyCmd([... , "--settings", "{}"])` is unchanged; `agyDenyCmd(["claude","-p"])` is unchanged.
+- [ ] **Step 2: Run, expect FAIL**: `VIBEOPS_TEST_EMBEDDED=1 node scripts/test-lane.mjs tests/relay-risk.test.ts tests/relay-wall.test.ts`
+- [ ] **Step 3: Implement.** `agyDenyCmd` applies only when `binBasename(cmd[0]).toLowerCase() === "agy"`. In `invoke.ts`, after the line from Task 3, set `cmd = agyDenyCmd(cmd, agent.liftedRules)` on both wall paths (make `cmd` a `let`). In `docs/AGENT_CLIS.md`, add a paragraph: agy lanes get the deny list as per-run `--settings` permission rules, and `find-delete-outside` and `curl-pipe` are not covered on agy.
+- [ ] **Step 4: Run, expect PASS**; `npx tsc --noEmit -p .`
+- [ ] **Step 5: Commit** `feat(relay): agy lanes get the deny list as per-run permission rules`
+
 ## Part B: exact usage
 
 ### Task 5: `exact` column and estimated totals

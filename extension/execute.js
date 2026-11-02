@@ -9,6 +9,8 @@ const MUTATING_VERBS = new Set(["click", "type", "select", "press"]);
 // step fails past this. Mutable so a jsdom test can shrink it if needed.
 export const NAV_TUNING = { loadTimeoutMs: 15000 };
 
+export const WAIT_TUNING = { timeoutMs: 10000, pollMs: 100 };
+
 /**
  * Build ref→element map from interactive elements.
  * @param {Document} doc
@@ -21,6 +23,15 @@ function buildRefMap(doc) {
     map.set(`ref${i + 1}`, item.element);
   });
   return map;
+}
+
+async function waitForText(doc, text) {
+  const deadline = Date.now() + WAIT_TUNING.timeoutMs;
+  for (;;) {
+    if ((doc.body?.innerText ?? doc.body?.textContent ?? "").includes(text)) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, WAIT_TUNING.pollMs));
+  }
 }
 
 export async function executeSteps(doc, steps, grant, targetOrigin) {
@@ -70,6 +81,13 @@ export async function executeSteps(doc, steps, grant, targetOrigin) {
       } else {
         const text = (el.textContent || "").trim();
         result = { ok: true, value: text };
+      }
+    } else if (step.verb === "wait") {
+      if (await waitForText(doc, step.text)) {
+        refMap = buildRefMap(doc);
+        result = { ok: true };
+      } else {
+        result = { ok: false, error: `text "${step.text}" did not appear within ${WAIT_TUNING.timeoutMs / 1000}s`, code: "wait_timeout" };
       }
     } else {
       result = { ok: false, error: `this extension build does not support the action "${step.verb}" - update the extension from the latest release`, code: "unsupported_verb" };

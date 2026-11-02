@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { JSDOM } from "jsdom";
-import { executeSteps } from "../extension/execute.js";
+import { executeSteps, WAIT_TUNING } from "../extension/execute.js";
 
 function dom(html: string) {
   return new JSDOM(html).window.document;
@@ -199,5 +199,21 @@ describe("rich editors and real key events", () => {
     expect(noGrant.results[0].code).toBe("no_grant");
     const unknown = (await executeSteps(doc, [{ verb: "bogusverb" }], "act", "https://github.com")) as any;
     expect(unknown.results[0].code).toBe("unsupported_verb");
+  });
+  it("wait succeeds when text appears and times out with a code otherwise", async () => {
+    const saved = { ...WAIT_TUNING };
+    WAIT_TUNING.timeoutMs = 300;
+    WAIT_TUNING.pollMs = 20;
+    try {
+      const doc = dom("<body><p>Loading</p></body>");
+      setTimeout(() => { doc.body.append("Done"); }, 50);
+      const ok = (await executeSteps(doc, [{ verb: "wait", text: "Done" }])) as any;
+      expect(ok.results[0]).toEqual({ ok: true });
+      const never = (await executeSteps(dom("<body>x</body>"), [{ verb: "wait", text: "Nope" }])) as any;
+      expect(never.results[0].ok).toBe(false);
+      expect(never.results[0].code).toBe("wait_timeout");
+    } finally {
+      Object.assign(WAIT_TUNING, saved);
+    }
   });
 });

@@ -96,3 +96,14 @@ describe("validateSteps - tab verbs", () => {
     expect(validateSteps([{ verb: "switchTab", tabId: "3" }]).ok).toBe(false);
   });
 });
+
+describe("validateSteps - wait", () => {
+  it("accepts wait with text and rejects it without", () => {
+    expect(validateSteps([{ verb: "wait", text: "Done" }]).ok).toBe(true);
+    expect(validateSteps([{ verb: "wait" }])).toEqual({ ok: false, error: "wait.text must be a string" });
+  });
+  it("lists wait in the unknown-verb error", () => {
+    const r = validateSteps([{ verb: "bogus" }]) as { ok: false; error: string };
+    expect(r.error).toContain("wait");
+  });
+});

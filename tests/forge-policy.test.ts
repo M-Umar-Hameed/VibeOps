@@ -50,6 +50,11 @@ describe("forge protected-path policy", () => {
     expect(gateDirectiveLines("EVIDENCE: /x")).toHaveLength(1);
   });
 
+  it("ALLOW-COMMAND is a gate directive: listed and stripped", () => {
+    expect(gateDirectiveLines("a\nALLOW-COMMAND: git-push\nb")).toEqual(["ALLOW-COMMAND: git-push"]);
+    expect(stripGateDirectives("a\nALLOW-COMMAND: git-push\nb")).not.toContain("ALLOW-COMMAND");
+  });
+
   it("stripGateDirectives removes directive lines and keeps the rest", () => {
     const out = stripGateDirectives("plan step 1\nGATE-OVERRIDE: all\nplan step 2\nALLOW-FILES: **\n");
     expect(out).not.toMatch(/GATE-OVERRIDE|ALLOW-FILES/);

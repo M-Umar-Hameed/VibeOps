@@ -79,8 +79,8 @@ export function parseGateOverrides(body: string): Set<string> {
 // members, MCP agents and inbound sync can write too, so the service layer only
 // lets an admin add one (src/services/tickets.ts) and the forge strips them from
 // model output before it becomes a spec.
-// (GATE-OVERRIDE, ALLOW-PROTECTED, ALLOW-FILES, EXPORT-TO, EVIDENCE).
-const DIRECTIVE_RE = /^\s*(GATE-OVERRIDE|ALLOW-PROTECTED|ALLOW-FILES|EXPORT-TO|EVIDENCE):\s*.*$/gim;
+// (GATE-OVERRIDE, ALLOW-PROTECTED, ALLOW-FILES, ALLOW-COMMAND, EXPORT-TO, EVIDENCE).
+const DIRECTIVE_RE = /^\s*(GATE-OVERRIDE|ALLOW-PROTECTED|ALLOW-FILES|ALLOW-COMMAND|EXPORT-TO|EVIDENCE):\s*.*$/gim;
 
 export function gateDirectiveLines(text: string): string[] {
   return [...text.matchAll(DIRECTIVE_RE)].map((m) => m[0].trim());

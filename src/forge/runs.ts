@@ -156,8 +156,8 @@ const runs = new Map<string, Run>();
 export type RunSummary = Omit<Run, "output" | "child" | "checksChild" | "abort" | "stopped" | "done" | "persisted" | "pid" | "logPath" | "runToken" | "procStartedAt" | "lastLogSize" | "lastActivityAt" | "lastCpuMs" | "stallReason" | "declared">;
 
 function summarize(r: Run): RunSummary {
-  const { output, child, checksChild, abort, stopped, done, persisted, pid, logPath, runToken, procStartedAt, lastLogSize, lastActivityAt, lastCpuMs, stallReason, ...rest } = r;
-  void output; void child; void checksChild; void abort; void stopped; void done; void persisted; void pid; void logPath; void runToken; void procStartedAt; void lastLogSize; void lastActivityAt; void lastCpuMs; void stallReason;
+  const { output, child, checksChild, abort, stopped, done, persisted, pid, logPath, runToken, procStartedAt, lastLogSize, lastActivityAt, lastCpuMs, stallReason, declared, ...rest } = r;
+  void output; void child; void checksChild; void abort; void stopped; void done; void persisted; void pid; void logPath; void runToken; void procStartedAt; void lastLogSize; void lastActivityAt; void lastCpuMs; void stallReason; void declared;
   return rest;
 }
 
@@ -841,6 +841,7 @@ async function pipeline(
   const unknownRules = allowCmd.filter((id) => !RISK_IDS.includes(id));
   if (unknownRules.length) append(run, `\nforge: ALLOW-COMMAND ignores unknown rule ids: ${unknownRules.join(", ")}\n`);
   const liftedRules = allowCmd.filter((id) => RISK_IDS.includes(id));
+  if (liftedRules.length) append(run, `\nforge: deny list lifted for this run: ${liftedRules.join(", ")}\n`);
   const workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
     runAgent({ ...agents.work, write: true, projectId: ticket.projectId, liftedRules, ...evidenceDirs }, workPrompt, sandbox, onData,
       (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },

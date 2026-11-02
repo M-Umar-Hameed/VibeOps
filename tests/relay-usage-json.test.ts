@@ -19,6 +19,11 @@ describe("parseUsageJson", () => {
   it("keeps lines before the json", () => {
     expect(parseUsageJson("warning: x\n" + CLAUDE)?.text).toBe("warning: x\ndone");
   });
+  it("names a claude result that has no text", () => {
+    const j = '{"type":"result","subtype":"error_max_turns","usage":{"input_tokens":1,"output_tokens":1}}';
+    expect(parseUsageJson(j)?.text).toBe("[claude result: error_max_turns]");
+    expect(parseUsageJson('{"type":"result","usage":{}}')?.text).toBe("[claude result: error]");
+  });
   it("rejects other shapes", () => {
     expect(parseUsageJson('{"type":"result","res')).toBeUndefined();
     expect(parseUsageJson("hello")).toBeUndefined();

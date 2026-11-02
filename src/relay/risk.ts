@@ -24,7 +24,7 @@ function strictlyInside(target: string, workdir: string): boolean {
 }
 
 function sameDir(target: string, workdir: string): boolean {
-  const trim = (p: string) => lc(p).replace(/[\/]+$/, "");
+  const trim = (p: string) => lc(p).replace(/[\\/]+$/, "");
   return trim(target) === trim(path.resolve(workdir));
 }
 

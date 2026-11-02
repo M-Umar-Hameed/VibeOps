@@ -138,7 +138,7 @@ Install: Follow Antigravity installation docs.
 
 Login Flow: Sign in through the Antigravity CLI/app's own sign-in flow (no single flag — see Antigravity's docs). VibeOps only invokes agy once it's authenticated.
 
-Deny list: agy lanes receive the deny list (git push, npm publish, vercel, ssh and similar) as per-run `--settings` permission rules, with or without the wall. The `find-delete-outside` and `curl-pipe` rules are not covered on agy, because its token-prefix rules cannot express them.
+Deny list: agy lanes receive the deny list (git push, npm publish, vercel, ssh and similar) as per-run `--settings` permission rules, with or without the wall. The `find-delete-outside` and `curl-pipe` rules are not covered on agy, because its token-prefix rules cannot express them. Not yet verified against a live agy run. A lane whose cmd already carries its own `--settings` (or `--restricted` for claude) does not receive the deny list.
 
 MCP Wiring: Run once to reach VibeOps tools:
 `agy mcp add --header "Authorization: Bearer <key>" vibeops http://127.0.0.1:8787/mcp`

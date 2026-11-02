@@ -14,7 +14,7 @@ export function parseUsageJson(raw: string): JsonUsage | undefined {
     let cost = 0;
     const u = j.usage as Record<string, unknown> | undefined;
     if (j.type === "result" && u && typeof u === "object") {
-      text = typeof j.result === "string" ? j.result : "";
+      text = typeof j.result === "string" ? j.result : `[claude result: ${typeof j.subtype === "string" ? j.subtype : "error"}]`;
       tokens = n(u.input_tokens) + n(u.output_tokens) + n(u.cache_creation_input_tokens) + n(u.cache_read_input_tokens);
       cost = Math.round(n(j.total_cost_usd) * 1e6);
     } else if (typeof j.response === "string" && u && typeof u === "object" && typeof u.total_tokens === "number") {

@@ -40,13 +40,13 @@ export async function executeSteps(doc, steps, grant, targetOrigin) {
       let destOrigin = null;
       try { destOrigin = new URL(step.url).origin; } catch { destOrigin = null; }
       if (grant !== "act") {
-        result = { ok: false, error: `no act grant for ${targetOrigin}` };
+        result = { ok: false, error: `no act grant for ${targetOrigin}`, code: "no_grant" };
       } else if (destOrigin !== targetOrigin) {
-        result = { ok: false, error: `origin mismatch: navigate ${destOrigin} != granted ${targetOrigin}` };
+        result = { ok: false, error: `origin mismatch: navigate ${destOrigin} != granted ${targetOrigin}`, code: "origin_mismatch" };
       } else {
         const loaded = await navigateAndWait(doc, step.url);
         if (!loaded) {
-          result = { ok: false, error: "navigation timed out" };
+          result = { ok: false, error: "navigation timed out", code: "navigation_timeout" };
         } else {
           refMap = buildRefMap(doc); // re-collect refs against the destination
           result = { ok: true };
@@ -55,9 +55,9 @@ export async function executeSteps(doc, steps, grant, targetOrigin) {
     } else if (MUTATING_VERBS.has(step.verb)) {
       const origin = doc.location?.origin ?? ""; // recomputed per step: a prior navigate moved it
       if (grant !== "act") {
-        result = { ok: false, error: `no act grant for ${origin}` };
+        result = { ok: false, error: `no act grant for ${origin}`, code: "no_grant" };
       } else if (origin !== targetOrigin) {
-        result = { ok: false, error: `origin mismatch: page ${origin} != granted ${targetOrigin}` };
+        result = { ok: false, error: `origin mismatch: page ${origin} != granted ${targetOrigin}`, code: "origin_mismatch" };
       } else {
         result = runMutation(doc, refMap, step);
       }
@@ -66,13 +66,13 @@ export async function executeSteps(doc, steps, grant, targetOrigin) {
     } else if (step.verb === "read") {
       const el = refMap.get(step.ref);
       if (!el) {
-        result = { ok: false, error: "that element reference is stale - take a fresh snapshot and use its refs" };
+        result = { ok: false, error: "that element reference is stale - take a fresh snapshot and use its refs", code: "stale_ref" };
       } else {
         const text = (el.textContent || "").trim();
         result = { ok: true, value: text };
       }
     } else {
-      result = { ok: false, error: `this extension build does not support the action "${step.verb}" - update the extension from the latest release` };
+      result = { ok: false, error: `this extension build does not support the action "${step.verb}" - update the extension from the latest release`, code: "unsupported_verb" };
     }
 
     results.push(result);
@@ -148,18 +148,18 @@ function runMutation(doc, refMap, step) {
     const w = view.innerWidth || 0;
     const h = view.innerHeight || 0;
     if (vx < 0 || vy < 0 || (w > 0 && vx > w) || (h > 0 && vy > h)) {
-      return { ok: false, error: `point (${step.x},${step.y}) is outside the viewport` };
+      return { ok: false, error: `point (${step.x},${step.y}) is outside the viewport`, code: "out_of_viewport" };
     }
     const target = doc.elementFromPoint(vx, vy);
     // No fallback to body: a dead zone must report failure, not click something else.
-    if (!target) return { ok: false, error: `no element at (${step.x},${step.y})` };
+    if (!target) return { ok: false, error: `no element at (${step.x},${step.y})`, code: "no_element" };
     target.dispatchEvent(new view.MouseEvent("click", {
       bubbles: true, cancelable: true, clientX: vx, clientY: vy,
     }));
     return { ok: true };
   }
   const el = refMap.get(step.ref);
-  if (!el) return { ok: false, error: "that element reference is stale - take a fresh snapshot and use its refs" };
+  if (!el) return { ok: false, error: "that element reference is stale - take a fresh snapshot and use its refs", code: "stale_ref" };
   if (step.verb === "click") {
     el.click();
     return { ok: true };
@@ -187,5 +187,5 @@ function runMutation(doc, refMap, step) {
     el.dispatchEvent(new view.Event("change", { bubbles: true }));
     return { ok: true };
   }
-  return { ok: false, error: `this extension build does not support the action "${step.verb}" - update the extension from the latest release` };
+  return { ok: false, error: `this extension build does not support the action "${step.verb}" - update the extension from the latest release`, code: "unsupported_verb" };
 }

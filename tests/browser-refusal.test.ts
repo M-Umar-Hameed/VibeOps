@@ -16,3 +16,18 @@ test("already-human and unknown errors pass through unchanged; empty gets a reas
   expect(humanizeBrowserError("something new")).toBe("something new");
   expect(humanizeBrowserError(undefined)).toBe("the browser returned no reason");
 });
+
+test("codes win over reworded text and match the legacy rule wording", () => {
+  expect(humanizeBrowserError("reworded", "stale_ref")).toBe(humanizeBrowserError("unknown ref"));
+  expect(humanizeBrowserError("reworded", "unsupported_verb")).toContain("update the extension");
+  for (const code of ["no_grant", "origin_mismatch", "navigation_timeout", "screenshot_failed", "out_of_viewport", "no_element", "no_page", "page_navigated", "wait_timeout"]) {
+    const m = humanizeBrowserError("reworded", code);
+    expect(m).not.toBe("reworded");
+    expect(m).toMatch(/^[a-z]/);
+  }
+});
+
+test("unknown code falls back to the text rules", () => {
+  expect(humanizeBrowserError("unknown ref", "nope")).toBe(humanizeBrowserError("unknown ref"));
+  expect(humanizeBrowserError("something new", "nope")).toBe("something new");
+});

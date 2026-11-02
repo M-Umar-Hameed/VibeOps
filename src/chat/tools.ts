@@ -56,7 +56,7 @@ async function browserStep(
   const step = result.results.find((r) => !r.ok) ?? result.results[result.results.length - 1];
   if (!step?.ok) {
     rec(name, { instanceId }, `refused: ${step?.error ?? "unknown"}`);
-    return text(`browser refused: ${humanizeBrowserError(step?.error)}`);
+    return text(`browser refused: ${humanizeBrowserError(step?.error, step?.code)}`);
   }
   rec(name, { instanceId }, "ok");
   const val = typeof step.value === "string"
@@ -194,7 +194,7 @@ export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: stri
         const failed = result.results.find((r) => !r.ok);
         if (failed) {
           rec("browser_act", { instanceId, targetOrigin }, `refused: ${failed.error ?? "unknown"}`);
-          return text(`browser refused: ${humanizeBrowserError(failed.error)}`);
+          return text(`browser refused: ${humanizeBrowserError(failed.error, failed.code)}`);
         }
         rec("browser_act", { instanceId, targetOrigin }, "ok");
         return text(JSON.stringify(result.snapshot ?? "").slice(0, 4000));

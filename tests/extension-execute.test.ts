@@ -58,7 +58,7 @@ describe("executeSteps", () => {
       const doc = domAt('<input type="text" value="original">', "https://github.com/");
       const input = doc.querySelector("input") as any;
       const result = await executeSteps(doc, [{ verb: "type", ref: "ref1", text: "injected" }], undefined, undefined);
-      expect(result.results[0]).toEqual({ ok: false, error: "no act grant for https://github.com" });
+      expect(result.results[0]).toEqual({ ok: false, error: "no act grant for https://github.com", code: "no_grant" });
       expect(input.value).toBe("original");
     });
 
@@ -190,5 +190,14 @@ describe("rich editors and real key events", () => {
     q.focus();
     await executeSteps(doc, [{ verb: "press", key: "Enter" }], "act", "https://github.com");
     expect(submitted).toBe(0);
+  });
+  it("failures carry stable codes", async () => {
+    const doc = domAt("<button>X</button>", "https://github.com/");
+    const stale = (await executeSteps(doc, [{ verb: "read", ref: "BOGUS" }])) as any;
+    expect(stale.results[0].code).toBe("stale_ref");
+    const noGrant = (await executeSteps(doc, [{ verb: "click", ref: "ref1" }])) as any;
+    expect(noGrant.results[0].code).toBe("no_grant");
+    const unknown = (await executeSteps(doc, [{ verb: "bogusverb" }], "act", "https://github.com")) as any;
+    expect(unknown.results[0].code).toBe("unsupported_verb");
   });
 });

@@ -25,7 +25,7 @@ export type ActionStep =
   | { verb: "switchTab"; tabId: number };
 
 export type BatchResult = {
-  results: Array<{ ok: boolean; value?: string; error?: string }>;
+  results: Array<{ ok: boolean; value?: string; error?: string; code?: string }>;
   snapshot: unknown; // Snapshot (§1.1); untrusted page data, stored/returned verbatim, never introspected here
 };
 

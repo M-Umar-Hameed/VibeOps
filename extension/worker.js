@@ -150,14 +150,14 @@ async function captureScreenshot(windowId) {
     const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: "png" });
     const b64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
     if (b64.length > MAX_SCREENSHOT_B64) {
-      return { ok: false, error: `screenshot too large (${b64.length} > ${MAX_SCREENSHOT_B64})` };
+      return { ok: false, error: `screenshot too large (${b64.length} > ${MAX_SCREENSHOT_B64})`, code: "screenshot_failed" };
     }
     return { ok: true, value: b64 };
   } catch (err) {
     if (/minimi[sz]ed/i.test(String(err))) {
-      return { ok: false, error: "the VibeOps window is not visible - restore it to take a screenshot" };
+      return { ok: false, error: "the VibeOps window is not visible - restore it to take a screenshot", code: "screenshot_failed" };
     }
-    return { ok: false, error: `screenshot failed: ${String(err)}` };
+    return { ok: false, error: `screenshot failed: ${String(err)}`, code: "screenshot_failed" };
   }
 }
 
@@ -207,7 +207,7 @@ async function executeBatch(batch) {
       // either, so a never-navigated agent window fails a page segment here
       // rather than crashing into executeScript on an unscriptable page.
       if (!tab.url || tab.url.startsWith("chrome://") || tab.url.startsWith("about:")) {
-        results[seg.start] = { ok: false, error: "the agent window has no page yet - navigate to a URL first" };
+        results[seg.start] = { ok: false, error: "the agent window has no page yet - navigate to a URL first", code: "no_page" };
         failed = true;
         break;
       }
@@ -226,7 +226,7 @@ async function executeBatch(batch) {
         // A navigate inside the segment tears down the injected context and
         // executeScript resolves with no result. Report it; never crash into
         // the catch with a bare TypeError.
-        results[seg.start] = { ok: false, error: "the page navigated away before the remaining steps could run - take a fresh snapshot and retry them" };
+        results[seg.start] = { ok: false, error: "the page navigated away before the remaining steps could run - take a fresh snapshot and retry them", code: "page_navigated" };
         failed = true;
         continue;
       }
@@ -285,15 +285,15 @@ async function runTabStep(step, grant, targetOrigin, windowId) {
     // Mirrors navigate: mutating, and the grant must cover the DESTINATION origin.
     let dest = null;
     try { dest = new URL(step.url).origin; } catch { dest = null; }
-    if (grant !== "act") return { ok: false, error: `no act grant for ${dest ?? step.url}` };
-    if (dest !== targetOrigin) return { ok: false, error: `origin mismatch: newTab ${dest} != granted ${targetOrigin}` };
+    if (grant !== "act") return { ok: false, error: `no act grant for ${dest ?? step.url}`, code: "no_grant" };
+    if (dest !== targetOrigin) return { ok: false, error: `origin mismatch: newTab ${dest} != granted ${targetOrigin}`, code: "origin_mismatch" };
     const tab = await chrome.tabs.create({ windowId, url: step.url, active: true });
     const loaded = await waitForTabLoad(tab.id);
-    if (!loaded) return { ok: false, error: "new tab did not finish loading" };
+    if (!loaded) return { ok: false, error: "new tab did not finish loading", code: "navigation_timeout" };
     await chrome.storage.session.set({ agentTabId: tab.id });
     return { ok: true, value: String(tab.id) };
   }
-  return { ok: false, error: `unknown tab verb: ${step.verb}` };
+  return { ok: false, error: `unknown tab verb: ${step.verb}`, code: "unsupported_verb" };
 }
 
 async function submitResult(batchId, result) {

@@ -158,8 +158,8 @@ export async function buildServer(apiKey: string) {
     const failed = result.results.find((r) => !r.ok);
     const s = failed ?? result.results[result.results.length - 1];
     if (!s?.ok) {
-      recordBrowserCall(actor.id, { name, summary: `refused: ${humanizeBrowserError(s?.error)}` });
-      return `browser refused: ${humanizeBrowserError(s?.error)}`;
+      recordBrowserCall(actor.id, { name, summary: `refused: ${humanizeBrowserError(s?.error, s?.code)}` });
+      return `browser refused: ${humanizeBrowserError(s?.error, s?.code)}`;
     }
     recordBrowserCall(actor.id, { name, summary: "ok" });
     return typeof s.value === "string" ? s.value : JSON.stringify(result.snapshot ?? s.value ?? "").slice(0, 4000);
@@ -221,8 +221,8 @@ refs: ${refs}` }] };
       }
       const failed = result.results.find((r) => !r.ok);
       if (failed) {
-        recordBrowserCall(actor.id, { name: "browser_act", summary: `refused: ${humanizeBrowserError(failed.error)}` });
-        return { content: [{ type: "text", text: `browser refused: ${humanizeBrowserError(failed.error)}` }] };
+        recordBrowserCall(actor.id, { name: "browser_act", summary: `refused: ${humanizeBrowserError(failed.error, failed.code)}` });
+        return { content: [{ type: "text", text: `browser refused: ${humanizeBrowserError(failed.error, failed.code)}` }] };
       }
       recordBrowserCall(actor.id, { name: "browser_act", summary: "ok" });
       return { content: [{ type: "text", text: JSON.stringify(result.snapshot ?? "").slice(0, 4000) }] };

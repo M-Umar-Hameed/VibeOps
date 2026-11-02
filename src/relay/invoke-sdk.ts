@@ -7,6 +7,7 @@ import { substituteCmd } from "./invoke.js";
 import { query, type PermissionResult, type HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { loadWall, allowRules, DENY_RULES } from "./wall.js";
 import { registerEnvSecrets } from "../forge/redact.js";
+import { commandRisk } from "./risk.js";
 import { chooseAccount, allExhaustedResult, settleAccountResult } from "./accounts.js";
 
 const OUTPUT_CAP = 100_000;
@@ -93,9 +94,20 @@ const denyBackground: HookCallback = async (input) => {
   return {};
 };
 
+export function riskHook(workdir: string, lifted: readonly string[], onData?: (chunk: string) => void): HookCallback {
+  return async (input) => {
+    const i = input as { tool_name?: string; tool_input?: { command?: unknown } };
+    if ((i.tool_name !== "Bash" && i.tool_name !== "PowerShell") || typeof i.tool_input?.command !== "string") return {};
+    const hit = commandRisk(i.tool_input.command, workdir, lifted);
+    if (!hit) return {};
+    onData?.(`\n[forge: permission-denied Bash ${i.tool_input.command.slice(0, 120)} (${hit.id})]\n`);
+    return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: `blocked by the forge deny list (${hit.id}): ${hit.reason}` } };
+  };
+}
+
 export function buildSdkOptions(
   env: Record<string, string>, workdir: string, wallOn: boolean, allowed: string[],
-  onData?: (chunk: string) => void, model?: string,
+  onData?: (chunk: string) => void, model?: string, lifted: readonly string[] = [],
 ) {
   return {
     cwd: workdir,
@@ -103,7 +115,7 @@ export function buildSdkOptions(
     env,
     ...(wallOn ? { settingSources: [], allowedTools: allowRules(allowed) } : {}),
     disallowedTools: [...DENY_RULES, ...NO_BACKGROUND_TOOLS],
-    hooks: { PreToolUse: [{ matcher: "Bash|PowerShell", hooks: [denyBackground] }] },
+    hooks: { PreToolUse: [{ matcher: "Bash|PowerShell", hooks: [denyBackground, riskHook(workdir, lifted, onData)] }] },
     canUseTool: async (toolName: string, toolInput: Record<string, unknown>) =>
       checkToolPermission(toolName, toolInput, workdir, onData, wallOn),
   };
@@ -137,7 +149,7 @@ export async function runAgentSdk(
   try {
     const response = query({
       prompt,
-      options: { ...buildSdkOptions(env, workdir, wall.on, wall.allowed, onData, model), abortController: controller },
+      options: { ...buildSdkOptions(env, workdir, wall.on, wall.allowed, onData, model, agent.liftedRules ?? []), abortController: controller },
     });
     for await (const message of response) {
       if (message.type === "assistant") {

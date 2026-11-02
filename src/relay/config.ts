@@ -11,7 +11,7 @@ export type RelayModel = { name: string; tier: ModelTier; quality: number };
 // http lanes are chat-only model providers (e.g. OpenRouter): baseUrl is an
 // OpenAI-compatible API root, keySetting names the settings-table key holding
 // the user API key. cmd is unused for them.
-// write is set at call time for a stage that must edit files (forge work, relay work); relay.json never sets it. addDirs is call-time only too (extra read folders for the walled claude reviewer).
+// write is set at call time for a stage that must edit files (forge work, relay work); relay.json never sets it. addDirs is call-time only too (extra read folders for the walled claude reviewer). liftedRules is call-time only (risk rule ids a ticket lifted with ALLOW-COMMAND).
 // How the initial prompt reaches the agent. Declared per agent rather than
 // inferred from the cmd placeholders: inference silently picked argv for any
 // config carrying {prompt}, and an oversized prompt then died at spawn with
@@ -22,7 +22,7 @@ export type RelayModel = { name: string; tier: ModelTier; quality: number };
 export type PromptDelivery = "argv" | "file" | "stdin";
 export const PROMPT_DELIVERIES: PromptDelivery[] = ["argv", "file", "stdin"];
 export type RelayAccount = { id: string; label: string; configDir: string; priority: number; disabled?: boolean };
-export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string; write?: boolean; promptDelivery?: PromptDelivery; projectId?: string; addDirs?: string[]; skillAllowlist?: string[]; accounts?: RelayAccount[] };
+export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string; write?: boolean; promptDelivery?: PromptDelivery; projectId?: string; addDirs?: string[]; liftedRules?: string[]; skillAllowlist?: string[]; accounts?: RelayAccount[] };
 export type RelayConfig = {
   workdir: string; apiKey?: string; baseUrl?: string; pollMs?: number;
   agents: Record<string, RelayAgent>;

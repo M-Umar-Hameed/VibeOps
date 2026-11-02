@@ -20,7 +20,8 @@ import { availableAccount } from "../relay/accounts.js";
 import { redactSecrets } from "./redact.js";
 import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES, stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL, syncSandboxWithBase, type BaseSync } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
-import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, stripGateDirectives, parseExportTo, parseEvidence } from "./policy.js";
+import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, stripGateDirectives, parseExportTo, parseEvidence, parseAllowCommand } from "./policy.js";
+import { RISK_IDS } from "../relay/risk.js";
 import { pickAgents, escalate, pairsForRole, resolveStrategy, type Pick, type RoutingStrategy } from "./router.js";
 import { updateTicket } from "../services/tickets.js";
 import { addComment, listComments } from "../services/comments.js";
@@ -823,8 +824,12 @@ async function pipeline(
   // into a reverted, visible, run-failing one. See docs/AGENT_CLIS.md.
   const depsBaseline = snapshotDeps(workdir, depsDirs);
   const sentinelSnaps = snapshotSensitive(resolveSensitivePaths(await getSetting("forge.sensitivePaths")));
+  const allowCmd = parseAllowCommand(ticket.body ?? "");
+  const unknownRules = allowCmd.filter((id) => !RISK_IDS.includes(id));
+  if (unknownRules.length) append(run, `\nforge: ALLOW-COMMAND ignores unknown rule ids: ${unknownRules.join(", ")}\n`);
+  const liftedRules = allowCmd.filter((id) => RISK_IDS.includes(id));
   const workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
-    runAgent({ ...agents.work, write: true, projectId: ticket.projectId, ...evidenceDirs }, workPrompt, sandbox, onData,
+    runAgent({ ...agents.work, write: true, projectId: ticket.projectId, liftedRules, ...evidenceDirs }, workPrompt, sandbox, onData,
       (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
       modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r)));
   run.child = undefined;

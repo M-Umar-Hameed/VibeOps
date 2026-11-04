@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { randomUUID } from "node:crypto";
 import { ingestSessions, ingestSessionsSerialized } from "../src/ingest/sessions/ingest.js";
-import { searchKnowledge } from "../src/services/knowledge.js";
+import { searchKnowledge, upsertSourceDocsBatched } from "../src/services/knowledge.js";
 import { FakeEmbedder } from "../src/knowledge/embedder.js";
 import type { SessionSource } from "../src/ingest/sessions/source.js";
 
@@ -60,8 +60,12 @@ test("projectId is passed through to embeddings", async () => {
   expect(rows[0].projectId).toBe(project.id);
 });
 
-test("batching: 64 unique one-chunk docs produce 2 embed calls", async () => {
-  let embedCallLengths: number[] = [];
+test("batching: 64 unique one-chunk docs produce 2 embed calls of 32 each", async () => {
+  const { db } = await import("../src/db/client.js");
+  const { embeddings } = await import("../src/db/schema.js");
+  const { inArray } = await import("drizzle-orm");
+
+  const embedCallLengths: number[] = [];
   const countingEmb: FakeEmbedder = Object.assign(Object.create(FakeEmbedder.prototype), {
     ...new FakeEmbedder(1024),
     async embed(texts: string[]) {
@@ -70,18 +74,61 @@ test("batching: 64 unique one-chunk docs produce 2 embed calls", async () => {
     },
   });
 
+  const runId = `${Date.now()}-${randomUUID()}`;
   const docs = Array.from({ length: 64 }, (_, i) => ({
-    ref: `batch-${i}`,
-    text: `chunk ${i}`,
-    hash: `h-${i}`,
+    ref: `batch-${runId}-${i}`,
+    text: `chunk ${runId} ${i}`,
+    hash: `h-${runId}-${i}`,
   }));
   const src: SessionSource = { source: "batch", listSessionDocs: async () => docs };
 
   await ingestSessions([src], countingEmb, 30);
 
-  // Should have at least 2 calls with 32 each
-  expect(embedCallLengths.length).toBeGreaterThanOrEqual(2);
-  const total = embedCallLengths.reduce((a, b) => a + b, 0);
-  expect(total).toBe(64);
+  expect(embedCallLengths).toEqual([32, 32]);
+  const rows = await db.select({ id: embeddings.id }).from(embeddings).where(inArray(embeddings.sourceRef, docs.map((d) => d.ref)));
+  expect(rows.length).toBe(64);
 });
 
+test("upsertSourceDocsBatched: mid-batch write failure isolates error and subsequent docs keep their vectors", async () => {
+  const { db } = await import("../src/db/client.js");
+  const { embeddings } = await import("../src/db/schema.js");
+  const { eq, sql: dsql } = await import("drizzle-orm");
+
+  const runId = `midfail-${Date.now()}-${randomUUID()}`;
+  const doc0 = { ref: `ref0-${runId}`, text: `unique content zero ${runId}` };
+  const doc1 = { ref: `ref1-${runId}`, text: `unique content one ${runId}`, projectId: "invalid-uuid" };
+  const doc2 = { ref: `ref2-${runId}`, text: `unique content two ${runId}` };
+
+  const results = await upsertSourceDocsBatched("session", [doc0, doc1, doc2], emb, 10);
+
+  expect(results.length).toBe(3);
+  expect(results[0]).toEqual({ ref: doc0.ref, ok: true });
+  expect(results[1].ref).toBe(doc1.ref);
+  expect(results[1].ok).toBe(false);
+  expect(results[1].error).toBeDefined();
+  expect(results[2]).toEqual({ ref: doc2.ref, ok: true });
+
+  // doc1 failed to write: no rows in DB
+  const rows1 = await db.select().from(embeddings).where(eq(embeddings.sourceRef, doc1.ref));
+  expect(rows1.length).toBe(0);
+
+  // doc2 succeeded and preserved its own vector (not doc1's vector)
+  const rows2 = await db.select({
+    content: embeddings.content,
+    embedding: dsql<string>`${embeddings.embedding}::text`,
+  }).from(embeddings).where(eq(embeddings.sourceRef, doc2.ref));
+  expect(rows2.length).toBe(1);
+
+  const raw = rows2[0].embedding.trim();
+  const savedVec: number[] = JSON.parse(raw.startsWith("[") ? raw : `[${raw}]`);
+  const [expectedVec2] = await emb.embed([doc2.text]);
+  const [wrongVec1] = await emb.embed([doc1.text]);
+
+  expect(savedVec.length).toBe(1024);
+  for (let i = 0; i < 10; i++) {
+    expect(savedVec[i]).toBeCloseTo(expectedVec2[i], 3);
+  }
+  // Verify it did not receive doc1's vector
+  const diffFromWrong = Math.abs(savedVec[0] - wrongVec1[0]);
+  expect(diffFromWrong).toBeGreaterThan(0.001);
+});

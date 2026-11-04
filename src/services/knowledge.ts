@@ -89,27 +89,7 @@ function vecLiteral(v: number[]): string {
   return `[${v.join(",")}]`;
 }
 
-export function prepareSourceDoc(
-  kind: "vault" | "note" | "session" | "repo" | "chat",
-  ref: string,
-  text: string,
-  contentHash?: string,
-  projectId?: string | null,
-): {
-  kind: string;
-  ref: string;
-  hash: string;
-  scopeId: string | null;
-  newChunks: { index: number; content: string }[];
-  reuseIds: string[];
-  deadIds: string[];
-} {
-  const chunks = chunkMarkdown(text);
-  const hash = contentHash ?? fileHash(text);
-  return { kind, ref, hash, scopeId: null, newChunks: chunks.map((c) => ({ index: c.index, content: redactSecrets(c.content) })), reuseIds: [], deadIds: [] };
-}
-
-async function prepareSourceDocWithDiff(
+export async function prepareSourceDoc(
   kind: "vault" | "note" | "session" | "repo" | "chat",
   ref: string,
   text: string,
@@ -208,7 +188,7 @@ export async function upsertSourceDoc(
   contentHash?: string,
   projectId?: string | null,
 ): Promise<number> {
-  const prep = await prepareSourceDocWithDiff(kind, ref, text, contentHash, projectId);
+  const prep = await prepareSourceDoc(kind, ref, text, contentHash, projectId);
   const vecs = prep.newChunks.length ? await embedder.embed(prep.newChunks.map((c) => c.content)) : [];
   return writeSourceDoc(prep, vecs, embedder);
 }
@@ -222,7 +202,7 @@ export async function upsertSourceDocsBatched(
   batch = EMBED_BATCH,
 ): Promise<{ ref: string; ok: boolean; error?: string }[]> {
   const results: { ref: string; ok: boolean; error?: string }[] = [];
-  const pending: { prep: Awaited<ReturnType<typeof prepareSourceDocWithDiff>>; docIndex: number }[] = [];
+  const pending: { prep: Awaited<ReturnType<typeof prepareSourceDoc>>; docIndex: number }[] = [];
   let pendingChunks = 0;
 
   const flush = async () => {
@@ -232,11 +212,11 @@ export async function upsertSourceDocsBatched(
       const allVecs = await embedder.embed(allChunks);
       let offset = 0;
       for (const { prep, docIndex } of pending) {
+        const vecs = allVecs.slice(offset, offset + prep.newChunks.length);
+        offset += prep.newChunks.length;
         try {
-          const vecs = allVecs.slice(offset, offset + prep.newChunks.length);
           await writeSourceDoc(prep, vecs, embedder);
           results[docIndex] = { ref: prep.ref, ok: true };
-          offset += prep.newChunks.length;
         } catch (e) {
           results[docIndex] = { ref: prep.ref, ok: false, error: (e as Error).message };
         }
@@ -260,7 +240,7 @@ export async function upsertSourceDocsBatched(
   for (let i = 0; i < docs.length; i++) {
     const doc = docs[i];
     try {
-      const prep = await prepareSourceDocWithDiff(kind, doc.ref, doc.text, doc.contentHash, doc.projectId);
+      const prep = await prepareSourceDoc(kind, doc.ref, doc.text, doc.contentHash, doc.projectId);
       if (prep.newChunks.length === 0) {
         // No new chunks, just write metadata update
         await writeSourceDoc(prep, [], embedder);
@@ -603,6 +583,7 @@ function budgetByKind(rows: any[], limit: number): any[] {
 
 export const GRAPH_MAX_LIMIT = 1000;
 
+// ponytail: edge building is O(n^2) in JS, ~500k cosine pairs at the 1000 cap.
 export function clampGraphLimit(raw: unknown, fallback = 60): number {
   const n = Math.floor(Number(raw));
   return Number.isFinite(n) && n > 0 ? Math.min(n, GRAPH_MAX_LIMIT) : fallback;

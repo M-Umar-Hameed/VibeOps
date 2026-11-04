@@ -83,27 +83,43 @@ test("knowledgeGraph(projectId) includes project-scoped notes and excludes anoth
 test("knowledgeGraph(projectId) budgets project nodes first: 5 repo + 55 global at limit 60", async () => {
   const proj = randomUUID();
   const stamp = Date.now();
+  const refs: string[] = [];
   for (let i = 0; i < 5; i++) {
-    await upsertSourceDoc("repo", `${proj}:file-${i}-${stamp}.md`, `project repo doc ${i}`, emb);
+    const ref = `${proj}:file-${i}-${stamp}.md`;
+    refs.push(ref);
+    await upsertSourceDoc("repo", ref, `project repo doc ${i}`, emb);
   }
   for (let i = 0; i < 100; i++) {
-    await upsertSourceDoc("session", `budget-sess-${i}-${stamp}`, `global session ${i}`, emb);
+    const ref = `budget-sess-${i}-${stamp}`;
+    refs.push(ref);
+    await upsertSourceDoc("session", ref, `global session ${i}`, emb);
   }
-  const res = await knowledgeGraph(60, proj);
+  const res = await knowledgeGraph(60, proj, refs);
   const repoIds = res.nodes.filter(n => n.kind === "repo" && n.id.startsWith(`${proj}:`)).map(n => n.id);
   expect(repoIds.length).toBe(5);
+  for (let i = 0; i < 5; i++) {
+    expect(res.nodes.map(n => n.id)).toContain(`${proj}:file-${i}-${stamp}.md`);
+  }
+  expect(res.nodes.length).toBe(60);
+  const globalCount = res.nodes.filter(n => !(n.kind === "repo" && n.id.startsWith(`${proj}:`))).length;
+  expect(globalCount).toBe(55);
 });
 
 test("project sessions show as project rows in graph", async () => {
   const { actor } = await createActor({ name: "Session Author", kind: "human", role: "member" });
   const pA = await createProject({ key: `proj-sess-${randomUUID()}`, name: "PSess" });
   const stamp = Date.now();
+  const refs: string[] = [];
   for (let i = 0; i < 30; i++) {
-    await upsertSourceDoc("session", `psess-${i}-${stamp}`, `proj session ${i}`, emb, undefined, pA.id);
+    const ref = `psess-${i}-${stamp}`;
+    refs.push(ref);
+    await upsertSourceDoc("session", ref, `proj session ${i}`, emb, undefined, pA.id);
   }
-  await upsertSourceDoc("session", `global-sess-${stamp}`, "global session", emb, undefined, null);
+  const globalRef = `global-sess-${stamp}`;
+  refs.push(globalRef);
+  await upsertSourceDoc("session", globalRef, "global session", emb, undefined, null);
 
-  const res = await knowledgeGraph(60, pA.id);
+  const res = await knowledgeGraph(60, pA.id, refs);
   const projSessions = res.nodes.filter(n => n.kind === "session" && n.id.startsWith(`psess-`));
   const globalSessions = res.nodes.filter(n => n.kind === "session" && n.id.startsWith(`global-sess-`));
   expect(projSessions.length).toBeGreaterThanOrEqual(25); // Tens of project sessions
@@ -255,4 +271,3 @@ test("knowledgeGraph(projectId) reserves a global floor: 55 repo + 28 global at 
   expect(globalCount).toBeGreaterThanOrEqual(Math.floor(60 * 0.25)); // >= 15
   expect(res.nodes.length).toBe(60);
 });
-

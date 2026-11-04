@@ -6,8 +6,8 @@ import { db } from "../../db/client.js";
 import { embeddings, projects, tickets } from "../../db/schema.js";
 import { sandboxRoot } from "../../forge/sandbox.js";
 import { getSetting, setSetting } from "../../services/settings.js";
-import { readIndexTail } from "./tail.js";
-import { readHead } from "./tail.js";
+import { readIndexTail, readHead } from "./tail.js";
+
 import { UNTRUSTED_CLAUSE } from "../../relay/prompts.js";
 
 // Claude Code names ~/.claude/projects/<dir> by replacing every non-alphanumeric char of the cwd with "-".

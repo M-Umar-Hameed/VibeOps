@@ -1,15 +1,15 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, basename, dirname } from "node:path";
+import { join } from "node:path";
 import { readIndexTail, readHead, TAIL_BYTES } from "./tail.js";
 import type { SessionSource, SessionDoc } from "./source.js";
 import { sandboxRoot, inside } from "../../forge/sandbox.js";
 import {
-  encodeClaudeProjectDir,
+
   loadSessionProjectResolver,
   defaultSkipDirs,
   isSkippedSessionDir,
-  userTurnTexts,
+
   isWarmupTranscript,
   isForgeAgentTranscript,
 } from "./session-project.js";

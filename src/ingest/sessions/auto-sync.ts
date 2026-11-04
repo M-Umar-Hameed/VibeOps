@@ -34,7 +34,7 @@ export async function startSessionAutoSync(opts: AutoSyncOptions = {}): Promise<
   const sweep = async () => {
     if (isBusy()) return;
     // 1-day incremental window; hash-gated so a quiet sweep is near-free.
-    const summary = await ingestSessionsSerialized(sources, embedder, 1);
+    const summary = await ingestSessionsSerialized(sources, embedder, 1, "auto");
     if (summary && Object.values(summary).some((s) => s.indexed > 0)) {
       console.log(`sessions auto-sync: ${JSON.stringify(summary)}`);
     }

@@ -132,3 +132,69 @@ test("upsertSourceDocsBatched: mid-batch write failure isolates error and subseq
   const diffFromWrong = Math.abs(savedVec[0] - wrongVec1[0]);
   expect(diffFromWrong).toBeGreaterThan(0.001);
 });
+
+
+test("per-source progress reports listing, checking and embedding with done/total counts", async () => {
+  const uniq = `prog-${Date.now()}-${Math.round(performance.now() * 1000)}`;
+  const docsA = [
+    { ref: `a1#${uniq}`, text: `text a1 ${uniq}`, hash: `ha1-${uniq}` },
+    { ref: `a2#${uniq}`, text: `text a2 ${uniq}`, hash: `ha2-${uniq}` },
+  ];
+  const docsB = [
+    { ref: `b1#${uniq}`, text: `text b1 ${uniq}`, hash: `hb1-${uniq}` },
+    { ref: `b2#${uniq}`, text: `text b2 ${uniq}`, hash: `hb2-${uniq}` },
+    { ref: `b3#${uniq}`, text: `text b3 ${uniq}`, hash: `hb3-${uniq}` },
+  ];
+  const srcA: SessionSource = { source: "a", listSessionDocs: async () => docsA };
+  const srcB: SessionSource = { source: "b", listSessionDocs: async () => docsB };
+
+  const log: any[] = [];
+  const s: any = {};
+  const ctx = {
+    cancelled: false,
+    progress(p: any) {
+      Object.assign(s, p);
+      log.push({ ...s });
+    },
+  };
+
+  await ingestSessions([srcA, srcB], emb, 30, ctx);
+
+  expect(log.some((entry) => entry.phase === "a (1/2): checking")).toBe(true);
+  expect(log.some((entry) => entry.phase === "a (1/2): embedding")).toBe(true);
+  expect(log.some((entry) => entry.phase === "b (2/2): embedding")).toBe(true);
+  expect(log.some((entry) => entry.phase === "a (1/2): embedding" && entry.done === 2 && entry.total === 2)).toBe(true);
+  expect(log[log.length - 1].done).toBe(3);
+  expect(log[log.length - 1].total).toBe(3);
+});
+
+test("cancel between docs stops before completing all sources", async () => {
+  const uniq = `cancel-${Date.now()}-${Math.round(performance.now() * 1000)}`;
+  const docSkipped = { ref: `c0#${uniq}`, text: `text c0 ${uniq}`, hash: `hc0-${uniq}` };
+  await ingestSessions([{ source: "a", listSessionDocs: async () => [docSkipped] }], emb, 30);
+
+  const docsA = [
+    docSkipped,
+    { ref: `c1#${uniq}`, text: `text c1 ${uniq}`, hash: `hc1-${uniq}` },
+    { ref: `c2#${uniq}`, text: `text c2 ${uniq}`, hash: `hc2-${uniq}` },
+  ];
+  let bCalls = 0;
+  const srcA: SessionSource = { source: "a", listSessionDocs: async () => docsA };
+  const srcB: SessionSource = { source: "b", listSessionDocs: async () => { bCalls++; return []; } };
+
+  let cancelFlag = false;
+  const ctx = {
+    get cancelled() { return cancelFlag; },
+    progress(p: any) {
+      if (typeof p.done === "number" && p.done >= 1) {
+        cancelFlag = true;
+      }
+    },
+  };
+
+  const r = await ingestSessions([srcA, srcB], emb, 30, ctx);
+
+  expect(r.a.indexed).toBeLessThan(2);
+  expect(bCalls).toBe(0);
+  expect(r.b).toBeUndefined();
+});

@@ -42,6 +42,8 @@ import { registerBrowserRoutes } from "./browser-routes.js";
 import { registerRelayAccountsRoutes } from "./relay-accounts-routes.js";
 import { registerChatRoutes } from "./chat-routes.js";
 import { armExport } from "../services/export-debounce.js";
+import { startJob } from "../services/jobs.js";
+import { registerJobRoutes, respondWithJob } from "./job-routes.js";
 
 export const app = new Hono<{ Variables: { actor: Actor } }>();
 
@@ -253,13 +255,18 @@ app.patch("/projects/:id", requireAdmin, async (c) => {
   }
 });
 app.post("/projects/:id/git-init", requireAdmin, async (c) => c.json(await gitInitProject(c.req.param("id"))));
-app.post("/projects/:id/index-repo", requireAdmin, async (c) =>
-  c.json(await indexRepoDocs(c.req.param("id"))));
+app.post("/projects/:id/index-repo", requireAdmin, async (c) => {
+  const id = c.req.param("id");
+  return respondWithJob(c, startJob("index-repo", `index-repo:${id}`, "Index docs", (ctx) => indexRepoDocs(id, ctx), { cancellable: true }));
+});
 app.get("/projects/:id/vault", async (c) => c.json(await getProjectVaultStatus(c.req.param("id"))));
 
 app.delete("/projects/:id/knowledge", requireAdmin, async (c) => {
-  const removed = await clearProjectKnowledge(c.req.param("id"));
-  return c.json({ removed });
+  const id = c.req.param("id");
+  return respondWithJob(c, startJob("clear-knowledge", `clear-knowledge:${id}`, "Clear knowledge", async (ctx) => {
+    ctx.progress({ phase: "clearing indexed chunks" });
+    return { removed: await clearProjectKnowledge(id) };
+  }));
 });
 
 app.delete("/projects/:id", requireAdmin, async (c) => {
@@ -267,8 +274,11 @@ app.delete("/projects/:id", requireAdmin, async (c) => {
   if (!UUID.test(id)) return c.json({ error: "invalid project id" }, 400);
   const runId = await activeRunForProject(id);
   if (runId) return c.json({ error: `project has an active forge run: ${runId}`, runId }, 409);
-  await deleteProject(id);
-  return c.json({ ok: true });
+  return respondWithJob(c, startJob("delete-project", `delete-project:${id}`, "Delete project", async (ctx) => {
+    ctx.progress({ phase: "deleting project" });
+    await deleteProject(id);
+    return { ok: true };
+  }));
 });
 
 app.post("/projects/scan", requireAdmin, async (c) => {
@@ -321,7 +331,11 @@ app.put("/projects/:id/settings/:key", requireAdmin, async (c) => {
 
 app.post("/sync/:projectId", requireAdmin, async (c) => {
   try {
-    return c.json(await syncProject(c.req.param("projectId")));
+    const pid = c.req.param("projectId");
+    return await respondWithJob(c, startJob("tracker-sync", `tracker-sync:${pid}`, "Tracker sync", async (ctx) => {
+      ctx.progress({ phase: "syncing tickets" });
+      return syncProject(pid);
+    }));
   } catch (e) {
     return c.json({ error: (e as Error).message }, 400);
   }
@@ -511,8 +525,11 @@ app.patch("/settings/:key", requireAdmin, async (c) => {
 app.get("/knowledge/obsidian", async (c) => c.json(await getVaultStatus()));
 app.post("/knowledge/obsidian/start", requireAdmin, async (c) => {
   const body = await c.req.json().catch(() => ({}));
-  await startWatcher(body.vaultPath);
-  return c.json(await getVaultStatus());
+  return respondWithJob(c, startJob("vault-sync", "vault-sync", "Vault sync", async (ctx) => {
+    ctx.progress({ phase: "indexing vault" });
+    await startWatcher(body.vaultPath);
+    return getVaultStatus();
+  }));
 });
 app.post("/knowledge/obsidian/stop", requireAdmin, async (c) => {
   await stopWatcher();
@@ -522,17 +539,15 @@ app.post("/knowledge/obsidian/stop", requireAdmin, async (c) => {
 app.post("/ingest/sessions", requireAdmin, async (c) => {
   const { sinceDays } = await c.req.json().catch(() => ({}));
   const days = Number.isFinite(Number(sinceDays)) && Number(sinceDays) >= 0 ? Number(sinceDays) : 30;
-  const { ingestSessionsSerialized } = await import("../ingest/sessions/ingest.js");
+  const { startSessionIngestJob } = await import("../ingest/sessions/ingest.js");
   const { makeClaudeMemSource } = await import("../ingest/sessions/claude-mem.js");
   const { makeClaudeCodeSource } = await import("../ingest/sessions/claude-code.js");
   const { makeCodexSource } = await import("../ingest/sessions/codex.js");
   const { makeAntigravitySource } = await import("../ingest/sessions/antigravity.js");
-  const summary = await ingestSessionsSerialized(
+  return respondWithJob(c, startSessionIngestJob(
     [makeClaudeMemSource(), makeClaudeCodeSource(), makeCodexSource(), makeAntigravitySource()],
     getEmbedder(), days,
-  );
-  if (!summary) return c.json({ skipped: "sync already running" }, 409);
-  return c.json(summary);
+  ));
 });
 
 app.get("/system/metrics", async (c) => c.json(await getSystemMetrics()));
@@ -589,3 +604,4 @@ registerCouncilRoutes(app);
 registerExportRoutes(app);
 registerBrowserRoutes(app);
 registerChatRoutes(app);
+registerJobRoutes(app);

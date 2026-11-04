@@ -6,6 +6,12 @@ import { notes } from "../api/notes.js";
 import { apiFetch } from "../api/client.js";
 import { NotesPanel } from "../components/NotesPanel.js";
 import { useProject } from "../context/project.js";
+import { useJobs, isActive, JobProgress } from "../components/JobProgress.js";
+
+function formatSummary(summary: any) {
+  if (!summary || typeof summary !== "object") return "";
+  return Object.entries(summary).map(([source, r]: any) => `${source} ${r?.indexed ?? 0}`).join(" · ");
+}
 
 function hashString(str: string) {
   let hash = 0;
@@ -85,15 +91,26 @@ export function KnowledgeScreen() {
   });
 
   const [syncResult, setSyncResult] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  const sessionJobs = useJobs("/jobs?kind=sessions");
+  const latest = sessionJobs[0];
+  const runningJob = latest && isActive(latest) ? latest : null;
+
   const sync = useMutation({
     mutationFn: () =>
       apiFetch("/ingest/sessions", { method: "POST", body: {} }) as Promise<Record<string, { indexed: number; skipped: number; failed: number }>>,
     onSuccess: (summary) => {
-      setSyncResult(Object.entries(summary).map(([source, r]) => `${source} ${r.indexed}`).join(" · "));
+      setSyncError(null);
+      setSyncResult(formatSummary(summary));
       // The graph and session list are what the user is looking at to judge
       // whether sync did anything - stale caches read as "nothing happened".
       qc.invalidateQueries({ queryKey: ["graph"] });
       qc.invalidateQueries({ queryKey: ["sessions"] });
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+    },
+    onError: (e: any) => {
+      setSyncError(e instanceof Error ? e.message : String(e));
     },
   });
 
@@ -119,16 +136,33 @@ export function KnowledgeScreen() {
                 onClick={() => setTab("Graph")}
               >Graph</button>
             </div>
-            <div className="flex items-center justify-center gap-3 pt-4">
-              <button
-                className="flex items-center gap-2 px-3 py-1.5 bg-surface-container-lowest border border-white/10 rounded font-code-label text-[10px] uppercase tracking-widest text-on-surface-variant hover:text-primary hover:border-primary/30 transition-colors cursor-pointer disabled:opacity-50"
-                disabled={sync.isPending}
-                onClick={() => sync.mutate()}
-              >
-                {sync.isPending && <span className="material-symbols-outlined animate-spin text-sm">sync</span>}
-                Sync sessions
-              </button>
-              {syncResult && <span className="font-code-sm text-[10px] text-on-surface-variant/70">{syncResult}</span>}
+            <div className="flex flex-col items-center justify-center gap-3 pt-4">
+              <div className="flex items-center justify-center gap-3">
+                <button
+                  type="button"
+                  className="flex items-center gap-2 px-3 py-1.5 bg-surface-container-lowest border border-white/10 rounded font-code-label text-[10px] uppercase tracking-widest text-on-surface-variant hover:text-primary hover:border-primary/30 transition-colors cursor-pointer disabled:opacity-50"
+                  disabled={sync.isPending || !!runningJob}
+                  title={runningJob ? (runningJob.trigger === "auto" ? "Auto-sync sweep running" : "Sync already running") : undefined}
+                  onClick={() => sync.mutate()}
+                >
+                  {(sync.isPending || !!runningJob) && <span className="material-symbols-outlined animate-spin text-sm">sync</span>}
+                  Sync sessions
+                </button>
+                {syncError && <span className="text-error text-xs font-code-sm">{syncError}</span>}
+              </div>
+              {runningJob ? (
+                <div className="w-full max-w-sm">
+                  <JobProgress job={runningJob} />
+                </div>
+              ) : syncResult ? (
+                <span className="font-code-sm text-[10px] text-on-surface-variant/70">{syncResult}</span>
+              ) : latest?.state === "done" && latest.result ? (
+                <span className="font-code-sm text-[10px] text-on-surface-variant/70">{formatSummary(latest.result)}</span>
+              ) : latest?.state === "failed" ? (
+                <div className="w-full max-w-sm">
+                  <JobProgress job={latest} />
+                </div>
+              ) : null}
             </div>
           </div>
           

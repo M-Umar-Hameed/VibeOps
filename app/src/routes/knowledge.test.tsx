@@ -7,7 +7,11 @@ const notesList = vi.fn();
 const notesSave = vi.fn();
 const notesUpdate = vi.fn();
 const notesRemove = vi.fn();
-vi.mock("../api/knowledge.js", () => ({ knowledge: { search: vi.fn(async () => [{ content: "backup nightly", sourceKind: "vault", sourceRef: "sop.md", score: 1, citation: "sop.md" }]) } }));
+const knowledgeGetSource = vi.fn();
+vi.mock("../api/knowledge.js", () => ({ knowledge: {
+  search: vi.fn(async () => [{ content: "backup nightly", sourceKind: "vault", sourceRef: "sop.md", score: 1, citation: "sop.md" }]),
+  getSource: (...a: any[]) => knowledgeGetSource(...a),
+} }));
 vi.mock("../api/notes.js", () => ({ notes: {
   list: (...a: any[]) => notesList(...a),
   save: (...a: any[]) => notesSave(...a),
@@ -28,10 +32,12 @@ const wrap = (ui: any) => <QueryClientProvider client={new QueryClient()}>{ui}</
 const note = { id: "n1", actorId: "a1", body: "First line\nmore body", title: null, scope: "global", refId: null, indexed: true, version: 1, deletedAt: null, createdAt: "2026-01-01" };
 
 beforeEach(() => {
+  mockProjectId = null;
   notesList.mockReset().mockResolvedValue([]);
   notesSave.mockReset().mockResolvedValue({ id: "n1" });
   notesUpdate.mockReset().mockResolvedValue({ ...note, version: 2 });
   notesRemove.mockReset().mockResolvedValue({ ok: true });
+  knowledgeGetSource.mockReset().mockResolvedValue({ text: "body" });
   apiFetch.mockReset().mockResolvedValue({ codex: { indexed: 1, skipped: 0, failed: 0 }, "claude-code": { indexed: 38, skipped: 2, failed: 0 } });
 });
 
@@ -147,11 +153,11 @@ test("switching the active project changes the graph query key and refetches", a
   mockProjectId = "proj-A";
   const { rerender } = render(wrapStable(<KnowledgeScreen />));
   fireEvent.click(screen.getByText("Graph"));
-  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/knowledge/graph", { query: { project: "proj-A" } }));
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/knowledge/graph", { query: { limit: "200", project: "proj-A" } }));
 
   mockProjectId = "proj-B";
   rerender(wrapStable(<KnowledgeScreen />));
-  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/knowledge/graph", { query: { project: "proj-B" } }));
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/knowledge/graph", { query: { limit: "200", project: "proj-B" } }));
 });
 
 test("graph renders each kind with its color and shape, and the legend matches", async () => {
@@ -221,5 +227,36 @@ test.each([
   fireEvent.click(container.querySelector(`g[data-kind="${kind}"]`)!);
   expect(await screen.findByText(expectedLabel)).toBeInTheDocument();
   expect(screen.queryByText("DATABASE_NOTE")).toBeNull();
+});
+
+test("changing graph size select fetches graph with new limit", async () => {
+  apiFetch.mockImplementation(async (url: string) => {
+    if (url === "/knowledge/graph") return { nodes: [], edges: [] };
+    return {};
+  });
+  render(wrap(<KnowledgeScreen />));
+  fireEvent.click(screen.getByText("Graph"));
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/knowledge/graph", { query: { limit: "200" } }));
+
+  const select = await screen.findByLabelText("Graph size");
+  fireEvent.change(select, { target: { value: "500" } });
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/knowledge/graph", { query: { limit: "500" } }));
+});
+
+test("source panel renders untrusted badge instead of raw tags", async () => {
+  apiFetch.mockImplementation(async (url: string) => {
+    if (url === "/knowledge/graph") return { nodes: [{ id: "s1", kind: "session" }], edges: [] };
+    return {};
+  });
+  knowledgeGetSource.mockResolvedValue({ text: '<UNTRUSTED label="transcript">\nREPORT: done\n</UNTRUSTED>' });
+  const { container } = render(wrap(<KnowledgeScreen />));
+
+  fireEvent.click(screen.getByText("Graph"));
+  await waitFor(() => expect(container.querySelector('g[data-kind="session"]')).toBeTruthy());
+  fireEvent.click(container.querySelector('g[data-kind="session"]')!);
+
+  expect(await screen.findByText("untrusted: transcript")).toBeInTheDocument();
+  expect(screen.getByText("REPORT: done")).toBeInTheDocument();
+  expect(screen.queryByText(/<UNTRUSTED/)).toBeNull();
 });
 

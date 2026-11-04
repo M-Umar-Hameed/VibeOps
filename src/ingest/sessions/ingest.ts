@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import { embeddings } from "../../db/schema.js";
-import { upsertSourceDoc } from "../../services/knowledge.js";
+import { upsertSourceDocsBatched } from "../../services/knowledge.js";
 import { getEmbedder, type Embedder } from "../../knowledge/embedder.js";
 import type { SessionSource } from "./source.js";
 import { compressSessionText } from "./compress.js";
@@ -16,18 +16,50 @@ export async function ingestSessions(
     const r = { indexed: 0, skipped: 0, failed: 0 };
     result[src.source] = r;
     let docs;
-    try { docs = await src.listSessionDocs(sinceDays); }
-    catch (e) { console.warn(`source ${src.source} failed: ${(e as Error).message}`); r.failed++; continue; }
+    try {
+      docs = await src.listSessionDocs(sinceDays);
+    } catch (e) {
+      console.warn(`source ${src.source} failed: ${(e as Error).message}`);
+      r.failed++;
+      continue;
+    }
+
+    const changed: typeof docs = [];
     for (const doc of docs) {
       try {
-        const [existing] = await db.select({ h: embeddings.contentHash }).from(embeddings)
-          .where(and(eq(embeddings.sourceKind, "session"), eq(embeddings.sourceRef, doc.ref))).limit(1);
-        if (existing && existing.h === doc.hash) { r.skipped++; continue; }
-        await upsertSourceDoc("session", doc.ref, compressSessionText(doc.text), embedder, doc.hash);
-        r.indexed++;
+        const [existing] = await db.select({ h: embeddings.contentHash })
+          .from(embeddings)
+          .where(and(eq(embeddings.sourceKind, "session"), eq(embeddings.sourceRef, doc.ref)))
+          .limit(1);
+        if (existing && existing.h === doc.hash) {
+          r.skipped++;
+        } else {
+          changed.push(doc);
+        }
       } catch (e) {
-        console.warn(`doc ${doc.ref} failed: ${(e as Error).message}`);
+        console.warn(`hash check failed for ${doc.ref}: ${(e as Error).message}`);
         r.failed++;
+      }
+    }
+
+    if (changed.length) {
+      try {
+        const results = await upsertSourceDocsBatched(
+          "session",
+          changed.map((d) => ({ ref: d.ref, text: compressSessionText(d.text), contentHash: d.hash, projectId: d.projectId })),
+          embedder
+        );
+        for (const res of results) {
+          if (res.ok) {
+            r.indexed++;
+          } else {
+            console.warn(`doc ${res.ref} failed: ${res.error}`);
+            r.failed++;
+          }
+        }
+      } catch (e) {
+        console.warn(`batch ingest failed for ${src.source}: ${(e as Error).message}`);
+        r.failed += changed.length;
       }
     }
   }

@@ -55,3 +55,36 @@ export function readIndexTail(
   const hash = createHash("sha256").update(`${size}:${mtimeMs}:`).update(buf).digest("hex");
   return { text, hash };
 }
+
+// First maxBytes of the file, cut back to the last complete line (whole file if smaller).
+export function readHead(path: string, maxBytes = 1_048_576): string {
+  let size: number;
+  try {
+    size = statSync(path).size;
+  } catch {
+    return "";
+  }
+
+  const len = Math.min(size, maxBytes);
+  const buf = Buffer.alloc(len);
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch {
+    return "";
+  }
+  try {
+    readSync(fd, buf, 0, len, 0);
+  } catch {
+    return "";
+  } finally {
+    closeSync(fd);
+  }
+
+  let text = buf.toString("utf8");
+  if (len < size) {
+    const nl = text.lastIndexOf("\n");
+    if (nl !== -1) text = text.slice(0, nl);
+  }
+  return text;
+}

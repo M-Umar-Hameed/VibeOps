@@ -29,6 +29,8 @@ function kindStyle(kind: string): { fill: string; shape: NodeShape } {
   return KIND_STYLE[kind] ?? { fill: "fill-on-surface", shape: "circle" };
 }
 
+const SOURCE_LABEL: Record<string, string> = { vault: "READ_ONLY_VAULT_NODE", repo: "REPO_DOC", chat: "CHAT", session: "SESSION" };
+
 function nodeShape(shape: NodeShape, x: number, y: number) {
   switch (shape) {
     case "square":
@@ -386,7 +388,7 @@ export function KnowledgeScreen() {
             <div>
               <h2 className="font-headline-md text-headline-md font-bold text-primary">{activeSource?.citation}</h2>
               <p className="font-code-sm text-xs text-on-surface-variant uppercase mt-1">
-                {activeSource?.kind === 'vault' ? 'READ_ONLY_VAULT_NODE' : 'DATABASE_NOTE'}
+                {activeSource ? (SOURCE_LABEL[activeSource.kind] ?? 'DATABASE_NOTE') : ''}
               </p>
             </div>
             <button className="p-2 text-on-surface-variant hover:text-on-surface hover:bg-white/5 rounded-full transition-colors cursor-pointer" onClick={() => setActiveSource(null)}>

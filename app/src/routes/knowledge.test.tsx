@@ -260,3 +260,136 @@ test("source panel renders untrusted badge instead of raw tags", async () => {
   expect(screen.queryByText(/<UNTRUSTED/)).toBeNull();
 });
 
+
+
+test("running sessions job shows phase, done/total progress and disables button", async () => {
+  const runningJob = {
+    id: "j1",
+    kind: "sessions",
+    key: "sessions",
+    label: "Sync sessions",
+    trigger: "manual",
+    state: "running",
+    phase: "claude-code (2/4): embedding",
+    done: 120,
+    total: 400,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    result: null,
+    error: null,
+    cancellable: true,
+    cancelRequested: false,
+  };
+  apiFetch.mockImplementation(async (url: string) => {
+    if (url === "/jobs?kind=sessions") return [runningJob];
+    return {};
+  });
+
+  render(wrap(<KnowledgeScreen />));
+
+  expect(await screen.findByText(/claude-code \(2\/4\): embedding/)).toBeInTheDocument();
+  expect(screen.getByText("120 of 400")).toBeInTheDocument();
+  expect(screen.getByRole("progressbar")).toBeInTheDocument();
+  expect(screen.getAllByText("Sync sessions")[0].closest("button")).toBeDisabled();
+});
+
+test("auto-sync sweep running job displays Auto-sync sweep label", async () => {
+  const autoJob = {
+    id: "j-auto",
+    kind: "sessions",
+    key: "sessions",
+    label: "Auto-sync sweep",
+    trigger: "auto",
+    state: "running",
+    phase: "checking",
+    done: 10,
+    total: 50,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    result: null,
+    error: null,
+    cancellable: true,
+    cancelRequested: false,
+  };
+  apiFetch.mockImplementation(async (url: string) => {
+    if (url === "/jobs?kind=sessions") return [autoJob];
+    return {};
+  });
+
+  render(wrap(<KnowledgeScreen />));
+
+  expect(await screen.findByText("Auto-sync sweep")).toBeInTheDocument();
+});
+
+test("done sessions job shows formatted summary without clicking", async () => {
+  const doneJob = {
+    id: "j-done",
+    kind: "sessions",
+    key: "sessions",
+    label: "Sync sessions",
+    trigger: "manual",
+    state: "done",
+    phase: "done",
+    done: 4,
+    total: 4,
+    startedAt: new Date().toISOString(),
+    finishedAt: new Date().toISOString(),
+    result: { codex: { indexed: 4, skipped: 0, failed: 0 } },
+    error: null,
+    cancellable: true,
+    cancelRequested: false,
+  };
+  apiFetch.mockImplementation(async (url: string) => {
+    if (url === "/jobs?kind=sessions") return [doneJob];
+    return {};
+  });
+
+  render(wrap(<KnowledgeScreen />));
+
+  expect(await screen.findByText(/codex 4/)).toBeInTheDocument();
+});
+
+test("clicking cancel on running job calls /jobs/:id/cancel", async () => {
+  const runningJob = {
+    id: "j1",
+    kind: "sessions",
+    key: "sessions",
+    label: "Sync sessions",
+    trigger: "manual",
+    state: "running",
+    phase: "claude-code (2/4): embedding",
+    done: 120,
+    total: 400,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    result: null,
+    error: null,
+    cancellable: true,
+    cancelRequested: false,
+  };
+  apiFetch.mockImplementation(async (url: string) => {
+    if (url === "/jobs?kind=sessions") return [runningJob];
+    return {};
+  });
+
+  render(wrap(<KnowledgeScreen />));
+
+  const cancelBtn = await screen.findByLabelText("Cancel Sync sessions");
+  fireEvent.click(cancelBtn);
+
+  await waitFor(() => {
+    expect(apiFetch.mock.calls.some((call) => call[0] === "/jobs/j1/cancel")).toBe(true);
+  });
+});
+
+test("sync failure shows inline error message", async () => {
+  apiFetch.mockImplementation(async (url: string) => {
+    if (url === "/ingest/sessions") throw new Error("Sync sessions already running");
+    return [];
+  });
+
+  render(wrap(<KnowledgeScreen />));
+
+  fireEvent.click(screen.getByRole("button", { name: /Sync sessions/i }));
+  expect(await screen.findByText("Sync sessions already running")).toBeInTheDocument();
+});

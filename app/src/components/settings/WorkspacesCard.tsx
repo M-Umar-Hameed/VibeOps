@@ -5,6 +5,7 @@ import type { Project } from "../../api/types.js";
 import { pickFolder, dialogAvailable } from "../../lib/native-dialog.js";
 import { ImportFromFolder } from "../projects/ImportFromFolder.js";
 import { exportBrief, sendBriefToNotebookLM } from "../../lib/notebooklm.js";
+import { useJobs, isActive, JobProgress } from "../JobProgress.js";
 
 export function ProjectWorkspaceRow({ project }: { project: Project }) {
   const queryClient = useQueryClient();
@@ -13,6 +14,10 @@ export function ProjectWorkspaceRow({ project }: { project: Project }) {
   const [indexResult, setIndexResult] = useState("");
   const [briefNotice, setBriefNotice] = useState("");
   const [canBrowse, setCanBrowse] = useState(false);
+
+  const indexJobs = useJobs("/jobs?kind=index-repo");
+  const job = indexJobs.find((j) => j.key === `index-repo:${project.id}`);
+  const indexing = job && isActive(job) ? job : null;
 
   useEffect(() => {
     dialogAvailable().then(setCanBrowse);
@@ -43,6 +48,9 @@ export function ProjectWorkspaceRow({ project }: { project: Project }) {
   const indexRepo = useMutation({
     mutationFn: async (id: string) => {
       return await api.post(`/projects/${id}/index-repo`);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
     },
   });
 
@@ -161,9 +169,13 @@ export function ProjectWorkspaceRow({ project }: { project: Project }) {
             <button
               type="button"
               onClick={handleIndexRepo}
-              disabled={indexRepo.isPending}
-              className="text-xs px-3 py-1 rounded bg-white/5 hover:bg-primary hover:text-on-primary text-on-surface font-medium transition-all disabled:opacity-50"
+              disabled={indexRepo.isPending || !!indexing}
+              title="Re-read this project's docs into knowledge search"
+              className="flex items-center gap-1.5 text-xs px-3 py-1 rounded bg-white/5 hover:bg-primary hover:text-on-primary text-on-surface font-medium transition-all disabled:opacity-50"
             >
+              {(indexRepo.isPending || !!indexing) && (
+                <span className="material-symbols-outlined animate-spin text-sm">sync</span>
+              )}
               Index docs
             </button>
             <button
@@ -184,12 +196,26 @@ export function ProjectWorkspaceRow({ project }: { project: Project }) {
         )}
       </div>
 
+      {project.repoPath && (
+        <div className="text-xs text-on-surface-variant/70">
+          Index docs: re-read this project's docs into knowledge search
+        </div>
+      )}
+
       {error && (
         <div className="text-xs text-error font-code-sm">{error}</div>
       )}
-      {indexResult && (
+      {indexing ? (
+        <JobProgress job={indexing} />
+      ) : indexResult ? (
         <div className="text-xs text-on-surface-variant font-code-sm">{indexResult}</div>
-      )}
+      ) : job?.state === "done" && job.result ? (
+        <div className="text-xs text-on-surface-variant font-code-sm">
+          {`indexed ${(job.result as any).indexed}, skipped ${(job.result as any).skipped}, removed ${(job.result as any).removed}`}
+        </div>
+      ) : job?.state === "failed" ? (
+        <JobProgress job={job} />
+      ) : null}
       {briefNotice && (
         <div role="status" className="text-xs text-on-surface-variant font-code-sm">{briefNotice}</div>
       )}

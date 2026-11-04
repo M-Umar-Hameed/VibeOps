@@ -11,6 +11,7 @@ import { ConflictError, NotFoundError } from "./errors.js";
 type Executor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 import { chunkMarkdown } from "../knowledge/chunker.js";
 import { getEmbedder, type Embedder } from "../knowledge/embedder.js";
+import type { JobCtx } from "./jobs.js";
 import { redactSecrets } from "../forge/redact.js";
 import { logKnowledgeQuery } from "./usage.js";
 import { bump } from "../services/metrics.js";
@@ -200,10 +201,16 @@ export async function upsertSourceDocsBatched(
   docs: { ref: string; text: string; contentHash?: string; projectId?: string | null }[],
   embedder: Embedder,
   batch = EMBED_BATCH,
+  hooks: { onDoc?: (done: number) => void; isCancelled?: () => boolean } = {},
 ): Promise<{ ref: string; ok: boolean; error?: string }[]> {
   const results: { ref: string; ok: boolean; error?: string }[] = [];
   const pending: { prep: Awaited<ReturnType<typeof prepareSourceDoc>>; docIndex: number }[] = [];
   let pendingChunks = 0;
+  let settled = 0;
+  const settle = (i: number, r: { ref: string; ok: boolean; error?: string }) => {
+    results[i] = r;
+    hooks.onDoc?.(++settled);
+  };
 
   const flush = async () => {
     if (pending.length === 0) return;
@@ -216,9 +223,9 @@ export async function upsertSourceDocsBatched(
         offset += prep.newChunks.length;
         try {
           await writeSourceDoc(prep, vecs, embedder);
-          results[docIndex] = { ref: prep.ref, ok: true };
+          settle(docIndex, { ref: prep.ref, ok: true });
         } catch (e) {
-          results[docIndex] = { ref: prep.ref, ok: false, error: (e as Error).message };
+          settle(docIndex, { ref: prep.ref, ok: false, error: (e as Error).message });
         }
       }
     } catch (e) {
@@ -227,9 +234,9 @@ export async function upsertSourceDocsBatched(
         try {
           const vecs = prep.newChunks.length ? await embedder.embed(prep.newChunks.map((c) => c.content)) : [];
           await writeSourceDoc(prep, vecs, embedder);
-          results[docIndex] = { ref: prep.ref, ok: true };
+          settle(docIndex, { ref: prep.ref, ok: true });
         } catch (err) {
-          results[docIndex] = { ref: prep.ref, ok: false, error: (err as Error).message };
+          settle(docIndex, { ref: prep.ref, ok: false, error: (err as Error).message });
         }
       }
     }
@@ -238,13 +245,14 @@ export async function upsertSourceDocsBatched(
   };
 
   for (let i = 0; i < docs.length; i++) {
+    if (hooks.isCancelled?.()) break;
     const doc = docs[i];
     try {
       const prep = await prepareSourceDoc(kind, doc.ref, doc.text, doc.contentHash, doc.projectId);
       if (prep.newChunks.length === 0) {
         // No new chunks, just write metadata update
         await writeSourceDoc(prep, [], embedder);
-        results[i] = { ref: doc.ref, ok: true };
+        settle(i, { ref: doc.ref, ok: true });
       } else {
         pending.push({ prep, docIndex: i });
         pendingChunks += prep.newChunks.length;
@@ -253,12 +261,12 @@ export async function upsertSourceDocsBatched(
         }
       }
     } catch (e) {
-      results[i] = { ref: doc.ref, ok: false, error: (e as Error).message };
+      settle(i, { ref: doc.ref, ok: false, error: (e as Error).message });
     }
   }
 
   await flush();
-  return results;
+  return results.filter(Boolean);
 }
 
 export async function upsertVaultFile(path: string, text: string, embedder: Embedder, contentHash?: string): Promise<number> {
@@ -331,17 +339,23 @@ function walkRepoDocs(root: string, currentDir = root, depth = 0, files: string[
   return files;
 }
 
-export async function indexRepoDocs(projectId: string): Promise<{ indexed: number; skipped: number; removed: number }> {
+export async function indexRepoDocs(
+  projectId: string,
+  ctx?: JobCtx,
+): Promise<{ indexed: number; skipped: number; removed: number; cancelled?: boolean }> {
   const [p] = await db.select().from(projects).where(eq(projects.id, projectId));
   if (!p) throw new NotFoundError(`project not found: ${projectId}`);
   if (!p.repoPath) throw new ConflictError("project has no repoPath set");
   const root = p.repoPath;
   const embedder = getEmbedder();
   const files = walkRepoDocs(root);
+  ctx?.progress({ phase: "reading docs", done: 0, total: files.length });
   let skipped = 0;
   const items: { ref: string; text: string }[] = [];
 
-  for (const file of files) {
+  for (let i = 0; i < files.length; i++) {
+    if (ctx?.cancelled) break;
+    const file = files[i];
     try {
       const stat = statSync(file);
       if (stat.size > 200 * 1024) {
@@ -354,13 +368,25 @@ export async function indexRepoDocs(projectId: string): Promise<{ indexed: numbe
       items.push({ ref, text });
     } catch (e) {
       // skip unreadable file
+    } finally {
+      ctx?.progress({ done: i + 1 });
     }
   }
 
-  const results = await upsertSourceDocsBatched("repo", items, embedder);
+  ctx?.progress({ phase: "embedding docs", done: 0, total: items.length });
+  const results = await upsertSourceDocsBatched("repo", items, embedder, EMBED_BATCH, {
+    onDoc: (n) => ctx?.progress({ done: n }),
+    isCancelled: () => !!ctx?.cancelled,
+  });
   const indexed = results.filter((r) => r.ok).length;
   const kept = results.filter((r) => r.ok).map((r) => r.ref);
 
+  if (ctx?.cancelled) {
+    // A partial kept list would delete docs that were never processed.
+    return { indexed, skipped, removed: 0, cancelled: true };
+  }
+
+  ctx?.progress({ phase: "removing stale docs" });
   const removedRows = await db.delete(embeddings)
     .where(and(
       eq(embeddings.sourceKind, "repo"),

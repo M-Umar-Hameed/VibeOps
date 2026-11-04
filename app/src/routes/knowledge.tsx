@@ -31,6 +31,14 @@ function kindStyle(kind: string): { fill: string; shape: NodeShape } {
 
 const SOURCE_LABEL: Record<string, string> = { vault: "READ_ONLY_VAULT_NODE", repo: "REPO_DOC", chat: "CHAT", session: "SESSION" };
 
+export function splitUntrusted(text: string): { labels: string[]; body: string } {
+  const labels: string[] = [];
+  const body = text
+    .replace(/<UNTRUSTED label="([^"]*)">\n?/g, (_m, l) => { if (!labels.includes(l)) labels.push(l); return ""; })
+    .replace(/\n?<\/UNTRUSTED>/g, "");
+  return { labels, body };
+}
+
 function nodeShape(shape: NodeShape, x: number, y: number) {
   switch (shape) {
     case "square":
@@ -53,10 +61,11 @@ export function KnowledgeScreen() {
   const [activeSource, setActiveSource] = useState<{kind: string, ref: string, citation: string} | null>(null);
   const [tab, setTab] = useState<"Search" | "Sessions" | "Graph">("Search");
   const [sessionFilter, setSessionFilter] = useState("");
-  
+  const [graphLimit, setGraphLimit] = useState(200);
+
   const sq = useQuery({ queryKey: ["knowledge", submitted], queryFn: () => knowledge.search(submitted), enabled: !!submitted });
   const sessionsQuery = useQuery({ queryKey: ["sessions"], queryFn: () => apiFetch("/knowledge/sessions") as Promise<{ref: string, chunkCount: number, created_at: string, excerpt: string}[]>, enabled: tab === "Sessions" });
-  const graphQuery = useQuery({ queryKey: ["graph", activeProjectId], queryFn: () => apiFetch("/knowledge/graph", { query: activeProjectId ? { project: activeProjectId } : undefined }) as Promise<{nodes: any[], edges: any[]}>, enabled: tab === "Graph" });
+  const graphQuery = useQuery({ queryKey: ["graph", activeProjectId, graphLimit], queryFn: () => apiFetch("/knowledge/graph", { query: { limit: String(graphLimit), ...(activeProjectId ? { project: activeProjectId } : {}) } }) as Promise<{nodes: any[], edges: any[]}>, enabled: tab === "Graph" });
   
   const sourceQuery = useQuery({
     queryKey: ["source", activeSource?.kind, activeSource?.ref],
@@ -175,6 +184,16 @@ export function KnowledgeScreen() {
                         </span>
                       );
                     })}
+                    <select
+                      aria-label="Graph size"
+                      value={graphLimit}
+                      onChange={(e) => setGraphLimit(Number(e.target.value))}
+                      className="bg-surface-container-lowest border border-white/10 font-code-label text-[10px] text-on-surface-variant rounded px-2 py-1"
+                    >
+                      <option value={100}>100</option>
+                      <option value={200}>200</option>
+                      <option value={500}>500</option>
+                    </select>
                   </div>
                 </>
               )}
@@ -407,11 +426,21 @@ export function KnowledgeScreen() {
                 Failed to load source node.
                 {sourceQuery.error && ` Error: ${(sourceQuery.error as Error).message}`}
               </div>
-            ) : (
-              <pre className="font-code-body text-code-body text-on-surface whitespace-pre-wrap font-mono">
-                {sourceQuery.data?.text}
-              </pre>
-            )}
+            ) : sourceQuery.data?.text ? (() => {
+              const { labels, body } = splitUntrusted(sourceQuery.data.text);
+              return (
+                <>
+                  {labels.map((label, i) => (
+                    <span key={i} className="inline-block font-code-label text-[10px] uppercase tracking-widest px-2 py-0.5 rounded border border-white/10 bg-surface-container-lowest text-on-surface-variant mb-2 mr-2">
+                      untrusted: {label}
+                    </span>
+                  ))}
+                  <pre className="font-code-body text-code-body text-on-surface whitespace-pre-wrap font-mono">
+                    {body}
+                  </pre>
+                </>
+              );
+            })() : null}
           </div>
         </div>
       </div>

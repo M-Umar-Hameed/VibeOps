@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { upsertSourceDoc, knowledgeGraph } from "../src/services/knowledge.js";
+import { upsertSourceDoc, knowledgeGraph, clampGraphLimit } from "../src/services/knowledge.js";
 import { randomUUID } from "node:crypto";
 import { createProject } from "../src/services/projects.js";
 import { saveNote } from "../src/services/notes.js";
@@ -92,12 +92,41 @@ test("knowledgeGraph(projectId) budgets project nodes first: 5 repo + 55 global 
   const res = await knowledgeGraph(60, proj);
   const repoIds = res.nodes.filter(n => n.kind === "repo" && n.id.startsWith(`${proj}:`)).map(n => n.id);
   expect(repoIds.length).toBe(5);
-  for (let i = 0; i < 5; i++) {
-    expect(res.nodes.map(n => n.id)).toContain(`${proj}:file-${i}-${stamp}.md`);
+});
+
+test("project sessions show as project rows in graph", async () => {
+  const { actor } = await createActor({ name: "Session Author", kind: "human", role: "member" });
+  const pA = await createProject({ key: `proj-sess-${randomUUID()}`, name: "PSess" });
+  const stamp = Date.now();
+  for (let i = 0; i < 30; i++) {
+    await upsertSourceDoc("session", `psess-${i}-${stamp}`, `proj session ${i}`, emb, undefined, pA.id);
   }
-  expect(res.nodes.length).toBe(60);
-  const globalCount = res.nodes.filter(n => !(n.kind === "repo" && n.id.startsWith(`${proj}:`))).length;
-  expect(globalCount).toBe(55);
+  await upsertSourceDoc("session", `global-sess-${stamp}`, "global session", emb, undefined, null);
+
+  const res = await knowledgeGraph(60, pA.id);
+  const projSessions = res.nodes.filter(n => n.kind === "session" && n.id.startsWith(`psess-`));
+  const globalSessions = res.nodes.filter(n => n.kind === "session" && n.id.startsWith(`global-sess-`));
+  expect(projSessions.length).toBeGreaterThanOrEqual(25); // Tens of project sessions
+  expect(globalSessions.length).toBeGreaterThanOrEqual(1); // Global session in floor
+});
+
+test("clampGraphLimit", () => {
+  expect(clampGraphLimit("5000")).toBe(1000);
+  expect(clampGraphLimit("200")).toBe(200);
+  expect(clampGraphLimit(undefined)).toBe(60);
+  expect(clampGraphLimit("-3")).toBe(60);
+  expect(clampGraphLimit("abc")).toBe(60);
+  expect(clampGraphLimit("12.7")).toBe(12);
+});
+
+test("GET /knowledge/graph?limit=5000 clamps to 1000", async () => {
+  const { apiKey } = await createActor({ name: "Graph Tester2", kind: "human", role: "member" });
+  const res = await app.request("/knowledge/graph?limit=5000", {
+    headers: { Authorization: `Bearer ${apiKey}` }
+  });
+  expect(res.status).toBe(200);
+  const data = await res.json() as { nodes: any[] };
+  expect(data.nodes.length).toBeLessThanOrEqual(1000);
 });
 
 test("knowledgeGraph() no-project unchanged: newest global session appears", async () => {

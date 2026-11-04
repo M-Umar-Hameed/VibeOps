@@ -8,7 +8,7 @@ import { addComment, listComments } from "../services/comments.js";
 import { getTicket, getTicketHistory, listTickets, searchTickets } from "../services/history.js";
 import { assertTicketId, sandboxExists } from "../forge/sandbox.js";
 import { saveNote, updateNote, deleteNote, listNotes, getNote } from "../services/notes.js";
-import { searchKnowledge, getKnowledgeSource, upsertSourceDoc, listSessionDocs, knowledgeGraph, indexRepoDocs } from "../services/knowledge.js";
+import { searchKnowledge, getKnowledgeSource, upsertSourceDoc, listSessionDocs, knowledgeGraph, indexRepoDocs, clampGraphLimit } from "../services/knowledge.js";
 import { recallBlock } from "../services/recall.js";
 import { fenceUntrusted, UNTRUSTED_CLAUSE } from "../relay/prompts.js";
 import { latestHandoff } from "../services/handoff.js";
@@ -403,8 +403,7 @@ app.get("/knowledge/graph", async (c) => {
   if (!actor || (actor.role !== "member" && actor.role !== "admin")) {
     throw new ForbiddenError("forbidden");
   }
-  const n = Number(c.req.query("limit"));
-  const limit = Number.isFinite(n) && n > 0 ? n : 60;
+  const limit = clampGraphLimit(c.req.query("limit"));
   const project = c.req.query("project") || undefined;
   return c.json(await knowledgeGraph(limit, project));
 });

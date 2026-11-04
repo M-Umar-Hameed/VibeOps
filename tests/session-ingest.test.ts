@@ -38,3 +38,49 @@ test("serialized ingest skips when one is already running (no double-ingest)", a
   await a;
 });
 
+test("projectId is passed through to embeddings", async () => {
+  const { createActor } = await import("./helpers/create-actor.js");
+  const { createProject } = await import("./helpers/create-project.js");
+  const { db } = await import("../src/db/client.js");
+  const { embeddings } = await import("../src/db/schema.js");
+  const { eq } = await import("drizzle-orm");
+
+  const uniq = `sess-proj-${Date.now()}-${Math.round(performance.now() * 1000)}`;
+  const actor = await createActor("member");
+  const project = await createProject(actor, { name: "Test Project" });
+
+  const doc = { ref: `fake#${uniq}`, text: `proj session ${uniq}`, hash: `h-${uniq}`, projectId: project.id };
+  const src: SessionSource = { source: "fake", listSessionDocs: async () => [doc] };
+
+  await ingestSessions([src], emb, 30);
+
+  const rows = await db.select().from(embeddings).where(eq(embeddings.sourceRef, doc.ref));
+  expect(rows.length).toBeGreaterThan(0);
+  expect(rows[0].projectId).toBe(project.id);
+});
+
+test("batching: 64 unique one-chunk docs produce 2 embed calls", async () => {
+  let embedCallLengths: number[] = [];
+  const countingEmb: FakeEmbedder = Object.assign(Object.create(FakeEmbedder.prototype), {
+    ...new FakeEmbedder(1024),
+    async embed(texts: string[]) {
+      embedCallLengths.push(texts.length);
+      return FakeEmbedder.prototype.embed.call(this, texts);
+    },
+  });
+
+  const docs = Array.from({ length: 64 }, (_, i) => ({
+    ref: `batch-${i}`,
+    text: `chunk ${i}`,
+    hash: `h-${i}`,
+  }));
+  const src: SessionSource = { source: "batch", listSessionDocs: async () => docs };
+
+  await ingestSessions([src], countingEmb, 30);
+
+  // Should have at least 2 calls with 32 each
+  expect(embedCallLengths.length).toBeGreaterThanOrEqual(2);
+  const total = embedCallLengths.reduce((a, b) => a + b, 0);
+  expect(total).toBe(64);
+});
+

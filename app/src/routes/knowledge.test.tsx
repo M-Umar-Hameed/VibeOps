@@ -147,11 +147,11 @@ test("switching the active project changes the graph query key and refetches", a
   mockProjectId = "proj-A";
   const { rerender } = render(wrapStable(<KnowledgeScreen />));
   fireEvent.click(screen.getByText("Graph"));
-  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/knowledge/graph", { query: { project: "proj-A" } }));
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/knowledge/graph", { query: { limit: "200", project: "proj-A" } }));
 
   mockProjectId = "proj-B";
   rerender(wrapStable(<KnowledgeScreen />));
-  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/knowledge/graph", { query: { project: "proj-B" } }));
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/knowledge/graph", { query: { limit: "200", project: "proj-B" } }));
 });
 
 test("graph renders each kind with its color and shape, and the legend matches", async () => {

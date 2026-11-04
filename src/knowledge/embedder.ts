@@ -46,6 +46,15 @@ export function padTo(v: number[], width: number): number[] {
   return v.length >= width ? v : [...v, ...new Array(width - v.length).fill(0)];
 }
 
+export function resolveEmbedThreads(raw: string | null): number {
+  const n = Math.floor(Number(raw));
+  return raw !== null && Number.isFinite(n) ? Math.min(6, Math.max(1, n)) : 6;
+}
+
+export function resetLocalPipeline(): void {
+  pipePromise = undefined;
+}
+
 // Xenova/all-MiniLM-L6-v2 main branch commit sha, verified 2026-07-12. Bump deliberately.
 const PINNED_REVISION = "751bff37182d3f1213fa05d7196b954e230abad9";
 
@@ -60,18 +69,36 @@ let pipePromise: Promise<(texts: string[], opts: object) => Promise<{ tolist(): 
 export class LocalEmbedder implements Embedder {
   model = "all-MiniLM-L6-v2";
   dim = 384;
-  private load() {
+  private async load() {
     // Lazy: the server must boot without loading ONNX; first embed pays the cost.
-    pipePromise ??= import("@huggingface/transformers").then((t) => {
-      t.env.cacheDir = join(homedir(), ".vibeops", "models");
-      return t.pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", { dtype: "q8", revision: PINNED_REVISION }) as never;
-    }).catch((e) => { pipePromise = undefined; throw e; });
+    if (!pipePromise) {
+      pipePromise = import("@huggingface/transformers").then(async (t) => {
+        t.env.cacheDir = join(homedir(), ".vibeops", "models");
+        let threads = 6;
+        try {
+          const { getSetting } = await import("../services/settings.js");
+          threads = resolveEmbedThreads(getSetting("knowledge.embedThreads"));
+        } catch {
+          // Fall back to default
+        }
+        return t.pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", {
+          dtype: "q8",
+          revision: PINNED_REVISION,
+          session_options: { intraOpNumThreads: threads, interOpNumThreads: 1 },
+        }) as never;
+      }).catch((e) => { pipePromise = undefined; throw e; });
+    }
     return pipePromise;
   }
   async embed(texts: string[]): Promise<number[][]> {
     const pipe = await this.load();
-    const out = await pipe(texts, { pooling: "mean", normalize: true });
-    return out.tolist().map((v) => padTo(v, 1024));
+    const results: number[][] = [];
+    for (let i = 0; i < texts.length; i += 32) {
+      const slice = texts.slice(i, i + 32);
+      const out = await pipe(slice, { pooling: "mean", normalize: true });
+      results.push(...out.tolist().map((v: number[]) => padTo(v, 1024)));
+    }
+    return results;
   }
 }
 

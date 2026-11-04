@@ -206,3 +206,20 @@ test("Sync sessions shows a spinner while the sync runs", async () => {
   resolve({});
 });
 
+test.each([
+  ["repo", "REPO_DOC"],
+  ["session", "SESSION"],
+  ["chat", "CHAT"],
+] as const)("source panel labels %s nodes %s", async (kind, expectedLabel) => {
+  apiFetch.mockImplementation(async (url: string) => {
+    if (url === "/knowledge/graph") return { nodes: [{ id: "p:docs/a.md", kind }], edges: [] };
+    return { text: "body" };
+  });
+  const { container } = render(wrap(<KnowledgeScreen />));
+  fireEvent.click(screen.getByText("Graph"));
+  await waitFor(() => expect(container.querySelector(`g[data-kind="${kind}"]`)).toBeTruthy());
+  fireEvent.click(container.querySelector(`g[data-kind="${kind}"]`)!);
+  expect(await screen.findByText(expectedLabel)).toBeInTheDocument();
+  expect(screen.queryByText("DATABASE_NOTE")).toBeNull();
+});
+

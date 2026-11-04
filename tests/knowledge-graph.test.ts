@@ -159,6 +159,54 @@ test("knowledgeGraph() no-project fair-shares budget across all four kinds", asy
   }
 });
 
+test("knowledgeGraph(projectId) keeps repo and project-vault next to many newer notes; global floor includes vault", async () => {
+  const { actor } = await createActor({ name: "Fair Tester", kind: "human", role: "member" });
+  const p = await createProject({ key: `kf-${randomUUID()}`, name: "F" });
+  const pid = p.id;
+  const stamp = Date.now();
+  const refs: string[] = [];
+
+  // Seed older project-scoped docs first
+  const repoRef = `${pid}:docs/r-${stamp}.md`;
+  await upsertSourceDoc("repo", repoRef, `repo doc ${stamp}`, emb);
+  refs.push(repoRef);
+
+  const pvRef = `${pid}:pv-${stamp}.md`;
+  await upsertSourceDoc("vault", pvRef, `project vault ${stamp}`, emb);
+  refs.push(pvRef);
+
+  const gvRef = `gv-${stamp}.md`;
+  await upsertSourceDoc("vault", gvRef, `global vault ${stamp}`, emb);
+  refs.push(gvRef);
+
+  // 50 newer project notes
+  for (let i = 0; i < 50; i++) {
+    const n = await saveNote(actor.id, { body: `fair note ${i} ${stamp}`, scope: "project", refId: pid }, emb);
+    refs.push(n.id);
+  }
+
+  // 30 global sessions
+  for (let i = 0; i < 30; i++) {
+    const r = `fair-sess-${i}-${stamp}`;
+    await upsertSourceDoc("session", r, `fair session ${i} ${stamp}`, emb);
+    refs.push(r);
+  }
+
+  const res = await knowledgeGraph(60, pid, refs);
+  const ids = res.nodes.map(n => n.id);
+
+  expect(res.nodes.length).toBe(60);
+  expect(ids).toContain(repoRef);
+  expect(ids).toContain(pvRef);
+  expect(ids).toContain(gvRef);
+
+  const globalCount = ids.filter(id => id === gvRef || id.startsWith("fair-sess-")).length;
+  expect(globalCount).toBe(15);
+
+  const noteCount = res.nodes.filter(n => n.kind === "note").length;
+  expect(noteCount).toBe(43);
+});
+
 test("knowledgeGraph(projectId) reserves a global floor: 55 repo + 28 global at limit 60", async () => {
   const proj = randomUUID();
   const stamp = Date.now();

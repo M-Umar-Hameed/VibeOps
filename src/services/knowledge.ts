@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { statSync, readdirSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { join, relative, sep } from "node:path";
+import { readFile, realpath } from "node:fs/promises";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { resolveProjectVaultPath } from "../ingest/vault-path.js";
 import { and, eq, isNull, inArray, like, notInArray, sql as dsql } from "drizzle-orm";
 import { db } from "../db/client.js";
@@ -368,6 +368,15 @@ export async function listSessionDocs(limit = 50): Promise<{ ref: string; chunkC
   }));
 }
 
+// Indexed chunks reassembled in order; null when the ref is not indexed.
+async function indexedText(kind: "session" | "chat" | "repo", ref: string): Promise<string | null> {
+  const rows = await db.select({ content: embeddings.content })
+    .from(embeddings)
+    .where(and(eq(embeddings.sourceKind, kind), eq(embeddings.sourceRef, ref)))
+    .orderBy(embeddings.chunkIndex);
+  return rows.length ? rows.map((r) => r.content).join("\n\n") : null;
+}
+
 export async function getKnowledgeSource(kind: string, ref: string): Promise<string> {
   if (kind === "vault") {
     // Only serve refs that exist in the knowledge index (exact sourceRef match).
@@ -388,14 +397,38 @@ export async function getKnowledgeSource(kind: string, ref: string): Promise<str
       return `Error: DB query failed: ${e.message}`;
     }
   } else if (kind === "session") {
-    // Ingested sessions have no source file to read back; the indexed chunks
-    // ARE the source. Reassemble them in order.
-    const rows = await db.select({ content: embeddings.content })
-      .from(embeddings)
-      .where(and(eq(embeddings.sourceKind, "session"), eq(embeddings.sourceRef, ref)))
-      .orderBy(embeddings.chunkIndex);
-    if (!rows.length) return `Error: Session ${ref} not found in the index.`;
-    return rows.map((r) => r.content).join("\n\n");
+    return (await indexedText("session", ref)) ?? `Error: Session ${ref} not found in the index.`;
+  } else if (kind === "chat") {
+    return (await indexedText("chat", ref)) ?? `Error: Chat ${ref} not found in the index.`;
+  } else if (kind === "repo") {
+    // Same exact-sourceRef gate as vault: never an arbitrary file read.
+    const chunks = await indexedText("repo", ref);
+    if (chunks === null) return `Error: ${ref} is not an indexed repo source.`;
+    const m = /^([0-9a-fA-F-]{36}):(.+)$/.exec(ref);
+    if (!m) return `Error: ${ref} is not a valid repo source ref.`;
+    const [p] = await db.select({ repoPath: projects.repoPath }).from(projects).where(eq(projects.id, m[1])).limit(1);
+    if (!p?.repoPath) return chunks; // repo moved/unset: indexed text is still the source
+    const inside = (root: string, file: string) => {
+      const rel = relative(root, file);
+      return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+    };
+    const file = join(p.repoPath, m[2]);
+    if (!inside(p.repoPath, file)) return `Error: ${ref} resolves outside the project repo.`;
+    let realFile: string;
+    try {
+      realFile = await realpath(file);
+    } catch {
+      return chunks; // file gone: fall back to indexed chunks
+    }
+    let realRoot: string;
+    try { realRoot = await realpath(p.repoPath); } catch { return chunks; }
+    // Symlinks/junctions: compare canonical paths (repoPath itself may be a junction).
+    if (!inside(realRoot, realFile)) return `Error: ${ref} resolves outside the project repo.`;
+    try {
+      return await readFile(realFile, "utf-8");
+    } catch {
+      return chunks;
+    }
   }
   return `Error: Unknown source kind ${kind}`;
 }
@@ -437,13 +470,16 @@ export async function knowledgeGraph(limit = 60, projectId?: string, refs?: stri
   // "<projectId>:" sourceRef prefix. note nodes map to a project via
   // scope+refId (notes have no project_id column); global-scope notes are shared.
   const unwrap = (r: unknown) => (Array.isArray(r) ? r : (r as { rows: unknown[] }).rows) as any[];
-  const groupQuery = (where: ReturnType<typeof dsql>) => db.execute(dsql`
-    SELECT source_ref, source_kind, count(id) as chunk_count, max(created_at) as created_at
-    FROM embeddings
-    ${where}
-    GROUP BY source_ref, source_kind
-    ORDER BY max(created_at) DESC
-    LIMIT ${limit}
+  const perKindQuery = (where: ReturnType<typeof dsql>) => db.execute(dsql`
+    SELECT source_ref, source_kind, chunk_count, created_at FROM (
+      SELECT source_ref, source_kind, count(id) AS chunk_count, max(created_at) AS created_at,
+        row_number() OVER (PARTITION BY source_kind ORDER BY max(created_at) DESC) AS rn
+      FROM embeddings
+      ${where}
+      GROUP BY source_ref, source_kind
+    ) sub
+    WHERE rn <= ${limit}
+    ORDER BY source_kind ASC, rn ASC
   `);
 
   // Test-only scoping: restrict candidates to caller-supplied refs so a test can
@@ -463,8 +499,10 @@ export async function knowledgeGraph(limit = 60, projectId?: string, refs?: stri
     const globalWhere = refWhere
       ? dsql`WHERE ${globalScopeWhere()} AND ${refWhere}`
       : dsql`WHERE ${globalScopeWhere()}`;
-    const projectRows = unwrap(await groupQuery(projectWhere));
-    const globalRows = unwrap(await groupQuery(globalWhere));
+    // Fair-share by kind within each group (round-robin) so repo docs and
+    // project-vault files always appear next to notes even when notes are newer.
+    const projectRows = budgetByKind(unwrap(await perKindQuery(projectWhere)), limit);
+    const globalRows = budgetByKind(unwrap(await perKindQuery(globalWhere)), limit);
     // Reserve a floor for global (shared vault/session) nodes so shared knowledge
     // stays visible even when a project has more than `limit` nodes; project-first
     // for the remaining budget, newest-first within each group.
@@ -478,18 +516,7 @@ export async function knowledgeGraph(limit = 60, projectId?: string, refs?: stri
     // session stream can't starve vault/note/repo (which plain newest-first-
     // across-all-kinds would drop entirely). Fetch top-`limit` per kind, then
     // round-robin. Total node count still bounded by `limit`.
-    const perKind = unwrap(await db.execute(dsql`
-      SELECT source_ref, source_kind, chunk_count, created_at FROM (
-        SELECT source_ref, source_kind, count(id) AS chunk_count, max(created_at) AS created_at,
-          row_number() OVER (PARTITION BY source_kind ORDER BY max(created_at) DESC) AS rn
-        FROM embeddings
-        ${refWhere ? dsql`WHERE ${refWhere}` : dsql``}
-        GROUP BY source_ref, source_kind
-      ) sub
-      WHERE rn <= ${limit}
-      ORDER BY source_kind ASC, rn ASC
-    `));
-    rows = budgetByKind(perKind, limit);
+    rows = budgetByKind(unwrap(await perKindQuery(refWhere ? dsql`WHERE ${refWhere}` : dsql``)), limit);
   }
   if (!rows.length) return { nodes: [], edges: [] };
 

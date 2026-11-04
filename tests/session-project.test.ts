@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
-import { createActor } from "./helpers/create-actor.js";
-import { createProject } from "./helpers/create-project.js";
-import { createTicket } from "./helpers/create-ticket.js";
+import { createActor } from "../src/services/actors.js";
+import { createProject, updateProjectRepo } from "../src/services/projects.js";
+import { createTicket } from "../src/services/tickets.js";
 import {
   encodeClaudeProjectDir,
   buildSessionProjectResolver,
@@ -19,7 +20,7 @@ import { FakeEmbedder } from "../src/knowledge/embedder.js";
 import { db } from "../src/db/client.js";
 import { embeddings } from "../src/db/schema.js";
 import { eq } from "drizzle-orm";
-import { updateProjectRepo } from "./helpers/update-project.js";
+
 
 describe("session-project.test.ts", () => {
   let tmpRepo: string;
@@ -103,11 +104,12 @@ describe("session-project.test.ts", () => {
   });
 
   it("loadSessionProjectResolver with real DB", async () => {
-    const actor = await createActor("member");
-    const project = await createProject(actor, { name: "Test Project" });
+    const uniq2 = `sp-2-${Date.now()}-${Math.round(performance.now() * 1000)}`;
+    const { actor } = await createActor({ name: uniq2, kind: "human", role: "member" });
+    const project = await createProject({ key: randomUUID().replace(/-/g, "").slice(0, 8), name: "Test Project" });
     await updateProjectRepo(project.id, tmpRepo);
 
-    const ticket = await createTicket({ projectId: project.id, title: "Test Ticket" });
+    const ticket = await createTicket(actor.id, { projectId: project.id, title: "Test Ticket" });
     const sandboxDir = mkdtempSync(join(tmpdir(), "test-sandbox-"));
 
     const resolve = await loadSessionProjectResolver(sandboxDir);
@@ -117,8 +119,9 @@ describe("session-project.test.ts", () => {
   });
 
   it("backfill assigns projects, deletes warmup, Forge and skip-dir sessions", async () => {
-    const actor = await createActor("member");
-    const project = await createProject(actor, { name: "Test Project" });
+    const uniq2 = `sp-2-${Date.now()}-${Math.round(performance.now() * 1000)}`;
+    const { actor } = await createActor({ name: uniq2, kind: "human", role: "member" });
+    const project = await createProject({ key: randomUUID().replace(/-/g, "").slice(0, 8), name: "Test Project" });
     await updateProjectRepo(project.id, tmpRepo);
 
     const repoFolder = encodeClaudeProjectDir(tmpRepo);

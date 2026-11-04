@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { randomUUID } from "node:crypto";
 import { ingestSessions, ingestSessionsSerialized } from "../src/ingest/sessions/ingest.js";
 import { searchKnowledge } from "../src/services/knowledge.js";
 import { FakeEmbedder } from "../src/knowledge/embedder.js";
@@ -39,15 +40,15 @@ test("serialized ingest skips when one is already running (no double-ingest)", a
 });
 
 test("projectId is passed through to embeddings", async () => {
-  const { createActor } = await import("./helpers/create-actor.js");
-  const { createProject } = await import("./helpers/create-project.js");
+  const { createActor } = await import("../src/services/actors.js");
+  const { createProject } = await import("../src/services/projects.js");
   const { db } = await import("../src/db/client.js");
   const { embeddings } = await import("../src/db/schema.js");
   const { eq } = await import("drizzle-orm");
 
   const uniq = `sess-proj-${Date.now()}-${Math.round(performance.now() * 1000)}`;
-  const actor = await createActor("member");
-  const project = await createProject(actor, { name: "Test Project" });
+  const { actor } = await createActor({ name: uniq, kind: "human", role: "member" });
+  const project = await createProject({ key: randomUUID().replace(/-/g, "").slice(0, 8), name: "Test Project" });
 
   const doc = { ref: `fake#${uniq}`, text: `proj session ${uniq}`, hash: `h-${uniq}`, projectId: project.id };
   const src: SessionSource = { source: "fake", listSessionDocs: async () => [doc] };

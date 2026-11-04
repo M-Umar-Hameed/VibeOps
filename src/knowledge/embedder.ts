@@ -77,7 +77,7 @@ export class LocalEmbedder implements Embedder {
         let threads = 6;
         try {
           const { getSetting } = await import("../services/settings.js");
-          threads = resolveEmbedThreads(getSetting("knowledge.embedThreads"));
+          threads = resolveEmbedThreads(await getSetting("knowledge.embedThreads"));
         } catch {
           // Fall back to default
         }

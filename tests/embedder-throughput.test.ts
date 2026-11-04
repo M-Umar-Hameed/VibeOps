@@ -6,6 +6,7 @@ describe.skipIf(!process.env.LOCAL_EMBED_TEST)("embedder-throughput.test.ts", ()
   it("throughput: threads 1 vs threads 6, batch 1 vs batch 32", async () => {
     const chunks = Array.from({ length: 256 }, (_, i) => "A".repeat(1000) + ` ${i}`);
 
+    let throughputA = 0;
     // Run A: threads 1, one text per call
     await withSetting("knowledge.embedThreads", "1", async () => {
       resetLocalPipeline();
@@ -15,7 +16,7 @@ describe.skipIf(!process.env.LOCAL_EMBED_TEST)("embedder-throughput.test.ts", ()
         await emb.embed([chunk]);
       }
       const elapsed = (performance.now() - start) / 1000;
-      const throughputA = chunks.length / elapsed;
+      throughputA = chunks.length / elapsed;
       console.log(`Run A (1 thread, 1 per call): ${throughputA.toFixed(1)} chunks/s`);
     });
 
@@ -28,9 +29,7 @@ describe.skipIf(!process.env.LOCAL_EMBED_TEST)("embedder-throughput.test.ts", ()
       const elapsed = (performance.now() - start) / 1000;
       const throughputB = chunks.length / elapsed;
       console.log(`Run B (6 threads, 32 per call): ${throughputB.toFixed(1)} chunks/s`);
-      // Expect B to be faster than A
-      const throughputARough = 256 / 20; // rough estimate from plan
-      expect(throughputB).toBeGreaterThan(throughputARough);
+      expect(throughputB).toBeGreaterThanOrEqual(throughputA);
     });
   });
 });

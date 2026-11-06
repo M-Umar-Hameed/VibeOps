@@ -19,6 +19,7 @@ const SHAPES: Record<string, Record<string, "string" | "number">> = {
   newTab: { url: "string" },
   switchTab: { tabId: "number" },
   wait: { text: "string" },
+  scroll: {}, // shape is "exactly one of ref|dy", checked below
 };
 
 export function validateSteps(
@@ -33,7 +34,14 @@ export function validateSteps(
     }
     const s = step as Record<string, unknown>;
     if (typeof s.verb !== "string" || !(s.verb in SHAPES)) {
-      return { ok: false, error: `there is no browser action called "${String(s.verb)}" - use one of: click, type, select, press, snapshot, screenshot, read, navigate, clickAt, tabs, newTab, switchTab, wait` };
+      return { ok: false, error: `there is no browser action called "${String(s.verb)}" - use one of: click, type, select, press, snapshot, screenshot, read, navigate, clickAt, tabs, newTab, switchTab, wait, scroll` };
+    }
+    if (s.verb === "scroll") {
+      const keys = Object.keys(s).filter((k) => k !== "verb");
+      const ok = keys.length === 1 &&
+        ((keys[0] === "ref" && typeof s.ref === "string") || (keys[0] === "dy" && Number.isFinite(s.dy)));
+      if (!ok) return { ok: false, error: "scroll takes exactly one of ref (string) or dy (finite number)" };
+      continue;
     }
     const shape = SHAPES[s.verb];
     const allowed = new Set(["verb", ...Object.keys(shape)]);

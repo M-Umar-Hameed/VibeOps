@@ -4,6 +4,7 @@
 // Static: MV3 service workers forbid dynamic import(), so a lazy import here
 // throws before the batch is ever reported and the server sees a 504.
 import { splitSegments } from "./segments.js";
+import { dispatchCdp, usesCdp } from "./cdp.js";
 
 const API_BASE = "http://127.0.0.1:8787";
 
@@ -185,6 +186,9 @@ async function agentTab() {
   return tab;
 }
 
+async function attachDebugger(tabId) { try { await chrome.debugger.attach({ tabId }, "1.3"); return true; } catch { return false; } }
+async function detachDebugger(tabId) { try { await chrome.debugger.detach({ tabId }); } catch { /* already detached */ } }
+
 // Tab verbs (tabs/newTab/switchTab) need chrome.tabs, so the batch is split
 // into segments: page segments inject into the agent tab, tab verbs run here
 // in between. Results go back in original order and the batch stops at the
@@ -192,6 +196,8 @@ async function agentTab() {
 async function executeBatch(batch) {
   const results = new Array(batch.steps.length);
   let snapshot = { instanceId, origin: "", identity: null, nodes: [] };
+  let dbgTab = null;
+  let dbgOk = false;
   try {
     let failed = false;
     for (const seg of splitSegments(batch.steps)) {
@@ -212,31 +218,73 @@ async function executeBatch(batch) {
         break;
       }
       const tabId = tab.id;
-      const [{ result } = {}] = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: async (steps, grant, targetOrigin) => {
-          const { executeSteps } = await import(chrome.runtime.getURL("execute.js"));
-          return executeSteps(document, steps, grant, targetOrigin);
-        },
-        args: [seg.steps, batch.grant ?? null, batch.targetOrigin ?? null],
-      });
-      // screenshot cannot run in the page: captureVisibleTab is a worker-only API,
-      // so execute.js leaves its slot as an unknown-verb error and we fill it here.
-      if (!result) {
-        // A navigate inside the segment tears down the injected context and
-        // executeScript resolves with no result. Report it; never crash into
-        // the catch with a bare TypeError.
-        results[seg.start] = { ok: false, error: "the page navigated away before the remaining steps could run - take a fresh snapshot and retry them", code: "page_navigated" };
-        failed = true;
-        continue;
+      if (batch.grant === "act" && seg.steps.some(usesCdp)) {
+        if (dbgTab !== tabId) {
+          if (dbgOk) await detachDebugger(dbgTab);
+          dbgOk = await attachDebugger(tabId);
+          dbgTab = tabId;
+        }
       }
-      for (let i = 0; i < seg.steps.length; i++) {
-        const r = seg.steps[i]?.verb === "screenshot" ? await captureScreenshot(tab.windowId) : result.results[i];
-        if (r === undefined) break; // execute.js stopped early
-        results[seg.start + i] = r;
-        if (!r.ok) failed = true;
+      const trusted = dbgOk && dbgTab === tabId;
+      let i = 0, resume = false, segSnap = null;
+      while (i < seg.steps.length) {
+        const [{ result } = {}] = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: async (steps, grant, targetOrigin, trusted, resume) => {
+            const { executeSteps } = await import(chrome.runtime.getURL("execute.js"));
+            const out = await executeSteps(document, steps, grant, targetOrigin, { trusted, refMap: resume ? globalThis.__vibeopsRefs : undefined });
+            globalThis.__vibeopsRefs = out.refMap; // Map of Elements is not structured-cloneable
+            delete out.refMap;
+            return out;
+          },
+          args: [seg.steps.slice(i), batch.grant ?? null, batch.targetOrigin ?? null, trusted, resume],
+        });
+        if (!result) {
+          results[seg.start + i] = { ok: false, error: "the page navigated away before the remaining steps could run - take a fresh snapshot and retry them", code: "page_navigated" };
+          failed = true;
+          break;
+        }
+        for (let j = 0; j < result.results.length; j++) {
+          const step = seg.steps[i + j];
+          let r = step?.verb === "screenshot" ? await captureScreenshot(tab.windowId) : result.results[j];
+          if (r === undefined) break;
+          if (r.cdp) {
+            try {
+              await dispatchCdp((method, params) => chrome.debugger.sendCommand({ tabId }, method, params), r.cdp);
+              r = { ok: true, path: "cdp" };
+            } catch (err) {
+              r = { ok: false, error: `trusted input failed: ${String(err)}`, code: "cdp_failed", path: "cdp" };
+            }
+          } else if (r.ok && usesCdp(step)) {
+            r = { ...r, path: "synthetic" };
+          }
+          results[seg.start + i + j] = r;
+          if (!r.ok) failed = true;
+        }
+        i += result.results.length;
+        segSnap = result.snapshot;
+        if (failed || segSnap) break; // executeSteps ran to its end
+        resume = true;
       }
-      snapshot = result.snapshot;
+      if (segSnap === null) {
+        try {
+          const [{ result } = {}] = await chrome.scripting.executeScript({
+            target: { tabId },
+            func: async (steps, grant, targetOrigin, trusted, resume) => {
+              const { executeSteps } = await import(chrome.runtime.getURL("execute.js"));
+              const out = await executeSteps(document, steps, grant, targetOrigin, { trusted, refMap: resume ? globalThis.__vibeopsRefs : undefined });
+              globalThis.__vibeopsRefs = out.refMap;
+              delete out.refMap;
+              return out;
+            },
+            args: [[], batch.grant ?? null, batch.targetOrigin ?? null, trusted, true],
+          });
+          if (result?.snapshot) segSnap = result.snapshot;
+        } catch {
+          // Keep previous snapshot
+        }
+      }
+      snapshot = segSnap ?? snapshot;
     }
     snapshot.instanceId = instanceId;
     await submitResult(batch.batchId, { results: results.filter((r) => r !== undefined), snapshot });
@@ -246,6 +294,8 @@ async function executeBatch(batch) {
       results: [{ ok: false, error: String(err) }],
       snapshot: { instanceId, origin: "", identity: null, nodes: [] },
     });
+  } finally {
+    if (dbgOk) await detachDebugger(dbgTab);
   }
 }
 

@@ -28,7 +28,7 @@ export type ActionStep =
   | { verb: "scroll"; dy: number };
 
 export type BatchResult = {
-  results: Array<{ ok: boolean; value?: string; error?: string; code?: string }>;
+  results: Array<{ ok: boolean; value?: string; error?: string; code?: string; path?: "cdp" | "synthetic" }>;
   snapshot: unknown; // Snapshot (§1.1); untrusted page data, stored/returned verbatim, never introspected here
 };
 

@@ -91,6 +91,54 @@ describe("executeSteps", () => {
       expect(input.value).toBe("hello");
       expect(changed).toBe(true);
     });
+
+    it("executes type through prototype value setter on tracked inputs", async () => {
+      const doc = domAt('<input type="text" value="">', "https://github.com/");
+      const view = doc.defaultView as any;
+      const input = doc.querySelector("input") as any;
+      const native = Object.getOwnPropertyDescriptor(view.HTMLInputElement.prototype, "value")!;
+      let tracked = "";
+      Object.defineProperty(input, "value", {
+        configurable: true,
+        get() { return native.get!.call(this); },
+        set(v) { tracked = v; native.set!.call(this, v); },
+      });
+      let seen: string | null = null;
+      input.addEventListener("input", () => {
+        if (input.value !== tracked) seen = input.value;
+      });
+      await executeSteps(doc, [{ verb: "type", ref: "ref1", text: "hello" }], "act", "https://github.com");
+      expect(seen).toBe("hello");
+      expect(doc.activeElement).toBe(input);
+    });
+
+    it("executes clickAt when grant act and origin matches", async () => {
+      const doc = domAt('<button id="b">Go</button>', "https://github.com/");
+      (doc as any).elementFromPoint = () => doc.querySelector("#b");
+      let clicked = false;
+      doc.querySelector("#b")!.addEventListener("click", () => { clicked = true; });
+      const result = await executeSteps(doc, [{ verb: "clickAt", x: 1, y: 1 }], "act", "https://github.com");
+      expect(result.results[0]).toEqual({ ok: true });
+      expect(clicked).toBe(true);
+    });
+
+    it("refuses clickAt without a grant with no_grant, not unsupported_verb", async () => {
+      const doc = domAt('<button id="b">Go</button>', "https://github.com/");
+      const result = await executeSteps(doc, [{ verb: "clickAt", x: 1, y: 1 }], undefined, undefined);
+      expect(result.results[0].code).toBe("no_grant");
+    });
+
+    it("executes click on role=option with mousedown, mouseup, and click events", async () => {
+      const doc = domAt('<div role="option">Free</div>', "https://github.com/");
+      const opt = doc.querySelector('[role="option"]') as any;
+      const events: string[] = [];
+      for (const t of ["mousedown", "mouseup", "click"]) {
+        opt.addEventListener(t, () => events.push(t));
+      }
+      const result = await executeSteps(doc, [{ verb: "click", ref: "ref1" }], "act", "https://github.com");
+      expect(result.results[0]).toEqual({ ok: true });
+      expect(events).toEqual(["mousedown", "mouseup", "click"]);
+    });
   });
 
   describe("navigate — grant + destination-origin gated", () => {
@@ -199,6 +247,9 @@ describe("rich editors and real key events", () => {
     expect(noGrant.results[0].code).toBe("no_grant");
     const unknown = (await executeSteps(doc, [{ verb: "bogusverb" }], "act", "https://github.com")) as any;
     expect(unknown.results[0].code).toBe("unsupported_verb");
+    expect(unknown.results[0].error).toBe(
+      'this extension build does not support the action "bogusverb" - update the extension from the latest release'
+    );
   });
   it("wait succeeds when text appears and times out with a code otherwise", async () => {
     const saved = { ...WAIT_TUNING };
@@ -215,5 +266,43 @@ describe("rich editors and real key events", () => {
     } finally {
       Object.assign(WAIT_TUNING, saved);
     }
+  });
+});
+
+describe("scroll verb and scrollIntoView centering", () => {
+  it("scroll by ref calls scrollIntoView with center block", async () => {
+    const doc = dom('<button id="b">A</button>');
+    const btn = doc.querySelector("#b") as any;
+    btn.scrollIntoView = vi.fn();
+    const result = await executeSteps(doc, [{ verb: "scroll", ref: "ref1" }]);
+    expect(result.results[0]).toEqual({ ok: true });
+    expect(btn.scrollIntoView).toHaveBeenCalledWith({ block: "center" });
+  });
+
+  it("scroll by dy calls scrollBy with 0, dy", async () => {
+    const doc = dom('<button id="b">A</button>');
+    const view = doc.defaultView as any;
+    view.scrollBy = vi.fn();
+    const result = await executeSteps(doc, [{ verb: "scroll", dy: 500 }]);
+    expect(result.results[0]).toEqual({ ok: true });
+    expect(view.scrollBy).toHaveBeenCalledWith(0, 500);
+  });
+
+  it("scroll with stale ref returns stale_ref", async () => {
+    const doc = dom('<button id="b">A</button>');
+    const result = await executeSteps(doc, [{ verb: "scroll", ref: "BOGUS" }]);
+    expect(result.results[0].code).toBe("stale_ref");
+  });
+
+  it("click and type call scrollIntoView({ block: 'center' }) on target", async () => {
+    const doc = domAt('<button id="b">Go</button><input id="i" type="text">', "https://github.com/");
+    const btn = doc.querySelector("#b") as any;
+    const input = doc.querySelector("#i") as any;
+    btn.scrollIntoView = vi.fn();
+    input.scrollIntoView = vi.fn();
+    await executeSteps(doc, [{ verb: "click", ref: "ref1" }], "act", "https://github.com");
+    expect(btn.scrollIntoView).toHaveBeenCalledWith({ block: "center" });
+    await executeSteps(doc, [{ verb: "type", ref: "ref2", text: "hi" }], "act", "https://github.com");
+    expect(input.scrollIntoView).toHaveBeenCalledWith({ block: "center" });
   });
 });

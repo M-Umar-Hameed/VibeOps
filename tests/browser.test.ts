@@ -441,3 +441,15 @@ test("tabs is read-tier: no targetOrigin or grant needed to enqueue", async () =
   // 504: enqueued and nobody collected it in this test - the gate let it through.
   expect(res.status).toBe(504);
 });
+
+test("scroll is read-tier: no targetOrigin or grant needed to enqueue", async () => {
+  BROWSER_TUNING.batchTimeoutMs = 100;
+  const h = await memberHeaders();
+  const id = await registerInstance(h);
+  const res = await app.request("/browser/batches", {
+    method: "POST",
+    headers: h,
+    body: JSON.stringify({ instanceId: id, tenant: "acme", steps: [{ verb: "scroll", dy: 400 }] }),
+  });
+  expect(res.status).toBe(504);
+});

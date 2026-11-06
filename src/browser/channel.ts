@@ -23,7 +23,9 @@ export type ActionStep =
   | { verb: "tabs" }
   | { verb: "newTab"; url: string }
   | { verb: "switchTab"; tabId: number }
-  | { verb: "wait"; text: string };
+  | { verb: "wait"; text: string }
+  | { verb: "scroll"; ref: string }
+  | { verb: "scroll"; dy: number };
 
 export type BatchResult = {
   results: Array<{ ok: boolean; value?: string; error?: string; code?: string }>;

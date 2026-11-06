@@ -3,7 +3,7 @@
 
 import { collectInteractive, buildSnapshot } from "./snapshot.js";
 
-const MUTATING_VERBS = new Set(["click", "type", "select", "press"]);
+const MUTATING_VERBS = new Set(["click", "type", "select", "press", "clickAt"]);
 
 // Bound the wait for the destination document to load after a navigate; the
 // step fails past this. Mutable so a jsdom test can shrink it if needed.
@@ -88,6 +88,19 @@ export async function executeSteps(doc, steps, grant, targetOrigin) {
         result = { ok: true };
       } else {
         result = { ok: false, error: `text "${step.text}" did not appear within ${WAIT_TUNING.timeoutMs / 1000}s`, code: "wait_timeout" };
+      }
+    } else if (step.verb === "scroll") {
+      if (typeof step.ref === "string") {
+        const el = refMap.get(step.ref);
+        if (!el) {
+          result = { ok: false, error: "that element reference is stale - take a fresh snapshot and use its refs", code: "stale_ref" };
+        } else {
+          el.scrollIntoView?.({ block: "center" });
+          result = { ok: true };
+        }
+      } else {
+        doc.defaultView.scrollBy(0, step.dy);
+        result = { ok: true };
       }
     } else {
       result = { ok: false, error: `this extension build does not support the action "${step.verb}" - update the extension from the latest release`, code: "unsupported_verb" };
@@ -179,11 +192,20 @@ function runMutation(doc, refMap, step) {
   const el = refMap.get(step.ref);
   if (!el) return { ok: false, error: "that element reference is stale - take a fresh snapshot and use its refs", code: "stale_ref" };
   if (step.verb === "click") {
-    el.click();
+    el.scrollIntoView?.({ block: "center" });
+    if (el.getAttribute("role") === "option") {
+      // react-select selects on mousedown in some versions; el.click() alone never fires it.
+      for (const type of ["mousedown", "mouseup", "click"]) {
+        el.dispatchEvent(new view.MouseEvent(type, { bubbles: true, cancelable: true, view }));
+      }
+    } else {
+      el.click();
+    }
     return { ok: true };
   }
   if (step.verb === "type") {
     if (el.isContentEditable || el.getAttribute("contenteditable") !== null) {
+      el.scrollIntoView?.({ block: "center" });
       // Rich editors have no .value: focus, then insert text the way a keyboard
       // would so the editor's own input handling sees it.
       el.focus();
@@ -195,7 +217,11 @@ function runMutation(doc, refMap, step) {
       }
       return { ok: true };
     }
-    el.value = step.text;
+    el.scrollIntoView?.({ block: "center" });
+    el.focus();
+    const proto = el.tagName === "TEXTAREA" ? view.HTMLTextAreaElement.prototype : view.HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (setter) setter.call(el, step.text); else el.value = step.text;
     el.dispatchEvent(new view.Event("input", { bubbles: true }));
     el.dispatchEvent(new view.Event("change", { bubbles: true }));
     return { ok: true };

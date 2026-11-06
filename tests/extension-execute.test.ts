@@ -317,3 +317,172 @@ describe("scroll verb and scrollIntoView centering", () => {
     expect(input.scrollIntoView).toHaveBeenCalledWith({ block: "center" });
   });
 });
+
+describe("trusted mode (CDP prepare)", () => {
+  it("click prepares CDP coordinates, does not call click listener, stops early, and returns null snapshot", async () => {
+    const doc = domAt('<button id="b1">Go</button><button id="b2">Read me</button>', "https://github.com/");
+    const btn = doc.querySelector("#b1") as any;
+    btn.getBoundingClientRect = () => ({ left: 10, top: 20, width: 100, height: 40 });
+    let clicked = false;
+    btn.addEventListener("click", () => { clicked = true; });
+    const out = (await executeSteps(
+      doc,
+      [{ verb: "click", ref: "ref1" }, { verb: "read", ref: "ref2" }],
+      "act",
+      "https://github.com",
+      { trusted: true }
+    )) as any;
+    expect(out.results.length).toBe(1);
+    expect(out.results[0]).toEqual({ ok: true, cdp: { verb: "click", x: 60, y: 40 } });
+    expect(clicked).toBe(false);
+    expect(out.snapshot).toBeNull();
+  });
+
+  it("click with zero-size rect falls back to synthetic", async () => {
+    const doc = domAt('<button id="b1">Go</button>', "https://github.com/");
+    const btn = doc.querySelector("#b1") as any;
+    let clicked = false;
+    btn.addEventListener("click", () => { clicked = true; });
+    const out = (await executeSteps(
+      doc,
+      [{ verb: "click", ref: "ref1" }],
+      "act",
+      "https://github.com",
+      { trusted: true }
+    )) as any;
+    expect(clicked).toBe(true);
+    expect(out.results[0]).toEqual({ ok: true });
+    expect(out.results[0].cdp).toBeUndefined();
+  });
+
+  it("type into input prepares CDP type, focuses element, selects content, keeps value", async () => {
+    const doc = domAt('<input type="text" value="old">', "https://github.com/");
+    const input = doc.querySelector("input") as any;
+    const out = (await executeSteps(
+      doc,
+      [{ verb: "type", ref: "ref1", text: "new" }],
+      "act",
+      "https://github.com",
+      { trusted: true }
+    )) as any;
+    expect(out.results[0]).toEqual({ ok: true, cdp: { verb: "type", text: "new" } });
+    expect(doc.activeElement).toBe(input);
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(3);
+    expect(input.value).toBe("old");
+  });
+
+  it("trusted type without grant returns no_grant without cdp field and leaves value unchanged", async () => {
+    const doc = domAt('<input type="text" value="old">', "https://github.com/");
+    const input = doc.querySelector("input") as any;
+    const out = (await executeSteps(
+      doc,
+      [{ verb: "type", ref: "ref1", text: "new" }],
+      undefined,
+      undefined,
+      { trusted: true }
+    )) as any;
+    expect(out.results[0].code).toBe("no_grant");
+    expect(out.results[0].cdp).toBeUndefined();
+    expect(input.value).toBe("old");
+  });
+
+  it("trusted click on origin mismatch returns origin_mismatch without cdp", async () => {
+    const doc = domAt('<button id="b1">Go</button>', "https://evil.com/");
+    const btn = doc.querySelector("#b1") as any;
+    btn.getBoundingClientRect = () => ({ left: 10, top: 20, width: 100, height: 40 });
+    const out = (await executeSteps(
+      doc,
+      [{ verb: "click", ref: "ref1" }],
+      "act",
+      "https://github.com",
+      { trusted: true }
+    )) as any;
+    expect(out.results[0].code).toBe("origin_mismatch");
+    expect(out.results[0].cdp).toBeUndefined();
+  });
+
+  it("press Enter prepares CDP press without dispatching keydown", async () => {
+    const doc = domAt('<input type="text">', "https://github.com/");
+    const input = doc.querySelector("input") as any;
+    input.focus();
+    let keydownDispatched = false;
+    input.addEventListener("keydown", () => { keydownDispatched = true; });
+    const out = (await executeSteps(
+      doc,
+      [{ verb: "press", key: "Enter" }],
+      "act",
+      "https://github.com",
+      { trusted: true }
+    )) as any;
+    expect(out.results[0]).toEqual({ ok: true, cdp: { verb: "press", key: "Enter" } });
+    expect(keydownDispatched).toBe(false);
+  });
+
+  it("scroll dy prepares CDP scroll while scroll ref returns ok:true without cdp", async () => {
+    const doc = domAt('<button id="b1">Go</button>', "https://github.com/");
+    const view = doc.defaultView as any;
+    const outDy = (await executeSteps(
+      doc,
+      [{ verb: "scroll", dy: 300 }],
+      "act",
+      "https://github.com",
+      { trusted: true }
+    )) as any;
+    expect(outDy.results[0]).toEqual({
+      ok: true,
+      cdp: { verb: "scroll", dy: 300, w: view.innerWidth, h: view.innerHeight },
+    });
+
+    const outRef = (await executeSteps(
+      doc,
+      [{ verb: "scroll", ref: "ref1" }],
+      "act",
+      "https://github.com",
+      { trusted: true }
+    )) as any;
+    expect(outRef.results[0]).toEqual({ ok: true });
+    expect(outRef.results[0].cdp).toBeUndefined();
+  });
+
+  it("clickAt outside the viewport returns out_of_viewport in trusted mode", async () => {
+    const doc = domAt("<body></body>", "https://github.com/");
+    const view = doc.defaultView as any;
+    view.innerWidth = 800;
+    view.innerHeight = 600;
+    const out = (await executeSteps(
+      doc,
+      [{ verb: "clickAt", x: 9999, y: 9999 }],
+      "act",
+      "https://github.com",
+      { trusted: true }
+    )) as any;
+    expect(out.results[0].code).toBe("out_of_viewport");
+    expect(out.results[0].cdp).toBeUndefined();
+  });
+
+  it("refMap reuse resolves against initial snapshot map across DOM changes", async () => {
+    const doc = domAt('<div id="container"><button id="a">A</button></div>', "https://github.com/");
+    const initial = (await executeSteps(
+      doc,
+      [{ verb: "read", ref: "ref1" }],
+      "act",
+      "https://github.com"
+    )) as any;
+    expect(initial.refMap.get("ref1").id).toBe("a");
+
+    const btnZ = doc.createElement("button");
+    btnZ.id = "z";
+    btnZ.textContent = "Z";
+    doc.querySelector("#container")!.insertBefore(btnZ, doc.querySelector("#a"));
+
+    const reused = (await executeSteps(
+      doc,
+      [{ verb: "read", ref: "ref1" }],
+      "act",
+      "https://github.com",
+      { refMap: initial.refMap }
+    )) as any;
+    expect(reused.results[0].value).toBe("A");
+  });
+});

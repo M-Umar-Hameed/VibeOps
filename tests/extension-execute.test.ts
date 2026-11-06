@@ -322,6 +322,7 @@ describe("trusted mode (CDP prepare)", () => {
   it("click prepares CDP coordinates, does not call click listener, stops early, and returns null snapshot", async () => {
     const doc = domAt('<button id="b1">Go</button><button id="b2">Read me</button>', "https://github.com/");
     const btn = doc.querySelector("#b1") as any;
+    (doc as any).elementFromPoint = () => btn;
     btn.getBoundingClientRect = () => ({ left: 10, top: 20, width: 100, height: 40 });
     let clicked = false;
     btn.addEventListener("click", () => { clicked = true; });
@@ -336,6 +337,68 @@ describe("trusted mode (CDP prepare)", () => {
     expect(out.results[0]).toEqual({ ok: true, cdp: { verb: "click", x: 60, y: 40 } });
     expect(clicked).toBe(false);
     expect(out.snapshot).toBeNull();
+  });
+
+  it("covered target returns not_hittable and does not fire click listener", async () => {
+    const doc = domAt('<button id="b1">Go</button><div id="overlay">Over</div>', "https://github.com/");
+    const btn = doc.querySelector("#b1") as any;
+    const overlay = doc.querySelector("#overlay") as any;
+    (doc as any).elementFromPoint = () => overlay;
+    btn.getBoundingClientRect = () => ({ left: 10, top: 20, width: 100, height: 40 });
+    let clicked = false;
+    btn.addEventListener("click", () => { clicked = true; });
+    const out = (await executeSteps(
+      doc,
+      [{ verb: "click", ref: "ref1" }],
+      "act",
+      "https://github.com",
+      { trusted: true }
+    )) as any;
+    expect(out.results.length).toBe(1);
+    expect(out.results[0]).toEqual({
+      ok: false,
+      error: "element ref1 is covered at (60,40) by <div> - scroll, close the overlay, or take a fresh snapshot",
+      code: "not_hittable",
+    });
+    expect(out.results[0].cdp).toBeUndefined();
+    expect(clicked).toBe(false);
+  });
+
+  it("hit on a child element counts as hittable and returns cdp", async () => {
+    const doc = domAt('<button id="b1"><span id="s1">Go</span></button>', "https://github.com/");
+    const btn = doc.querySelector("#b1") as any;
+    const span = doc.querySelector("#s1") as any;
+    (doc as any).elementFromPoint = () => span;
+    btn.getBoundingClientRect = () => ({ left: 10, top: 20, width: 100, height: 40 });
+    const out = (await executeSteps(
+      doc,
+      [{ verb: "click", ref: "ref1" }],
+      "act",
+      "https://github.com",
+      { trusted: true }
+    )) as any;
+    expect(out.results.length).toBe(1);
+    expect(out.results[0]).toEqual({ ok: true, cdp: { verb: "click", x: 60, y: 40 } });
+  });
+
+  it("elementFromPoint returning null returns not_hittable", async () => {
+    const doc = domAt('<button id="b1">Go</button>', "https://github.com/");
+    const btn = doc.querySelector("#b1") as any;
+    (doc as any).elementFromPoint = () => null;
+    btn.getBoundingClientRect = () => ({ left: 10, top: 20, width: 100, height: 40 });
+    const out = (await executeSteps(
+      doc,
+      [{ verb: "click", ref: "ref1" }],
+      "act",
+      "https://github.com",
+      { trusted: true }
+    )) as any;
+    expect(out.results.length).toBe(1);
+    expect(out.results[0]).toEqual({
+      ok: false,
+      error: "element ref1 is covered at (60,40) - scroll, close the overlay, or take a fresh snapshot",
+      code: "not_hittable",
+    });
   });
 
   it("click with zero-size rect falls back to synthetic", async () => {

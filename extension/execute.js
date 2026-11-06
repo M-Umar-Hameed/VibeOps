@@ -179,6 +179,12 @@ function prepareTrusted(doc, refMap, step) {
         // ponytail: zero-size/hidden targets keep the synthetic path
         return null;
       }
+      const local = centrePoint(r);
+      const hit = doc.elementFromPoint(local.x, local.y);
+      if (!hit || (hit !== el && !el.contains(hit))) {
+        return { ok: false, error: `element ${step.ref} is covered at (${Math.round(local.x)},${Math.round(local.y)})${hit ? ` by <${hit.tagName.toLowerCase()}>` : ""} - scroll, close the overlay, or take a fresh snapshot`, code: "not_hittable" };
+      }
+      // ponytail: hit-test is frame-local (elementFromPoint in the element's own document); an outer frame covering the iframe is not detected. Upgrade: DOM.getNodeForLocation on the top-level point from the worker.
       return { ok: true, cdp: { verb: "click", ...centrePoint(r, frameOffset(view)) } };
     }
     if (step.verb === "type") {

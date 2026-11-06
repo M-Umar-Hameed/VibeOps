@@ -19,6 +19,7 @@ const CODES: Record<string, string> = {
   screenshot_failed: "the screenshot could not be taken",
   out_of_viewport: "that point is outside the visible page - scroll or take a fresh snapshot",
   no_element: "there is no element at that point - take a fresh snapshot and retry",
+  not_hittable: "another element is covering the target - scroll, close the overlay, or take a fresh snapshot",
   no_page: "the agent window has no page yet - navigate to a URL first",
   page_navigated: "the page navigated away before the remaining steps could run - take a fresh snapshot and retry them",
   wait_timeout: "the text did not appear on the page in time - take a snapshot to see what the page shows",

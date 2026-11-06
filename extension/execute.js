@@ -219,8 +219,13 @@ function runMutation(doc, refMap, step) {
     }
     el.scrollIntoView?.({ block: "center" });
     el.focus();
-    const proto = el.tagName === "TEXTAREA" ? view.HTMLTextAreaElement.prototype : view.HTMLInputElement.prototype;
-    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    let proto = Object.getPrototypeOf(el);
+    let setter;
+    while (proto) {
+      setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+      if (setter) break;
+      proto = Object.getPrototypeOf(proto);
+    }
     if (setter) setter.call(el, step.text); else el.value = step.text;
     el.dispatchEvent(new view.Event("input", { bubbles: true }));
     el.dispatchEvent(new view.Event("change", { bubbles: true }));

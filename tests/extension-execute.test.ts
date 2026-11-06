@@ -112,6 +112,17 @@ describe("executeSteps", () => {
       expect(doc.activeElement).toBe(input);
     });
 
+    it("executes type on a non-contenteditable role=textbox div without throwing", async () => {
+      const doc = domAt('<div role="textbox"></div>', "https://github.com/");
+      const div = doc.querySelector("div") as any;
+      let changed = false;
+      div.addEventListener("change", () => { changed = true; });
+      const result = await executeSteps(doc, [{ verb: "type", ref: "ref1", text: "hello" }], "act", "https://github.com");
+      expect(result.results[0]).toEqual({ ok: true });
+      expect(div.value).toBe("hello");
+      expect(changed).toBe(true);
+    });
+
     it("executes clickAt when grant act and origin matches", async () => {
       const doc = domAt('<button id="b">Go</button>', "https://github.com/");
       (doc as any).elementFromPoint = () => doc.querySelector("#b");

@@ -1,5 +1,5 @@
 import {
-  pgTable, uuid, text, integer, timestamp, jsonb, pgEnum, index, uniqueIndex, check, vector, boolean, primaryKey,
+  pgTable, uuid, text, integer, timestamp, jsonb, pgEnum, index, uniqueIndex, check, vector, boolean, primaryKey, bigint,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -270,4 +270,12 @@ export const chatMessages = pgTable("chat_messages", {
 
 export type ChatSession = typeof chatSessions.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
+
+// Append-only session ingest: byte offset just past the last complete JSONL line consumed, per transcript.
+export const sessionCursors = pgTable("session_cursors", {
+  sourceRef: text("source_ref").primaryKey(),
+  byteOffset: bigint("byte_offset", { mode: "number" }).notNull(),
+  fileSize: bigint("file_size", { mode: "number" }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+});
 

@@ -194,6 +194,36 @@ export async function upsertSourceDoc(
   return writeSourceDoc(prep, vecs, embedder);
 }
 
+// Append-only write for growing transcripts: new chunks continue after the ref's max chunkIndex;
+// existing rows for the ref are never updated or deleted.
+export async function appendSourceDoc(
+  kind: "vault" | "note" | "session" | "repo" | "chat",
+  ref: string,
+  text: string,
+  embedder: Embedder,
+  contentHash?: string,
+  projectId?: string | null,
+): Promise<number> {
+  const contents = chunkMarkdown(text).map((c) => redactSecrets(c.content)).filter((c) => c.trim());
+  if (!contents.length) return 0;
+  const [{ max }] = await db.select({ max: dsql<number | null>`max(${embeddings.chunkIndex})` })
+    .from(embeddings)
+    .where(and(eq(embeddings.sourceKind, kind), eq(embeddings.sourceRef, ref)));
+  const base = max === null || max === undefined ? 0 : Number(max) + 1;
+  const vecs = await embedder.embed(contents);
+  const hash = contentHash ?? fileHash(text);
+  const scopeId = projectId !== undefined ? projectId : refProjectId(ref);
+  const rows = contents.map((content, i) => ({
+    sourceKind: kind, sourceRef: ref, chunkIndex: base + i, content, embedding: vecs[i],
+    model: embedder.model, dim: embedder.dim, contentHash: hash, projectId: scopeId,
+  }));
+  await db.transaction(async (tx) => {
+    for (let i = 0; i < rows.length; i += 100) await tx.insert(embeddings).values(rows.slice(i, i + 100));
+  });
+  bump("embed.chunks", vecs.length);
+  return vecs.length;
+}
+
 export const EMBED_BATCH = 32;
 
 export async function upsertSourceDocsBatched(

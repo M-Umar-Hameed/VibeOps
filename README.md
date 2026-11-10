@@ -32,11 +32,12 @@ flowchart LR
 |---|---|---|
 | Context at session start | Cold, every time | Primed with the relevant decisions, notes and past sessions |
 | Memory across agents | None; each tool keeps its own history | One searchable index every agent reads and writes |
+| After `/clear`, compaction or transcript cleanup | That history is out of reach | Still searchable: VibeOps keeps its own copy, and a growing session only adds to it |
 | Before code lands | The agent says "done" | Tests, typecheck, scope and secret checks, a second-model review, your approval |
 | Who did what | Scattered terminal history | Append-only audit trail, one key per agent |
 | Cost | Every token on your best model | Best model plans and reviews, cheap model writes; budget caps; real token usage per account |
 
-**Memory every agent shares.** One `search_knowledge` tool, over MCP or REST, covers your markdown and PDF vault (open it in Obsidian if you like), the decision notes agents write as they work, and transcripts of past Claude Code, Codex, Antigravity and claude-mem sessions. What one agent worked out on Monday, the next agent finds on Tuesday. A `SessionStart` hook primes every new session with the most relevant of it before the agent types a word. Embeddings run locally by default: no API key, and nothing leaves your machine.
+**Memory every agent shares.** One `search_knowledge` tool, over MCP or REST, covers your markdown and PDF vault (open it in Obsidian if you like), the decision notes agents write as they work, and transcripts of past Claude Code, Codex, Antigravity and claude-mem sessions. What one agent worked out on Monday, the next agent finds on Tuesday. That memory outlives the agent's own: Claude Code and Codex transcripts are indexed append-only, so a long or compacted session never pushes its earlier work out of the index, and nothing indexed is removed when Claude Code clears or deletes its transcripts. If VibeOps was off for a few days, the next sync catches up on everything since the last one, up to 30 days. A `SessionStart` hook primes every new session with the most relevant of it before the agent types a word. Embeddings run locally by default: no API key, and nothing leaves your machine.
 
 **Work that is checked before it lands.** The best model writes the plan. A cheap or local model does the work inside an isolated git worktree. Typecheck and tests run, scope and secret gates run, a second model reviews the diff cold, and a sentinel catches any write outside the sandbox. Nothing merges until you promote it.
 
@@ -176,7 +177,7 @@ pie title Forge Run Outcomes
 
 - **Your vault** — `~/.vibeops/vault` is created on first run and indexed automatically. Drop markdown or PDF files in, or open it as an Obsidian vault (Obsidian is optional; any editor works). Point one setting at an external vault instead if you have one.
 - **Notes** — a writeable document workspace (titled, versioned, audited, soft-deleted) agents use to persist decisions and gotchas.
-- **Session memory** — transcripts from Claude Code, claude-mem, Codex, and Antigravity are ingested so what one agent did is retrievable by every other agent.
+- **Session memory** — transcripts from Claude Code, claude-mem, Codex, and Antigravity are ingested so what one agent did is retrievable by every other agent. Claude Code and Codex transcripts are read append-only from a per-file cursor, so indexed history survives compaction, `/clear` and the agent's own transcript cleanup.
 - **Chat memory** — every completed Operator Chat turn folds its transcript into the index under the session's project, so conversations become retrievable knowledge without anyone saving anything.
 
 **Zero-key by default.** Embeddings run on a local ONNX model (all-MiniLM, ~23MB one-time download) — knowledge search works out of the box with no API key. Bring a Voyage key later if you want API-grade embeddings.

@@ -12,6 +12,79 @@ Vibecoding with multiple agents has a coordination problem: each agent starts co
 
 **New here?** Start with [Project State](docs/PROJECT_STATE.md) for what this is, what it set out to do, and where it stands. If you are a non-developer looking to automate work, read the [End-User Guide](docs/USER_GUIDE.md). VibeOps never asks for your AI provider API keys; you bring your own CLI and keep your usage on your existing subscriptions.
 
+## Why choose VibeOps
+
+Running coding agents bare is fast, and nothing checks the result. VibeOps puts every change through a plan, an isolated git worktree, typecheck and tests, a review by a second model, and your approval. These are the measurements behind that trade.
+
+### Same tickets, with and without supervision
+
+30 closed tickets from this repo were replayed from their parent commit twice: once with bare `claude -p` (Sonnet), once through the forge (Opus plans and reviews, Sonnet writes the code). Each result was scored against the tests the real commit added, which neither run could see. 4 tickets were dropped: 2 whose tests pass without any change, and 2 where the real commit itself timed out in the test environment.
+
+```mermaid
+xychart-beta
+    title "Tickets passing hidden tests and typecheck, out of 26"
+    x-axis ["Bare agent", "VibeOps forge"]
+    y-axis "Tickets" 0 --> 26
+    bar [6, 11]
+```
+
+```mermaid
+pie showData
+    title Paired outcome per ticket
+    "Both passed" : 6
+    "Only the forge passed" : 5
+    "Neither passed" : 15
+```
+
+| | Bare agent | VibeOps forge |
+|---|---|---|
+| Passed hidden tests and typecheck | 6 of 26 (23%) | 11 of 26 (42%) |
+| Passed hidden tests, ignoring typecheck | 7 | 11 |
+| Tickets only this side passed | 0 | 5 |
+| Median wall time per ticket | 1.7 min | 11.4 min |
+| Review rounds needed | - | 1 round: 14, 2 rounds: 8, 3 rounds: 4 |
+
+Read these with care. 26 tickets is a small sample, and the gap is not statistically significant (exact McNemar p = 0.0625). The forge never lost a ticket the bare agent won, and it costs about ten extra minutes per ticket. Hidden tests often call the exact function names of the real commit, so both pass rates understate what either side can do. The review gate is not a guarantee: 14 of the 23 tickets it approved still failed the hidden tests, which is why promotion stays a human step.
+
+### What the gate catches in daily use
+
+1,139 forge runs on 295 tickets across a 450k-line monorepo and VibeOps itself, 2026-10-14 to 2026-11-06:
+
+```mermaid
+pie showData
+    title First review result, 282 tickets
+    "Passed first review" : 151
+    "Sent back for rework" : 131
+```
+
+```mermaid
+xychart-beta
+    title "Median work-stage cost per promoted ticket, USD"
+    x-axis ["Passed first review", "Needed rework"]
+    y-axis "USD" 0 --> 3
+    bar [0.51, 2.71]
+```
+
+| Measure | Value |
+|---|---|
+| First-review pass rate | 53.5% (151 of 282) |
+| Failed reviews forced by red typecheck or tests | 120 of 293 |
+| Failed reviews forced by a scope, secret or mutation block | 100 of 293 (causes can overlap) |
+| Promoted with no extra human action | 90.7% (243 of 268) |
+| Median review time | 0.7 min |
+| Work-stage cost, passed first review | median $0.51, p90 $1.77 |
+| Work-stage cost, needed rework | median $2.71, p90 $10.08 |
+
+Supervision itself is cheap. Rework is the expensive part, and it is cheaper to pay inside a sandbox than after a merge. Full method and the gaps the audit found: [docs/evals/2026-11-09-supervision-vs-bare-agents.md](docs/evals/2026-11-09-supervision-vs-bare-agents.md).
+
+### Also
+
+- **No cold starts.** Claude Code, Codex, Gemini, Antigravity, Cursor and you share one queue, one searchable memory of decisions, and one append-only audit trail over REST and MCP.
+- **Expensive model thinks, cheap model types.** Plan and review run on the best model; the implementation runs on a cheap or local one.
+- **Your accounts, your code.** Runs on your existing CLI subscriptions, never asks for provider API keys, never pushes.
+
+**When to skip it:** small edits you are watching yourself. The forge adds minutes per ticket.
+
 ## What it does
 
 ```mermaid

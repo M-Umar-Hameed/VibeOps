@@ -35,6 +35,11 @@ await build({
   outfile: join(outDir, "firewall-hook.mjs"), logLevel: "info",
 });
 
+await build({
+  entryPoints: ["src/relay/agy-firewall-hook.ts"], bundle: true, platform: "node", format: "esm", target: "node20",
+  outfile: join(outDir, "agy-firewall-hook.mjs"), logLevel: "info",
+});
+
 cpSync("node_modules/@electric-sql/pglite", join(outDir, "node_modules", "@electric-sql", "pglite"), { recursive: true });
 cpSync("node_modules/@anthropic-ai/claude-agent-sdk", join(outDir, "node_modules", "@anthropic-ai", "claude-agent-sdk"), { recursive: true });
 cpSync("drizzle", join(outDir, "drizzle"), { recursive: true });

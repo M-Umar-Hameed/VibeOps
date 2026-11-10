@@ -203,7 +203,7 @@ export function pipelineStartWarnings(config: RelayConfig, agentNames: string[])
     if (seen.has(name)) continue;
     seen.add(name);
     const cmd0 = config.agents[name]?.cmd?.[0];
-    if (cmd0 && binBasename(cmd0).toLowerCase() === "agy") warnings.push(`agent "${name}" (agy): no parsed-command firewall on this lane; only per-run deny globs guard shell commands`);
+    if (cmd0 && binBasename(cmd0).toLowerCase() === "agy") warnings.push(`agent "${name}" (agy): the forge firewall runs as a .agents/hooks.json hook in work sandboxes, but agy runs the command anyway if the hook exits without printing a decision (a missing hook script blocks)`);
     const s = cachedStatus(config, name);
     if (s && !s.probe.ok) warnings.push(`agent "${name}" (${s.binary}): ${s.probe.error ?? "probe failed"}`);
   }

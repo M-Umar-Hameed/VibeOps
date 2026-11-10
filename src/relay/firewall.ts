@@ -1,4 +1,4 @@
-// Server copy of blueprint/firewall.ts plus the ALLOW-COMMAND lift hook (FirewallOptions.lift). Keep rule logic in sync with blueprint/.
+// Server copy of blueprint/firewall.ts plus the ALLOW-COMMAND lift hook (FirewallOptions.lift) and dialect-aware Windows drive exclusion in remoteRule. Keep rule logic in sync with blueprint/.
 import fs from "node:fs";
 import os from "node:os";
 
@@ -776,7 +776,7 @@ function remoteRule(k: K): Verdict | undefined {
     if (h) return d(k, "egress-remote-shell", `ssh to ${h.raw}`);
   }
   if (name === "scp" || name === "rsync" || name === "sftp") {
-    const r = a.find((x) => x[0] !== "-" && /^([^@/\s]+@)?[^/\s:]+:/.test(x) && !/^[A-Za-z]:/.test(x));
+    const r = a.find((x) => x[0] !== "-" && /^([^@/\s]+@)?[^/\s:]+:/.test(x) && !(k.c.dialect === "powershell" && /^[A-Za-z]:[\\/]/.test(x)));
     if (r) return d(k, "egress-remote-shell", `${name} to remote ${r}`);
   }
 }

@@ -43,7 +43,7 @@ describe("relay-firewall", () => {
     const bad = corpus
       .map((e) => {
         const dialect = e.category === "powershell" || e.category === "allow-powershell" ? "powershell" : "posix";
-        const res = (commandRisk as any)(e.command, ws, [], dialect);
+        const res = commandRisk(e.command, ws, [], dialect);
         return {
           cmd: e.command,
           cat: e.category,

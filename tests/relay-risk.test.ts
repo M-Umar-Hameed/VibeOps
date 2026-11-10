@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { commandRisk, denyPatterns, agyPatterns, RISK_IDS } from "../src/relay/risk.js";
 
 const WD = process.platform === "win32" ? "C:\\w\\sb" : "/w/sb";
-const id = (c: string, lifted: string[] = []) => commandRisk(c, WD, lifted)?.id;
+const id = (c: string, lifted: string[] = [], dialect: "posix" | "powershell" = "posix") => commandRisk(c, WD, lifted, dialect)?.id;
 
 describe("commandRisk", () => {
   it("git push through wrappers and chains", () => {
@@ -19,9 +19,9 @@ describe("commandRisk", () => {
     for (const c of ["rm -rf node_modules/.cache", "rm -rf build", "rm file.txt"]) expect(commandRisk(c, WD)).toBeNull();
   });
   it.runIf(process.platform === "win32")("win32 paths", () => {
-    expect(id("rm -rf C:\\Users")).toBe("rm-outside");
-    expect(commandRisk("rm -rf .\\build", WD)).toBeNull();
-    expect(commandRisk("rm -rf c:\\W\\SB\\out", WD)).toBeNull();
+    expect(id("rm -rf C:\\Users", [], "powershell")).toBe("rm-outside");
+    expect(commandRisk("rm -rf .\\build", WD, [], "powershell")).toBeNull();
+    expect(commandRisk("rm -rf c:\\W\\SB\\out", WD, [], "powershell")).toBeNull();
   });
   it("other rules", () => {
     const cases: Record<string, string> = {
@@ -50,14 +50,14 @@ describe("commandRisk", () => {
     }
   });
   it("PowerShell recursive deletes count as rm", () => {
-    expect(id("Remove-Item -Recurse -Force ../x")).toBe("rm-outside");
-    expect(id("ri -r ../x")).toBe("rm-outside");
-    expect(id("rd /s /q ../x")).toBe("rm-outside");
-    expect(commandRisk("Remove-Item -Recurse build", WD)).toBeNull();
-    expect(commandRisk("Remove-Item build", WD)).toBeNull();
+    expect(id("Remove-Item -Recurse -Force ../x", [], "powershell")).toBe("rm-outside");
+    expect(id("ri -r ../x", [], "powershell")).toBe("rm-outside");
+    expect(id("rd /s /q ../x", [], "powershell")).toBe("rm-outside");
+    expect(commandRisk("Remove-Item -Recurse build", WD, [], "powershell")).toBeNull();
+    expect(commandRisk("Remove-Item build", WD, [], "powershell")).toBeNull();
   });
   it.runIf(process.platform === "win32")("PowerShell backslash target", () => {
-    expect(id("Remove-Item -Recurse -Force ..\\x")).toBe("rm-outside");
+    expect(id("Remove-Item -Recurse -Force ..\\x", [], "powershell")).toBe("rm-outside");
   });
   it("ssh rule skips ssh-keygen and ssh-add; plain commands and 2>&1 are fine", () => {
     expect(commandRisk("ssh-keygen -t ed25519", WD)).toBeNull();

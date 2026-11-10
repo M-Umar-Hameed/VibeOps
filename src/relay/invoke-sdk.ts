@@ -98,7 +98,7 @@ export function riskHook(workdir: string, lifted: readonly string[], onData?: (c
   return async (input) => {
     const i = input as { tool_name?: string; tool_input?: { command?: unknown } };
     if ((i.tool_name !== "Bash" && i.tool_name !== "PowerShell") || typeof i.tool_input?.command !== "string") return {};
-    const hit = commandRisk(i.tool_input.command, workdir, lifted);
+    const hit = commandRisk(i.tool_input.command, workdir, lifted, i.tool_name === "PowerShell" ? "powershell" : "posix");
     if (!hit) return {};
     onData?.(`\n[forge: permission-denied Bash ${i.tool_input.command.slice(0, 120)} (${hit.id})]\n`);
     return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: `blocked by the forge deny list (${hit.id}): ${hit.reason}` } };

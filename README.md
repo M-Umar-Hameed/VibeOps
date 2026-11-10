@@ -253,16 +253,18 @@ the one being made.
   kernel-confined. Writes outside the worktree are caught by a sentinel that snapshots
   sensitive paths before the run and restores them after, which is detection and repair
   rather than prevention.
-- **Shell commands pass a parsing firewall first, on the Claude lanes.** On the Claude
-  Agent SDK and Claude Code CLI lanes, every Bash or PowerShell command a work agent runs
+- **Shell commands pass a parsing firewall first.** On the Claude Agent SDK, Claude Code
+  CLI and Gemini (agy) work lanes, every shell command a work agent runs
   is parsed (quotes, heredocs, `$(...)`, `sh -c`, `eval`, `find -exec`, npm scripts)
   and checked before it runs: pushes, publishes, deletes outside the workspace, remote
   shells and downloads piped into a shell are refused. On a 340-command red-team set it
   blocked 257 of 257 destructive commands with no false positives, and 65 of 66 on a
   held-out set (the old regex list blocked 42.8% and 36.4%). If the check itself fails,
-  the command is refused. The Gemini (agy) lane is still guarded only by per-run deny
-  globs, and the app warns about it at every pipeline start; codex relies on its own OS
-  sandbox and kimi has no command guard. A script the agent writes and then runs is outside the firewall's view,
+  the command is refused. On agy the check runs as a `.agents/hooks.json` hook the forge
+  writes into each work sandbox and removes before commit; agy blocks the command if the
+  hook is missing, but would run it if the hook exited without printing a decision, and
+  the app says so at pipeline start. codex relies on its own OS sandbox and kimi has no
+  command guard. A script the agent writes and then runs is outside the firewall's view,
   which is what the sentinel is for.
 - **VibeOps never pushes code.** It commits inside sandboxes and merges into your local
   branch on promote; `git push` stays yours. The separate, opt-in issue-tracker

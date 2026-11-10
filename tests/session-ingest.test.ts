@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { ingestSessions, ingestSessionsSerialized } from "../src/ingest/sessions/ingest.js";
 import { searchKnowledge, upsertSourceDocsBatched } from "../src/services/knowledge.js";
@@ -31,7 +31,7 @@ test("serialized ingest skips when one is already running (no double-ingest)", a
   let calls = 0;
   const slow: SessionSource = { source: "slow", listSessionDocs: async () => { calls++; await gate; return []; } };
   const a = ingestSessionsSerialized([slow], emb, 1);
-  await Promise.resolve();
+  await vi.waitFor(() => expect(calls).toBe(1));
   const b = await ingestSessionsSerialized([slow], emb, 1);
   expect(b).toBeNull();
   expect(calls).toBe(1);

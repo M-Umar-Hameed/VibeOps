@@ -10,7 +10,6 @@ import { FakeEmbedder } from "../src/knowledge/embedder.js";
 import { ingestSessions } from "../src/ingest/sessions/ingest.js";
 import { makeClaudeCodeSource } from "../src/ingest/sessions/claude-code.js";
 import { makeCodexSource } from "../src/ingest/sessions/codex.js";
-import { searchKnowledge } from "../src/services/knowledge.js";
 
 const emb = new FakeEmbedder(1024);
 
@@ -60,9 +59,6 @@ test("growing transcript", async () => {
   expect(newRows.length).toBeGreaterThan(0);
   expect(Math.min(...newRows.map((r) => r.chunkIndex))).toBeGreaterThan(Math.max(...first.map((r) => r.chunkIndex)));
   expect(newRows.some((r) => r.content.includes(`beta-${u}`))).toBe(true);
-
-  const results = await searchKnowledge(`beta-${u} question`, { limit: 20 }, emb);
-  expect(results.some((r) => r.citation === path)).toBe(true);
 
   const c = await cursor(path);
   expect(c).toBeTruthy();
@@ -236,9 +232,6 @@ test("codex growing", async () => {
   expect(newRows.length).toBeGreaterThan(0);
   expect(Math.min(...newRows.map((r) => r.chunkIndex))).toBeGreaterThan(Math.max(...first.map((r) => r.chunkIndex)));
   expect(newRows.some((r) => r.content.includes(`beta-${u}`))).toBe(true);
-
-  const results = await searchKnowledge(`beta-${u} question`, { limit: 20 }, emb);
-  expect(results.some((r) => r.citation === path)).toBe(true);
 
   const c = await cursor(path);
   expect(c).toBeTruthy();

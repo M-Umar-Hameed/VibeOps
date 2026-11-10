@@ -144,6 +144,11 @@ describe("riskHook", () => {
     expect(await call("Bash", "npm test")).toEqual({});
     expect(await call("Bash", "git push", ["git-push"])).toEqual({});
   });
+
+  it("uses the PowerShell dialect for the PowerShell tool", async () => {
+    const r = await call("PowerShell", "del ../x");
+    expect(r.hookSpecificOutput.permissionDecision).toBe("deny");
+  });
 });
 
 describe("sdkEnv", () => {

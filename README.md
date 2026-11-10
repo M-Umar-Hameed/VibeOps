@@ -152,20 +152,24 @@ flowchart TB
 ```
 
 ```mermaid
-pie title Ticket Status
-    "Closed" : 200
-    "Open" : 1
-    "Review" : 1
+pie showData
+    title Tickets promoted through the forge, by repository
+    "VibeOps (this repo)" : 270
+    "monorepo (450k-line ERP)" : 234
+    "LibreAscent" : 11
 ```
 
 ```mermaid
-pie title Forge Run Outcomes
-    "Rejected" : 6
-    "Passed" : 5
-    "Stopped" : 1
+pie showData
+    title Forge run outcomes, 1,146 runs
+    "Failed (worker error, stall, guard)" : 412
+    "Rejected by review" : 297
+    "Passed review" : 279
+    "Interrupted (restart)" : 110
+    "Stopped by a human" : 47
 ```
 
-*Data provenance: Real counts from the running API and git history of this repository, measured August 2026.*
+*Data provenance: promoted tickets are `forge: promote` merge commits in each repository's git history, 2026-07-14 to 2026-11-11. Run outcomes come from the live run log, 2026-10-14 to 2026-11-10, across VibeOps and monorepo.*
 
 **Cross-model economics & budget caps.** Optimize costs by combining multiple models across the forge loop. Run work against open-weights models locally while relying on frontier models for review. Apply budget caps to ensure runs never spiral out of control.
 
@@ -190,21 +194,33 @@ pie title Forge Run Outcomes
 
 ## What it costs, measured
 
-VibeOps is built through its own pipeline, so these are its own numbers rather than a
-demo project's.
+VibeOps is built through its own pipeline and used daily on other codebases, so these are
+real numbers rather than a demo project's.
 
-- **173 tickets** promoted through plan -> sandboxed work -> review -> human promote.
-- **5 files, +217/-23 lines** changed per promoted ticket, on average.
-- **125 tickets reached review; 50 of them (40%) did not pass the first one** and went
-  back for rework, across 74 rework rounds total.
+- **515 tickets promoted** through plan -> sandboxed work -> review -> human promote,
+  across three repositories, 2026-07-14 to 2026-11-11:
 
-Read that 40% carefully, because it is the number most likely to be oversold. It is the
-rate at which the review gate sent work back — not a proven defect count, and not a
-controlled comparison against an unsupervised agent. A model reviewed the diff and asked
-for changes; sometimes it was wrong. What it does show is that four times in ten, the
-first thing the pipeline produced was not the thing that got merged.
+  | Repository | Promoted tickets | Average change per ticket |
+  |---|---|---|
+  | VibeOps (this repo) | 270 | 5.5 files, +281/-22 lines |
+  | monorepo (450k-line ERP) | 234 | 24.7 files, +499/-119 lines |
+  | LibreAscent | 11 | 4.4 files, +158/-46 lines |
 
-**Token cost is deliberately absent, and that is the honest answer.** Until 2026-08-12
+- **1,146 forge runs on 300 tickets** in the live run log (2026-10-14 to 2026-11-10).
+  286 tickets reached review; **133 of them (46.5%) did not pass the first one** and went
+  back for rework, across 297 failed reviews in total.
+- **$558.84 of work-stage spend at Anthropic API list prices**, as reported by the
+  Claude Agent SDK lane over the same window. A ticket that passed its first review cost
+  a median $0.51 of work; one that needed rework cost a median $2.71.
+
+Read that 46.5% carefully, because it is the number most likely to be oversold. It is the
+rate at which the review gate sent work back — not a proven defect count. A model
+reviewed the diff and asked for changes; sometimes it was wrong. What it does show is
+that nearly half the time, the first thing the pipeline produced was not the thing that
+got merged. The controlled comparison against an unsupervised agent is the replay in
+[Why choose VibeOps](#why-choose-vibeops).
+
+**Dollar cost is exact on one lane only.** Until 2026-08-12
 this project was not measuring it. Headless CLI agents report no token counts, so usage
 was estimated from the length of the model's *output* alone — ignoring the prompt, which
 on a plan stage carries the ticket, the retrieved knowledge and the repo context and
@@ -218,8 +234,8 @@ them.** Those caps are enforced against the number described above, which used t
 too small — often by more than an order of magnitude. A limit that never fired before may
 now stop a run part-way through a ticket, which surfaces as a 409 refusing to start the
 next stage. The caps did not get stricter; they started being real. Genuine per-call token and dollar figures still exist only on the lane whose
-API reports them, so a with/without comparison is not published here yet rather than
-guessed at.
+API reports them (the Claude Agent SDK), which is why the spend above covers that lane's
+work stage and nothing else. Plan and review run on CLI lanes that report estimates.
 
 ## What is actually guaranteed
 
@@ -231,8 +247,8 @@ the one being made.
 - **Checks are mechanical.** Typecheck and test commands run concurrently with the
   review, and a failing check forces `VERDICT: FAIL` no matter what the reviewer
   concluded — the reviewer cannot talk a run past a red check.
-- **The reviewer is a model reading a diff.** It catches a great deal — 40% of tickets
-  here went back at least once — and it is also wrong sometimes, in both directions.
+- **The reviewer is a model reading a diff.** It catches a great deal — 46.5% of tickets
+  went back at least once — and it is also wrong sometimes, in both directions.
 - **The sandbox is a git worktree, not an OS jail.** A work agent's shell is not
   kernel-confined. Writes outside the worktree are caught by a sentinel that snapshots
   sensitive paths before the run and restores them after, which is detection and repair

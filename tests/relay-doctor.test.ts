@@ -190,3 +190,22 @@ test("runDoctor: lane without mcp has no mcp field", async () => {
   const [s] = await runDoctor(configWith(name, EXIT0), { fresh: true });
   expect(s.mcp).toBeUndefined();
 });
+
+test("pipelineStartWarnings: agy-basename agent produces firewall warning, non-agy does not", () => {
+  const agyName = uniq("agy-agent");
+  const claudeName = uniq("claude-agent");
+  const cfg: RelayConfig = {
+    workdir: tmpdir(),
+    agents: {
+      [agyName]: { cmd: ["agy", "-p"], roles: ["work"] },
+      [claudeName]: { cmd: ["claude", "-p"], roles: ["work"] },
+    },
+  };
+  const agyWarnings = pipelineStartWarnings(cfg, [agyName]);
+  expect(agyWarnings).toEqual([
+    `agent "${agyName}" (agy): no parsed-command firewall on this lane; only per-run deny globs guard shell commands`,
+  ]);
+
+  const claudeWarnings = pipelineStartWarnings(cfg, [claudeName]);
+  expect(claudeWarnings).toEqual([]);
+});

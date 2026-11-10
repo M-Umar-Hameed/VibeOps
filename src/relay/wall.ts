@@ -1,5 +1,20 @@
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { binBasename } from "./doctor.js";
 import { agyPatterns, denyPatterns } from "./risk.js";
+
+export const ALLOW_COMMAND_ENV = "VIBEOPS_ALLOW_COMMAND";
+const fwd = (p: string) => p.replace(/\\/g, "/");
+// Packaged: firewall-hook.mjs sits next to server.mjs (scripts/build-server.mjs). Source: run the .ts under the tsx loader (risk.ts imports ./firewall.js, which Node type stripping cannot resolve).
+// `|| exit 2`: a hook that cannot start blocks the call.
+export function firewallHookCommand(): string {
+  const mjs = fileURLToPath(new URL("./firewall-hook.mjs", import.meta.url));
+  const args = existsSync(mjs) ? [mjs]
+    : ["--import", pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href, fileURLToPath(new URL("./firewall-hook.ts", import.meta.url))];
+  return [process.execPath, ...args].map((a) => `"${fwd(a)}"`).join(" ") + " || exit 2";
+}
+export const firewallHooks = () => ({ PreToolUse: [{ matcher: "Bash|PowerShell", hooks: [{ type: "command", command: firewallHookCommand(), timeout: 10 }] }] });
 
 export const DEFAULT_ALLOWED_COMMANDS = ["npm test", "npm run", "npx vitest", "npx tsc", "git status", "git diff", "git log", "git show", "git rm"];
 
@@ -24,8 +39,9 @@ export const DENY_RULES = ["Bash(git *--output*)", "PowerShell(git *--output*)"]
 // Per-program write wall added at launch, whatever relay.json says. claude: the
 // prompt moves to stdin (a prompt file outside the folder would be refused) and
 // --restricted confines its file tools to the working folder, edit rights only
-// when write is true (the work stage); only allow-listed
-// commands run; claude also gets the deny list when the wall is off (denyOnlyCmd); plan/work/review agents can also read the attachments folder (operator evidence, chat attachments). codex: its own OS sandbox. Other programs are not walled here.
+// when write is true (the work stage); shell commands pass through the PreToolUse
+// firewall hook and only allow-listed commands run; claude also gets the firewall
+// hook and deny list when the wall is off (denyOnlyCmd); plan/work/review agents can also read the attachments folder (operator evidence, chat attachments). codex: its own OS sandbox. Other programs are not walled here.
 export function wallCmd(cmd: string[], allowed: string[], write = false, addDirs: string[] = [], lifted: readonly string[] = []): string[] {
   const bin = binBasename(cmd[0]).toLowerCase();
   if (bin === "claude") {
@@ -36,7 +52,7 @@ export function wallCmd(cmd: string[], allowed: string[], write = false, addDirs
       ...(write ? ["--permission-mode", "acceptEdits"] : []),
       "--permission-prompts", "none",
       "--tools", "Read,Edit,Write,Glob,Grep,Bash,PowerShell",
-      "--settings", JSON.stringify({ permissions: { allow: [...allowRules(allowed), "mcp__vibeops"], deny: [...DENY_RULES, ...denyPatterns(lifted)] } }),
+      "--settings", JSON.stringify({ permissions: { allow: [...allowRules(allowed), "mcp__vibeops"], deny: [...DENY_RULES, ...denyPatterns(lifted)] }, hooks: firewallHooks() }),
       ...addDirs.flatMap((d) => ["--add-dir", d])];
   }
   if (bin === "codex") {
@@ -49,7 +65,7 @@ export function wallCmd(cmd: string[], allowed: string[], write = false, addDirs
 
 export function denyOnlyCmd(cmd: string[], lifted: readonly string[] = []): string[] {
   if (binBasename(cmd[0]).toLowerCase() !== "claude" || cmd.includes("--settings")) return cmd;
-  return [...cmd, "--settings", JSON.stringify({ permissions: { deny: [...DENY_RULES, ...denyPatterns(lifted)] } })];
+  return [...cmd, "--settings", JSON.stringify({ permissions: { deny: [...DENY_RULES, ...denyPatterns(lifted)] }, hooks: firewallHooks() })];
 }
 
 export function agyDenyCmd(cmd: string[], lifted: readonly string[] = []): string[] {

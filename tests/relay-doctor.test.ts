@@ -203,7 +203,7 @@ test("pipelineStartWarnings: agy-basename agent produces firewall warning, non-a
   };
   const agyWarnings = pipelineStartWarnings(cfg, [agyName]);
   expect(agyWarnings).toEqual([
-    `agent "${agyName}" (agy): no parsed-command firewall on this lane; only per-run deny globs guard shell commands`,
+    `agent "${agyName}" (agy): the forge firewall runs as a .agents/hooks.json hook in work sandboxes, but agy runs the command anyway if the hook cannot start or prints nothing`,
   ]);
 
   const claudeWarnings = pipelineStartWarnings(cfg, [claudeName]);

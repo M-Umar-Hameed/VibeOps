@@ -7,10 +7,11 @@ import { startTimeReader } from "../runtime/proc-start.js";
 import { treeCpuReader } from "../runtime/proc-tree-cpu.js";
 import type { ChildProcess } from "node:child_process";
 import { resolveCmd, loadRelayConfig, type RelayConfig, type RelayAgent } from "../relay/config.js";
-import { pipelineStartWarnings, pipelineStartBlockingError } from "../relay/doctor.js";
+import { pipelineStartWarnings, pipelineStartBlockingError, binBasename } from "../relay/doctor.js";
 import { roleStyle } from "../relay/style.js";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted } from "../relay/prompts.js";
-import { loadWall } from "../relay/wall.js";
+import { loadWall, agyFirewallHookCommand } from "../relay/wall.js";
+import { installAgyHook, restoreAgyHook } from "./agy-hook.js";
 import { listSkills, formatSkillIndex, formatSkillBodies, parseOperatorSkills, parsePlanSkills, parseSkillAllowlist, skillsForAgent, type SkillMeta } from "./skills.js";
 import { recallBlock } from "../services/recall.js";
 import { chunkReviewDiff, mergeReviewVerdicts } from "./review-chunks.js";
@@ -842,10 +843,20 @@ async function pipeline(
   if (unknownRules.length) append(run, `\nforge: ALLOW-COMMAND ignores unknown rule ids: ${unknownRules.join(", ")}\n`);
   const liftedRules = allowCmd.filter((id) => RISK_IDS.includes(id));
   if (liftedRules.length) append(run, `\nforge: deny list lifted for this run: ${liftedRules.join(", ")}\n`);
-  const workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
-    runAgent({ ...agents.work, write: true, projectId: ticket.projectId, liftedRules, ...evidenceDirs }, workPrompt, sandbox, onData,
-      (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
-      modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r)));
+  const agyHook = binBasename(agents.work.cmd[0] ?? "").toLowerCase() === "agy";
+  if (agyHook) {
+    installAgyHook(sandbox, agyFirewallHookCommand());
+    append(run, "\nforge: agy firewall hook installed (.agents/hooks.json, removed before commit)\n");
+  }
+  let workRes: AgentResult;
+  try {
+    workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
+      runAgent({ ...agents.work, write: true, projectId: ticket.projectId, liftedRules, ...evidenceDirs }, workPrompt, sandbox, onData,
+        (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
+        modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r)));
+  } finally {
+    if (agyHook) restoreAgyHook(sandbox);
+  }
   run.child = undefined;
   run.abort = undefined;
   const tampered = detectAndRestore(sentinelSnaps);

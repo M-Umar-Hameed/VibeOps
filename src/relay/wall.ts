@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -6,13 +7,39 @@ import { agyPatterns, denyPatterns } from "./risk.js";
 
 export const ALLOW_COMMAND_ENV = "VIBEOPS_ALLOW_COMMAND";
 const fwd = (p: string) => p.replace(/\\/g, "/");
+const nodeExe = () => process.execPath.replace(/^\\\\\?\\/, "");
+function hookArgv(base: string): string[] {
+  const mjs = fileURLToPath(new URL(`./${base}.mjs`, import.meta.url));
+  return existsSync(mjs) ? [mjs]
+    : ["--import", pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href, fileURLToPath(new URL(`./${base}.ts`, import.meta.url))];
+}
+const quoted = (base: string) => [nodeExe(), ...hookArgv(base)].map((a) => `"${fwd(a)}"`).join(" ");
 // Packaged: firewall-hook.mjs sits next to server.mjs (scripts/build-server.mjs). Source: run the .ts under the tsx loader (risk.ts imports ./firewall.js, which Node type stripping cannot resolve).
 // `|| exit 2`: a hook that cannot start blocks the call.
-export function firewallHookCommand(): string {
-  const mjs = fileURLToPath(new URL("./firewall-hook.mjs", import.meta.url));
-  const args = existsSync(mjs) ? [mjs]
-    : ["--import", pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href, fileURLToPath(new URL("./firewall-hook.ts", import.meta.url))];
-  return [process.execPath, ...args].map((a) => `"${fwd(a)}"`).join(" ") + " || exit 2";
+export function firewallHookCommand(): string { return quoted("firewall-hook") + " || exit 2"; }
+
+function toShortPath(p: string): string {
+  if (process.platform !== "win32" || !p.includes(" ")) return fwd(p);
+  try {
+    const clean = p.replace(/^\\\\\?\\/, "");
+    const res = spawnSync("cmd.exe", ["/c", `for %I in ("${clean}") do @echo %~sI`], {
+      encoding: "utf8",
+      windowsVerbatimArguments: true,
+    });
+    const out = res.stdout ? res.stdout.trim() : "";
+    if (out && existsSync(out)) return fwd(out);
+  } catch {}
+  return `"${fwd(p)}"`;
+}
+
+// agy runs this via Go exec.Command("cmd", "/c", command), which escapes double quotes as \",
+// breaking cmd.exe argument parsing. Use 8.3 short paths without quotes on win32.
+export function agyFirewallHookCommand(): string {
+  if (process.platform === "win32") {
+    const args = [toShortPath(nodeExe()), ...hookArgv("agy-firewall-hook").map((a) => a.startsWith("file:") || a.startsWith("-") ? a : toShortPath(a))];
+    return args.join(" ");
+  }
+  return quoted("agy-firewall-hook");
 }
 export const firewallHooks = () => ({ PreToolUse: [{ matcher: "Bash|PowerShell", hooks: [{ type: "command", command: firewallHookCommand(), timeout: 10 }] }] });
 

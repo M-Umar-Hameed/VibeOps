@@ -14,9 +14,41 @@ Vibecoding with multiple agents has a coordination problem: each agent starts co
 
 ## Why choose VibeOps
 
-Running coding agents bare is fast, and nothing checks the result. VibeOps puts every change through a plan, an isolated git worktree, typecheck and tests, a review by a second model, and your approval. These are the measurements behind that trade.
+Run Claude Code, Codex, Gemini or Cursor on their own and three things go wrong: every session starts cold, nobody checks the diff before it lands, and nothing records which agent did what. VibeOps fixes all three from one self-hosted app.
 
-### Same tickets, with and without supervision
+```mermaid
+flowchart LR
+  CC["Claude Code"] --> V
+  CX["Codex"] --> V
+  GM["Gemini / Antigravity"] --> V
+  CU["Cursor"] --> V
+  YOU["You, in the desktop app"] --> V
+  V["VibeOps<br/>one queue, one memory, one audit trail"] --> K["Shared knowledge<br/>vault, notes, past sessions"]
+  V --> F["Forge<br/>plan, sandbox, tests, review"]
+  F --> H["Your approval, then merge"]
+```
+
+| | Agents on their own | With VibeOps |
+|---|---|---|
+| Context at session start | Cold, every time | Primed with the relevant decisions, notes and past sessions |
+| Memory across agents | None; each tool keeps its own history | One searchable index every agent reads and writes |
+| Before code lands | The agent says "done" | Tests, typecheck, scope and secret checks, a second-model review, your approval |
+| Who did what | Scattered terminal history | Append-only audit trail, one key per agent |
+| Cost | Every token on your best model | Best model plans and reviews, cheap model writes; budget caps; real token usage per account |
+
+**Memory every agent shares.** One `search_knowledge` tool, over MCP or REST, covers your markdown and PDF vault (open it in Obsidian if you like), the decision notes agents write as they work, and transcripts of past Claude Code, Codex, Antigravity and claude-mem sessions. What one agent worked out on Monday, the next agent finds on Tuesday. A `SessionStart` hook primes every new session with the most relevant of it before the agent types a word. Embeddings run locally by default: no API key, and nothing leaves your machine.
+
+**Work that is checked before it lands.** The best model writes the plan. A cheap or local model does the work inside an isolated git worktree. Typecheck and tests run, scope and secret gates run, a second model reviews the diff cold, and a sentinel catches any write outside the sandbox. Nothing merges until you promote it.
+
+**Ideas turned into specs, not vague tickets.** Describe an idea and a council of three personas (believer, investor, skeptic) debates it. A chairman rates it, asks you the open questions, and creates the ticket only once the spec is real.
+
+**A colleague you can talk to.** Operator Chat gives an agent real tools: knowledge search, the board, and live pages through the Chrome extension. Every finished turn becomes searchable memory, with nobody saving anything by hand.
+
+**Know who did what, and what it cost.** Each agent gets its own key and role. Every change is attributed in the audit trail. The Token Usage tab reads real usage per signed-in account from local logs, budget caps stop runaway tickets, and runs fail over to another account when one hits its usage limit.
+
+**Your accounts, your code.** Runs on the CLI subscriptions you already pay for and never asks for provider API keys. It never pushes; `git push` stays yours. It installs as a single file on Windows, macOS or Linux, with zero configuration.
+
+### Proof: same tickets, with and without supervision
 
 30 closed tickets from this repo were replayed from their parent commit twice: once with bare `claude -p` (Sonnet), once through the forge (Opus plans and reviews, Sonnet writes the code). Each result was scored against the tests the real commit added, which neither run could see. 4 tickets were dropped: 2 whose tests pass without any change, and 2 where the real commit itself timed out in the test environment.
 
@@ -46,7 +78,7 @@ pie showData
 
 Read these with care. 26 tickets is a small sample, and the gap is not statistically significant (exact McNemar p = 0.0625). The forge never lost a ticket the bare agent won, and it costs about ten extra minutes per ticket. Hidden tests often call the exact function names of the real commit, so both pass rates understate what either side can do. The review gate is not a guarantee: 14 of the 23 tickets it approved still failed the hidden tests, which is why promotion stays a human step.
 
-### What the gate catches in daily use
+### Proof: what the gate catches in daily use
 
 1,139 forge runs on 295 tickets across a 450k-line monorepo and VibeOps itself, 2026-10-14 to 2026-11-06:
 
@@ -76,12 +108,6 @@ xychart-beta
 | Work-stage cost, needed rework | median $2.71, p90 $10.08 |
 
 Supervision itself is cheap. Rework is the expensive part, and it is cheaper to pay inside a sandbox than after a merge. Full method and the gaps the audit found: [docs/evals/2026-11-09-supervision-vs-bare-agents.md](docs/evals/2026-11-09-supervision-vs-bare-agents.md).
-
-### Also
-
-- **No cold starts.** Claude Code, Codex, Gemini, Antigravity, Cursor and you share one queue, one searchable memory of decisions, and one append-only audit trail over REST and MCP.
-- **Expensive model thinks, cheap model types.** Plan and review run on the best model; the implementation runs on a cheap or local one.
-- **Your accounts, your code.** Runs on your existing CLI subscriptions, never asks for provider API keys, never pushes.
 
 **When to skip it:** small edits you are watching yourself. The forge adds minutes per ticket.
 

@@ -183,6 +183,13 @@
       "when": 1793652345358,
       "tag": "0025_usage_exact",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1794339975663,
+      "tag": "0026_session_cursors",
+      "breakpoints": true
     }
   ]
 }

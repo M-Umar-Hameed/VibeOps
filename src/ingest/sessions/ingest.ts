@@ -1,11 +1,16 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../../db/client.js";
-import { embeddings } from "../../db/schema.js";
-import { upsertSourceDocsBatched, EMBED_BATCH } from "../../services/knowledge.js";
+import { embeddings, sessionCursors } from "../../db/schema.js";
+import { upsertSourceDocsBatched, appendSourceDoc, EMBED_BATCH } from "../../services/knowledge.js";
 import { getEmbedder, type Embedder } from "../../knowledge/embedder.js";
 import type { SessionSource } from "./source.js";
 import { compressSessionText } from "./compress.js";
 import { startJob, type JobCtx } from "../../services/jobs.js";
+
+async function saveCursor(ref: string, c: { offset: number; size: number }) {
+  await db.insert(sessionCursors).values({ sourceRef: ref, byteOffset: c.offset, fileSize: c.size })
+    .onConflictDoUpdate({ target: sessionCursors.sourceRef, set: { byteOffset: c.offset, fileSize: c.size, updatedAt: new Date() } });
+}
 
 export async function ingestSessions(
   sources: SessionSource[],
@@ -21,9 +26,14 @@ export async function ingestSessions(
     result[src.source] = r;
 
     ctx?.progress({ phase: `${tag}: listing`, done: null, total: null });
+    const cursorRows = await db.select({ ref: sessionCursors.sourceRef, offset: sessionCursors.byteOffset })
+      .from(sessionCursors)
+      .where(sql`exists (select 1 from ${embeddings} e where e.source_kind = 'session' and e.source_ref = ${sessionCursors.sourceRef})`);
+    const cursors = new Map(cursorRows.map((r) => [r.ref, Number(r.offset)]));
+
     let docs;
     try {
-      docs = await src.listSessionDocs(sinceDays);
+      docs = await src.listSessionDocs(sinceDays, cursors);
     } catch (e) {
       console.warn(`source ${src.source} failed: ${(e as Error).message}`);
       r.failed++;
@@ -33,8 +43,10 @@ export async function ingestSessions(
     ctx?.progress({ phase: `${tag}: checking`, done: 0, total: docs.length });
     let done = 0;
     const changed: typeof docs = [];
+    const appends: typeof docs = [];
     for (const doc of docs) {
       if (ctx?.cancelled) break;
+      if (doc.append) { appends.push(doc); continue; }
       try {
         const [existing] = await db.select({ h: embeddings.contentHash })
           .from(embeddings)
@@ -43,6 +55,7 @@ export async function ingestSessions(
         if (existing && existing.h === doc.hash) {
           r.skipped++;
           ctx?.progress({ done: ++done });
+          if (doc.cursor) await saveCursor(doc.ref, doc.cursor);
         } else {
           changed.push(doc);
         }
@@ -52,9 +65,11 @@ export async function ingestSessions(
         ctx?.progress({ done: ++done });
       }
     }
+    // ponytail: unchanged cursored files produce no doc, so they are not counted in `skipped`.
 
-    if (changed.length && !ctx?.cancelled) {
+    if ((changed.length || appends.length) && !ctx?.cancelled) {
       ctx?.progress({ phase: `${tag}: embedding` });
+      const byRef = new Map(changed.map((d) => [d.ref, d]));
       try {
         const results = await upsertSourceDocsBatched(
           "session",
@@ -69,14 +84,35 @@ export async function ingestSessions(
         for (const res of results) {
           if (res.ok) {
             r.indexed++;
+            const d = byRef.get(res.ref);
+            if (d?.cursor) {
+              try { await saveCursor(d.ref, d.cursor); }
+              catch (e) { console.warn(`cursor save failed for ${d.ref}: ${(e as Error).message}`); }
+            }
           } else {
             console.warn(`doc ${res.ref} failed: ${res.error}`);
             r.failed++;
           }
         }
+        done += changed.length;
       } catch (e) {
         console.warn(`batch ingest failed for ${src.source}: ${(e as Error).message}`);
         r.failed += changed.length;
+      }
+
+      for (const doc of appends) {
+        if (ctx?.cancelled) break;
+        try {
+          const text = compressSessionText(doc.text);
+          // ponytail: insert and cursor save are separate statements; a crash between them re-appends that delta once (duplicate chunks, never loss).
+          if (text.trim()) { await appendSourceDoc("session", doc.ref, text, embedder, doc.hash, doc.projectId); r.indexed++; }
+          else r.skipped++;
+          await saveCursor(doc.ref, doc.cursor!);
+        } catch (e) {
+          console.warn(`append failed for ${doc.ref}: ${(e as Error).message}`);
+          r.failed++;
+        }
+        ctx?.progress({ done: ++done });
       }
     }
   }

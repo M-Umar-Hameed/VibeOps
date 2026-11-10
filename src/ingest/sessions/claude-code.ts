@@ -106,7 +106,12 @@ export function makeClaudeCodeSource(
             if (st.mtimeMs < cutoff) continue;
             const d = readJsonlDelta(path, cursors?.get(path), tailBytes, windowBytes);
             if (!d) continue; // unchanged since the cursor, unreadable, or no complete line yet
-            if (d.texts.some(isLocalModelTranscript)) continue;
+            if (d.texts.some(isLocalModelTranscript)) {
+              if (d.append) {
+                docs.push({ ref: path, text: "", hash: d.hash, projectId, cursor: { offset: d.offset, size: d.size }, append: true });
+              }
+              continue;
+            }
             const head = !d.append && st.size <= tailBytes ? d.texts[0] : readHead(path);
             // Forge worker transcripts run inside the sandbox root; they are not user sessions.
             let cwd: string | undefined;

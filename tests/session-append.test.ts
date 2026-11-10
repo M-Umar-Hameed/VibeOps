@@ -143,6 +143,12 @@ test("truncated file", async () => {
 
   const c = await cursor(path);
   expect(Number(c!.fileSize)).toBe(statSync(path).size);
+
+  writeFileSync(path, "partial-without-newline");
+  await ingestSessions([src], emb, 30);
+  const c2 = await cursor(path);
+  expect(Number(c2!.fileSize)).toBe(statSync(path).size);
+  expect(Number(c2!.byteOffset)).toBe(0);
 });
 
 test("multi-window delta", async () => {
@@ -188,6 +194,14 @@ test("filter kept on delta", async () => {
   const second = await rows(path);
   expect(second.some((r) => r.content.includes(`local-${u}`))).toBe(false);
   expect(second.length).toBe(firstCount);
+  const c = await cursor(path);
+  expect(Number(c!.byteOffset)).toBe(statSync(path).size);
+
+  writeFileSync(path, ul(`later-${u}`) + al(`later-${u}-answer`), { flag: "a" });
+  await ingestSessions([src], emb, 30);
+  const third = await rows(path);
+  expect(third.length).toBeGreaterThan(firstCount);
+  expect(third.some((r) => r.content.includes(`later-${u}`))).toBe(true);
 });
 
 test("codex growing", async () => {

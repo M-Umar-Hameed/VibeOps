@@ -107,7 +107,10 @@ export function readJsonlDelta(path: string, cursor: number | undefined, tailByt
   if (size === cursor) return null;
   const start = size < cursor ? Math.max(0, size - tailBytes) : cursor;
   const d = readLines(path, start, size, windowBytes, size < cursor && start > 0);
-  if (!d || d.end === start) return null;
+  if (!d || d.end === start) {
+    if (size < cursor) return { texts: [], hash: "", offset: start, size, append: true };
+    return null;
+  }
   return { texts: d.texts, hash: d.hash, offset: d.end, size, append: true };
 }
 

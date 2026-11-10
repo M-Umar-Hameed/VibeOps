@@ -20,7 +20,7 @@ test("sweepSinceDays with various inputs", () => {
 
 test("sweepOnce uses stored value and advances it", async () => {
   const key = `sessions.lastSweepAt.test-${randomUUID()}`;
-  const fiveDaysAgoIso = new Date(Date.now() - 5 * 86_400_000).toISOString();
+  const fiveDaysAgoIso = new Date(Date.now() - (5 * 86_400_000 - 60_000)).toISOString();
   await setSetting(key, fiveDaysAgoIso);
 
   let seenDays: number[] = [];
@@ -61,7 +61,7 @@ test("sweepOnce with missing key uses 30", async () => {
 
 test("cancelled sweep does not advance lastSweepAt", async () => {
   const key = `sessions.lastSweepAt.test-${randomUUID()}`;
-  const fiveDaysAgoIso = new Date(Date.now() - 5 * 86_400_000).toISOString();
+  const fiveDaysAgoIso = new Date(Date.now() - (5 * 86_400_000 - 60_000)).toISOString();
   await setSetting(key, fiveDaysAgoIso);
 
   const src: SessionSource = {

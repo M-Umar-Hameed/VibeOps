@@ -39,7 +39,7 @@ flowchart LR
 
 **Memory every agent shares.** One `search_knowledge` tool, over MCP or REST, covers your markdown and PDF vault (open it in Obsidian if you like), the decision notes agents write as they work, and transcripts of past Claude Code, Codex, Antigravity and claude-mem sessions. What one agent worked out on Monday, the next agent finds on Tuesday. That memory outlives the agent's own: Claude Code and Codex transcripts are indexed append-only, so a long or compacted session never pushes its earlier work out of the index, and nothing indexed is removed when Claude Code clears or deletes its transcripts. If VibeOps was off for a few days, the next sync catches up on everything since the last one, up to 30 days. A `SessionStart` hook primes every new session with the most relevant of it before the agent types a word. Embeddings run locally by default: no API key, and nothing leaves your machine.
 
-**Work that is checked before it lands.** The best model writes the plan. A cheap or local model does the work inside an isolated git worktree. Typecheck and tests run, scope and secret gates run, a second model reviews the diff cold, and a sentinel catches any write outside the sandbox. Nothing merges until you promote it.
+**Work that is checked before it lands.** The best model writes the plan. A cheap or local model does the work inside an isolated git worktree. Shell commands are parsed and checked before they run, so pushes, deletes outside the workspace and piped downloads are refused. Typecheck and tests run, scope and secret gates run, a second model reviews the diff cold, and a sentinel catches any write outside the sandbox. Nothing merges until you promote it.
 
 **Ideas turned into specs, not vague tickets.** Describe an idea and a council of three personas (believer, investor, skeptic) debates it. A chairman rates it, asks you the open questions, and creates the ticket only once the spec is real.
 
@@ -237,6 +237,17 @@ the one being made.
   kernel-confined. Writes outside the worktree are caught by a sentinel that snapshots
   sensitive paths before the run and restores them after, which is detection and repair
   rather than prevention.
+- **Shell commands pass a parsing firewall first, on the Claude lanes.** On the Claude
+  Agent SDK and Claude Code CLI lanes, every Bash or PowerShell command a work agent runs
+  is parsed (quotes, heredocs, `$(...)`, `sh -c`, `eval`, `find -exec`, npm scripts)
+  and checked before it runs: pushes, publishes, deletes outside the workspace, remote
+  shells and downloads piped into a shell are refused. On a 340-command red-team set it
+  blocked 257 of 257 destructive commands with no false positives, and 65 of 66 on a
+  held-out set (the old regex list blocked 42.8% and 36.4%). If the check itself fails,
+  the command is refused. The Gemini (agy) lane is still guarded only by per-run deny
+  globs, and the app warns about it at every pipeline start; codex relies on its own OS
+  sandbox and kimi has no command guard. A script the agent writes and then runs is outside the firewall's view,
+  which is what the sentinel is for.
 - **VibeOps never pushes code.** It commits inside sandboxes and merges into your local
   branch on promote; `git push` stays yours. The separate, opt-in issue-tracker
   connectors are the one thing that talks outward, and only if you bind a repo and supply

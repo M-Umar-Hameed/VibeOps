@@ -1,4 +1,6 @@
 import { expect, test, vi } from "vitest";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import { spawn, ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -126,4 +128,50 @@ test("installShutdown registers an HTTP shutdown handler", async () => {
   expect(serverClose).toHaveBeenCalledTimes(1);
   expect(exit).toHaveBeenCalledWith(0);
   exit.mockRestore();
+});
+
+test("makeShutdown drops a long-lived connection so closeDb and exit are reached",
+  { timeout: 10_000 }, async () => {
+  const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.flushHeaders(); // SSE-style: headers out, body never ends
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  const { port } = server.address() as AddressInfo;
+  const req = http.get({ host: "127.0.0.1", port, path: "/events" });
+  req.on("error", () => {}); // socket is destroyed by shutdown; ECONNRESET expected
+  await new Promise<void>((r) => req.on("response", (res) => { res.on("error", () => {}); r(); }));
+
+  const closeDb = vi.fn(async () => {});
+  const started = Date.now();
+  await makeShutdown(server as never, closeDb)("test");
+
+  expect(closeDb).toHaveBeenCalledTimes(1);
+  expect(exit).toHaveBeenCalledWith(0);
+  expect(Date.now() - started).toBeLessThan(5000);
+  expect(server.listening).toBe(false);
+  req.destroy();
+  exit.mockRestore();
+});
+
+test("makeShutdown bounds a server close that never calls back and still checkpoints", async () => {
+  vi.useFakeTimers();
+  const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  const serverClose = vi.fn(() => {}); // never calls back
+  const closeDb = vi.fn(async () => {});
+  const shutdown = makeShutdown({ close: serverClose } as never, closeDb);
+
+  const p = shutdown("SIGTERM");
+  await vi.advanceTimersByTimeAsync(5000);
+  await p;
+
+  expect(closeDb).toHaveBeenCalledTimes(1);
+  expect(exit).toHaveBeenCalledWith(0);
+  expect(err).toHaveBeenCalledWith(expect.stringContaining("server close exceeded"));
+
+  vi.useRealTimers();
+  exit.mockRestore();
+  err.mockRestore();
 });

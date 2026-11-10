@@ -1,13 +1,23 @@
 import type { ServerType } from "@hono/node-server";
 import { fstatSync } from "node:fs";
+import type { Server as HttpServer } from "node:http";
 
 // Single idempotent shutdown: stop accepting connections, checkpoint the DB by
 // closing it, then exit 0. Exposed as a factory so it can be unit-tested without
 // real signals.
-// A hung closeDb must never trap the process. Bound it: 5s (matches the
-// sql.end timeout; a clean PGlite checkpoint is sub-second). Hit deadline or
-// close error -> log, exit 1 anyway. Clean -> exit 0.
+// A hung server close or closeDb must never trap the process. Bound both: 5s
+// (matches the sql.end timeout; a clean PGlite checkpoint is sub-second). Hit
+// deadline on server close -> log, proceed anyway. Hit deadline or close error
+// on db close -> log, exit 1 anyway. Clean -> exit 0.
 const CLOSE_DEADLINE_MS = 5000;
+
+// Race p against CLOSE_DEADLINE_MS; resolves "timeout" on deadline, clears its timer either way.
+async function withDeadline<T>(p: Promise<T>): Promise<T | "timeout"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<"timeout">((r) => { timer = setTimeout(() => r("timeout"), CLOSE_DEADLINE_MS); });
+  try { return await Promise.race([p, deadline]); }
+  finally { clearTimeout(timer); }
+}
 
 export function makeShutdown(server: ServerType, closeDb: () => Promise<void>, onBeforeClose?: () => Promise<void>) {
   let closing = false;
@@ -15,18 +25,23 @@ export function makeShutdown(server: ServerType, closeDb: () => Promise<void>, o
     if (closing) return;
     closing = true;
     console.log(`shutting down (${reason}); checkpointing embedded database`);
-    await new Promise<void>((r) => server.close(() => r()));
+    // Long-lived clients (UI /events SSE, Chrome extension, MCP streamable-HTTP GET)
+    // never end their sockets, and server.close() only calls back once all have
+    // ended. Stop accepting, then drop every connection, then wait (bounded).
+    const closed = new Promise<void>((r) => server.close(() => r()));
+    const http = server as Partial<Pick<HttpServer, "closeIdleConnections" | "closeAllConnections">>;
+    http.closeIdleConnections?.();
+    http.closeAllConnections?.();
+    if (await withDeadline(closed) === "timeout") {
+      console.error(`server close exceeded ${CLOSE_DEADLINE_MS}ms deadline; checkpointing anyway`);
+    }
     if (onBeforeClose) {
       try { await onBeforeClose(); }
       catch (e) { console.warn(`pre-close backup failed: ${(e as Error).message}`); }
     }
     let code = 0;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<"timeout">((r) => {
-      timer = setTimeout(() => r("timeout"), CLOSE_DEADLINE_MS);
-    });
     try {
-      const result = await Promise.race([closeDb().then(() => "closed" as const), deadline]);
+      const result = await withDeadline(closeDb().then(() => "closed" as const));
       if (result === "timeout") {
         console.error(`db close exceeded ${CLOSE_DEADLINE_MS}ms deadline; exiting anyway`);
         code = 1;
@@ -34,8 +49,6 @@ export function makeShutdown(server: ServerType, closeDb: () => Promise<void>, o
     } catch (e) {
       console.error(`db close failed: ${(e as Error).message}`);
       code = 1;
-    } finally {
-      clearTimeout(timer);
     }
     process.exit(code);
   };

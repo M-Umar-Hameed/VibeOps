@@ -61,6 +61,18 @@ test("find -exec rm -rf over / is denied", () => {
   }
 });
 
+test("one-letter remote hosts are not mistaken for drives", () => {
+  const ws = tmp();
+  try {
+    assert.equal(checkCommand("scp a b:c", { workspace: ws }).allow, false);
+    assert.equal(checkCommand("rsync -a . h:/x", { workspace: ws }).allow, false);
+    assert.equal(checkCommand("scp a b:c", { workspace: ws, dialect: "powershell" }).allow, false);
+    assert.equal(checkCommand("scp a h:/x", { workspace: ws, dialect: "powershell" }).allow, true);
+  } finally {
+    fs.rmSync(ws, { recursive: true, force: true });
+  }
+});
+
 test("npm scripts are resolved and checked", () => {
   const ws = tmp();
   try {

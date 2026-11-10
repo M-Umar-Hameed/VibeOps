@@ -770,7 +770,7 @@ function remoteRule(k: K): Verdict | undefined {
     if (h) return d(k, "egress-remote-shell", `ssh to ${h.raw}`);
   }
   if (name === "scp" || name === "rsync" || name === "sftp") {
-    const r = a.find((x) => x[0] !== "-" && /^([^@/\s]+@)?[^/\s:]+:/.test(x) && !/^[A-Za-z]:/.test(x));
+    const r = a.find((x) => x[0] !== "-" && /^([^@/\s]+@)?[^/\s:]+:/.test(x) && !(k.c.dialect === "powershell" && /^[A-Za-z]:[\\/]/.test(x)));
     if (r) return d(k, "egress-remote-shell", `${name} to remote ${r}`);
   }
 }

@@ -7,7 +7,7 @@ import { join, dirname } from "node:path";
 import type { RelayAgent, PromptDelivery } from "./config.js";
 import { pidAlive } from "../db/lifecycle.js";
 import { winCommand } from "./win-bin.js";
-import { loadWall, wallCmd, denyOnlyCmd, agyDenyCmd } from "./wall.js";
+import { loadWall, wallCmd, denyOnlyCmd, agyDenyCmd, ALLOW_COMMAND_ENV } from "./wall.js";
 import { registerEnvSecrets } from "../forge/redact.js";
 import { chooseAccount, allExhaustedResult, settleAccountResult, laneKind } from "./accounts.js";
 import { parseUsageJson } from "./usage-json.js";
@@ -172,6 +172,7 @@ export async function runAgent(
   if (process.env.ANTHROPIC_API_KEY) {
     childEnv = { ...(childEnv ?? process.env), ENABLE_PROMPT_CACHING_1H: "1" };
   }
+  childEnv = { ...(childEnv ?? process.env), [ALLOW_COMMAND_ENV]: (agent.liftedRules ?? []).join(",") };
 
   // S2-A2: with a run logPath, the stage child writes stdout+stderr straight to
   // that file (fd stdio) and is spawned detached+unref'd, so an API restart

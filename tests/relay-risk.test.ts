@@ -92,6 +92,14 @@ describe("denyPatterns", () => {
     expect(p).toContain("Bash(rm -rf g:*)");
     expect(denyPatterns([], []).some((g) => /rm -rf [A-Za-z]:/.test(g))).toBe(false);
   });
+  it("find-delete-outside drive globs include trailing slash", () => {
+    const p = denyPatterns([], ["C:"]);
+    expect(p).toContain("Bash(find C:/* -delete*)");
+    expect(p).toContain("PowerShell(find C:/* -delete*)");
+    expect(p).toContain("Bash(find c:/* -delete*)");
+    expect(p).not.toContain("Bash(find C:* -delete*)");
+    expect(p).not.toContain("Bash(find c:* -delete*)");
+  });
   it("lifted ids drop their patterns", () => {
     const p = denyPatterns(["git-push"]);
     expect(p).not.toContain("Bash(git push*)");

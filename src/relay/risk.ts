@@ -30,7 +30,7 @@ const RULES: Rule[] = [
   {
     id: "find-delete-outside",
     reason: "find -delete outside the sandbox workdir",
-    globs: (drives) => ["/", "~", "..", ...driveCases(drives)].map((t) => `find ${t}* -delete*`),
+    globs: (drives) => ["/", "~", "..", ...driveCases(drives).map((d) => `${d}/`)].map((t) => `find ${t}* -delete*`),
   },
   { id: "curl-pipe", reason: "piping a download into a shell runs unreviewed code", globs: ["curl *| sh*", "curl *| bash*", "wget *| sh*", "wget *| bash*"] },
   { id: "npm-publish", reason: "npm publish releases a package", globs: ["npm publish*"] },

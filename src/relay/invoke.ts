@@ -304,10 +304,14 @@ export async function runAgent(
       } else {
         const capture = (chunk: Buffer) => push(chunk.toString("utf-8"));
         child.stdout?.on("data", capture);
-        child.stderr?.on("data", (chunk: Buffer) => {
-          const filtered = filterClaudeStderr(chunk.toString("utf-8"));
-          if (filtered) push(filtered);
-        });
+        if (kind === "claude") {
+          child.stderr?.on("data", (chunk: Buffer) => {
+            const filtered = filterClaudeStderr(chunk.toString("utf-8"));
+            if (filtered) push(filtered);
+          });
+        } else {
+          child.stderr?.on("data", capture);
+        }
       }
 
       const finish = (ok: boolean) => {

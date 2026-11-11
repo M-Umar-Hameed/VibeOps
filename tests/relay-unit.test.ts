@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, test, describe, it, vi } from "vitest";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted } from "../src/relay/prompts.js";
 import { loadRelayConfig, resolveCmd } from "../src/relay/config.js";
-import { substituteCmd, runAgent, killTree } from "../src/relay/invoke.js";
+import { substituteCmd, runAgent, killTree, filterClaudeStderr } from "../src/relay/invoke.js";
 import { spawn } from "node:child_process";
 
 test("parseVerdict: PASS/FAIL/missing/garbage are fail-closed", () => {

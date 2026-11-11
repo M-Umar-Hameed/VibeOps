@@ -181,6 +181,17 @@ export function ChatScreen() {
     setIsSending(true);
     setLiveChunks([]);
     nextOffsetRef.current = 0;
+    // Optimistically append user message before server response arrives
+    queryClient.setQueryData<SessionDetail>(
+      ["chat", "session", selectedSessionId],
+      (old) => old ? {
+        ...old,
+        messages: [
+          ...old.messages,
+          { id: `optimistic-${Date.now()}`, role: "user", body, createdAt: new Date().toISOString() },
+        ],
+      } : old,
+    );
     try {
       const res = (await api.post(`/chat/sessions/${selectedSessionId}/messages`, {
         body,
@@ -436,7 +447,7 @@ export function ChatScreen() {
                 </div>
               )}
               {liveOutput && (
-                <div className="mr-auto bg-surface-container-highest max-w-[90%] rounded-lg p-3 animate-pulse">
+                <div className="mr-auto bg-surface-container-highest max-w-[90%] rounded-lg p-3">
                   <Markdown text={liveOutput} />
                 </div>
               )}

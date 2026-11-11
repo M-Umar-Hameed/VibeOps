@@ -288,7 +288,24 @@ export async function runAgent(
       } else {
         const capture = (chunk: Buffer) => push(chunk.toString("utf-8"));
         child.stdout?.on("data", capture);
-        child.stderr?.on("data", capture);
+        child.stderr?.on("data", (chunk: Buffer) => {
+          const text = chunk.toString("utf-8");
+          if (kind === "claude") {
+            const filtered = text.split(/\r?\n/).filter((line) => {
+              const t = line.trim();
+              if (!t) return false;
+              if (/^Warning:/i.test(t)) return false;
+              if (/^Permission (?:deny|allow) rule/i.test(t)) return false;
+              if (/has a :\* that is not at the end/i.test(t)) return false;
+              if (/no stdin data received/i.test(t)) return false;
+              if (/telemetry/i.test(t)) return false;
+              return true;
+            }).join("\n");
+            if (filtered) push(filtered);
+          } else {
+            push(text);
+          }
+        });
       }
 
       const finish = (ok: boolean) => {

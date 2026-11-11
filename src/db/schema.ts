@@ -1,5 +1,5 @@
 import {
-  pgTable, uuid, text, integer, timestamp, jsonb, pgEnum, index, uniqueIndex, check, vector, boolean, primaryKey, bigint,
+  pgTable, uuid, text, integer, timestamp, jsonb, pgEnum, index, uniqueIndex, check, vector, boolean, primaryKey, bigint, real,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -83,6 +83,8 @@ export const notes = pgTable("notes", {
   source: text("source").notNull().default("manual"),
   scope: noteScope("scope").notNull(),
   refId: uuid("ref_id"),
+  status: text("status").notNull().default("active"),
+  confidence: real("confidence").notNull().default(0.7),
   indexed: boolean("indexed").notNull().default(false),
   version: integer("version").notNull().default(1),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),

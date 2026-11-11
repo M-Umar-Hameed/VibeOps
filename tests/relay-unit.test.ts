@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdtempSync, rmSync, readdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, readdirSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, describe, it, vi } from "vitest";
@@ -165,13 +165,21 @@ test("filterClaudeStderr strips startup warnings and diagnostic telemetry", () =
 });
 
 test("runAgent filters diagnostic stderr on claude lane", async () => {
-  const script = "process.stderr.write('Warning: no stdin\\n'); process.stdout.write('model output');";
-  const res = await runAgent(
-    { cmd: ["node", "-e", script], roles: [] },
-    "unused", process.cwd(),
-  );
-  expect(res.output).toBe("model output");
-  expect(res.output).not.toContain("Warning: no stdin");
+  const dir = mkdtempSync(join(tmpdir(), "vibeops-claude-"));
+  const fake = join(dir, process.platform === "win32" ? "claude.exe" : "claude");
+  copyFileSync(process.execPath, fake);
+  const scriptPath = join(dir, "script.js");
+  writeFileSync(scriptPath, "process.stderr.write('Warning: no stdin\\n'); process.stdout.write('model output');");
+  try {
+    const res = await runAgent(
+      { cmd: [fake, scriptPath], roles: [] },
+      "unused", process.cwd(),
+    );
+    expect(res.output).toBe("model output");
+    expect(res.output).not.toContain("Warning: no stdin");
+  } finally {
+    try { rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
 });
 
 test("runAgent smoke: succeeds and captures stdout", async () => {

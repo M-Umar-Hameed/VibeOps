@@ -98,6 +98,22 @@ export async function killPidTree(pid: number, timeoutMs = KILL_TIMEOUT_MS): Pro
   }
 }
 
+export function filterClaudeStderr(text: string): string {
+  const lines = text.split(/\r?\n/);
+  const kept: string[] = [];
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t) continue;
+    if (/^Warning:/i.test(t)) continue;
+    if (/^Permission (?:deny|allow) rule/i.test(t)) continue;
+    if (/has a :\* that is not at the end/i.test(t)) continue;
+    if (/no stdin data received/i.test(t)) continue;
+    if (/telemetry/i.test(t)) continue;
+    kept.push(line);
+  }
+  return kept.length > 0 ? kept.join("\n") + "\n" : "";
+}
+
 export async function runAgent(
   agent: RelayAgent, prompt: string, workdir: string,
   onData?: (chunk: string) => void,
@@ -289,22 +305,8 @@ export async function runAgent(
         const capture = (chunk: Buffer) => push(chunk.toString("utf-8"));
         child.stdout?.on("data", capture);
         child.stderr?.on("data", (chunk: Buffer) => {
-          const text = chunk.toString("utf-8");
-          if (kind === "claude") {
-            const filtered = text.split(/\r?\n/).filter((line) => {
-              const t = line.trim();
-              if (!t) return false;
-              if (/^Warning:/i.test(t)) return false;
-              if (/^Permission (?:deny|allow) rule/i.test(t)) return false;
-              if (/has a :\* that is not at the end/i.test(t)) return false;
-              if (/no stdin data received/i.test(t)) return false;
-              if (/telemetry/i.test(t)) return false;
-              return true;
-            }).join("\n");
-            if (filtered) push(filtered);
-          } else {
-            push(text);
-          }
+          const filtered = filterClaudeStderr(chunk.toString("utf-8"));
+          if (filtered) push(filtered);
         });
       }
 

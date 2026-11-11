@@ -200,12 +200,14 @@ export function ChatScreen() {
       if (res.error) {
         setError(res.error);
         setIsSending(false);
+        await refetchDetail();
         return false;
       }
       return true;
     } catch (e: any) {
       setError(e.message || "Failed to send message");
       setIsSending(false);
+      await refetchDetail();
       return false;
     }
   };

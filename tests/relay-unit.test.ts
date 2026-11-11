@@ -150,6 +150,30 @@ test("substituteCmd leaves cmd untouched when no placeholders match", () => {
   expect(substituteCmd(["echo", "hi"], { prompt: "x" })).toEqual(["echo", "hi"]);
 });
 
+test("filterClaudeStderr strips startup warnings and diagnostic telemetry", () => {
+  const raw = [
+    "Permission deny rule (settings.json): Bash(find C:* -delete*) has a :* that is not at the end",
+    "Warning: no stdin data received in 3s, proceeding without it.",
+    "[telemetry] session ping",
+    "fatal: genuine failure message",
+  ].join("\n");
+  const filtered = filterClaudeStderr(raw);
+  expect(filtered).not.toContain("Permission deny rule");
+  expect(filtered).not.toContain("Warning: no stdin");
+  expect(filtered).not.toContain("telemetry");
+  expect(filtered).toContain("fatal: genuine failure message");
+});
+
+test("runAgent filters diagnostic stderr on claude lane", async () => {
+  const script = "process.stderr.write('Warning: no stdin\\n'); process.stdout.write('model output');";
+  const res = await runAgent(
+    { cmd: ["node", "-e", script], roles: [] },
+    "unused", process.cwd(),
+  );
+  expect(res.output).toBe("model output");
+  expect(res.output).not.toContain("Warning: no stdin");
+});
+
 test("runAgent smoke: succeeds and captures stdout", async () => {
   const result = await runAgent(
     { cmd: [process.execPath, "-e", "console.log('hi')"], roles: [] },

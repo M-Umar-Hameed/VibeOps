@@ -172,7 +172,11 @@ export async function runAgent(
   if (process.env.ANTHROPIC_API_KEY) {
     childEnv = { ...(childEnv ?? process.env), ENABLE_PROMPT_CACHING_1H: "1" };
   }
-  childEnv = { ...(childEnv ?? process.env), [ALLOW_COMMAND_ENV]: (agent.liftedRules ?? []).join(",") };
+  childEnv = {
+    ...(childEnv ?? process.env),
+    [ALLOW_COMMAND_ENV]: (agent.liftedRules ?? []).join(","),
+    VIBEOPS_TEST_EMBEDDED: process.env.VIBEOPS_TEST_EMBEDDED ?? "1",
+  };
 
   // S2-A2: with a run logPath, the stage child writes stdout+stderr straight to
   // that file (fd stdio) and is spawned detached+unref'd, so an API restart

@@ -1,15 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { getLessons, lessonsClause } from "./lessons.js";
+import { getLessons, lessonsClause, harvestLessons } from "./lessons.js";
 import { existsSync, openSync, readSync, fstatSync, closeSync, statSync, readdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { vibeopsHome } from "../runtime/home.js";
 import { startTimeReader } from "../runtime/proc-start.js";
 import { treeCpuReader } from "../runtime/proc-tree-cpu.js";
-import type { ChildProcess } from "node:child_process";
+import { type ChildProcess, execFileSync } from "node:child_process";
 import { resolveCmd, loadRelayConfig, type RelayConfig, type RelayAgent } from "../relay/config.js";
 import { pipelineStartWarnings, pipelineStartBlockingError, binBasename } from "../relay/doctor.js";
 import { roleStyle } from "../relay/style.js";
-import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted } from "../relay/prompts.js";
+import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted, type ReworkContext } from "../relay/prompts.js";
 import { loadWall, agyFirewallHookCommand } from "../relay/wall.js";
 import { installAgyHook, restoreAgyHook } from "./agy-hook.js";
 import { listSkills, formatSkillIndex, formatSkillBodies, parseOperatorSkills, parsePlanSkills, parseSkillAllowlist, skillsForAgent, type SkillMeta } from "./skills.js";
@@ -816,7 +816,30 @@ async function pipeline(
   // the same mistakes (live-hit on the first dogfood ticket).
   const lastReview = [...(await listComments(ticket.id))].reverse().find((c) => c.kind === "review");
   const conflictNote = sync?.state === "conflict" ? `\n\nResolve the merge conflicts in ${(sync.files ?? []).join(", ")}; keep both sides' intent.` : "";
-  const findings = conflictNote + (lastReview ? `\n\nPrevious review findings (address ALL of these):\n${fenceUntrusted("prior-review-findings", lastReview.body)}` : "");
+  const findings = lastReview ? fenceUntrusted("prior-review-findings", lastReview.body) : "";
+
+  let rework: ReworkContext | undefined;
+  if (lastReview || sync?.state === "conflict") {
+    let recentCommit: string | undefined;
+    let gitStatus: string | undefined;
+    try {
+      recentCommit = execFileSync("git", ["log", "-n", "1", "--oneline"], { cwd: sandbox, stdio: ["ignore", "pipe", "ignore"] }).toString("utf-8").trim();
+      gitStatus = execFileSync("git", ["status", "--short"], { cwd: sandbox, stdio: ["ignore", "pipe", "ignore"] }).toString("utf-8").trim();
+    } catch {}
+    let failingCheckOutput: string | undefined;
+    if (lastReview?.body && lastReview.body.includes("[forge: check(s) failed")) {
+      const match = lastReview.body.match(/\[forge: check\(s\) failed[^\n]*\]\n([\s\S]*?)(?=\nVERDICT: FAIL|$)/);
+      if (match) failingCheckOutput = match[1].trim();
+    }
+    rework = {
+      findings: findings || (conflictNote ? "Resolve merge conflicts" : ""),
+      conflictNote: conflictNote.trim() || undefined,
+      recentCommit: recentCommit || undefined,
+      gitStatus: gitStatus || undefined,
+      failingCheckOutput,
+    };
+  }
+
   const workChecks = resolveChecks(await getSetting(`forge.checks.${ticket.projectId}`), sandbox, await getSetting("forge.checks"));
   const workPrompt = composeWorkPrompt({
     ticket, plan, knowledge, workdir: sandbox, memory,
@@ -824,13 +847,14 @@ async function pipeline(
     operatorEvidence: workEv.length ? workEv : undefined,
     allowedCommands: (await loadWall(ticket.projectId, true, sandbox)).allowed,
     checks: workChecks,
+    rework,
   })
     // No lessons clause here: A/B'd 2026-08-12 (docs/findings/2026-08-12-lessons-clause-ab.md).
     // On work prompts the doc measured inert - identical output on a control task, same
     // defect rate on a task its own "test isolation" line targets. Most of its lines
     // address the supervisor ("Supervisor sweeps before planning", "REPORT:/VERDICT:"),
     // which a worker cannot act on. Still injected at the plan stage, which was not tested.
-    + findings + NARRATION + (parseExportTo(ticket.body ?? "") ? EXPORT_NARRATION : "") + "\n\nDo NOT run git commit; the supervisor commits for you." + roleStyle("work", styleSetting) + extra;
+    + NARRATION + (parseExportTo(ticket.body ?? "") ? EXPORT_NARRATION : "") + "\n\nDo NOT run git commit; the supervisor commits for you." + roleStyle("work", styleSetting) + extra;
   // Sandbox-escape sentinel: snapshot known-sensitive files OUTSIDE the sandbox
   // before the work stage runs. Bash in a work lane is not OS-jailed, so a diff
   // gate (which only sees the worktree) cannot catch a write to the installed
@@ -941,6 +965,37 @@ async function pipeline(
     append(run, `\nforge: worker crashed (${crashed}) after saving a diff; continuing to review\n`);
   }
   if (!crashed) await forgeCommit(ticket.id, ticket.title);
+  if (!crashed && (await getSetting("forge.preReviewCheck")) === "true") {
+    const preChecks = resolveChecks(await getSetting(`forge.checks.${ticket.projectId}`), sandbox, await getSetting("forge.checks"));
+    if (preChecks.length > 0) {
+      append(run, `\n=== FORGE pre-review check ===\n`);
+      const results = await runChecks(preChecks, sandbox);
+      const failed = results.filter((r) => r.code !== 0);
+      if (failed.length > 0) {
+        append(run, `\nforge: pre-review check failed (${failed.length} check(s)); running local rework retry before review\n`);
+        const preCheckOutput = formatChecks(results);
+        const retryPrompt = composeWorkPrompt({
+          ticket, plan, knowledge, workdir: sandbox, memory,
+          skills: selectedSkills.bodies,
+          allowedCommands: (await loadWall(ticket.projectId, true, sandbox)).allowed,
+          checks: preChecks,
+          rework: {
+            findings: "Fix failing checks before supervisor review.",
+            failingCheckOutput: preCheckOutput,
+          },
+        }) + NARRATION + "\n\nDo NOT run git commit; the supervisor commits for you.";
+        try {
+          const retryRes = await track(actorId, ticket.id, "work", run.agents.work, retryPrompt.length, () =>
+            runAgent({ ...agents.work, write: true, projectId: ticket.projectId, liftedRules, ...evidenceDirs }, retryPrompt, sandbox, onData,
+              (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
+              modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r)));
+          if (retryRes.ok) {
+            await forgeCommit(ticket.id, `${ticket.title} (pre-review fix)`);
+          }
+        } catch {}
+      }
+    }
+  }
   await addComment(actorId, ticket.id, redactSecrets(workRes.output), "report");
   void captureMemory({ actorId, text: redactSecrets(reportTail(workRes.output)), projectId: ticket.projectId ?? undefined });
   ticket = await setStatus(actorId, ticket.id, "review");
@@ -974,6 +1029,24 @@ function settle(run: Run, status: Status): void {
   // so until this row lands a settled run still reads as active. That gap used to
   // be covered by the analyzer's extra await; deleting the analyzer exposed it.
   run.persisted = persistRun(run).catch(() => {});
+  void harvestRunLessons(run, status).catch(() => {});
+}
+
+async function harvestRunLessons(run: Run, status: Status): Promise<void> {
+  if (status !== "rejected" && status !== "failed") return;
+  const comments = await listComments(run.ticketId);
+  const lastReview = [...comments].reverse().find((c) => c.kind === "review");
+  const reviewBody = lastReview?.body ?? "";
+  if (!reviewBody.includes("VERDICT: FAIL") && !reviewBody.includes("Critical:")) return;
+  const ticket = await getTicket(run.ticketId);
+  const actorsList = await listActors();
+  const actorId = actorsList[0]?.id;
+  if (!actorId) return;
+  await harvestLessons(actorId, {
+    ticketTitle: ticket.title,
+    status,
+    reviewFindings: reviewBody,
+  });
 }
 
 // Known-benign SDK worker errors: matched only on the supervisor marker lines from invoke-sdk.ts, never worker text.

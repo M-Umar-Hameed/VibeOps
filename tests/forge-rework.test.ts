@@ -160,9 +160,14 @@ describe("POST /forge/tickets/:id/rework", () => {
     // No plan stage; work stage ran.
     expect(output?.chunk).not.toContain("=== FORGE plan");
     expect(output?.chunk).toContain("=== FORGE work");
-    // Worker prompt carried the review findings verbatim.
+    // Worker prompt carried the review findings verbatim at the top of the prompt.
     expect(output?.chunk).toContain("prior-review-findings");
     expect(output?.chunk).toContain("WIDGET-BUG-XYZZY empty input crash");
+    const reworkIdx = output?.chunk.indexOf("# REWORK INSTRUCTIONS") ?? -1;
+    const planIdx = output?.chunk.indexOf("Plan:") ?? -1;
+    expect(reworkIdx).toBeGreaterThan(-1);
+    expect(planIdx).toBeGreaterThan(reworkIdx);
+    expect(output?.chunk).toContain("Recent sandbox commit:");
     // Prior commit still on the branch (sandbox reused, commits intact).
     const log = execFileSync("git", ["log", "--format=%H"], { cwd: join(sandboxRoot, ticket.id) }).toString();
     expect(log).toContain(priorHash);

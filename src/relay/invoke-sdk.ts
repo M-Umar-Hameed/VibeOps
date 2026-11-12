@@ -1,12 +1,14 @@
-import { existsSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
-import path from "node:path";
+import { existsSync, realpathSync, mkdirSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
+import path, { join } from "node:path";
 import type { RelayAgent } from "./config.js";
 import type { AgentResult } from "./invoke.js";
 import { substituteCmd } from "./invoke.js";
 import { query, type PermissionResult, type HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { loadWall, allowRules, DENY_RULES } from "./wall.js";
 import { registerEnvSecrets } from "../forge/redact.js";
+import { commandRisk } from "./risk.js";
 import { chooseAccount, allExhaustedResult, settleAccountResult } from "./accounts.js";
 
 const OUTPUT_CAP = 100_000;
@@ -82,6 +84,12 @@ export function sdkEnv(agent: RelayAgent, workdir: string, acctEnv: Record<strin
     .filter((e): e is [string, string] => e[1] !== undefined));
   env.BASH_DEFAULT_TIMEOUT_MS ??= BASH_TIMEOUT_MS;
   env.BASH_MAX_TIMEOUT_MS ??= BASH_TIMEOUT_MS;
+  env.VIBEOPS_TEST_EMBEDDED ??= "1";
+  if (!env.VIBEOPS_HOME) {
+    const workerTestHome = join(tmpdir(), `vibeops-worker-home-${randomUUID()}`);
+    mkdirSync(workerTestHome, { recursive: true });
+    env.VIBEOPS_HOME = workerTestHome;
+  }
   return env;
 }
 
@@ -93,6 +101,17 @@ const denyBackground: HookCallback = async (input) => {
   }
   return {};
 };
+
+export function riskHook(workdir: string, lifted: readonly string[], onData?: (chunk: string) => void): HookCallback {
+  return async (input) => {
+    const i = input as { tool_name?: string; tool_input?: { command?: unknown } };
+    if ((i.tool_name !== "Bash" && i.tool_name !== "PowerShell") || typeof i.tool_input?.command !== "string") return {};
+    const hit = commandRisk(i.tool_input.command, workdir, lifted, i.tool_name === "PowerShell" ? "powershell" : "posix");
+    if (!hit) return {};
+    onData?.(`\n[forge: permission-denied Bash ${i.tool_input.command.slice(0, 120)} (${hit.id})]\n`);
+    return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: `blocked by the forge deny list (${hit.id}): ${hit.reason}` } };
+  };
+}
 
 export function buildSdkOptions(
   env: Record<string, string>, workdir: string, wallOn: boolean, allowed: string[],
@@ -147,7 +166,11 @@ export async function runAgentSdk(
   try {
     const response = query({
       prompt,
+<<<<<<< HEAD
       options: { ...buildSdkOptions(env, workdir, wall.on, wall.allowed, onData, model, agent), abortController: controller },
+=======
+      options: { ...buildSdkOptions(env, workdir, wall.on, wall.allowed, onData, model, agent.liftedRules ?? []), abortController: controller },
+>>>>>>> aad4f8dcc05204b093cb33f15b33c1a1fa8efb58
     });
     for await (const message of response) {
       if (message.type === "assistant") {

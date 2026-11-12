@@ -271,6 +271,13 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     const ticket = await getTicket(ticketId);
     // No interrupted run recorded: fall back to a normal open/planned start.
     if (item && !item.resumable) return c.json({ error: item.reason }, 409);
+    const body = (await c.req.json().catch(() => null)) ?? {};
+    const picks = agentPicks(body);
+    if ("error" in picks) return c.json({ error: picks.error }, 400);
+    const operatorNotes = typeof body.operatorNotes === "string" ? body.operatorNotes : undefined;
+    const requestedStage = typeof body.resumeStage === "string" && ["plan", "work", "review"].includes(body.resumeStage)
+      ? (body.resumeStage as any)
+      : undefined;
     // A crashed run leaves the ticket in_progress with its latest run interrupted;
     // the interrupted row proves nothing is running (an active run would report
     // "running" and be newer). Recover it like a planned ticket: resumeStage "work"
@@ -279,16 +286,13 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     // rejected-only guard stays separate.
     const interruptedInProgress = ticket.status === "in_progress"
       && (await latestRunStatus(ticketId)) === "interrupted";
-    const resumeStage = interruptedInProgress ? "work"
+    const resumeStage = requestedStage
+      ?? (interruptedInProgress ? "work"
       : item?.resumeMode === "review" ? "review"
-      : item?.resumeMode === "work" ? "work" : undefined;
+      : item?.resumeMode === "work" ? "work" : undefined);
     if (!resumeStage && ticket.status !== "open" && ticket.status !== "planned") {
       return c.json({ error: "ticket must be open or planned to resume" }, 409);
     }
-    const body = (await c.req.json().catch(() => null)) ?? {};
-    const picks = agentPicks(body);
-    if ("error" in picks) return c.json({ error: picks.error }, 400);
-    const operatorNotes = typeof body.operatorNotes === "string" ? body.operatorNotes : undefined;
     try {
       const { runId, doctorWarnings } = await startPipeline(c.get("actor").id, config, {
         ticketId, ...picks, operatorNotes, resumeStage,

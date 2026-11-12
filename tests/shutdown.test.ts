@@ -1,10 +1,13 @@
 import { expect, test, vi } from "vitest";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import { spawn, ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeShutdown, installShutdown } from "../src/api/shutdown.js";
+import { register, nextBatch, BROWSER_TUNING } from "../src/browser/channel.js";
 
 test("makeShutdown closes server then db, exits 0, and is idempotent", async () => {
   const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
@@ -15,9 +18,62 @@ test("makeShutdown closes server then db, exits 0, and is idempotent", async () 
   await shutdown("SIGTERM");
   await shutdown("SIGTERM"); // second call is a no-op
 
+  expect(exit).toHaveBeenCalledWith(0);
   expect(serverClose).toHaveBeenCalledTimes(1);
   expect(closeDb).toHaveBeenCalledTimes(1);
+  exit.mockRestore();
+});
+
+test("a held keep-alive connection does not block shutdown", async () => {
+  const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+  const held = { value: false };
+  const server = http.createServer((_req, _res) => {
+    held.value = true;
+    // never respond
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const addr = server.address() as AddressInfo;
+  const agent = new http.Agent({ keepAlive: true });
+  const req = http.get({ host: "127.0.0.1", port: addr.port, agent });
+  req.on("error", () => {});
+  await vi.waitFor(() => {
+    if (!held.value) throw new Error("not held");
+  });
+
+  const closeDb = vi.fn(async () => {});
+  const shutdown = makeShutdown(server as never, closeDb);
+
+  const t0 = Date.now();
+  await shutdown("SIGTERM");
+  const elapsed = Date.now() - t0;
+
+  expect(closeDb).toHaveBeenCalledTimes(1);
   expect(exit).toHaveBeenCalledWith(0);
+  expect(elapsed).toBeLessThan(5000);
+  expect(server.listening).toBe(false);
+
+  req.destroy();
+  agent.destroy();
+  exit.mockRestore();
+});
+
+test("shutdown releases a pending /browser/poll waiter", async () => {
+  const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+  const id = register({ browserChannel: "chrome", profileId: "p", profileLabel: "L" });
+  const p = nextBatch(id);
+
+  const serverClose = vi.fn((cb: () => void) => cb());
+  const shutdown = makeShutdown({ close: serverClose } as never, async () => {});
+
+  await shutdown("SIGTERM");
+  expect(exit).toHaveBeenCalledWith(0);
+
+  const result = await Promise.race([p, new Promise<string>((r) => setTimeout(() => r("timeout"), 1000))]);
+  expect(result).toBe(null);
+
+  const later = await nextBatch(id);
+  expect(later).toBe(null);
+
   exit.mockRestore();
 });
 
@@ -126,4 +182,50 @@ test("installShutdown registers an HTTP shutdown handler", async () => {
   expect(serverClose).toHaveBeenCalledTimes(1);
   expect(exit).toHaveBeenCalledWith(0);
   exit.mockRestore();
+});
+
+test("makeShutdown drops a long-lived connection so closeDb and exit are reached",
+  { timeout: 10_000 }, async () => {
+  const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.flushHeaders(); // SSE-style: headers out, body never ends
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  const { port } = server.address() as AddressInfo;
+  const req = http.get({ host: "127.0.0.1", port, path: "/events" });
+  req.on("error", () => {}); // socket is destroyed by shutdown; ECONNRESET expected
+  await new Promise<void>((r) => req.on("response", (res) => { res.on("error", () => {}); r(); }));
+
+  const closeDb = vi.fn(async () => {});
+  const started = Date.now();
+  await makeShutdown(server as never, closeDb)("test");
+
+  expect(closeDb).toHaveBeenCalledTimes(1);
+  expect(exit).toHaveBeenCalledWith(0);
+  expect(Date.now() - started).toBeLessThan(5000);
+  expect(server.listening).toBe(false);
+  req.destroy();
+  exit.mockRestore();
+});
+
+test("makeShutdown bounds a server close that never calls back and still checkpoints", async () => {
+  vi.useFakeTimers();
+  const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  const serverClose = vi.fn(() => {}); // never calls back
+  const closeDb = vi.fn(async () => {});
+  const shutdown = makeShutdown({ close: serverClose } as never, closeDb);
+
+  const p = shutdown("SIGTERM");
+  await vi.advanceTimersByTimeAsync(5000);
+  await p;
+
+  expect(closeDb).toHaveBeenCalledTimes(1);
+  expect(exit).toHaveBeenCalledWith(0);
+  expect(err).toHaveBeenCalledWith(expect.stringContaining("server close exceeded"));
+
+  vi.useRealTimers();
+  exit.mockRestore();
+  err.mockRestore();
 });

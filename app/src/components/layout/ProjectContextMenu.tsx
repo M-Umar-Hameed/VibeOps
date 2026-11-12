@@ -21,6 +21,7 @@ export function ProjectContextMenu({ project, x, y, onClose }: {
     },
     {
       key: "index", label: "Index docs",
+      hint: "Re-read this project's docs into knowledge search",
       disabled: !project.repoPath, disabledReason: !project.repoPath ? "no repo folder configured" : undefined,
       onSelect: async () => {
         const r: any = await api.post(`/projects/${project.id}/index-repo`);

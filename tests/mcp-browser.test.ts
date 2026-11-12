@@ -94,6 +94,16 @@ describe("MCP browser verbs", () => {
     await client.close();
   });
 
+  it("browser_wait enqueues a wait step with no act grant required", async () => {
+    hasActGrant.mockResolvedValue(false);
+    submitBatch.mockResolvedValue({ results: [{ ok: true, value: "found" }], snapshot: { origin: "https://github.com", nodes: [] } });
+    const { client } = await connectedClient();
+    await client.callTool({ name: "browser_wait", arguments: { instanceId: "i1", text: "Done" } });
+    expect(submitBatch).toHaveBeenCalledWith("i1", "i1", [{ verb: "wait", text: "Done" }]);
+    expect(hasActGrant).not.toHaveBeenCalled();
+    await client.close();
+  });
+
   it("with an act grant, the SAME MCP call enqueues grant:act+targetOrigin and returns the snapshot", async () => {
     hasActGrant.mockResolvedValue(true);
     submitBatch.mockResolvedValue({ results: [{ ok: true }], snapshot: { origin: "https://github.com", nodes: [] } });

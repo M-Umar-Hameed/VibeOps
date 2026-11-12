@@ -190,3 +190,22 @@ test("runDoctor: lane without mcp has no mcp field", async () => {
   const [s] = await runDoctor(configWith(name, EXIT0), { fresh: true });
   expect(s.mcp).toBeUndefined();
 });
+
+test("pipelineStartWarnings: agy-basename agent produces firewall warning, non-agy does not", () => {
+  const agyName = uniq("agy-agent");
+  const claudeName = uniq("claude-agent");
+  const cfg: RelayConfig = {
+    workdir: tmpdir(),
+    agents: {
+      [agyName]: { cmd: ["agy", "-p"], roles: ["work"] },
+      [claudeName]: { cmd: ["claude", "-p"], roles: ["work"] },
+    },
+  };
+  const agyWarnings = pipelineStartWarnings(cfg, [agyName]);
+  expect(agyWarnings).toEqual([
+    `agent "${agyName}" (agy): the forge firewall runs as a .agents/hooks.json hook in work sandboxes, but agy runs the command anyway if the hook exits without printing a decision (a missing hook script blocks)`,
+  ]);
+
+  const claudeWarnings = pipelineStartWarnings(cfg, [claudeName]);
+  expect(claudeWarnings).toEqual([]);
+});

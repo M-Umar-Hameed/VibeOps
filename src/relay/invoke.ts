@@ -7,9 +7,10 @@ import { join, dirname } from "node:path";
 import type { RelayAgent, PromptDelivery } from "./config.js";
 import { pidAlive } from "../db/lifecycle.js";
 import { winCommand } from "./win-bin.js";
-import { loadWall, wallCmd } from "./wall.js";
+import { loadWall, wallCmd, denyOnlyCmd, agyDenyCmd, ALLOW_COMMAND_ENV } from "./wall.js";
 import { registerEnvSecrets } from "../forge/redact.js";
-import { chooseAccount, allExhaustedResult, settleAccountResult } from "./accounts.js";
+import { chooseAccount, allExhaustedResult, settleAccountResult, laneKind } from "./accounts.js";
+import { parseUsageJson } from "./usage-json.js";
 
 const OUTPUT_CAP = 100_000;
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
@@ -97,6 +98,22 @@ export async function killPidTree(pid: number, timeoutMs = KILL_TIMEOUT_MS): Pro
   }
 }
 
+export function filterClaudeStderr(text: string): string {
+  const lines = text.split(/\r?\n/);
+  const kept: string[] = [];
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t) continue;
+    if (/^Warning:/i.test(t)) continue;
+    if (/^Permission (?:deny|allow) rule/i.test(t)) continue;
+    if (/has a :\* that is not at the end/i.test(t)) continue;
+    if (/no stdin data received/i.test(t)) continue;
+    if (/telemetry/i.test(t)) continue;
+    kept.push(line);
+  }
+  return kept.length > 0 ? kept.join("\n") + "\n" : "";
+}
+
 export async function runAgent(
   agent: RelayAgent, prompt: string, workdir: string,
   onData?: (chunk: string) => void,
@@ -112,7 +129,11 @@ export async function runAgent(
   }
 
   const wall = await loadWall(agent.projectId, agent.write === true, workdir);
-  const cmd = wall.on ? wallCmd(agent.cmd, wall.allowed, agent.write === true, agent.addDirs) : agent.cmd;
+  let cmd = wall.on ? wallCmd(agent.cmd, wall.allowed, agent.write === true, agent.addDirs, agent.liftedRules) : denyOnlyCmd(agent.cmd, agent.liftedRules);
+  cmd = agyDenyCmd(cmd, agent.liftedRules);
+  const kind = laneKind(agent);
+  const exact = agent.usage === "exact";
+  if (exact && (kind === "claude" || kind === "agy") && !cmd.includes("--output-format")) cmd = [...cmd, "--output-format", "json"];
 
   const promptFile = join(tmpdir(), `vibeops-relay-${randomUUID()}.txt`);
   // Declared delivery wins while the cmd still carries its placeholder. The wall
@@ -167,6 +188,14 @@ export async function runAgent(
   if (process.env.ANTHROPIC_API_KEY) {
     childEnv = { ...(childEnv ?? process.env), ENABLE_PROMPT_CACHING_1H: "1" };
   }
+  const workerTestHome = join(tmpdir(), `vibeops-worker-home-${randomUUID()}`);
+  mkdirSync(workerTestHome, { recursive: true });
+  childEnv = {
+    ...(childEnv ?? process.env),
+    [ALLOW_COMMAND_ENV]: (agent.liftedRules ?? []).join(","),
+    VIBEOPS_TEST_EMBEDDED: childEnv?.VIBEOPS_TEST_EMBEDDED ?? process.env.VIBEOPS_TEST_EMBEDDED ?? "1",
+    VIBEOPS_HOME: childEnv?.VIBEOPS_HOME ?? workerTestHome,
+  };
 
   // S2-A2: with a run logPath, the stage child writes stdout+stderr straight to
   // that file (fd stdio) and is spawned detached+unref'd, so an API restart
@@ -232,8 +261,8 @@ export async function runAgent(
       let tailPos = tailStart;
 
       const push = (s: string) => {
-        if (output.length < OUTPUT_CAP) output += s;
-        onData?.(s);
+        if (output.length < (exact ? OUTPUT_CAP * 4 : OUTPUT_CAP)) output += s;
+        if (!exact) onData?.(s);
       };
 
       const timeoutMs = agent.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -282,7 +311,14 @@ export async function runAgent(
       } else {
         const capture = (chunk: Buffer) => push(chunk.toString("utf-8"));
         child.stdout?.on("data", capture);
-        child.stderr?.on("data", capture);
+        if (kind === "claude") {
+          child.stderr?.on("data", (chunk: Buffer) => {
+            const filtered = filterClaudeStderr(chunk.toString("utf-8"));
+            if (filtered) push(filtered);
+          });
+        } else {
+          child.stderr?.on("data", capture);
+        }
       }
 
       const finish = (ok: boolean) => {
@@ -292,6 +328,13 @@ export async function runAgent(
         if (exitTimer) clearTimeout(exitTimer);
         if (pollTimer) clearInterval(pollTimer);
         drainTail();
+        if (exact) {
+          // ponytail: the raw run log file keeps the JSON; only the parsed text reaches onData and output
+          const parsed = parseUsageJson(output);
+          onData?.(parsed ? parsed.text : output);
+          resolve({ ok, output: (parsed ? parsed.text : output).slice(0, OUTPUT_CAP), ...(parsed && { usage: parsed.usage }) });
+          return;
+        }
         resolve({ ok, output: output.slice(0, OUTPUT_CAP) });
       };
       child.on("close", (code) => finish(code === 0));

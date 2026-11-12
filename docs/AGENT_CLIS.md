@@ -14,6 +14,9 @@ type RelayAgent = {
   mcp?: boolean; // written by auto-wiring as a record that the lane is registered; set false to opt out
   accounts?: RelayAccount[];
   executable?: string; // sdk lanes only: absolute path to a Claude Code executable
+  liftedRules?: string[];
+  skillAllowlist?: string[];
+  usage?: "exact";
 };
 
 type RelayModel = {
@@ -138,6 +141,8 @@ VibeOps does this for you: `ensureMcpWiring` (src/mcp/autowire.ts) registers the
 Install: Follow Antigravity installation docs.
 
 Login Flow: Sign in through the Antigravity CLI/app's own sign-in flow (no single flag — see Antigravity's docs). VibeOps only invokes agy once it's authenticated.
+
+Deny list: claude CLI lanes now run the PreToolUse firewall hook (`src/relay/firewall-hook.ts`) before the deny globs. Lifted ids reach the hook through `VIBEOPS_ALLOW_COMMAND`. If the hook cannot start, the call is blocked. agy lanes receive the deny list (git push, npm publish, vercel, ssh and similar) as per-run `--settings` permission rules, with or without the wall. The `find-delete-outside` and `curl-pipe` rules are not covered on agy, because its token-prefix rules cannot express them. agy work lanes in forge sandboxes get `.agents/hooks.json` (named hook `vibeops-firewall`, `run_command` PreToolUse) running `agy-firewall-hook`. The file is merged into a tracked copy if one exists, restored or removed before every forge commit, and backed up under `.forge/agy-hook-backup.json`. The deny globs stay as a second layer. Plan and review stages and non-forge agy calls get no hook. Live verification shows agy blocks denied commands and missing hook scripts, allows safe commands when the hook outputs allow, passes through lifted rule environment variables to the hook, but fails open running the command if the hook script exits 0 and prints nothing. A lane whose cmd already carries its own `--settings` (or `--restricted` for claude) does not receive the deny list.
 
 MCP Wiring: Run once to reach VibeOps tools:
 `agy mcp add --header "Authorization: Bearer <key>" vibeops http://127.0.0.1:8787/mcp`

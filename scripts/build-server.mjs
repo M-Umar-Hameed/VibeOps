@@ -25,8 +25,19 @@ await build({
   // claude-agent-sdk spawns its own cli.js and resolves it relative to its
   // package dir, so it must stay on disk rather than be inlined.
   external: ["@electric-sql/pglite", "@huggingface/transformers", "@anthropic-ai/claude-agent-sdk"],
-  banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
+  // Aliased: esbuild cannot see banner text, so a bundled module importing createRequire would redeclare it.
+  banner: { js: "import { createRequire as __bannerCreateRequire } from 'node:module'; const require = __bannerCreateRequire(import.meta.url);" },
   logLevel: "info",
+});
+
+await build({
+  entryPoints: ["src/relay/firewall-hook.ts"], bundle: true, platform: "node", format: "esm", target: "node20",
+  outfile: join(outDir, "firewall-hook.mjs"), logLevel: "info",
+});
+
+await build({
+  entryPoints: ["src/relay/agy-firewall-hook.ts"], bundle: true, platform: "node", format: "esm", target: "node20",
+  outfile: join(outDir, "agy-firewall-hook.mjs"), logLevel: "info",
 });
 
 cpSync("node_modules/@electric-sql/pglite", join(outDir, "node_modules", "@electric-sql", "pglite"), { recursive: true });

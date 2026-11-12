@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { statSync, readdirSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { join, relative, sep } from "node:path";
+import { readFile, realpath } from "node:fs/promises";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { resolveProjectVaultPath } from "../ingest/vault-path.js";
 import { and, eq, isNull, inArray, like, notInArray, sql as dsql } from "drizzle-orm";
 import { db } from "../db/client.js";
@@ -11,6 +11,7 @@ import { ConflictError, NotFoundError } from "./errors.js";
 type Executor = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
 import { chunkMarkdown } from "../knowledge/chunker.js";
 import { getEmbedder, type Embedder } from "../knowledge/embedder.js";
+import type { JobCtx } from "./jobs.js";
 import { redactSecrets } from "../forge/redact.js";
 import { logKnowledgeQuery } from "./usage.js";
 import { bump } from "../services/metrics.js";
@@ -89,10 +90,21 @@ function vecLiteral(v: number[]): string {
   return `[${v.join(",")}]`;
 }
 
-export async function upsertSourceDoc(
-  kind: "vault" | "note" | "session" | "repo" | "chat", ref: string, text: string,
-  embedder: Embedder, contentHash?: string,
-): Promise<number> {
+export async function prepareSourceDoc(
+  kind: "vault" | "note" | "session" | "repo" | "chat",
+  ref: string,
+  text: string,
+  contentHash?: string,
+  projectId?: string | null,
+): Promise<{
+  kind: string;
+  ref: string;
+  hash: string;
+  scopeId: string | null;
+  newChunks: { index: number; content: string }[];
+  reuseIds: string[];
+  deadIds: string[];
+}> {
   const chunks = chunkMarkdown(text);
   const hash = contentHash ?? fileHash(text);
   // Incremental diff: reuse a stored row when an incoming chunk at the SAME index has
@@ -119,17 +131,39 @@ export async function upsertSourceDoc(
   }
   const deadIds = existing.filter((r) => !reusedIndexes.has(r.chunkIndex)).map((r) => r.id);
 
-  const vecs = newChunks.length ? await embedder.embed(newChunks.map((c) => c.content)) : [];
   // S5 moved scope from query-time (the old predicate resolved notes via a subquery
   // on every read, so it was right no matter who wrote the row) to WRITE time, which
   // is only right if every writer sets it. A note ref carries no "<uuid>:" prefix, so
   // resolve it from the notes table exactly as the backfill migration does; otherwise a
   // note indexed through this generic path lands unscoped and survives clearProjectKnowledge.
-  const scopeId = kind === "note" ? await noteScopeProjectId(ref) : refProjectId(ref);
-  const rows = newChunks.map((c, i) => ({
-    sourceKind: kind, sourceRef: ref, chunkIndex: c.index,
-    content: c.content, embedding: vecs[i], model: embedder.model, dim: embedder.dim,
-    contentHash: hash, projectId: scopeId,
+  const scopeId = projectId !== undefined ? projectId : (kind === "note" ? await noteScopeProjectId(ref) : refProjectId(ref));
+
+  return { kind, ref, hash, scopeId, newChunks, reuseIds, deadIds };
+}
+
+export async function writeSourceDoc(
+  prep: {
+    kind: string;
+    ref: string;
+    hash: string;
+    scopeId: string | null;
+    newChunks: { index: number; content: string }[];
+    reuseIds: string[];
+    deadIds: string[];
+  },
+  vecs: number[][],
+  embedder: Embedder,
+): Promise<number> {
+  const rows = prep.newChunks.map((c, i) => ({
+    sourceKind: prep.kind as "vault" | "note" | "session" | "repo" | "chat",
+    sourceRef: prep.ref,
+    chunkIndex: c.index,
+    content: c.content,
+    embedding: vecs[i],
+    model: embedder.model,
+    dim: embedder.dim,
+    contentHash: prep.hash,
+    projectId: prep.scopeId,
   }));
   // One transaction so a mid-batch failure rolls everything back. Delete dead rows
   // first, then insert new ones (freed indices reuse safely); rewrite reused rows'
@@ -137,14 +171,132 @@ export async function upsertSourceDoc(
   // reindexFile's limit(1) gate and the one-distinct-hash invariant depend on it.
   // Batched inserts: a multi-thousand-row statement overflows PGlite's WASM memory.
   await db.transaction(async (tx) => {
-    if (deadIds.length) await tx.delete(embeddings).where(inArray(embeddings.id, deadIds));
-    if (reuseIds.length) await tx.update(embeddings).set({ contentHash: hash }).where(inArray(embeddings.id, reuseIds));
+    if (prep.deadIds.length) await tx.delete(embeddings).where(inArray(embeddings.id, prep.deadIds));
+    if (prep.reuseIds.length) await tx.update(embeddings).set({ contentHash: prep.hash, projectId: prep.scopeId }).where(inArray(embeddings.id, prep.reuseIds));
     for (let i = 0; i < rows.length; i += 100) {
       await tx.insert(embeddings).values(rows.slice(i, i + 100));
     }
   });
   bump("embed.chunks", vecs.length);
   return vecs.length;
+}
+
+export async function upsertSourceDoc(
+  kind: "vault" | "note" | "session" | "repo" | "chat",
+  ref: string,
+  text: string,
+  embedder: Embedder,
+  contentHash?: string,
+  projectId?: string | null,
+): Promise<number> {
+  const prep = await prepareSourceDoc(kind, ref, text, contentHash, projectId);
+  const vecs = prep.newChunks.length ? await embedder.embed(prep.newChunks.map((c) => c.content)) : [];
+  return writeSourceDoc(prep, vecs, embedder);
+}
+
+// Append-only write for growing transcripts: new chunks continue after the ref's max chunkIndex;
+// existing rows for the ref are never updated or deleted.
+export async function appendSourceDoc(
+  kind: "vault" | "note" | "session" | "repo" | "chat",
+  ref: string,
+  text: string,
+  embedder: Embedder,
+  contentHash?: string,
+  projectId?: string | null,
+): Promise<number> {
+  const contents = chunkMarkdown(text).map((c) => redactSecrets(c.content)).filter((c) => c.trim());
+  if (!contents.length) return 0;
+  const [{ max }] = await db.select({ max: dsql<number | null>`max(${embeddings.chunkIndex})` })
+    .from(embeddings)
+    .where(and(eq(embeddings.sourceKind, kind), eq(embeddings.sourceRef, ref)));
+  const base = max === null || max === undefined ? 0 : Number(max) + 1;
+  const vecs = await embedder.embed(contents);
+  const hash = contentHash ?? fileHash(text);
+  const scopeId = projectId !== undefined ? projectId : refProjectId(ref);
+  const rows = contents.map((content, i) => ({
+    sourceKind: kind, sourceRef: ref, chunkIndex: base + i, content, embedding: vecs[i],
+    model: embedder.model, dim: embedder.dim, contentHash: hash, projectId: scopeId,
+  }));
+  await db.transaction(async (tx) => {
+    for (let i = 0; i < rows.length; i += 100) await tx.insert(embeddings).values(rows.slice(i, i + 100));
+  });
+  bump("embed.chunks", vecs.length);
+  return vecs.length;
+}
+
+export const EMBED_BATCH = 32;
+
+export async function upsertSourceDocsBatched(
+  kind: "vault" | "note" | "session" | "repo" | "chat",
+  docs: { ref: string; text: string; contentHash?: string; projectId?: string | null }[],
+  embedder: Embedder,
+  batch = EMBED_BATCH,
+  hooks: { onDoc?: (done: number) => void; isCancelled?: () => boolean } = {},
+): Promise<{ ref: string; ok: boolean; error?: string }[]> {
+  const results: { ref: string; ok: boolean; error?: string }[] = [];
+  const pending: { prep: Awaited<ReturnType<typeof prepareSourceDoc>>; docIndex: number }[] = [];
+  let pendingChunks = 0;
+  let settled = 0;
+  const settle = (i: number, r: { ref: string; ok: boolean; error?: string }) => {
+    results[i] = r;
+    hooks.onDoc?.(++settled);
+  };
+
+  const flush = async () => {
+    if (pending.length === 0) return;
+    const allChunks = pending.flatMap((p) => p.prep.newChunks.map((c) => c.content));
+    try {
+      const allVecs = await embedder.embed(allChunks);
+      let offset = 0;
+      for (const { prep, docIndex } of pending) {
+        const vecs = allVecs.slice(offset, offset + prep.newChunks.length);
+        offset += prep.newChunks.length;
+        try {
+          await writeSourceDoc(prep, vecs, embedder);
+          settle(docIndex, { ref: prep.ref, ok: true });
+        } catch (e) {
+          settle(docIndex, { ref: prep.ref, ok: false, error: (e as Error).message });
+        }
+      }
+    } catch (e) {
+      // Batch embed failed, fall back to one-by-one
+      for (const { prep, docIndex } of pending) {
+        try {
+          const vecs = prep.newChunks.length ? await embedder.embed(prep.newChunks.map((c) => c.content)) : [];
+          await writeSourceDoc(prep, vecs, embedder);
+          settle(docIndex, { ref: prep.ref, ok: true });
+        } catch (err) {
+          settle(docIndex, { ref: prep.ref, ok: false, error: (err as Error).message });
+        }
+      }
+    }
+    pending.length = 0;
+    pendingChunks = 0;
+  };
+
+  for (let i = 0; i < docs.length; i++) {
+    if (hooks.isCancelled?.()) break;
+    const doc = docs[i];
+    try {
+      const prep = await prepareSourceDoc(kind, doc.ref, doc.text, doc.contentHash, doc.projectId);
+      if (prep.newChunks.length === 0) {
+        // No new chunks, just write metadata update
+        await writeSourceDoc(prep, [], embedder);
+        settle(i, { ref: doc.ref, ok: true });
+      } else {
+        pending.push({ prep, docIndex: i });
+        pendingChunks += prep.newChunks.length;
+        if (pendingChunks >= batch) {
+          await flush();
+        }
+      }
+    } catch (e) {
+      settle(i, { ref: doc.ref, ok: false, error: (e as Error).message });
+    }
+  }
+
+  await flush();
+  return results.filter(Boolean);
 }
 
 export async function upsertVaultFile(path: string, text: string, embedder: Embedder, contentHash?: string): Promise<number> {
@@ -217,17 +369,23 @@ function walkRepoDocs(root: string, currentDir = root, depth = 0, files: string[
   return files;
 }
 
-export async function indexRepoDocs(projectId: string): Promise<{ indexed: number; skipped: number; removed: number }> {
+export async function indexRepoDocs(
+  projectId: string,
+  ctx?: JobCtx,
+): Promise<{ indexed: number; skipped: number; removed: number; cancelled?: boolean }> {
   const [p] = await db.select().from(projects).where(eq(projects.id, projectId));
   if (!p) throw new NotFoundError(`project not found: ${projectId}`);
   if (!p.repoPath) throw new ConflictError("project has no repoPath set");
   const root = p.repoPath;
   const embedder = getEmbedder();
   const files = walkRepoDocs(root);
-  let indexed = 0;
+  ctx?.progress({ phase: "reading docs", done: 0, total: files.length });
   let skipped = 0;
-  const kept: string[] = [];
-  for (const file of files) {
+  const items: { ref: string; text: string }[] = [];
+
+  for (let i = 0; i < files.length; i++) {
+    if (ctx?.cancelled) break;
+    const file = files[i];
     try {
       const stat = statSync(file);
       if (stat.size > 200 * 1024) {
@@ -237,14 +395,28 @@ export async function indexRepoDocs(projectId: string): Promise<{ indexed: numbe
       const text = await readFile(file, "utf-8");
       const relPosix = relative(root, file).split(sep).join("/");
       const ref = `${projectId}:${relPosix}`;
-      await upsertSourceDoc("repo", ref, text, embedder);
-      indexed++;
-      kept.push(ref);
+      items.push({ ref, text });
     } catch (e) {
       // skip unreadable file
+    } finally {
+      ctx?.progress({ done: i + 1 });
     }
   }
-  
+
+  ctx?.progress({ phase: "embedding docs", done: 0, total: items.length });
+  const results = await upsertSourceDocsBatched("repo", items, embedder, EMBED_BATCH, {
+    onDoc: (n) => ctx?.progress({ done: n }),
+    isCancelled: () => !!ctx?.cancelled,
+  });
+  const indexed = results.filter((r) => r.ok).length;
+  const kept = results.filter((r) => r.ok).map((r) => r.ref);
+
+  if (ctx?.cancelled) {
+    // A partial kept list would delete docs that were never processed.
+    return { indexed, skipped, removed: 0, cancelled: true };
+  }
+
+  ctx?.progress({ phase: "removing stale docs" });
   const removedRows = await db.delete(embeddings)
     .where(and(
       eq(embeddings.sourceKind, "repo"),
@@ -330,9 +502,9 @@ export async function searchKnowledge(
 }
 
 // Removes exactly the project's indexed chunks — repo docs, project-vault files,
-// and project/ticket note chunks — as defined by the shared scoping predicate.
-// Leaves genuinely global sources (legacy shared vault, sessions) and every notes
-// row itself. Takes an executor so deleteProject can call it inside its transaction.
+// project-mapped sessions, and project/ticket note chunks — as defined by the shared
+// scoping predicate. Leaves global sources (legacy shared vault, unmatched sessions)
+// and every notes row itself. Takes an executor so deleteProject can call it inside its transaction.
 export async function clearProjectKnowledge(projectId: string, executor: Executor = db): Promise<number> {
   const rows = await executor.delete(embeddings)
     .where(projectScopeWhere(projectId))
@@ -368,6 +540,15 @@ export async function listSessionDocs(limit = 50): Promise<{ ref: string; chunkC
   }));
 }
 
+// Indexed chunks reassembled in order; null when the ref is not indexed.
+async function indexedText(kind: "session" | "chat" | "repo", ref: string): Promise<string | null> {
+  const rows = await db.select({ content: embeddings.content })
+    .from(embeddings)
+    .where(and(eq(embeddings.sourceKind, kind), eq(embeddings.sourceRef, ref)))
+    .orderBy(embeddings.chunkIndex);
+  return rows.length ? rows.map((r) => r.content).join("\n\n") : null;
+}
+
 export async function getKnowledgeSource(kind: string, ref: string): Promise<string> {
   if (kind === "vault") {
     // Only serve refs that exist in the knowledge index (exact sourceRef match).
@@ -388,14 +569,38 @@ export async function getKnowledgeSource(kind: string, ref: string): Promise<str
       return `Error: DB query failed: ${e.message}`;
     }
   } else if (kind === "session") {
-    // Ingested sessions have no source file to read back; the indexed chunks
-    // ARE the source. Reassemble them in order.
-    const rows = await db.select({ content: embeddings.content })
-      .from(embeddings)
-      .where(and(eq(embeddings.sourceKind, "session"), eq(embeddings.sourceRef, ref)))
-      .orderBy(embeddings.chunkIndex);
-    if (!rows.length) return `Error: Session ${ref} not found in the index.`;
-    return rows.map((r) => r.content).join("\n\n");
+    return (await indexedText("session", ref)) ?? `Error: Session ${ref} not found in the index.`;
+  } else if (kind === "chat") {
+    return (await indexedText("chat", ref)) ?? `Error: Chat ${ref} not found in the index.`;
+  } else if (kind === "repo") {
+    // Same exact-sourceRef gate as vault: never an arbitrary file read.
+    const chunks = await indexedText("repo", ref);
+    if (chunks === null) return `Error: ${ref} is not an indexed repo source.`;
+    const m = /^([0-9a-fA-F-]{36}):(.+)$/.exec(ref);
+    if (!m) return `Error: ${ref} is not a valid repo source ref.`;
+    const [p] = await db.select({ repoPath: projects.repoPath }).from(projects).where(eq(projects.id, m[1])).limit(1);
+    if (!p?.repoPath) return chunks; // repo moved/unset: indexed text is still the source
+    const inside = (root: string, file: string) => {
+      const rel = relative(root, file);
+      return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+    };
+    const file = join(p.repoPath, m[2]);
+    if (!inside(p.repoPath, file)) return `Error: ${ref} resolves outside the project repo.`;
+    let realFile: string;
+    try {
+      realFile = await realpath(file);
+    } catch {
+      return chunks; // file gone: fall back to indexed chunks
+    }
+    let realRoot: string;
+    try { realRoot = await realpath(p.repoPath); } catch { return chunks; }
+    // Symlinks/junctions: compare canonical paths (repoPath itself may be a junction).
+    if (!inside(realRoot, realFile)) return `Error: ${ref} resolves outside the project repo.`;
+    try {
+      return await readFile(realFile, "utf-8");
+    } catch {
+      return chunks;
+    }
   }
   return `Error: Unknown source kind ${kind}`;
 }
@@ -432,18 +637,31 @@ function budgetByKind(rows: any[], limit: number): any[] {
   return out;
 }
 
+export const GRAPH_MAX_LIMIT = 1000;
+
+// ponytail: edge building is O(n^2) in JS, ~500k cosine pairs at the 1000 cap.
+export function clampGraphLimit(raw: unknown, fallback = 60): number {
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n > 0 ? Math.min(n, GRAPH_MAX_LIMIT) : fallback;
+}
+
 export async function knowledgeGraph(limit = 60, projectId?: string, refs?: string[]): Promise<{ nodes: { id: string; kind: string; chunks: number; createdAt: string }[]; edges: { a: string; b: string; w: number }[] }> {
-  // vault + session are shared context (no project). repo nodes carry a
-  // "<projectId>:" sourceRef prefix. note nodes map to a project via
-  // scope+refId (notes have no project_id column); global-scope notes are shared.
+  limit = clampGraphLimit(limit);
+  // repo nodes carry a "<projectId>:" sourceRef prefix. Sessions with a project_id
+  // are project rows; sessions with no project_id (unmatched sessions) are global.
+  // note nodes map to a project via scope+refId; global-scope notes are global.
+  // vault is always global.
   const unwrap = (r: unknown) => (Array.isArray(r) ? r : (r as { rows: unknown[] }).rows) as any[];
-  const groupQuery = (where: ReturnType<typeof dsql>) => db.execute(dsql`
-    SELECT source_ref, source_kind, count(id) as chunk_count, max(created_at) as created_at
-    FROM embeddings
-    ${where}
-    GROUP BY source_ref, source_kind
-    ORDER BY max(created_at) DESC
-    LIMIT ${limit}
+  const perKindQuery = (where: ReturnType<typeof dsql>) => db.execute(dsql`
+    SELECT source_ref, source_kind, chunk_count, created_at FROM (
+      SELECT source_ref, source_kind, count(id) AS chunk_count, max(created_at) AS created_at,
+        row_number() OVER (PARTITION BY source_kind ORDER BY max(created_at) DESC) AS rn
+      FROM embeddings
+      ${where}
+      GROUP BY source_ref, source_kind
+    ) sub
+    WHERE rn <= ${limit}
+    ORDER BY source_kind ASC, rn ASC
   `);
 
   // Test-only scoping: restrict candidates to caller-supplied refs so a test can
@@ -453,18 +671,21 @@ export async function knowledgeGraph(limit = 60, projectId?: string, refs?: stri
   if (projectId) {
     // Budget the node list so a project's own nodes are never crowded out by the
     // globally-shared, always-newer session/vault stream. Project-scoped nodes
-    // (repo docs + this project's project/ticket notes) are selected FIRST, then
-    // remaining slots fill with global nodes (vault/session + global-scope notes),
-    // newest-first within each group. The two groups are disjoint (a row is repo,
-    // vault, session, or a note of exactly one scope) so no dedup is needed.
+    // (repo docs + this project's sessions + this project's project/ticket notes)
+    // are selected FIRST, then remaining slots fill with global nodes (vault +
+    // unmatched sessions + global-scope notes), newest-first within each group.
+    // The two groups are disjoint (a row is repo, vault, session, or a note of
+    // exactly one scope) so no dedup is needed.
     const projectWhere = refWhere
       ? dsql`WHERE ${projectScopeWhere(projectId)} AND ${refWhere}`
       : dsql`WHERE ${projectScopeWhere(projectId)}`;
     const globalWhere = refWhere
       ? dsql`WHERE ${globalScopeWhere()} AND ${refWhere}`
       : dsql`WHERE ${globalScopeWhere()}`;
-    const projectRows = unwrap(await groupQuery(projectWhere));
-    const globalRows = unwrap(await groupQuery(globalWhere));
+    // Fair-share by kind within each group (round-robin) so repo docs and
+    // project-vault files always appear next to notes even when notes are newer.
+    const projectRows = budgetByKind(unwrap(await perKindQuery(projectWhere)), limit);
+    const globalRows = budgetByKind(unwrap(await perKindQuery(globalWhere)), limit);
     // Reserve a floor for global (shared vault/session) nodes so shared knowledge
     // stays visible even when a project has more than `limit` nodes; project-first
     // for the remaining budget, newest-first within each group.
@@ -478,18 +699,7 @@ export async function knowledgeGraph(limit = 60, projectId?: string, refs?: stri
     // session stream can't starve vault/note/repo (which plain newest-first-
     // across-all-kinds would drop entirely). Fetch top-`limit` per kind, then
     // round-robin. Total node count still bounded by `limit`.
-    const perKind = unwrap(await db.execute(dsql`
-      SELECT source_ref, source_kind, chunk_count, created_at FROM (
-        SELECT source_ref, source_kind, count(id) AS chunk_count, max(created_at) AS created_at,
-          row_number() OVER (PARTITION BY source_kind ORDER BY max(created_at) DESC) AS rn
-        FROM embeddings
-        ${refWhere ? dsql`WHERE ${refWhere}` : dsql``}
-        GROUP BY source_ref, source_kind
-      ) sub
-      WHERE rn <= ${limit}
-      ORDER BY source_kind ASC, rn ASC
-    `));
-    rows = budgetByKind(perKind, limit);
+    rows = budgetByKind(unwrap(await perKindQuery(refWhere ? dsql`WHERE ${refWhere}` : dsql``)), limit);
   }
   if (!rows.length) return { nodes: [], edges: [] };
 
@@ -536,6 +746,8 @@ export async function knowledgeGraph(limit = 60, projectId?: string, refs?: stri
     return dot(a, b) / (mA * mB);
   }
 
+  // ponytail: edges cost O(n²) in JS. At the 1000 cap that is about 500k cosine
+  // pairs per request. Leave this comment at the clamp.
   const edges: { a: string; b: string; w: number }[] = [];
   for (let i = 0; i < nodes.length; i++) {
     for (let j = i + 1; j < nodes.length; j++) {

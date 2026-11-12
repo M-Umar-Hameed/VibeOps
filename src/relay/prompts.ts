@@ -46,13 +46,35 @@ export function composePlanPrompt(
   ].filter(Boolean).join("\n");
 }
 
+export type ReworkContext = {
+  findings: string;
+  conflictNote?: string;
+  recentCommit?: string;
+  gitStatus?: string;
+  failingCheckOutput?: string;
+};
+
 export function composeWorkPrompt(
-  { ticket, plan, knowledge, workdir, memory, skills, operatorEvidence, allowedCommands, checks }: {
+  { ticket, plan, knowledge, workdir, memory, skills, operatorEvidence, allowedCommands, checks, rework }: {
     ticket: TicketLike; plan: string; knowledge: KnowledgeItem[]; workdir: string; memory?: string; skills?: string; operatorEvidence?: string[];
-    allowedCommands?: string[]; checks?: string[];
+    allowedCommands?: string[]; checks?: string[]; rework?: ReworkContext;
   },
 ): string {
+  const reworkHeader = rework ? [
+    `# REWORK INSTRUCTIONS (HIGHEST PRIORITY)`,
+    `You are addressing review feedback and/or fixing check failures from a previous attempt.`,
+    `Your primary goal is to satisfy the review findings and ensure all checks pass.`,
+    `Do NOT discard or rewrite working code that already passed review.`,
+    rework.conflictNote ? rework.conflictNote : "",
+    `\nPrevious review findings (address ALL of these):\n${rework.findings}`,
+    rework.failingCheckOutput ? `\nFailing check output:\n<failing-check-output>\n${rework.failingCheckOutput}\n</failing-check-output>` : "",
+    rework.recentCommit ? `\nRecent sandbox commit:\n${rework.recentCommit}` : "",
+    rework.gitStatus ? `\nUncommitted sandbox changes:\n${rework.gitStatus}` : "",
+    `\n---\n`,
+  ].filter(Boolean).join("\n") : "";
+
   return [
+    reworkHeader,
     `Ticket: ${ticket.title}`,
     ticket.body ? fenceUntrusted("ticket-body", ticket.body) : "",
     formatOperatorEvidence(operatorEvidence, "before changing code"),

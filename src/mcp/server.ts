@@ -56,9 +56,9 @@ export async function buildServer(apiKey: string) {
 
   server.registerTool("save_decision",
     { description: "Record a decision with its rationale so it is recalled unasked in matching contexts. Only for choices or constraints the owner stated. Never record a tool limitation, a failure, a missing permission, or your own inability - those are transient.",
-      inputSchema: { text: z.string(), rationale: z.string(), domain: z.string().optional(), scope: z.enum(["global", "project", "ticket"]).default("global"), refId: z.string().optional() } },
-    async ({ text, rationale, domain, scope, refId }) => ({
-      content: [{ type: "text", text: JSON.stringify(await saveNote(actor.id, { body: text, rationale, domain, kind: "decision", scope, refId })) }],
+      inputSchema: { text: z.string(), rationale: z.string(), domain: z.string().optional(), scope: z.enum(["global", "project", "ticket"]).default("global"), refId: z.string().optional(), supersedesId: z.string().optional() } },
+    async ({ text, rationale, domain, scope, refId, supersedesId }) => ({
+      content: [{ type: "text", text: JSON.stringify(await saveNote(actor.id, { body: text, rationale, domain, kind: "decision", scope, refId, supersedesId })) }],
     }));
 
   server.registerTool("save_rule",
@@ -158,8 +158,8 @@ export async function buildServer(apiKey: string) {
     const failed = result.results.find((r) => !r.ok);
     const s = failed ?? result.results[result.results.length - 1];
     if (!s?.ok) {
-      recordBrowserCall(actor.id, { name, summary: `refused: ${humanizeBrowserError(s?.error)}` });
-      return `browser refused: ${humanizeBrowserError(s?.error)}`;
+      recordBrowserCall(actor.id, { name, summary: `refused: ${humanizeBrowserError(s?.error, s?.code)}` });
+      return `browser refused: ${humanizeBrowserError(s?.error, s?.code)}`;
     }
     recordBrowserCall(actor.id, { name, summary: "ok" });
     return typeof s.value === "string" ? s.value : JSON.stringify(result.snapshot ?? s.value ?? "").slice(0, 4000);
@@ -180,6 +180,11 @@ export async function buildServer(apiKey: string) {
       inputSchema: { instanceId: z.string().optional(), ref: z.string() } },
     async ({ instanceId, ref }) => ({ content: [{ type: "text", text: await readOnly("browser_read", instanceId, { verb: "read", ref }) }] }));
 
+  server.registerTool("browser_wait",
+    { description: "Wait until text appears on the page, up to a few seconds (read-only). Use after a click or navigate that loads content asynchronously. instanceId optional when one browser is connected.",
+      inputSchema: { instanceId: z.string().optional(), text: z.string() } },
+    async ({ instanceId, text }) => ({ content: [{ type: "text", text: await readOnly("browser_wait", instanceId, { verb: "wait", text }) }] }));
+
   server.registerTool("browser_marks",
     { description: "Screenshot the connected browser with numbered boxes over every interactive element; returns the mark table as text plus a file path to the annotated PNG. Choose a target by MARK NUMBER and act on its ref with browser_act. Works without vision: each mark lists its role and name.",
       inputSchema: { instanceId: z.string().optional() } },
@@ -199,7 +204,7 @@ refs: ${refs}` }] };
     });
 
   server.registerTool("browser_act",
-    { description: "Run mutating steps (click/type/select/press/navigate/newTab) on a browser instance; requires an act grant for targetOrigin. navigate and newTab need an act grant for the DESTINATION origin (http/https only); newTab {url} opens it in a new active tab, and later steps in the same batch run there.",
+    { description: "Run mutating steps (click/type/select/press/navigate/newTab/wait) on a browser instance; requires an act grant for targetOrigin. navigate and newTab need an act grant for the DESTINATION origin (http/https only); newTab {url} opens it in a new active tab, and later steps in the same batch run there.",
       inputSchema: { instanceId: z.string().optional(), targetOrigin: z.string(), steps: z.array(z.any()) } },
     async ({ instanceId, targetOrigin, steps }) => {
       const { id, err } = resolveInstance(instanceId);
@@ -221,8 +226,8 @@ refs: ${refs}` }] };
       }
       const failed = result.results.find((r) => !r.ok);
       if (failed) {
-        recordBrowserCall(actor.id, { name: "browser_act", summary: `refused: ${humanizeBrowserError(failed.error)}` });
-        return { content: [{ type: "text", text: `browser refused: ${humanizeBrowserError(failed.error)}` }] };
+        recordBrowserCall(actor.id, { name: "browser_act", summary: `refused: ${humanizeBrowserError(failed.error, failed.code)}` });
+        return { content: [{ type: "text", text: `browser refused: ${humanizeBrowserError(failed.error, failed.code)}` }] };
       }
       recordBrowserCall(actor.id, { name: "browser_act", summary: "ok" });
       return { content: [{ type: "text", text: JSON.stringify(result.snapshot ?? "").slice(0, 4000) }] };

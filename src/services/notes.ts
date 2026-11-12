@@ -9,6 +9,7 @@ import { noteIndexText } from "./note-index-text.js";
 
 export type NoteKind = "note" | "decision" | "rule" | "handoff";
 export type NoteSource = "manual" | "auto";
+export type NoteStatus = "active" | "superseded" | "rejected";
 const NOTE_KINDS: readonly NoteKind[] = ["note", "decision", "rule", "handoff"];
 
 export async function saveNote(
@@ -16,6 +17,7 @@ export async function saveNote(
   input: {
     body: string; scope: "global" | "project" | "ticket"; refId?: string; title?: string;
     kind?: NoteKind; domain?: string; rationale?: string; source?: NoteSource;
+    status?: NoteStatus; confidence?: number; supersedesId?: string;
   },
   embedder: Embedder = getEmbedder(),
 ): Promise<Note> {
@@ -27,12 +29,23 @@ export async function saveNote(
   }
 
   const note = await db.transaction(async (tx) => {
+    if (input.supersedesId) {
+      const [old] = await tx.select().from(notes).where(and(eq(notes.id, input.supersedesId), isNull(notes.deletedAt))).limit(1);
+      if (old) {
+        await tx.update(notes)
+          .set({ status: "superseded", version: old.version + 1 })
+          .where(and(eq(notes.id, old.id), eq(notes.version, old.version)));
+        await tx.insert(events).values({ actorId, noteId: old.id, action: "note.superseded" });
+      }
+    }
     const [n] = await tx.insert(notes).values({
       actorId, body: input.body, scope: input.scope, refId: input.refId, title: input.title, indexed: false,
       kind: input.kind ?? "note",
       domain: input.domain ? input.domain.trim().toLowerCase() : null,
       rationale: input.rationale ?? null,
       source: input.source ?? "manual",
+      status: input.status ?? "active",
+      confidence: input.confidence ?? (input.source === "auto" ? 0.5 : 1.0),
     }).returning();
     await tx.insert(events).values({ actorId, noteId: n.id, action: "note.saved" });
     return n;
@@ -82,7 +95,7 @@ export async function updateNote(
     if (!current || current.deletedAt) throw new NotFoundError(`note ${id}`);
     if (current.version !== expectedVersion) throw new StaleVersionError(expectedVersion, current.version);
 
-    const ALLOWED = ["title", "body", "kind", "domain", "rationale"] as const;
+    const ALLOWED = ["title", "body", "kind", "domain", "rationale", "status", "confidence"] as const;
     const clean: Record<string, unknown> = Object.fromEntries(
       Object.entries(patch).filter(([k, v]) => (ALLOWED as readonly string[]).includes(k) && v !== undefined),
     );

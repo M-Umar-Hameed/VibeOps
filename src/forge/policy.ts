@@ -48,6 +48,18 @@ export function parseAllowFiles(body: string): string[] {
   return globs;
 }
 
+// ALLOW-COMMAND: <risk-id>, <risk-id> lines in the ticket body lift those command-risk rules for the run.
+export function parseAllowCommand(body: string): string[] {
+  const ids: string[] = [];
+  for (const m of body.matchAll(/^\s*ALLOW-COMMAND:\s*(.+)$/gim)) {
+    for (const g of m[1].split(",")) {
+      const t = g.trim();
+      if (t) ids.push(t);
+    }
+  }
+  return ids;
+}
+
 // GATE-OVERRIDE: <check>, <check> lines in the ticket body downgrade those gate
 // blocks to warnings on every run, not just the current one. `all` covers every
 // check. History-scanning checks (secret, citation) can never be cleared by
@@ -67,8 +79,8 @@ export function parseGateOverrides(body: string): Set<string> {
 // members, MCP agents and inbound sync can write too, so the service layer only
 // lets an admin add one (src/services/tickets.ts) and the forge strips them from
 // model output before it becomes a spec.
-// (GATE-OVERRIDE, ALLOW-PROTECTED, ALLOW-FILES, EXPORT-TO, EVIDENCE).
-const DIRECTIVE_RE = /^\s*(GATE-OVERRIDE|ALLOW-PROTECTED|ALLOW-FILES|EXPORT-TO|EVIDENCE):\s*.*$/gim;
+// (GATE-OVERRIDE, ALLOW-PROTECTED, ALLOW-FILES, ALLOW-COMMAND, EXPORT-TO, EVIDENCE).
+const DIRECTIVE_RE = /^\s*(GATE-OVERRIDE|ALLOW-PROTECTED|ALLOW-FILES|ALLOW-COMMAND|EXPORT-TO|EVIDENCE):\s*.*$/gim;
 
 export function gateDirectiveLines(text: string): string[] {
   return [...text.matchAll(DIRECTIVE_RE)].map((m) => m[0].trim());

@@ -41,6 +41,16 @@ describe("getEmbedder default chain", () => {
     process.env.EMBED_PROVIDER = "fake"; delete process.env.EMBED_MODEL; process.env.VOYAGE_API_KEY = "k";
     try { expect(getEmbedder()).toBeInstanceOf(FakeEmbedder); } finally { restore(); }
   });
+
+  it("uses EMBED_MODEL with local provider", () => {
+    process.env.EMBED_PROVIDER = "local"; process.env.EMBED_MODEL = "nomic-embed-text-v1.5";
+    try {
+      const e = getEmbedder();
+      expect(e).toBeInstanceOf(LocalEmbedder);
+      expect(e.model).toBe("nomic-embed-text-v1.5");
+      expect(e.dim).toBe(768);
+    } finally { restore(); }
+  });
 });
 
 // Real model download + inference — excluded from the default (offline) suite.

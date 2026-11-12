@@ -25,6 +25,9 @@ To create your first work order in Forge, type your task description. You can at
 
 The pipeline orchestrates the task through plan, work, and review stages. Once the agent finishes, review the proposed diff. If the changes look correct, click **Promote** to merge them. Note that Promote unlocks after a passing review; if you click Request changes, the run bounces back and your feedback is injected into the next attempt. For a full walkthrough, see [docs/QUICKSTART.md](QUICKSTART.md).
 
+### Watching Forge runs via SSE
+Drivers should wait on `GET /events` event `run.settled` (`{runId, ticketId, status}`) instead of polling `GET /forge/runs`. EventSource cannot send headers, so pass the key as `?access_token=`. SSE has no replay: open the stream first, then GET the current state, GET again after every reconnect, and keep a slow fallback poll (5-10 min). `GET /forge/runs` accepts opt-in `limit` (1..200), `before` (ISO startedAt) with `beforeId` (tiebreak), `status`, `projectId` and `summary=1` (no verification, stage durations or reasons; includes `cause` and `causeDetail`).
+
 ## Projects & workspaces
 VibeOps organizes work into projects. Use **Add project** to create a new one, or **Import from folder...** to batch-import existing directories. A local git repository badge appears in the Sidebar for projects bound to a repository. You can also click **Initialize git** to create a new repository for an empty project.
 

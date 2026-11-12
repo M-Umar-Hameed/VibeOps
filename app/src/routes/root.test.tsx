@@ -52,3 +52,64 @@ test("wizard hidden when firstRun is false", async () => {
   await new Promise(r => setTimeout(r, 100)); // wait for effect
   expect(screen.queryByText("Welcome to VibeOps")).not.toBeInTheDocument();
 });
+
+import { fireEvent } from "@testing-library/react";
+
+test("running jobs region renders active job progress and cancel button", async () => {
+  const indexJob = {
+    id: "j-idx-1",
+    kind: "index-repo",
+    key: "index-repo:p1",
+    label: "Index docs",
+    trigger: "manual",
+    state: "running",
+    phase: "embedding docs",
+    done: 3,
+    total: 714,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    result: null,
+    error: null,
+    cancellable: true,
+    cancelRequested: false,
+  };
+  vi.mocked(api.get).mockImplementation(async (p: string) => (p === "/jobs?active=1" ? [indexJob] : {}));
+
+  render(wrap(<Root />));
+
+  const region = await screen.findByRole("region", { name: "Running jobs" });
+  expect(region).toBeInTheDocument();
+  expect(screen.getByText("Index docs")).toBeInTheDocument();
+  expect(screen.getByText(/embedding docs/)).toBeInTheDocument();
+  expect(screen.getByText("3 of 714")).toBeInTheDocument();
+});
+
+test("cancelling active job calls /jobs/:id/cancel", async () => {
+  const indexJob = {
+    id: "j-idx-2",
+    kind: "index-repo",
+    key: "index-repo:p2",
+    label: "Index docs",
+    trigger: "manual",
+    state: "running",
+    phase: "embedding docs",
+    done: 3,
+    total: 714,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    result: null,
+    error: null,
+    cancellable: true,
+    cancelRequested: false,
+  };
+  vi.mocked(api.get).mockImplementation(async (p: string) => (p === "/jobs?active=1" ? [indexJob] : {}));
+
+  render(wrap(<Root />));
+
+  const cancelBtn = await screen.findByLabelText("Cancel Index docs");
+  fireEvent.click(cancelBtn);
+
+  await waitFor(() => {
+    expect(api.post).toHaveBeenCalledWith("/jobs/j-idx-2/cancel");
+  });
+});

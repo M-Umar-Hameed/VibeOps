@@ -8,14 +8,14 @@ import { loadRelayConfig } from "../relay/config.js";
 import { relayConfigPath, writeRelayConfig } from "../relay/bootstrap-config.js";
 import { runDoctor } from "../relay/doctor.js";
 import { parseVerdict } from "../relay/prompts.js";
-import { startPipeline, listRunsWithHistory, getRunOutput, getSettledRunOutput, stopRun, resolveWorkdir, hasActiveRun, latestRunStatus, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes } from "../forge/runs.js";
+import { startPipeline, listRunsWithHistory, getRunOutput, getSettledRunOutput, stopRun, resolveWorkdir, hasActiveRun, latestRunStatus, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes, parsePair, RUN_STATUSES, type RunListOpts } from "../forge/runs.js";
 import {
   sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash, sandboxActivity, sandboxWorkingDiff, withReadOnlyView,
   attachmentsDir, exportOutputs, validateExportPath,
 } from "../forge/sandbox.js";
 import { listSkillDir } from "../forge/skills.js";
 import { indexRepoDocs } from "../services/knowledge.js";
-import { pickAgents } from "../forge/router.js";
+import { pickAgents, pairsForRole } from "../forge/router.js";
 import { runAgent } from "../relay/invoke.js";
 import { resolveCmd } from "../relay/config.js";
 import { updateTicket } from "../services/tickets.js";
@@ -46,6 +46,7 @@ const ATTACHMENT_FILE_RE = /^[0-9a-f-]{36}\.(png|jpg|gif|webp)$/;
 const ATTACHMENT_CONTENT_TYPE: Record<string, string> = {
   png: "image/png", jpg: "image/jpeg", gif: "image/gif", webp: "image/webp",
 };
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type AppEnv = { Variables: { actor: Actor } };
 
@@ -66,6 +67,20 @@ function agentPicks(body: Record<string, unknown>):
     if (val !== undefined && typeof val !== "string") return { error: `${key} must be a string` };
   }
   return { planAgent, workAgent, reviewAgent, planModel, workModel, reviewModel } as { planAgent: string; workAgent: string; reviewAgent: string; planModel?: string; workModel?: string; reviewModel?: string };
+}
+
+async function inheritPicks(ticketId: string, body: Record<string, unknown>, statuses: string[]): Promise<Record<string, unknown>> {
+  const prev = (await listRunsWithHistory(ticketId)).find((r) => statuses.includes(r.status));
+  if (!prev) return body;
+  const config = forgeConfig();
+  const out = { ...body };
+  for (const role of ["plan", "work", "review"] as const) {
+    if (body[`${role}Agent`] !== undefined || body[`${role}Model`] !== undefined) continue;
+    const { agent, model } = parsePair(prev.agents[role]);
+    const pair = pairsForRole(config, role).find((p) => p.agent === agent && p.model?.toLowerCase() === model?.toLowerCase());
+    if (pair) { out[`${role}Agent`] = pair.agent; out[`${role}Model`] = pair.model; }
+  }
+  return out;
 }
 
 // The promote gate is a security control: only ADMIN-authored review comments
@@ -216,7 +231,29 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     }
   });
 
-  app.get("/forge/runs", requireAdmin, async (c) => c.json(await listRunsWithHistory(c.req.query("ticketId") || undefined)));
+  app.get("/forge/runs", requireAdmin, async (c) => {
+    const q = c.req.query();
+    const opts: RunListOpts = {};
+    if (q.limit !== undefined) {
+      const n = Number(q.limit);
+      if (!Number.isInteger(n) || n < 1 || n > 200) return c.json({ error: "limit must be an integer 1..200" }, 400);
+      opts.limit = n;
+    }
+    if (q.before !== undefined) {
+      if (Number.isNaN(Date.parse(q.before))) return c.json({ error: "before must be an ISO timestamp" }, 400);
+      opts.before = { startedAt: new Date(q.before).toISOString(), id: q.beforeId || undefined };
+    }
+    if (q.status !== undefined) {
+      if (!(RUN_STATUSES as readonly string[]).includes(q.status)) return c.json({ error: `status must be one of ${RUN_STATUSES.join(", ")}` }, 400);
+      opts.status = q.status as RunListOpts["status"];
+    }
+    if (q.projectId !== undefined) {
+      if (!UUID.test(q.projectId)) return c.json({ error: "projectId must be a uuid" }, 400);
+      opts.projectId = q.projectId;
+    }
+    if (q.summary === "1") opts.summary = true;
+    return c.json(await listRunsWithHistory(q.ticketId || undefined, opts));
+  });
 
   app.get("/forge/recovery", requireAdmin, async (c) => {
     return c.json({ interrupted: await listInterruptedRuns(forgeConfig()) });
@@ -272,6 +309,13 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     const ticket = await getTicket(ticketId);
     // No interrupted run recorded: fall back to a normal open/planned start.
     if (item && !item.resumable) return c.json({ error: item.reason }, 409);
+    const body = (await c.req.json().catch(() => null)) ?? {};
+    const picks = agentPicks(await inheritPicks(ticketId, body, ["interrupted", "failed"]));
+    if ("error" in picks) return c.json({ error: picks.error }, 400);
+    const operatorNotes = typeof body.operatorNotes === "string" ? body.operatorNotes : undefined;
+    const requestedStage = typeof body.resumeStage === "string" && ["plan", "work", "review"].includes(body.resumeStage)
+      ? (body.resumeStage as any)
+      : undefined;
     // A crashed run leaves the ticket in_progress with its latest run interrupted;
     // the interrupted row proves nothing is running (an active run would report
     // "running" and be newer). Recover it like a planned ticket: resumeStage "work"
@@ -280,16 +324,13 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     // rejected-only guard stays separate.
     const interruptedInProgress = ticket.status === "in_progress"
       && (await latestRunStatus(ticketId)) === "interrupted";
-    const resumeStage = interruptedInProgress ? "work"
+    const resumeStage = requestedStage
+      ?? (interruptedInProgress ? "work"
       : item?.resumeMode === "review" ? "review"
-      : item?.resumeMode === "work" ? "work" : undefined;
+      : item?.resumeMode === "work" ? "work" : undefined);
     if (!resumeStage && ticket.status !== "open" && ticket.status !== "planned") {
       return c.json({ error: "ticket must be open or planned to resume" }, 409);
     }
-    const body = (await c.req.json().catch(() => null)) ?? {};
-    const picks = agentPicks(body);
-    if ("error" in picks) return c.json({ error: picks.error }, 400);
-    const operatorNotes = typeof body.operatorNotes === "string" ? body.operatorNotes : undefined;
     try {
       const { runId, doctorWarnings } = await startPipeline(c.get("actor").id, config, {
         ticketId, ...picks, operatorNotes, resumeStage,
@@ -548,7 +589,7 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
       return c.json({ error: "no sandbox to rework: the rejected run's sandbox is gone; start a new run instead" }, 409);
     }
     const body = (await c.req.json().catch(() => null)) ?? {};
-    const picks = agentPicks(body);
+    const picks = agentPicks(await inheritPicks(ticketId, body, ["rejected"]));
     if ("error" in picks) return c.json({ error: picks.error }, 400);
     const reworkInstruction =
       "This is a rework pass on an existing sandbox with prior commits. Address ONLY the review " +

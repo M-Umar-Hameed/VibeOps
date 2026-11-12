@@ -1230,27 +1230,35 @@ async function reviewStage(
 
   if (run.stopped) { setCause(run, "stopped"); return settle(run, "stopped"); }
 
-  // Checks run CONCURRENTLY with the whole review (single or chunked): the
-  // reviewer only needs check RESULTS at verdict time. Checks execute in
-  // `sandbox`; the review agent runs in its own read-only view, so no
-  // filesystem race.
-  const checksPromise: Promise<CheckResult[]> = checkCmds.length
-    ? (async () => {
-        if (!await acquireCheckSlot(run)) return [];
-        try {
-          run.checksStartedAt = Date.now();
-          const results = await runChecks(checkCmds, sandbox, undefined, (child) => {
-            run.checksChild = child;
-            if (run.stopped) void killTree(child);
-          });
-          run.checksChild = undefined;
-          run.checksEndedAt = Date.now();
-          return results;
-        } finally {
-          checkSlotsHeld--;
-        }
-      })()
-    : Promise.resolve<CheckResult[]>([]);
+  // Checks run BEFORE the review so the reviewer judges real results, not the diff alone.
+  let checkResults: CheckResult[] = [];
+  if (checkCmds.length) {
+    if (await acquireCheckSlot(run)) {
+      try {
+        run.checksStartedAt = Date.now();
+        checkResults = await runChecks(checkCmds, sandbox, undefined, (child) => {
+          run.checksChild = child;
+          if (run.stopped) void killTree(child);
+        });
+        run.checksChild = undefined;
+        run.checksEndedAt = Date.now();
+      } finally {
+        checkSlotsHeld--;
+      }
+    }
+  }
+  if (run.checksStartedAt !== undefined) run.checksDurationMs = Date.now() - run.checksStartedAt;
+  if (run.stopped) { setCause(run, "stopped"); return settle(run, "stopped"); }
+  if (run.stallReason) { await bounce(run, actorId, run.stallReason, ""); setCause(run, "stall", run.stallReason); return settle(run, "failed"); }
+
+  let checksText: string | undefined;
+  let checksFailed = false;
+  if (checkCmds.length) {
+    checksText = redactSecrets(formatChecks(checkResults));
+    checksFailed = checkResults.some((r) => r.code !== 0);
+  }
+  const checksLog = [checksText, skippedText].filter(Boolean).join("\n\n");
+  if (checksLog) append(run, `\n=== FORGE checks ===\n${checksLog}\n`);
 
   // One review invocation per chunk, sequential: recordSpawn tracks a single
   // live child/pid, and chunked review is the rare oversized-diff path.
@@ -1273,7 +1281,7 @@ async function reviewStage(
       if (run.stopped || run.stallReason) break;
       const reviewPrompt = composeReviewPrompt({
         ticket, plan, report: reportOutput, diff: chunk.payload, operatorNotes: run.operatorNotes,
-        pendingChecks: checkCmds.length ? checkCmds : undefined,
+        checks: checksText, checksFailed,
         protectedViolation: protectedFinding, amendments, gate: gate.report || undefined,
         citations: gate.citations || undefined, skills,
         evidence: evidence.paths.length ? evidence.paths : undefined,
@@ -1290,14 +1298,8 @@ async function reviewStage(
       ).then((r) => noteAccount(run, "review", r))));
     }
     return results;
-  })
-    // Never settle while checks still run in the sandbox; a resume would start a second set.
-    .catch(async (e) => { await checksPromise.catch(() => {}); throw e; });
+  });
   run.child = undefined;
-  if (run.stopped) { setCause(run, "stopped"); return settle(run, "stopped"); }
-  if (run.stallReason) { await checksPromise.catch(() => {}); await bounce(run, actorId, run.stallReason, ""); setCause(run, "stall", run.stallReason); return settle(run, "failed"); }
-  const checkResults = await checksPromise;
-  if (run.checksStartedAt !== undefined) run.checksDurationMs = Date.now() - run.checksStartedAt;
   if (run.stopped) { setCause(run, "stopped"); return settle(run, "stopped"); }
   if (run.stallReason) { await bounce(run, actorId, run.stallReason, ""); setCause(run, "stall", run.stallReason); return settle(run, "failed"); }
 
@@ -1319,15 +1321,6 @@ async function reviewStage(
     setCause(run, "reviewer_stray", "reviewer changed files in its read-only copy");
     return settle(run, "failed");
   }
-
-  let checksText: string | undefined;
-  let checksFailed = false;
-  if (checkCmds.length) {
-    checksText = redactSecrets(formatChecks(checkResults));
-    checksFailed = checkResults.some((r) => r.code !== 0);
-  }
-  const checksLog = [checksText, skippedText].filter(Boolean).join("\n\n");
-  if (checksLog) append(run, `\n=== FORGE checks ===\n${checksLog}\n`);
 
   for (const res of reviewResults) applyVerification(res, run.agents.review, run, config);
   const verdict = mergeReviewVerdicts(chunks, reviewResults.map((r) => r.output));
@@ -1696,8 +1689,7 @@ export async function getSettledRunOutput(id: string, after: number) {
   return { chunk, next: from + chunk.length, stage: row.stage, status: row.status, source: "log" as const };
 }
 
-// Test/introspection accessor: absolute timestamps for the checks-vs-review
-// overlap. reviewStartedAt < checksEndedAt proves the two ran concurrently.
+// Test/introspection accessor: absolute timestamps for checks and review. checksEndedAt <= reviewStartedAt proves checks finished before review began.
 export function getRunTimings(id: string) {
   const r = runs.get(id);
   if (!r) return undefined;
@@ -1772,12 +1764,12 @@ export async function sweepStalledRuns(now: number, windowMs: number): Promise<s
       const iso = new Date(since).toISOString().replace(/\.\d{3}Z$/, "Z");
       const reason = `stopped by the stall timer after ${mins} minutes without activity in ${run.stage} stage (last activity ${iso})`;
       const pid = run.pid;
-      const child = run.child;
+      const child = run.child ?? run.checksChild;
       run.stallReason = reason;
       if (child) {
         // In-process pipeline awaits this child: it WIP-commits, reports and settles (bounce lands inside the run window).
         await killTree(child);
-        if (run.checksChild) await killTree(run.checksChild);
+        if (run.checksChild && run.checksChild !== child) await killTree(run.checksChild);
       } else {
         // Reattached survivor: no pipeline left to save its work. tailUntilExit holds off settling while stallReason is set.
         try {

@@ -873,20 +873,7 @@ async function pipeline(
   const depsBaseline = snapshotDeps(workdir, depsDirs);
   const sentinelSnaps = snapshotSensitive(resolveSensitivePaths(await getSetting("forge.sensitivePaths")));
   const headBefore = await sandboxHeadHash(workdir, ticket.id);
-  const workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
-    runAgent({ ...agents.work, write: true, projectId: ticket.projectId, liftedRules, ...evidenceDirs }, workPrompt, sandbox, onData,
-      (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
-      modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r)));
   const allowCmd = parseAllowCommand(ticket.body ?? "");
-  if (!crashed) {
-    const committed = await forgeCommit(ticket.id, ticket.title);
-    if (!committed && (await sandboxHeadHash(workdir, ticket.id)) === headBefore
-      && !(parseExportTo(ticket.body ?? "") && listExportOutputs(ticket.id).length)) {
-      run.cause = "no_changes";
-      await bounce(run, actorId, "no changes: work stage produced no diff", redactSecrets(workRes.output));
-      return settle(run, "failed");
-    }
-  }
   const unknownRules = allowCmd.filter((id) => !RISK_IDS.includes(id));
   if (unknownRules.length) append(run, `\nforge: ALLOW-COMMAND ignores unknown rule ids: ${unknownRules.join(", ")}\n`);
   const liftedRules = allowCmd.filter((id) => RISK_IDS.includes(id));
@@ -896,15 +883,20 @@ async function pipeline(
     installAgyHook(sandbox, agyFirewallHookCommand());
     append(run, "\nforge: agy firewall hook installed (.agents/hooks.json, removed before commit)\n");
   }
-  let workRes: AgentResult;
-  try {
-    workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
-      runAgent({ ...agents.work, write: true, projectId: ticket.projectId, liftedRules, ...evidenceDirs }, workPrompt, sandbox, onData,
-        (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
-        modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r)));
-  } finally {
-    if (agyHook) restoreAgyHook(sandbox);
+  const workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
+    runAgent({ ...agents.work, write: true, projectId: ticket.projectId, liftedRules, ...evidenceDirs }, workPrompt, sandbox, onData,
+      (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
+      modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r)));
+  if (!crashed) {
+    const committed = await forgeCommit(ticket.id, ticket.title);
+    if (!committed && (await sandboxHeadHash(workdir, ticket.id)) === headBefore
+      && !(parseExportTo(ticket.body ?? "") && listExportOutputs(ticket.id).length)) {
+      run.cause = "no_changes";
+      await bounce(run, actorId, "no changes: work stage produced no diff", redactSecrets(workRes.output));
+      return settle(run, "failed");
+    }
   }
+  if (agyHook) restoreAgyHook(sandbox);
   run.child = undefined;
   run.abort = undefined;
   const tampered = detectAndRestore(sentinelSnaps);

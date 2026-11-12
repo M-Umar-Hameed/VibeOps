@@ -358,7 +358,7 @@ describe("forge run manager", () => {
 
   it("FAIL verdict settles rejected, bounces to planned, sandbox kept", async () => {
     const { actorId, ticket } = await seedTicket("Fail path");
-    setScript("plan,work,review-fail", true, true);
+    setScript("plan,work,review-fail", true);
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",

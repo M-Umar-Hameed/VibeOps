@@ -8,14 +8,14 @@ import { loadRelayConfig } from "../relay/config.js";
 import { relayConfigPath, writeRelayConfig } from "../relay/bootstrap-config.js";
 import { runDoctor } from "../relay/doctor.js";
 import { parseVerdict } from "../relay/prompts.js";
-import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, latestRunStatus, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes } from "../forge/runs.js";
+import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, latestRunStatus, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes, parsePair } from "../forge/runs.js";
 import {
   sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash, sandboxActivity, sandboxWorkingDiff, withReadOnlyView,
   attachmentsDir, exportOutputs, validateExportPath,
 } from "../forge/sandbox.js";
 import { listSkillDir } from "../forge/skills.js";
 import { indexRepoDocs } from "../services/knowledge.js";
-import { pickAgents } from "../forge/router.js";
+import { pickAgents, pairsForRole } from "../forge/router.js";
 import { runAgent } from "../relay/invoke.js";
 import { resolveCmd } from "../relay/config.js";
 import { updateTicket } from "../services/tickets.js";
@@ -66,6 +66,20 @@ function agentPicks(body: Record<string, unknown>):
     if (val !== undefined && typeof val !== "string") return { error: `${key} must be a string` };
   }
   return { planAgent, workAgent, reviewAgent, planModel, workModel, reviewModel } as { planAgent: string; workAgent: string; reviewAgent: string; planModel?: string; workModel?: string; reviewModel?: string };
+}
+
+async function inheritPicks(ticketId: string, body: Record<string, unknown>, statuses: string[]): Promise<Record<string, unknown>> {
+  const prev = (await listRunsWithHistory(ticketId)).find((r) => statuses.includes(r.status));
+  if (!prev) return body;
+  const config = forgeConfig();
+  const out = { ...body };
+  for (const role of ["plan", "work", "review"] as const) {
+    if (body[`${role}Agent`] !== undefined || body[`${role}Model`] !== undefined) continue;
+    const { agent, model } = parsePair(prev.agents[role]);
+    const pair = pairsForRole(config, role).find((p) => p.agent === agent && p.model?.toLowerCase() === model?.toLowerCase());
+    if (pair) { out[`${role}Agent`] = pair.agent; out[`${role}Model`] = pair.model; }
+  }
+  return out;
 }
 
 // The promote gate is a security control: only ADMIN-authored review comments
@@ -272,7 +286,7 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     // No interrupted run recorded: fall back to a normal open/planned start.
     if (item && !item.resumable) return c.json({ error: item.reason }, 409);
     const body = (await c.req.json().catch(() => null)) ?? {};
-    const picks = agentPicks(body);
+    const picks = agentPicks(await inheritPicks(ticketId, body, ["interrupted", "failed"]));
     if ("error" in picks) return c.json({ error: picks.error }, 400);
     const operatorNotes = typeof body.operatorNotes === "string" ? body.operatorNotes : undefined;
     const requestedStage = typeof body.resumeStage === "string" && ["plan", "work", "review"].includes(body.resumeStage)
@@ -551,7 +565,7 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
       return c.json({ error: "no sandbox to rework: the rejected run's sandbox is gone; start a new run instead" }, 409);
     }
     const body = (await c.req.json().catch(() => null)) ?? {};
-    const picks = agentPicks(body);
+    const picks = agentPicks(await inheritPicks(ticketId, body, ["rejected"]));
     if ("error" in picks) return c.json({ error: picks.error }, 400);
     const reworkInstruction =
       "This is a rework pass on an existing sandbox with prior commits. Address ONLY the review " +

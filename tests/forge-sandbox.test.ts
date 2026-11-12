@@ -11,7 +11,7 @@ import {
   validateExportPath, exportOutputs, copyEvidence, EVIDENCE_MAX_BYTES,
   DEPS_DIRS, resolveDepsDirs, resolveFrontendDeps,
   stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL, OPERATOR_EVIDENCE_DIR,
-  diskSpaceReader, DiskFullError, syncSandboxWithBase, conflictMarkerFiles
+  diskSpaceReader, DiskFullError, syncSandboxWithBase, conflictMarkerFiles, duplicateAddedTestTitles
 } from "../src/forge/sandbox.js";
 import { vibeopsHome } from "../src/runtime/home.js";
 import { ConflictError } from "../src/services/errors.js";
@@ -158,6 +158,28 @@ describe("forge sandbox", () => {
   it("conflictMarkerFiles detects a CRLF marker line", () => {
     const diff = "--- a/src/a.ts\r\n+++ b/src/a.ts\r\n@@ -0,0 +1 @@\r\n+>>>>>>> abc\r\n";
     expect(conflictMarkerFiles(diff)).toEqual(["src/a.ts"]);
+  });
+
+  it("duplicateAddedTestTitles reports a title added twice in one file", () => {
+    const diff = "--- a/tests/a.test.ts\n+++ b/tests/a.test.ts\n@@ -0,0 +1,2 @@\n+  it(\"x\", () => {\n+  it(\"x\", () => {\n";
+    expect(duplicateAddedTestTitles(diff)).toEqual(['tests/a.test.ts: "x"']);
+  });
+
+  it("duplicateAddedTestTitles ignores the same title in two different files", () => {
+    const diff = "--- a/tests/a.test.ts\n+++ b/tests/a.test.ts\n@@ -0,0 +1 @@\n+  it(\"x\", () => {\n" +
+      "--- a/tests/b.test.ts\n+++ b/tests/b.test.ts\n@@ -0,0 +1 @@\n+  it(\"x\", () => {\n";
+    expect(duplicateAddedTestTitles(diff)).toEqual([]);
+  });
+
+  it("duplicateAddedTestTitles ignores a removed copy of an added title", () => {
+    const diff = "--- a/tests/a.test.ts\n+++ b/tests/a.test.ts\n@@ -1 +1 @@\n-  it(\"x\", () => {\n+  it(\"x\", () => {\n";
+    expect(duplicateAddedTestTitles(diff)).toEqual([]);
+  });
+
+  it("duplicateAddedTestTitles reports it.skip with single quotes and test with backticks", () => {
+    const diff = "--- a/tests/a.test.ts\n+++ b/tests/a.test.ts\n@@ -0,0 +1,4 @@\n" +
+      "+  it.skip('y', () => {});\n+  it.skip('y', () => {});\n+  test(`z`, () => {});\n+  test(`z`, () => {});\n";
+    expect(duplicateAddedTestTitles(diff)).toEqual(['tests/a.test.ts: "y"', 'tests/a.test.ts: "z"']);
   });
 
   it("promote refuses a branch that adds conflict markers, sandbox kept", async () => {

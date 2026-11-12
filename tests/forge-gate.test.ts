@@ -6,7 +6,26 @@ import {
   isTestPath, extractDeclaredPaths, unexpectedFiles,
   extractAcceptanceCriteria, unmatchedCriteria, mutationCandidate,
   isDocPath, addedLinesByFile, extractCitations, resolveCitation,
+  declaredFullPaths, overlappingDeclared,
 } from "../src/forge/gate.js";
+
+describe("declaredFullPaths", () => {
+  it("keeps only sorted entries containing a slash", () => {
+    expect(declaredFullPaths("Edit src/a.ts and b.ts, see e.g. docs/x.md")).toEqual(["docs/x.md", "src/a.ts"]);
+  });
+});
+
+describe("overlappingDeclared", () => {
+  it("reports shared files per other run", () => {
+    expect(overlappingDeclared(["src/a.ts", "src/b.ts"], [
+      { ticketId: "t1", title: "One", declared: ["src/b.ts", "src/c.ts"] },
+      { ticketId: "t2", title: "Two", declared: ["src/z.ts"] },
+    ])).toEqual([{ ticketId: "t1", title: "One", files: ["src/b.ts"] }]);
+  });
+  it("ignores basename-only overlap", () => {
+    expect(overlappingDeclared(["a.ts"], [{ ticketId: "t1", title: "One", declared: ["src/a.ts"] }])).toEqual([]);
+  });
+});
 
 describe("isTestPath", () => {
   it("matches common test file patterns", () => {

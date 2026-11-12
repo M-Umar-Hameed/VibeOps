@@ -1217,15 +1217,6 @@ async function reviewStage(
     setCause(run, "duplicate_tests", "duplicate tests");
     return settle(run, "rejected");
   }
-  if (dupes.length) {
-    await addComment(actorId, ticket.id,
-      `${DUPLICATE_TESTS} ${branchName(ticket.id)} adds the same test title more than once:\n` +
-      `${dupes.map((d) => `  - ${d}`).join("\n")}\n` +
-      `Keep one copy of each test and delete the repeated block.\nVERDICT: FAIL`, "review");
-    await setStatus(actorId, ticket.id, "planned");
-    setCause(run, "duplicate_tests", "duplicate tests");
-    return settle(run, "rejected");
-  }
 
   // Checks: project static gates run in the SANDBOX (T17 shipped a tsc break —
   // reviewer reads diffs, vitest transpiles without typechecking). Resolved

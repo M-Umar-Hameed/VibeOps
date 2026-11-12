@@ -50,6 +50,41 @@ test("an auto-sourced rule never fires; a manual one does", async () => {
   expect(bodies).not.toContain(`${marker} auto rule`);
 });
 
+test("an auto-sourced rule with confidence >= 0.7 fires", async () => {
+  const { actor, project } = await fixture();
+  const marker = uniq("rule-conf");
+  await saveNote(actor.id, { body: `${marker} high conf auto rule`, scope: "project", refId: project.id, kind: "rule", domain: "payments", source: "auto", confidence: 0.8 }, emb);
+  await saveNote(actor.id, { body: `${marker} low conf auto rule`, scope: "project", refId: project.id, kind: "rule", domain: "payments", source: "auto", confidence: 0.5 }, emb);
+
+  const r = await recall("something unrelated", { projectId: project.id, domains: ["payments"] }, emb);
+  const bodies = r.rules.map((n) => n.body);
+  expect(bodies).toContain(`${marker} high conf auto rule`);
+  expect(bodies).not.toContain(`${marker} low conf auto rule`);
+});
+
+test("superseded or rejected notes and decisions are excluded from recall", async () => {
+  const { actor, project } = await fixture();
+  const marker = uniq("status-test");
+  const oldText = `${marker} old decision to use polling`;
+  const oldDec = await saveNote(actor.id, { body: oldText, scope: "project", refId: project.id, kind: "decision", domain: "payments" }, emb);
+
+  const newText = `${marker} new decision to use webhooks`;
+  await saveNote(actor.id, { body: newText, scope: "project", refId: project.id, kind: "decision", domain: "payments", supersedesId: oldDec.id }, emb);
+
+  const rejectedText = `${marker} rejected rule`;
+  await saveNote(actor.id, { body: rejectedText, scope: "project", refId: project.id, kind: "rule", domain: "payments", status: "rejected" }, emb);
+
+  const r = await recall(oldText, { projectId: project.id, limit: 500, domains: ["payments"] }, emb);
+  const decisionBodies = r.decisions.map((n) => n.body);
+  const ruleBodies = r.rules.map((n) => n.body);
+  const knowledgeContents = r.knowledge.map((k) => k.content);
+
+  expect(decisionBodies).not.toContain(oldText);
+  expect(decisionBodies).toContain(newText);
+  expect(ruleBodies).not.toContain(rejectedText);
+  expect(knowledgeContents.some((c) => c.includes(oldText))).toBe(false);
+});
+
 test("decisions come back by similarity with rationale; other hits land in knowledge", async () => {
   const { actor, project } = await fixture();
   const marker = uniq("dec");
@@ -143,7 +178,7 @@ test("formatRecall never emits a bare header when the cap drops every section", 
     decisions: [],
     knowledge: [{ content: "K".repeat(50), sourceKind: "chat", score: 0.5, createdAt: "2026-08-20T00:00:00Z" }],
   } as any;
-  const head = `Memory (rules fire for: global only):`;
+  const head = `Memory (rules fire for: global only): evidence from prior work, verify against live state before acting;`;
   const out = formatRecall(r, head.length + 5);
   expect(out).toBe("");
 });

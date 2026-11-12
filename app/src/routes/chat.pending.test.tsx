@@ -91,3 +91,49 @@ test("an idle session's leftover live buffer is not rendered as a live bubble", 
   await waitFor(() => expect(screen.getAllByText("persisted reply").length).toBe(1));
   expect(document.querySelector(".animate-pulse")).toBeNull();
 });
+
+test("sending a message renders the user bubble optimistically before the post resolves", async () => {
+  let resolvePost: (val: any) => void;
+  const postPromise = new Promise((resolve) => { resolvePost = resolve; });
+
+  apiFetch.mockImplementation(async (path: string, opts?: any) => {
+    if (path === "/chat/sessions") return [sess];
+    if (path === "/chat/models") return [];
+    if (path === "/chat/sessions/s1") return { session: sess, messages: [] };
+    if (path.startsWith("/chat/sessions/s1/output")) return { chunk: "", next: 0, status: "idle" };
+    if (path === "/chat/sessions/s1/messages" && opts?.method === "POST") return postPromise;
+    return {};
+  });
+
+  render(wrap(<ChatScreen />));
+  await waitFor(() => expect(screen.getByText("Mine")).toBeInTheDocument());
+  fireEvent.click(screen.getByText("Mine"));
+  await waitFor(() => expect(screen.getByPlaceholderText(/Type a message/i)).toBeInTheDocument());
+
+  fireEvent.change(screen.getByPlaceholderText(/Type a message/i), { target: { value: "Hello optimistic" } });
+  fireEvent.click(screen.getByRole("button", { name: /send/i }));
+
+  expect(screen.getByText("Hello optimistic", { selector: "p" })).toBeInTheDocument();
+  resolvePost!({ ok: true });
+});
+
+test("failing to send rolls back the optimistic user bubble via refetchDetail", async () => {
+  apiFetch.mockImplementation(async (path: string, opts?: any) => {
+    if (path === "/chat/sessions") return [sess];
+    if (path === "/chat/models") return [];
+    if (path === "/chat/sessions/s1") return { session: sess, messages: [] };
+    if (path.startsWith("/chat/sessions/s1/output")) return { chunk: "", next: 0, status: "idle" };
+    if (path === "/chat/sessions/s1/messages" && opts?.method === "POST") return { error: "Network error" };
+    return {};
+  });
+
+  render(wrap(<ChatScreen />));
+  await waitFor(() => expect(screen.getByText("Mine")).toBeInTheDocument());
+  fireEvent.click(screen.getByText("Mine"));
+  await waitFor(() => expect(screen.getByPlaceholderText(/Type a message/i)).toBeInTheDocument());
+
+  fireEvent.change(screen.getByPlaceholderText(/Type a message/i), { target: { value: "Will fail" } });
+  fireEvent.click(screen.getByRole("button", { name: /send/i }));
+
+  await waitFor(() => expect(screen.queryByText("Will fail", { selector: "p" })).toBeNull());
+});

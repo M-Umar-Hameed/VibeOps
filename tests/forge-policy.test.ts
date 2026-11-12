@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   DEFAULT_PROTECTED_GLOBS, resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths,
-  gateDirectiveLines, stripGateDirectives, parseExportTo, parseEvidence,
+  gateDirectiveLines, parseAllowCommand, stripGateDirectives, parseExportTo, parseEvidence,
 } from "../src/forge/policy.js";
 
 describe("forge protected-path policy", () => {
@@ -50,6 +50,11 @@ describe("forge protected-path policy", () => {
     expect(gateDirectiveLines("EVIDENCE: /x")).toHaveLength(1);
   });
 
+  it("ALLOW-COMMAND is a gate directive: listed and stripped", () => {
+    expect(gateDirectiveLines("a\nALLOW-COMMAND: git-push\nb")).toEqual(["ALLOW-COMMAND: git-push"]);
+    expect(stripGateDirectives("a\nALLOW-COMMAND: git-push\nb")).not.toContain("ALLOW-COMMAND");
+  });
+
   it("stripGateDirectives removes directive lines and keeps the rest", () => {
     const out = stripGateDirectives("plan step 1\nGATE-OVERRIDE: all\nplan step 2\nALLOW-FILES: **\n");
     expect(out).not.toMatch(/GATE-OVERRIDE|ALLOW-FILES/);
@@ -82,5 +87,14 @@ describe("forge protected-path policy", () => {
     expect(parseEvidence('EVIDENCE: C:/qa/confirmed.txt\nx\n  evidence: "/tmp/qa dir"\nEVIDENCE: C:/qa/confirmed.txt'))
       .toEqual(["C:/qa/confirmed.txt", "/tmp/qa dir"]);
     expect(parseEvidence("see EVIDENCE: /x")).toEqual([]);
+  });
+});
+
+describe("parseAllowCommand", () => {
+  it("collects ids across lines", () => {
+    expect(parseAllowCommand("x\nALLOW-COMMAND: git-push, npm-deploy\nallow-command: ssh")).toEqual(["git-push", "npm-deploy", "ssh"]);
+  });
+  it("empty body", () => {
+    expect(parseAllowCommand("")).toEqual([]);
   });
 });

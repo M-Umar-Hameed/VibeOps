@@ -65,6 +65,13 @@ test("a member cannot smuggle a directive behind unusual whitespace or a line br
     .rejects.toBeInstanceOf(ForbiddenError);
 });
 
+test("a member cannot add an ALLOW-COMMAND directive", async () => {
+  const { member, project } = await setup();
+  const t = await createTicket(member.id, { projectId: project.id, title: "t", body: "plain" });
+  await expect(updateTicket(member.id, t.id, t.version, { body: "plain\nALLOW-COMMAND: git-push" }))
+    .rejects.toBeInstanceOf(ForbiddenError);
+});
+
 test("a member cannot add an EXPORT-TO directive; an admin can", async () => {
   const { admin, member, project } = await setup();
   const t = await createTicket(member.id, { projectId: project.id, title: "t", body: "plain" });

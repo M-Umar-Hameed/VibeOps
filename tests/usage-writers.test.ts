@@ -177,5 +177,37 @@ describe("usage writers", () => {
     const [row] = await db.select().from(aiUsageLogs).where(eq(aiUsageLogs.provider, agentName));
     expect(row.tokens).toBe(12345); // real, NOT 4000/4=1000
     expect(row.cost).toBe(6789);
+    expect(row.exact).toBe(true);
+  });
+
+  it("logAgentUse marks estimated rows", async () => {
+    const { actorId, ticket } = await seedTicket("Usage estimated");
+    const agentName = uniq("agent");
+    const { logAgentUse } = await import("../src/services/usage.js");
+    await logAgentUse({
+      actorId, agent: agentName, role: "work", ticketId: ticket.id,
+      promptChars: 400, outputChars: 400, durationMs: 5, ok: true,
+    });
+    const [row] = await db.select().from(aiUsageLogs).where(eq(aiUsageLogs.provider, agentName));
+    expect(row.tokens).toBe(200);
+    expect(row.exact).toBe(false);
+  });
+
+  it("getAiUsage splits estimated tokens", async () => {
+    const { actorId, ticket } = await seedTicket("Usage split");
+    const agentName = uniq("agent");
+    const { logAgentUse } = await import("../src/services/usage.js");
+    await logAgentUse({
+      actorId, agent: agentName, role: "work", ticketId: ticket.id,
+      outputChars: 0, durationMs: 5, ok: true, tokens: 1000,
+    });
+    await logAgentUse({
+      actorId, agent: agentName, role: "work", ticketId: ticket.id,
+      promptChars: 400, outputChars: 0, durationMs: 5, ok: true,
+    });
+    const { getAiUsage } = await import("../src/services/system.js");
+    const entry = (await getAiUsage()).usage.find((u: any) => u.provider === agentName);
+    expect(entry!.tokens).toBe(1100);
+    expect(entry!.estimatedTokens).toBe(100);
   });
 });

@@ -1,6 +1,50 @@
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { binBasename } from "./doctor.js";
+import { agyPatterns, denyPatterns } from "./risk.js";
 
-export const DEFAULT_ALLOWED_COMMANDS = ["npm test", "npm run", "npx vitest", "npx tsc", "git status", "git diff", "git log", "git show"];
+export const ALLOW_COMMAND_ENV = "VIBEOPS_ALLOW_COMMAND";
+const fwd = (p: string) => p.replace(/\\/g, "/");
+const nodeExe = () => process.execPath.replace(/^\\\\\?\\/, "");
+function hookArgv(base: string): string[] {
+  const mjs = fileURLToPath(new URL(`./${base}.mjs`, import.meta.url));
+  return existsSync(mjs) ? [mjs]
+    : ["--import", pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href, fileURLToPath(new URL(`./${base}.ts`, import.meta.url))];
+}
+const quoted = (base: string) => [nodeExe(), ...hookArgv(base)].map((a) => `"${fwd(a)}"`).join(" ");
+// Packaged: firewall-hook.mjs sits next to server.mjs (scripts/build-server.mjs). Source: run the .ts under the tsx loader (risk.ts imports ./firewall.js, which Node type stripping cannot resolve).
+// `|| exit 2`: a hook that cannot start blocks the call.
+export function firewallHookCommand(): string { return quoted("firewall-hook") + " || exit 2"; }
+
+function toShortPath(p: string): string {
+  if (process.platform !== "win32" || !p.includes(" ")) return fwd(p);
+  try {
+    const clean = p.replace(/^\\\\\?\\/, "");
+    const res = spawnSync("cmd.exe", ["/c", `for %I in ("${clean}") do @echo %~sI`], {
+      encoding: "utf8",
+      windowsVerbatimArguments: true,
+      windowsHide: true,
+    });
+    const out = res.stdout ? res.stdout.trim() : "";
+    if (out && existsSync(out)) return fwd(out);
+  } catch {}
+  return `"${fwd(p)}"`;
+}
+
+// agy runs this via Go exec.Command("cmd", "/c", command), which escapes double quotes as \",
+// breaking cmd.exe argument parsing. Use 8.3 short paths without quotes on win32.
+export function agyFirewallHookCommand(): string {
+  if (process.platform === "win32") {
+    const args = [toShortPath(nodeExe()), ...hookArgv("agy-firewall-hook").map((a) => a.startsWith("file:") || a.startsWith("-") ? a : toShortPath(a))];
+    return args.join(" ");
+  }
+  return quoted("agy-firewall-hook");
+}
+export const firewallHooks = () => ({ PreToolUse: [{ matcher: "Bash|PowerShell", hooks: [{ type: "command", command: firewallHookCommand(), timeout: 10 }] }] });
+
+export const DEFAULT_ALLOWED_COMMANDS = ["npm test", "npm run", "npx vitest", "npx tsc", "git status", "git diff", "git log", "git show", "git rm"];
 
 // forge.allowedCommands (JSON string array) wins; unset or malformed falls back.
 export function resolveAllowedCommands(setting: string | null, fallback = DEFAULT_ALLOWED_COMMANDS): string[] {
@@ -23,9 +67,10 @@ export const DENY_RULES = ["Bash(git *--output*)", "PowerShell(git *--output*)"]
 // Per-program write wall added at launch, whatever relay.json says. claude: the
 // prompt moves to stdin (a prompt file outside the folder would be refused) and
 // --restricted confines its file tools to the working folder, edit rights only
-// when write is true (the work stage); only allow-listed
-// commands run; plan/work/review agents can also read the attachments folder (operator evidence, chat attachments). codex: its own OS sandbox. Other programs are not walled here.
-export function wallCmd(cmd: string[], allowed: string[], write = false, addDirs: string[] = []): string[] {
+// when write is true (the work stage); shell commands pass through the PreToolUse
+// firewall hook and only allow-listed commands run; claude also gets the firewall
+// hook and deny list when the wall is off (denyOnlyCmd); plan/work/review agents can also read the attachments folder (operator evidence, chat attachments). codex: its own OS sandbox. Other programs are not walled here.
+export function wallCmd(cmd: string[], allowed: string[], write = false, addDirs: string[] = [], lifted: readonly string[] = []): string[] {
   const bin = binBasename(cmd[0]).toLowerCase();
   if (bin === "claude") {
     if (cmd.includes("--restricted")) return cmd;
@@ -35,7 +80,7 @@ export function wallCmd(cmd: string[], allowed: string[], write = false, addDirs
       ...(write ? ["--permission-mode", "acceptEdits"] : []),
       "--permission-prompts", "none",
       "--tools", "Read,Edit,Write,Glob,Grep,Bash,PowerShell",
-      "--settings", JSON.stringify({ permissions: { allow: [...allowRules(allowed), "mcp__vibeops"], deny: DENY_RULES } }),
+      "--settings", JSON.stringify({ permissions: { allow: [...allowRules(allowed), "mcp__vibeops"], deny: [...DENY_RULES, ...denyPatterns(lifted)] }, hooks: firewallHooks() }),
       ...addDirs.flatMap((d) => ["--add-dir", d])];
   }
   if (bin === "codex") {
@@ -46,15 +91,37 @@ export function wallCmd(cmd: string[], allowed: string[], write = false, addDirs
   return cmd;
 }
 
+export function denyOnlyCmd(cmd: string[], lifted: readonly string[] = []): string[] {
+  if (binBasename(cmd[0]).toLowerCase() !== "claude" || cmd.includes("--settings")) return cmd;
+  return [...cmd, "--settings", JSON.stringify({ permissions: { deny: [...DENY_RULES, ...denyPatterns(lifted)] }, hooks: firewallHooks() })];
+}
+
+export function agyDenyCmd(cmd: string[], lifted: readonly string[] = []): string[] {
+  if (binBasename(cmd[0]).toLowerCase() !== "agy" || cmd.includes("--settings")) return cmd;
+  return [...cmd, "--settings", JSON.stringify({ permissions: { deny: agyPatterns(lifted) } })];
+}
+
+const SHELL_CONTROL = /&&|\|\||;|\||>|<|`|\$\(/;
+const warnedChecks = new Set<string>();
+
 // forge.allowedCommands.<projectId> wins over forge.allowedCommands, then the default.
-export async function loadWall(projectId?: string): Promise<{ on: boolean; allowed: string[] }> {
+// Work lanes (write) may also run the project's single-command checks.
+export async function loadWall(projectId?: string, write = false, workdir = ""): Promise<{ on: boolean; allowed: string[] }> {
   try {
     const { getSetting } = await import("../services/settings.js");
     const global = resolveAllowedCommands(await getSetting("forge.allowedCommands"));
-    return {
-      on: (await getSetting("forge.agentWall")) !== "false",
-      allowed: projectId ? resolveAllowedCommands(await getSetting(`forge.allowedCommands.${projectId}`), global) : global,
-    };
+    const allowed = projectId ? resolveAllowedCommands(await getSetting(`forge.allowedCommands.${projectId}`), global) : global;
+    const on = (await getSetting("forge.agentWall")) !== "false";
+    if (!write) return { on, allowed };
+    const { resolveChecks } = await import("../forge/checks.js");
+    const checks = resolveChecks(projectId ? await getSetting(`forge.checks.${projectId}`) : null, workdir, await getSetting("forge.checks"));
+    const checkCmds = checks.map((c) => typeof c === "string" ? c : c.cmd);
+    const simple = checkCmds.filter((c) => {
+      if (!SHELL_CONTROL.test(c)) return true;
+      if (!warnedChecks.has(c)) { warnedChecks.add(c); console.warn(`forge: wall skips compound check (use a single command): ${c}`); }
+      return false;
+    });
+    return { on, allowed: [...new Set([...allowed, ...simple])] };
   } catch {
     return { on: true, allowed: DEFAULT_ALLOWED_COMMANDS };
   }

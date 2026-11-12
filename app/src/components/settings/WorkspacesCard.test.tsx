@@ -153,3 +153,49 @@ test("Failed savePath invalidates projects query on error", async () => {
   });
   expect(screen.getByText("Permission denied")).toBeInTheDocument();
 });
+
+
+test("project with repoPath shows caption text for Index docs", async () => {
+  render(wrap(<WorkspacesCard />));
+  await waitFor(() => expect(screen.getByText("Git Project")).toBeInTheDocument());
+
+  const captions = screen.getAllByText("Index docs: re-read this project's docs into knowledge search");
+  expect(captions.length).toBeGreaterThan(0);
+});
+
+test("running index-repo job shows progress and disables Index docs button", async () => {
+  const runningJob = {
+    id: "job-idx-1",
+    kind: "index-repo",
+    key: "index-repo:1",
+    label: "Index docs",
+    trigger: "manual",
+    state: "running",
+    phase: "embedding docs",
+    done: 3,
+    total: 714,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    result: null,
+    error: null,
+    cancellable: true,
+    cancelRequested: false,
+  };
+
+  apiFetch.mockImplementation(async (path: string, options?: any) => {
+    if (path === "/projects" && (!options || options.method === "GET" || !options.method)) {
+      return mockProjects;
+    }
+    if (path === "/jobs?kind=index-repo") {
+      return [runningJob];
+    }
+    return {};
+  });
+
+  render(wrap(<WorkspacesCard />));
+  await waitFor(() => expect(screen.getByText("Git Project")).toBeInTheDocument());
+
+  expect(await screen.findByText("3 of 714")).toBeInTheDocument();
+  const indexBtns = screen.getAllByRole("button", { name: /Index docs/ });
+  expect(indexBtns[0]).toBeDisabled();
+});

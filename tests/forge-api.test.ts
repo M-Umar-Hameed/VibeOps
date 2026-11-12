@@ -17,6 +17,7 @@ import { indexRepoDocs, searchKnowledge, repoIndexed } from "../src/services/kno
 import * as knowledgeSvc from "../src/services/knowledge.js";
 import { resolveSyncActor } from "../src/sync/actor.js";
 import { addComment, listComments } from "../src/services/comments.js";
+import * as commentsSvc from "../src/services/comments.js";
 import { settleAll, reconcileMergedTickets, stopRun, awaitRun, activeStageForTicket } from "../src/forge/runs.js";
 import { withSetting } from "./helpers/settings.js";
 import * as sandbox from "../src/forge/sandbox.js";
@@ -571,14 +572,9 @@ describe("forge API", () => {
   it("promote 409s when the sandbox has no commits, even with a passing review", async () => {
     const h = await adminHeaders();
     const ticket = await seedTicket();
-    setScript("plan,work,review-pass"); // no FAKE_WRITE -- work stage makes no file changes
-
-    const startRes = await app.request("/forge/pipeline", {
-      method: "POST", headers: h,
-      body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
-    });
-    const { runId } = await startRes.json();
-    await pollUntilDone(h, runId);
+    await sandbox.ensureSandbox(workdir, ticket.id);
+    const { actor: admin } = await createActor({ name: uniq("forge-admin"), kind: "human", role: "admin" });
+    await addComment(admin.id, ticket.id, "Looks good\n\nVERDICT: PASS", "review");
 
     const sandboxRes = await app.request(`/forge/tickets/${ticket.id}/sandbox`, { headers: h });
     expect((await sandboxRes.json()).lastVerdict).toBe("pass");
@@ -863,6 +859,34 @@ describe("forge API", () => {
     expect(typeof body.reclaimedBytes).toBe("number");
   });
 
+  it("sandbox usage route enforces authz and returns disk fields", async () => {
+    const { apiKey: memberKey } = await createActor({ name: uniq("forge-api-usage-member"), kind: "agent" });
+    const memberH = { Authorization: `Bearer ${memberKey}`, "Content-Type": "application/json" };
+
+    const memberRes = await app.request("/forge/sandboxes/usage", { method: "GET", headers: memberH });
+    expect(memberRes.status).toBe(403);
+
+    const h = await adminHeaders();
+    const adminRes = await app.request("/forge/sandboxes/usage", { method: "GET", headers: h });
+    expect(adminRes.status).toBe(200);
+    const body = await adminRes.json();
+    expect(typeof body.root).toBe("string");
+    expect(typeof body.freeBytes).toBe("number");
+    expect(typeof body.totalBytes).toBe("number");
+    expect(typeof body.minFreeBytes).toBe("number");
+    expect(body.minFreeBytes).toBe(2048 * 1024 * 1024);
+    expect(Array.isArray(body.sandboxes)).toBe(true);
+
+    const ticket = await seedTicket();
+    await sandbox.ensureSandbox(workdir, ticket.id);
+    const adminRes2 = await app.request("/forge/sandboxes/usage", { method: "GET", headers: h });
+    const body2 = await adminRes2.json();
+    const sbx = body2.sandboxes.find((s: { ticketId: string }) => s.ticketId === ticket.id);
+    expect(sbx).toBeTruthy();
+    expect(typeof sbx.bytes).toBe("number");
+    expect(sbx.bytes).toBeGreaterThan(0);
+  });
+
   it("gate block forces promote 409", async () => {
     const h = await adminHeaders();
     const ticket = await seedTicket();
@@ -908,6 +932,34 @@ describe("forge API", () => {
     const promoteClean = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
     expect(promoteClean.status).toBe(200);
     expect((await promoteClean.json()).status).toBe("closed");
+  });
+
+  it("promote with a dirty tracked file returns 409 with files; ticket untouched", async () => {
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+    setScript("plan,work,review-pass", true);
+    await runToPassed(h, ticket.id);
+    writeFileSync(join(workdir, "readme.md"), "dirty\n");
+    const res = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
+    expect(res.status).toBe(409);
+    expect((await res.json()).files).toContain("readme.md");
+    expect((await getTicket(ticket.id)).status).toBe("review");
+    expect((await listComments(ticket.id)).some((cm) => cm.body === "forge: promoted")).toBe(false);
+  });
+
+  it("two concurrent promotes of one ticket: one 200, one 409, one promoted comment", async () => {
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+    setScript("plan,work,review-pass", true);
+    await runToPassed(h, ticket.id);
+    const url = `/forge/tickets/${ticket.id}/promote`;
+    const [a, b] = await Promise.all([
+      app.request(url, { method: "POST", headers: h }),
+      app.request(url, { method: "POST", headers: h }),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    expect((await listComments(ticket.id)).filter((cm) => cm.body === "forge: promoted").length).toBe(1);
+    expect((await getTicket(ticket.id)).status).toBe("closed");
   });
 });
 
@@ -1550,6 +1602,123 @@ it("boot reconcile does NOT touch a review ticket whose last run failed", async 
       } finally {
         rmSync(exportDest, { recursive: true, force: true });
       }
+    });
+
+    it("GET /forge/runs rejects bad status, projectId, limit, before with 400", async () => {
+      const h = await adminHeaders();
+      expect((await app.request("/forge/runs?status=bogus", { headers: h })).status).toBe(400);
+      expect((await app.request("/forge/runs?projectId=not-a-uuid", { headers: h })).status).toBe(400);
+      expect((await app.request("/forge/runs?limit=0", { headers: h })).status).toBe(400);
+      expect((await app.request("/forge/runs?limit=201", { headers: h })).status).toBe(400);
+      expect((await app.request("/forge/runs?before=nope", { headers: h })).status).toBe(400);
+      expect((await app.request("/forge/runs?status=failed", { headers: h })).status).toBe(200);
+    });
+
+    it("GET /forge/runs loads comments once per ticket per call", async () => {
+      const h = await adminHeaders();
+      const t = await seedTicket();
+      const now = Date.now();
+      const rows = [0, 1, 2].map((i) => ({
+        id: randomUUID(),
+        ticketId: t.id,
+        status: "failed",
+        stage: "work",
+        planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+        startedAt: new Date(now - (i + 1) * 1000),
+        finishedAt: new Date(now - i * 1000),
+      }));
+      await db.insert(forgeRuns).values(rows);
+      const spy = vi.spyOn(commentsSvc, "listComments");
+      try {
+        const res = await app.request(`/forge/runs?ticketId=${t.id}`, { headers: h });
+        expect(res.status).toBe(200);
+        expect(spy.mock.calls.filter(([id]) => id === t.id).length).toBe(1);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("summary=1 with status and projectId matches the full listing filtered by hand", async () => {
+      const h = await adminHeaders();
+      const { actor } = await createActor({ name: uniq("h"), kind: "human", role: "admin" });
+      const p = await createProject({ key: uniq("p"), name: uniq("p") });
+      const q = await createProject({ key: uniq("q"), name: uniq("q") });
+      const ta = await createTicket(actor.id, { projectId: p.id, title: "ta" });
+      const tb = await createTicket(actor.id, { projectId: p.id, title: "tb" });
+      const tc = await createTicket(actor.id, { projectId: q.id, title: "tc" });
+      const now = Date.now();
+      await db.insert(forgeRuns).values([
+        { id: randomUUID(), ticketId: ta.id, status: "failed", stage: "work", planAgent: "fake", workAgent: "fake", reviewAgent: "fake", startedAt: new Date(now - 1000), finishedAt: new Date(now), cause: "base_conflict", causeDetail: "x" },
+        { id: randomUUID(), ticketId: ta.id, status: "passed", stage: "review", planAgent: "fake", workAgent: "fake", reviewAgent: "fake", startedAt: new Date(now - 2000), finishedAt: new Date(now - 1000) },
+        { id: randomUUID(), ticketId: tb.id, status: "failed", stage: "work", planAgent: "fake", workAgent: "fake", reviewAgent: "fake", startedAt: new Date(now - 3000), finishedAt: new Date(now - 2000) },
+        { id: randomUUID(), ticketId: tb.id, status: "rejected", stage: "review", planAgent: "fake", workAgent: "fake", reviewAgent: "fake", startedAt: new Date(now - 4000), finishedAt: new Date(now - 3000) },
+        { id: randomUUID(), ticketId: tc.id, status: "failed", stage: "work", planAgent: "fake", workAgent: "fake", reviewAgent: "fake", startedAt: new Date(now - 5000), finishedAt: new Date(now - 4000) },
+      ]);
+
+      const resA = (await (await app.request(`/forge/runs?ticketId=${ta.id}`, { headers: h })).json()) as any[];
+      const resB = (await (await app.request(`/forge/runs?ticketId=${tb.id}`, { headers: h })).json()) as any[];
+      const full = [...resA, ...resB].filter((r) => r.status === "failed").map((r) => r.id).sort();
+
+      const sumRes = (await (await app.request(`/forge/runs?summary=1&status=failed&projectId=${p.id}`, { headers: h })).json()) as any[];
+      const sum = sumRes.map((r) => r.id).sort();
+      expect(sum).toEqual(full);
+      expect(sum.length).toBe(2);
+      expect(sumRes.some((r) => r.ticketId === tc.id)).toBe(false);
+      expect(sumRes.every((r) => r.modelVerified === undefined && r.stageDurationsMs === undefined)).toBe(true);
+      const withCause = sumRes.find((r) => r.cause === "base_conflict");
+      expect(withCause?.causeDetail).toBe("x");
+    });
+
+    it("default GET /forge/runs response shape is unchanged", async () => {
+      const h = await adminHeaders();
+      const t = await seedTicket();
+      const now = Date.now();
+      await db.insert(forgeRuns).values([
+        { id: randomUUID(), ticketId: t.id, status: "passed", stage: "review", planAgent: "fake", workAgent: "fake", reviewAgent: "fake", startedAt: new Date(now - 2000), finishedAt: new Date(now - 1000) },
+        { id: randomUUID(), ticketId: t.id, status: "passed", stage: "review", planAgent: "fake", workAgent: "fake", reviewAgent: "fake", startedAt: new Date(now - 1000), finishedAt: new Date(now) },
+      ]);
+      const res = (await (await app.request(`/forge/runs?ticketId=${t.id}`, { headers: h })).json()) as any[];
+      expect(res.length).toBe(2);
+      for (const item of res) {
+        expect(item.modelVerified).toBeDefined();
+        expect(item.stageDurationsMs).toBeDefined();
+        expect(item.persisted).toBe(true);
+        expect("cause" in item).toBe(false);
+      }
+    });
+
+    it("limit and before/beforeId page without overlap, id tiebreak on equal startedAt", async () => {
+      const h = await adminHeaders();
+      const t = await seedTicket();
+      const sameTime = new Date("2026-01-01T12:00:00.000Z");
+      const olderTime = (i: number) => new Date(sameTime.getTime() - (i + 1) * 10000);
+      const rows = [
+        ...Array.from({ length: 5 }, () => ({
+          id: randomUUID(), ticketId: t.id, status: "passed", stage: "review",
+          planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+          startedAt: sameTime, finishedAt: sameTime,
+        })),
+        ...Array.from({ length: 3 }, (_, i) => ({
+          id: randomUUID(), ticketId: t.id, status: "passed", stage: "review",
+          planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+          startedAt: olderTime(i), finishedAt: olderTime(i),
+        })),
+      ];
+      await db.insert(forgeRuns).values(rows);
+
+      const p1 = (await (await app.request(`/forge/runs?ticketId=${t.id}&limit=4`, { headers: h })).json()) as any[];
+      expect(p1.length).toBe(4);
+      const last = p1[p1.length - 1];
+      const p2 = (await (await app.request(`/forge/runs?ticketId=${t.id}&limit=4&before=${encodeURIComponent(last.startedAt)}&beforeId=${last.id}`, { headers: h })).json()) as any[];
+      expect(p2.length).toBe(4);
+
+      const p1Ids = new Set(p1.map((r) => r.id));
+      const p2Ids = new Set(p2.map((r) => r.id));
+      for (const id of p2Ids) {
+        expect(p1Ids.has(id)).toBe(false);
+      }
+      const union = new Set([...p1Ids, ...p2Ids]);
+      expect(union.size).toBe(8);
     });
   });
 

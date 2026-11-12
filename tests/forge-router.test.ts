@@ -101,3 +101,31 @@ test("escalate: already at the top pair is capped, not thrown", () => {
   const top = { agent: "multi", model: "expensive-hi" }; // quality 5, nothing higher
   expect(escalate(escalationPairs, top, 5)).toEqual(top);
 });
+
+test("escalate: base pair not in config keeps the base pick", () => {
+  const missing = { agent: "unknown", model: "model" };
+  expect(escalate(escalationPairs, missing, 2)).toEqual(missing);
+});
+
+test("escalate: candidates come from the base lane only", () => {
+  const pairs: AgentModelPair[] = [
+    { agent: "lane-a", model: "m1", tier: "cheap", quality: 2 },
+    { agent: "lane-b", model: "m2", tier: "expensive", quality: 5 },
+  ];
+  const base = { agent: "lane-a", model: "m1" };
+  expect(escalate(pairs, base, 2)).toEqual(base);
+});
+
+test("escalate: model match is case-insensitive", () => {
+  const base = { agent: "multi", model: "CHEAP-LO" };
+  expect(escalate(escalationPairs, base, 2)).toEqual({ agent: "multi", model: "cheap-hi" });
+});
+
+test("escalate: equal quality breaks ties on the cheaper tier", () => {
+  const pairs: AgentModelPair[] = [
+    { agent: "a", model: "base", tier: "free", quality: 1 },
+    { agent: "a", model: "costly", tier: "expensive", quality: 4 },
+    { agent: "a", model: "thrifty", tier: "cheap", quality: 4 },
+  ];
+  expect(escalate(pairs, { agent: "a", model: "base" }, 2)).toEqual({ agent: "a", model: "thrifty" });
+});

@@ -572,14 +572,9 @@ describe("forge API", () => {
   it("promote 409s when the sandbox has no commits, even with a passing review", async () => {
     const h = await adminHeaders();
     const ticket = await seedTicket();
-    setScript("plan,work,review-pass"); // no FAKE_WRITE -- work stage makes no file changes
-
-    const startRes = await app.request("/forge/pipeline", {
-      method: "POST", headers: h,
-      body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
-    });
-    const { runId } = await startRes.json();
-    await pollUntilDone(h, runId);
+    await sandbox.ensureSandbox(workdir, ticket.id);
+    const { actor: admin } = await createActor({ name: uniq("forge-admin"), kind: "human", role: "admin" });
+    await addComment(admin.id, ticket.id, "Looks good\n\nVERDICT: PASS", "review");
 
     const sandboxRes = await app.request(`/forge/tickets/${ticket.id}/sandbox`, { headers: h });
     expect((await sandboxRes.json()).lastVerdict).toBe("pass");
@@ -909,6 +904,34 @@ describe("forge API", () => {
     const promoteClean = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
     expect(promoteClean.status).toBe(200);
     expect((await promoteClean.json()).status).toBe("closed");
+  });
+
+  it("promote with a dirty tracked file returns 409 with files; ticket untouched", async () => {
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+    setScript("plan,work,review-pass", true);
+    await runToPassed(h, ticket.id);
+    writeFileSync(join(workdir, "readme.md"), "dirty\n");
+    const res = await app.request(`/forge/tickets/${ticket.id}/promote`, { method: "POST", headers: h });
+    expect(res.status).toBe(409);
+    expect((await res.json()).files).toContain("readme.md");
+    expect((await getTicket(ticket.id)).status).toBe("review");
+    expect((await listComments(ticket.id)).some((cm) => cm.body === "forge: promoted")).toBe(false);
+  });
+
+  it("two concurrent promotes of one ticket: one 200, one 409, one promoted comment", async () => {
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+    setScript("plan,work,review-pass", true);
+    await runToPassed(h, ticket.id);
+    const url = `/forge/tickets/${ticket.id}/promote`;
+    const [a, b] = await Promise.all([
+      app.request(url, { method: "POST", headers: h }),
+      app.request(url, { method: "POST", headers: h }),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    expect((await listComments(ticket.id)).filter((cm) => cm.body === "forge: promoted").length).toBe(1);
+    expect((await getTicket(ticket.id)).status).toBe("closed");
   });
 });
 

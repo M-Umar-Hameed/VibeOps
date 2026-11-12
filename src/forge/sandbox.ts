@@ -496,23 +496,34 @@ function promoteMessages(ticketId: string, title: string): { subject: string; bo
   return { subject, body };
 }
 
-export async function promoteSandbox(workdir: string, ticketId: string, title: string, discardAfter = true): Promise<void> {
-  const dirty = await git(workdir, "status", "--porcelain");
-  if (dirty.out.trim()) {
+export async function workdirDirtyFiles(workdir: string): Promise<string[]> {
+  const out = await must(workdir, "status", "--porcelain", "--untracked-files=no");
+  return out.split("\n").map((l) => l.replace(/\r$/, "")).filter((l) => l.trim()).map((l) => l.slice(3));
+}
+
+export async function promoteSandbox(workdir: string, ticketId: string, title: string, discardAfter = true, retryDelayMs = 2000): Promise<void> {
+  if ((await workdirDirtyFiles(workdir)).length) {
     throw new ConflictError("workdir has uncommitted changes; commit or stash before promoting");
   }
   const { subject, body } = promoteMessages(ticketId, title);
-  const merge = await git(workdir, "merge", "--no-ff", branchName(ticketId),
-    "-m", subject, "-m", body);
+  const mergeHead = async () => (await git(workdir, "rev-parse", "-q", "--verify", "MERGE_HEAD")).code === 0;
+  let merge = await git(workdir, "merge", "--no-ff", branchName(ticketId), "-m", subject, "-m", body);
+  for (let attempt = 1; merge.code !== 0 && /index\.lock/.test(merge.out) && !(await mergeHead()); attempt++) {
+    if (attempt >= 5) throw new Error("repository busy: .git/index.lock held");
+    await new Promise((r) => setTimeout(r, retryDelayMs));
+    merge = await git(workdir, "merge", "--no-ff", branchName(ticketId), "-m", subject, "-m", body);
+  }
   if (merge.code !== 0) {
     const conflicts = await git(workdir, "diff", "--name-only", "--diff-filter=U");
-    await git(workdir, "merge", "--abort");
+    if (await mergeHead()) await git(workdir, "merge", "--abort");
     const files = conflicts.out.split("\n").map((l) => l.replace(/\r$/, "").trim()).filter(Boolean);
-    const named = files.length ? files.join(", ") : merge.out.trim().slice(0, 200);
-    throw new ConflictError(
-      `promote blocked: ${branchName(ticketId)} conflicts with the base in ${files.length} file(s): ${named}. ` +
-      `The sandbox and branch are left intact; rework the ticket and re-run, or resolve the conflict before promoting again.`,
-    );
+    if (files.length) {
+      throw new ConflictError(
+        `promote blocked: ${branchName(ticketId)} conflicts with the base in ${files.length} file(s): ${files.join(", ")}. ` +
+        `The sandbox and branch are left intact; rework the ticket and re-run, or resolve the conflict before promoting again.`,
+      );
+    }
+    throw new Error(`promote merge failed: ${merge.out.trim().slice(0, 300)}`);
   }
   if (discardAfter) await cleanup(workdir, ticketId);
 }

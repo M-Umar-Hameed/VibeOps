@@ -207,6 +207,10 @@ if (process.env.FAKE_WRITE_STRAY && mode === "work") {
 if (process.env.FAKE_WRITE_MARKERS && mode === "work") {
   writeFileSync(join(process.cwd(), "markers.txt"), "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> base\n");
 }
+if (process.env.FAKE_WRITE_DUP_TEST && mode === "work") {
+  const t = 'it("same title", () => {});\n';
+  writeFileSync(join(process.cwd(), "dup.test.ts"), t + t);
+}
 if (process.env.FAKE_WRITE_PATH && mode === "work") {
   const p = join(process.cwd(), process.env.FAKE_WRITE_PATH);
   mkdirSync(dirname(p), { recursive: true });

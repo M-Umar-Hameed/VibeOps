@@ -1793,7 +1793,8 @@ export async function sweepStalledRuns(now: number, windowMs: number): Promise<s
   const stalled: string[] = [];
   for (const run of activeRuns()) {
     try {
-      if (run.stallReason) { setCause(run, "stall", run.stallReason); settle(run, "failed"); continue; } // pipeline never resumed after the kill (child refused to die): force terminal
+      if (run.stallReason) { setCause(run, "stall", run.stallReason); settle(run, "failed"); continue; }
+      if (run.checksChild) { run.lastActivityAt = now; continue; } // pipeline never resumed after the kill (child refused to die): force terminal
       const size = logSizeReader.read(run.logPath);
       if (size === null) { run.lastActivityAt ??= now; continue; }
       const cpu = run.pid != null ? treeCpuReader.read(run.pid) : null;

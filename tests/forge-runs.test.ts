@@ -147,6 +147,7 @@ function relayConfig(): RelayConfig {
 }
 
 function setScript(script: string, write?: boolean): void {
+  if (existsSync(counterFile)) rmSync(counterFile);
   process.env.FAKE_SCRIPT = script;
   process.env.FAKE_COUNTER_FILE = counterFile;
   if (write) process.env.FAKE_WRITE = "1";
@@ -1709,6 +1710,7 @@ const file2 = "run2-output.txt";
             FAKE_SCRIPT: "plan,work,review-pass",
             FAKE_COUNTER_FILE: counter1,
             FAKE_WRITE_PATH: file1,
+            FAKE_WRITE: "1",
           },
         },
       },
@@ -1724,6 +1726,7 @@ const file2 = "run2-output.txt";
             FAKE_SCRIPT: "plan,work,review-pass",
             FAKE_COUNTER_FILE: counter2,
             FAKE_WRITE_PATH: file2,
+            FAKE_WRITE: "1",
           },
         },
       },
@@ -2218,6 +2221,7 @@ const file2 = "run2-output.txt";
             FAKE_SCRIPT: "plan,work,review-pass",
             FAKE_COUNTER_FILE: counter1,
             FAKE_WRITE_PATH: file1,
+            FAKE_WRITE: "1",
           },
         },
       },
@@ -2233,6 +2237,7 @@ const file2 = "run2-output.txt";
             FAKE_SCRIPT: "plan,work,review-pass",
             FAKE_COUNTER_FILE: counter2,
             FAKE_WRITE_PATH: file2,
+            FAKE_WRITE: "1",
           },
         },
       },

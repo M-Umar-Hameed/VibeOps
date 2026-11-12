@@ -451,6 +451,14 @@ describe("forge run manager", () => {
     expect(review?.body).toMatch(/VERDICT:\s*FAIL\s*$/); // forced FAIL wins, at the end
 
     expect((await getTicket(ticket.id)).status).toBe("planned");
+
+    const row = await waitForPersistedRun(runId);
+    expect(row.cause).toBe("checks");
+    expect(row.causeDetail).toContain("reviewer passed; forced by checks");
+    expect(row.causeDetail).toContain("npm run typecheck");
+    const item = (await listRunsWithHistory(ticket.id)).find((r) => r.id === runId);
+    expect(item?.rejectionReason).toContain("npm run typecheck");
+    expect(item?.rejectionReason).not.toContain("looks good");
   });
 
   it("checks run concurrently with review: review starts before the slow check finishes", async () => {
@@ -489,6 +497,7 @@ describe("forge run manager", () => {
       expect(await stopRun(runId)).toBe(true);
       await awaitRun(runId);
       expect(getRunOutput(runId, 0)?.status).toBe("stopped");
+      expect((await waitForPersistedRun(runId)).cause).toBe("stopped");
     });
   }, 15_000);
 
@@ -509,6 +518,8 @@ describe("forge run manager", () => {
     const persisted = await waitForPersistedRun(runId);
     expect(persisted.status).toBe("failed");
     expect(persisted.finishedAt).toBeTruthy();
+    expect(persisted.cause).toBe("crash");
+    expect(persisted.causeDetail).toBe("worker failed");
     const item = (await listRunsWithHistory(ticket.id)).find((r) => r.id === runId);
     expect(item?.failureReason).toBe("worker failed");
   });
@@ -1865,6 +1876,14 @@ const file2 = "run2-output.txt";
 
     // Ticket bounced to planned
     expect((await getTicket(ticket.id)).status).toBe("planned");
+
+    const row = await waitForPersistedRun(runId);
+    expect(row.cause).toBe("gate");
+    expect(row.causeDetail).toContain("reviewer passed; forced by gate");
+    expect(row.causeDetail).toContain("target.txt");
+    const item = (await listRunsWithHistory(ticket.id)).find((r) => r.id === runId);
+    expect(item?.rejectionReason).toContain("reviewer passed; forced by gate");
+    expect(item?.rejectionReason).not.toContain("looks good");
   });
 
   it("gate clean: model PASS is respected, ticket stays in review", async () => {

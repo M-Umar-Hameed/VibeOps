@@ -634,6 +634,7 @@ export async function startPipeline(
     // Uphold the never-stuck-in_progress invariant even for unexpected throws
     // (forgeCommit/addComment failures land here, after the claim).
     await bounce(run, actorId, `pipeline error: ${(e as Error).message}`, "");
+    setCause(run, "pipeline_error", `pipeline error: ${(e as Error).message}`);
     settle(run, "failed");
   }).then(() => run.persisted).catch(() => {})
     .then(() => opts.limitRetry ? undefined : retryOnNextAccount(run, actorId, config, agents, {
@@ -814,11 +815,11 @@ async function pipeline(
     });
     if (planStray.length) append(run, `\n[forge: planner changed files in its read-only copy; discarded: ${planStray.join(", ")}]\n`);
     run.child = undefined;
-    if (run.stopped) return settle(run, "stopped");
-    if (run.stallReason) { await bounce(run, actorId, run.stallReason, ""); return settle(run, "failed"); }
+    if (run.stopped) { setCause(run, "stopped"); return settle(run, "stopped"); }
+    if (run.stallReason) { await bounce(run, actorId, run.stallReason, ""); setCause(run, "stall", run.stallReason); return settle(run, "failed"); }
     applyVerification(res, run.agents.plan, run, config);
-    if (!res.ok) { await bounce(run, actorId, "planner failed", res.output); return settle(run, "failed"); }
-    if (!res.output.trim()) { await bounce(run, actorId, "planner returned an empty plan", ""); return settle(run, "failed"); }
+    if (!res.ok) { await bounce(run, actorId, "planner failed", res.output); setCause(run, "planner", "planner failed"); return settle(run, "failed"); }
+    if (!res.output.trim()) { await bounce(run, actorId, "planner returned an empty plan", ""); setCause(run, "planner", "planner returned an empty plan"); return settle(run, "failed"); }
     // Comments are the DURABLE record — redact them too, not just the console.
     await addComment(actorId, ticket.id, redactSecrets(res.output), "plan");
     ticket = await setStatus(actorId, ticket.id, "planned");
@@ -954,6 +955,7 @@ async function pipeline(
       ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]"
       : "";
     await bounce(run, actorId, "sandbox escape: protected path written outside the worktree", report + note);
+    setCause(run, "sandbox_escape", "sandbox escape: protected path written outside the worktree");
     return settle(run, "failed");
   }
   const depsLeak = detectDepsLeak(depsBaseline);
@@ -973,6 +975,7 @@ async function pipeline(
       ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]"
       : "";
     await bounce(run, actorId, "deps leak: wrote through shared node_modules link", report + note);
+    setCause(run, "deps_leak", "deps leak: wrote through shared node_modules link");
     return settle(run, "failed");
   }
   if (run.stallReason) {
@@ -980,6 +983,7 @@ async function pipeline(
     const saved = await forgeCommit(ticket.id, `WIP (stalled) ${ticket.title}`);
     const note = saved ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]" : "";
     await bounce(run, actorId, run.stallReason, note);
+    setCause(run, "stall", run.stallReason);
     return settle(run, "failed");
   }
   if (run.stopped) {
@@ -993,6 +997,7 @@ async function pipeline(
       ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]"
       : "";
     await bounce(run, actorId, "run stopped", note);
+    setCause(run, "stopped");
     return settle(run, "stopped");
   }
   applyVerification(workRes, run.agents.work, run, config);
@@ -1015,6 +1020,8 @@ async function pipeline(
         ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]"
         : "";
       await bounce(run, actorId, "worker failed", workRes.output + note);
+      if (run.limit || workRes.limit) setCause(run, "usage_limit", "worker failed: usage limit");
+      else setCause(run, "crash", "worker failed");
       return settle(run, "failed");
     }
     append(run, `\nforge: worker crashed (${crashed}) after saving a diff; continuing to review\n`);
@@ -1075,6 +1082,14 @@ async function pipeline(
   return reviewStage(run, actorId, agents.review, workdir, sandbox, ticket, plan, report, styleSetting, config, amendments, selectSkills(plan, agents.review.skillAllowlist).bodies, operatorEvidence);
 }
 
+const CAUSE_DETAIL_CAP = 300;
+
+function setCause(run: Run, cause: string, detail?: string): void {
+  if (run.finishedAt) return; // first settle wins; keep its cause
+  run.cause = cause;
+  run.causeDetail = detail ? redactSecrets(detail).slice(0, CAUSE_DETAIL_CAP) : undefined;
+}
+
 function settle(run: Run, status: Status): void {
   if (run.finishedAt) return; // first settle wins; a later stall/tail settle must never override
   run.status = status;
@@ -1133,7 +1148,7 @@ async function reviewStage(
   append(run, `\n=== FORGE review (${run.agents.review}) ===\n`);
   const onData = (c: string) => append(run, c);
 
-  if (run.stopped) return settle(run, "stopped");
+  if (run.stopped) { setCause(run, "stopped"); return settle(run, "stopped"); }
 
   const sync = await syncSandboxWithBase(workdir, ticket.id);
   append(run, baseSyncLine(sync));
@@ -1144,7 +1159,7 @@ async function reviewStage(
       `${files.map((f) => `  - ${f}`).join("\n")}\n` +
       `Resolve the merge conflicts in ${files.join(", ")}; keep both sides' intent.\nVERDICT: FAIL`, "review");
     await setStatus(actorId, ticket.id, "planned");
-    run.cause = "base_conflict";
+    setCause(run, "base_conflict", "base conflict");
     return settle(run, "rejected");
   }
 
@@ -1201,7 +1216,7 @@ async function reviewStage(
   const gateBlocked = gate.findings.some(f => f.severity === "block");
   if (gate.report) append(run, `\n=== FORGE gate ===\n${gate.report}\n`);
 
-  if (run.stopped) return settle(run, "stopped");
+  if (run.stopped) { setCause(run, "stopped"); return settle(run, "stopped"); }
 
   const [diff, stat] = await Promise.all([
     sandboxDiff(workdir, ticket.id),
@@ -1212,7 +1227,7 @@ async function reviewStage(
   // each carrying the whole-diff stat so the reviewer knows what it cannot see.
   const chunks = chunkReviewDiff(elideGeneratedDiffs(diff), stat, DIFF_PROMPT_CAP);
 
-  if (run.stopped) return settle(run, "stopped");
+  if (run.stopped) { setCause(run, "stopped"); return settle(run, "stopped"); }
 
   // Checks run CONCURRENTLY with the whole review (single or chunked): the
   // reviewer only needs check RESULTS at verdict time. Checks execute in
@@ -1278,12 +1293,12 @@ async function reviewStage(
     // Never settle while checks still run in the sandbox; a resume would start a second set.
     .catch(async (e) => { await checksPromise.catch(() => {}); throw e; });
   run.child = undefined;
-  if (run.stopped) return settle(run, "stopped");
-  if (run.stallReason) { await checksPromise.catch(() => {}); await bounce(run, actorId, run.stallReason, ""); return settle(run, "failed"); }
+  if (run.stopped) { setCause(run, "stopped"); return settle(run, "stopped"); }
+  if (run.stallReason) { await checksPromise.catch(() => {}); await bounce(run, actorId, run.stallReason, ""); setCause(run, "stall", run.stallReason); return settle(run, "failed"); }
   const checkResults = await checksPromise;
   if (run.checksStartedAt !== undefined) run.checksDurationMs = Date.now() - run.checksStartedAt;
-  if (run.stopped) return settle(run, "stopped");
-  if (run.stallReason) { await bounce(run, actorId, run.stallReason, ""); return settle(run, "failed"); }
+  if (run.stopped) { setCause(run, "stopped"); return settle(run, "stopped"); }
+  if (run.stallReason) { await bounce(run, actorId, run.stallReason, ""); setCause(run, "stall", run.stallReason); return settle(run, "failed"); }
 
   // A reviewer that never produced a verdict (non-zero exit, thrown error, an
   // API/transport error surfaced in output, or empty output) is "could not be reached", NOT
@@ -1294,11 +1309,13 @@ async function reviewStage(
   const reviewFailure = reviewResults.find((r) => !r.ok || !r.output.trim());
   if (reviewFailure) {
     await bounce(run, actorId, "reviewer failed", reviewFailure.output);
+    setCause(run, "reviewer_failed", "reviewer failed");
     return settle(run, "failed");
   }
 
   if (reviewStray.length) {
     await bounce(run, actorId, "reviewer changed files in its read-only copy", reviewStray.join("\n"));
+    setCause(run, "reviewer_stray", "reviewer changed files in its read-only copy");
     return settle(run, "failed");
   }
 
@@ -1335,6 +1352,15 @@ async function reviewStage(
     // FAIL: back to planned; sandbox kept for the rework pass. The run settles
     // "rejected" (not "passed") so the quality signal reflects the verdict, not
     // pipeline completion.
+    const firstFailed = checkResults.find((r) => r.code !== 0)?.command;
+    const gateWhy = gate.findings.filter((f) => f.severity === "block").map((f) => f.detail).join("; ");
+    if (gateBlocked || checksFailed) {
+      const forcedBy = gateBlocked && checksFailed ? "gate and checks" : gateBlocked ? "gate" : "checks";
+      const why = [gateBlocked ? `gate: ${gateWhy}` : "", checksFailed ? `check failed: ${firstFailed}` : ""].filter(Boolean).join("; ");
+      setCause(run, gateBlocked ? "gate" : "checks", verdict.pass ? `reviewer passed; forced by ${forcedBy}; ${why}` : why);
+    } else {
+      setCause(run, "reviewer", parseReason(verdict.raw));
+    }
     await setStatus(actorId, ticket.id, "planned");
     return settle(run, "rejected");
   }
@@ -1587,6 +1613,7 @@ export async function listRunsWithHistory(ticketId?: string, opts: RunListOpts =
       agents: { plan: r.planAgent, work: r.workAgent, review: r.reviewAgent },
       effort: (r.effort ?? undefined) as Effort | undefined,
       checksDurationMs: r.checksDurationMs ?? undefined,
+      cause: r.cause ?? undefined, causeDetail: r.causeDetail ?? undefined,
       startedAt: r.startedAt.toISOString(),
       finishedAt: r.finishedAt ? r.finishedAt.toISOString() : undefined,
       persisted: true,
@@ -1620,21 +1647,27 @@ export async function listRunsWithHistory(ticketId?: string, opts: RunListOpts =
       );
     }
     if (item.status === "rejected" || item.status === "failed" || item.status === "stopped") {
-      const comments = await commentsFor(item.ticketId);
-      const from = new Date(item.startedAt).getTime();
-      const to = item.finishedAt ? new Date(item.finishedAt).getTime() : Date.now();
-      const inWindow = (c: { createdAt: Date }) => {
-        const at = new Date(c.createdAt).getTime();
-        return at >= from && at <= to;
-      };
-      if (item.status === "rejected") {
-        const review = [...comments].reverse().find((c) => c.kind === "review" && inWindow(c));
-        if (review) item.rejectionReason = parseReason(review.body.split("\n\n[forge: ")[0]);
+      if (item.cause) {
+        const reason = item.causeDetail || item.cause;
+        if (item.status === "rejected") item.rejectionReason = reason;
+        else item.failureReason = reason;
       } else {
-        // bounce() records why a run died as a "forge: <why>" report comment;
-        // its first line is the reason the run card shows.
-        const report = [...comments].reverse().find((c) => c.kind === "report" && c.body.startsWith("forge: ") && inWindow(c));
-        if (report) item.failureReason = report.body.split(/\r?\n/)[0].slice("forge: ".length).trim();
+        const comments = await commentsFor(item.ticketId);
+        const from = new Date(item.startedAt).getTime();
+        const to = item.finishedAt ? new Date(item.finishedAt).getTime() : Date.now();
+        const inWindow = (c: { createdAt: Date }) => {
+          const at = new Date(c.createdAt).getTime();
+          return at >= from && at <= to;
+        };
+        if (item.status === "rejected") {
+          const review = [...comments].reverse().find((c) => c.kind === "review" && inWindow(c));
+          if (review) item.rejectionReason = parseReason(review.body.split("\n\n[forge: ")[0]);
+        } else {
+          // bounce() records why a run died as a "forge: <why>" report comment;
+          // its first line is the reason the run card shows.
+          const report = [...comments].reverse().find((c) => c.kind === "report" && c.body.startsWith("forge: ") && inWindow(c));
+          if (report) item.failureReason = report.body.split(/\r?\n/)[0].slice("forge: ".length).trim();
+        }
       }
     }
   });
@@ -1711,7 +1744,7 @@ export async function sweepStalledRuns(now: number, windowMs: number): Promise<s
   const stalled: string[] = [];
   for (const run of activeRuns()) {
     try {
-      if (run.stallReason) { settle(run, "failed"); continue; } // pipeline never resumed after the kill (child refused to die): force terminal
+      if (run.stallReason) { setCause(run, "stall", run.stallReason); settle(run, "failed"); continue; } // pipeline never resumed after the kill (child refused to die): force terminal
       const size = logSizeReader.read(run.logPath);
       if (size === null) { run.lastActivityAt ??= now; continue; }
       const cpu = run.pid != null ? treeCpuReader.read(run.pid) : null;
@@ -1741,7 +1774,7 @@ export async function sweepStalledRuns(now: number, windowMs: number): Promise<s
           const admin = (await listActors()).find((a) => a.role === "admin");
           if (admin) await bounce(run, admin.id, reason, note);
           else append(run, `\nforge: ${reason}\n`);
-        } finally { settle(run, "failed"); }
+        } finally { setCause(run, "stall", reason); settle(run, "failed"); }
       }
       stalled.push(run.id);
     } catch (e) {
@@ -1820,6 +1853,7 @@ function tailUntilExit(run: Run): Promise<void> {
         clearInterval(timer);
         drain();
         if (readFd !== undefined) { try { closeSync(readFd); } catch { /* best effort */ } }
+        setCause(run, run.stopped ? "stopped" : "interrupted");
         settle(run, run.stopped ? "stopped" : "interrupted");
         resolve();
       }
@@ -1848,7 +1882,7 @@ export async function markInterruptedRuns(): Promise<string[]> {
         continue;
       }
       await db.update(forgeRuns)
-        .set({ status: "interrupted", finishedAt: new Date() })
+        .set({ status: "interrupted", finishedAt: new Date(), cause: "interrupted" })
         .where(eq(forgeRuns.id, row.id));
       interrupted.push(row.ticketId);
     }

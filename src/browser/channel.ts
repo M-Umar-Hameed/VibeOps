@@ -74,6 +74,16 @@ type Instance = {
   waiter: { resolve: (b: DeliveredBatch | null) => void; timer: ReturnType<typeof setTimeout> } | null;
 };
 
+let draining = false;
+export function releasePollers(): void {
+  draining = true;
+  for (const inst of instances.values()) {
+    if (!inst.waiter) continue;
+    clearTimeout(inst.waiter.timer);
+    inst.waiter.resolve(null);
+    inst.waiter = null;
+  }
+}
 const instances = new Map<string, Instance>();
 
 function live(inst: Instance | undefined, now: number): Instance | undefined {
@@ -126,6 +136,7 @@ function pump(inst: Instance): void {
 // GET /browser/poll: next batch for this instance, or null on ~25s timeout (204).
 // Poll also refreshes lastSeen — it is the heartbeat.
 export function nextBatch(instanceId: string): Promise<DeliveredBatch | null> {
+  if (draining) return Promise.resolve(null);
   const inst = live(instances.get(instanceId), Date.now());
   if (!inst) return Promise.resolve(null); // route 404s unknown instance before calling
   inst.lastSeen = Date.now();

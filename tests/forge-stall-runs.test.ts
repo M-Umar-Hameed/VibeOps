@@ -9,8 +9,9 @@ import { execFileSync } from "node:child_process";
 import { eq } from "drizzle-orm";
 import {
   startPipeline, stopRun, awaitRun, getRunOutput,
-  sweepStalledRuns, logSizeReader, resolveStallWindowMs, listRunsWithHistory,
+  sweepStalledRuns, logSizeReader, resolveStallWindowMs, listRunsWithHistory, getRunTimings,
 } from "../src/forge/runs.js";
+import { withSetting } from "./helpers/settings.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
 import { createTicket } from "../src/services/tickets.js";
@@ -156,6 +157,41 @@ describe("forge stall detection", () => {
       await awaitRun(runId);
     }
   }, 30_000);
+
+  it("a run whose checks are still executing is not swept, however long they are silent", async () => {
+    const { actorId, ticket } = await seedTicket("checks running not swept");
+    await withSetting("forge.checks", JSON.stringify([`node "${join(__dirname, "fixtures", "check-hang.mjs")}"`]), async () => {
+      setScript("plan,work,review-pass", true);
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await waitForStage(runId, "review");
+      const start = Date.now();
+      while (getRunTimings(runId)?.checksStartedAt === undefined) {
+        if (Date.now() - start > 5000) throw new Error("timed out waiting for checksStartedAt");
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      await new Promise((r) => setTimeout(r, 300)); // let the check child spawn -> run.checksChild set
+
+      const origLog = logSizeReader.read;
+      const origCpu = treeCpuReader.read;
+      logSizeReader.read = () => 100;
+      treeCpuReader.read = () => 5;
+      try {
+        const t0 = 1_700_000_000_000;
+        expect(await sweepStalledRuns(t0, WINDOW)).toEqual([]);
+        expect(await sweepStalledRuns(t0 + WINDOW + 60_000, WINDOW)).toEqual([]);
+        expect(getRunOutput(runId, 0)?.status).toBe("running");
+      } finally {
+        logSizeReader.read = origLog;
+        treeCpuReader.read = origCpu;
+      }
+
+      expect(await stopRun(runId)).toBe(true);
+      await awaitRun(runId);
+      expect(getRunOutput(runId, 0)?.status).toBe("stopped");
+    });
+  }, 20_000);
 
   it("does NOT kill a run whose log is still growing, even far past the window", async () => {
     const { actorId, ticket } = await seedTicket("still growing");

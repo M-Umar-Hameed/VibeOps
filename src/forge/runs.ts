@@ -368,7 +368,6 @@ function applyVerification(res: { ok: boolean; output: string }, compositeName: 
 
 const BASE_CONFLICT = "[forge: base conflict]";
 const CONFLICT_MARKERS = "[forge: conflict markers]";
-const CONFLICT_MARKERS = "[forge: conflict markers]";
 
 function baseSyncLine(s: BaseSync): string {
   return `\n=== FORGE base sync: ${s.state}${s.files?.length ? ` (${s.files.join(", ")})` : ""} ===\n`;

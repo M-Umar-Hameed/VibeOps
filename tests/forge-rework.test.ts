@@ -208,6 +208,7 @@ describe("POST /forge/tickets/:id/rework", () => {
     const { runId } = await res.json();
     await awaitRun(runId);
     expect(getRunOutput(runId, 0)?.chunk).not.toContain("=== FORGE plan");
+  });
 
   it("conflict markers added by the worker reject before the review agent runs", async () => {
     const { apiKey, ticket } = await seedRejected("Rework conflict markers");
@@ -230,7 +231,6 @@ describe("POST /forge/tickets/:id/rework", () => {
     } finally {
       delete process.env.FAKE_WRITE_MARKERS;
     }
-  });
   });
 
   it("rework skips planning even when the body changed after the plan", async () => {

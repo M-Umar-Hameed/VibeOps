@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "VibeOps Browser Agent",
-  "version": "0.1.9",
+  "version": "0.1.12",
   "icons": {
     "16": "icon-16.png",
     "48": "icon-48.png",
@@ -14,7 +14,8 @@
     "storage",
     "activeTab",
     "scripting",
-    "alarms"
+    "alarms",
+    "debugger"
   ],
   "host_permissions": [
     "http://127.0.0.1:8787/*",
@@ -29,7 +30,8 @@
     {
       "resources": [
         "snapshot.js",
-        "execute.js"
+        "execute.js",
+        "cdp.js"
       ],
       "matches": [
         "<all_urls>"

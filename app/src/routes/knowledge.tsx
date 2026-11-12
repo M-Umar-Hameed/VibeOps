@@ -6,6 +6,12 @@ import { notes } from "../api/notes.js";
 import { apiFetch } from "../api/client.js";
 import { NotesPanel } from "../components/NotesPanel.js";
 import { useProject } from "../context/project.js";
+import { useJobs, isActive, JobProgress } from "../components/JobProgress.js";
+
+function formatSummary(summary: any) {
+  if (!summary || typeof summary !== "object") return "";
+  return Object.entries(summary).map(([source, r]: any) => `${source} ${r?.indexed ?? 0}`).join(" · ");
+}
 
 function hashString(str: string) {
   let hash = 0;
@@ -27,6 +33,16 @@ const KIND_STYLE: Record<string, { fill: string; shape: NodeShape }> = {
 
 function kindStyle(kind: string): { fill: string; shape: NodeShape } {
   return KIND_STYLE[kind] ?? { fill: "fill-on-surface", shape: "circle" };
+}
+
+const SOURCE_LABEL: Record<string, string> = { vault: "READ_ONLY_VAULT_NODE", repo: "REPO_DOC", chat: "CHAT", session: "SESSION" };
+
+export function splitUntrusted(text: string): { labels: string[]; body: string } {
+  const labels: string[] = [];
+  const body = text
+    .replace(/<UNTRUSTED label="([^"]*)">\n?/g, (_m, l) => { if (!labels.includes(l)) labels.push(l); return ""; })
+    .replace(/\n?<\/UNTRUSTED>/g, "");
+  return { labels, body };
 }
 
 function nodeShape(shape: NodeShape, x: number, y: number) {
@@ -51,10 +67,11 @@ export function KnowledgeScreen() {
   const [activeSource, setActiveSource] = useState<{kind: string, ref: string, citation: string} | null>(null);
   const [tab, setTab] = useState<"Search" | "Sessions" | "Graph">("Search");
   const [sessionFilter, setSessionFilter] = useState("");
-  
+  const [graphLimit, setGraphLimit] = useState(200);
+
   const sq = useQuery({ queryKey: ["knowledge", submitted], queryFn: () => knowledge.search(submitted), enabled: !!submitted });
   const sessionsQuery = useQuery({ queryKey: ["sessions"], queryFn: () => apiFetch("/knowledge/sessions") as Promise<{ref: string, chunkCount: number, created_at: string, excerpt: string}[]>, enabled: tab === "Sessions" });
-  const graphQuery = useQuery({ queryKey: ["graph", activeProjectId], queryFn: () => apiFetch("/knowledge/graph", { query: activeProjectId ? { project: activeProjectId } : undefined }) as Promise<{nodes: any[], edges: any[]}>, enabled: tab === "Graph" });
+  const graphQuery = useQuery({ queryKey: ["graph", activeProjectId, graphLimit], queryFn: () => apiFetch("/knowledge/graph", { query: { limit: String(graphLimit), ...(activeProjectId ? { project: activeProjectId } : {}) } }) as Promise<{nodes: any[], edges: any[]}>, enabled: tab === "Graph" });
   
   const sourceQuery = useQuery({
     queryKey: ["source", activeSource?.kind, activeSource?.ref],
@@ -74,15 +91,26 @@ export function KnowledgeScreen() {
   });
 
   const [syncResult, setSyncResult] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  const sessionJobs = useJobs("/jobs?kind=sessions");
+  const latest = sessionJobs[0];
+  const runningJob = latest && isActive(latest) ? latest : null;
+
   const sync = useMutation({
     mutationFn: () =>
       apiFetch("/ingest/sessions", { method: "POST", body: {} }) as Promise<Record<string, { indexed: number; skipped: number; failed: number }>>,
     onSuccess: (summary) => {
-      setSyncResult(Object.entries(summary).map(([source, r]) => `${source} ${r.indexed}`).join(" · "));
+      setSyncError(null);
+      setSyncResult(formatSummary(summary));
       // The graph and session list are what the user is looking at to judge
       // whether sync did anything - stale caches read as "nothing happened".
       qc.invalidateQueries({ queryKey: ["graph"] });
       qc.invalidateQueries({ queryKey: ["sessions"] });
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+    },
+    onError: (e: any) => {
+      setSyncError(e instanceof Error ? e.message : String(e));
     },
   });
 
@@ -108,16 +136,33 @@ export function KnowledgeScreen() {
                 onClick={() => setTab("Graph")}
               >Graph</button>
             </div>
-            <div className="flex items-center justify-center gap-3 pt-4">
-              <button
-                className="flex items-center gap-2 px-3 py-1.5 bg-surface-container-lowest border border-white/10 rounded font-code-label text-[10px] uppercase tracking-widest text-on-surface-variant hover:text-primary hover:border-primary/30 transition-colors cursor-pointer disabled:opacity-50"
-                disabled={sync.isPending}
-                onClick={() => sync.mutate()}
-              >
-                {sync.isPending && <span className="material-symbols-outlined animate-spin text-sm">sync</span>}
-                Sync sessions
-              </button>
-              {syncResult && <span className="font-code-sm text-[10px] text-on-surface-variant/70">{syncResult}</span>}
+            <div className="flex flex-col items-center justify-center gap-3 pt-4">
+              <div className="flex items-center justify-center gap-3">
+                <button
+                  type="button"
+                  className="flex items-center gap-2 px-3 py-1.5 bg-surface-container-lowest border border-white/10 rounded font-code-label text-[10px] uppercase tracking-widest text-on-surface-variant hover:text-primary hover:border-primary/30 transition-colors cursor-pointer disabled:opacity-50"
+                  disabled={sync.isPending || !!runningJob}
+                  title={runningJob ? (runningJob.trigger === "auto" ? "Auto-sync sweep running" : "Sync already running") : undefined}
+                  onClick={() => sync.mutate()}
+                >
+                  {(sync.isPending || !!runningJob) && <span className="material-symbols-outlined animate-spin text-sm">sync</span>}
+                  Sync sessions
+                </button>
+                {syncError && <span className="text-error text-xs font-code-sm">{syncError}</span>}
+              </div>
+              {runningJob ? (
+                <div className="w-full max-w-sm">
+                  <JobProgress job={runningJob} />
+                </div>
+              ) : syncResult ? (
+                <span className="font-code-sm text-[10px] text-on-surface-variant/70">{syncResult}</span>
+              ) : latest?.state === "done" && latest.result ? (
+                <span className="font-code-sm text-[10px] text-on-surface-variant/70">{formatSummary(latest.result)}</span>
+              ) : latest?.state === "failed" ? (
+                <div className="w-full max-w-sm">
+                  <JobProgress job={latest} />
+                </div>
+              ) : null}
             </div>
           </div>
           
@@ -173,6 +218,16 @@ export function KnowledgeScreen() {
                         </span>
                       );
                     })}
+                    <select
+                      aria-label="Graph size"
+                      value={graphLimit}
+                      onChange={(e) => setGraphLimit(Number(e.target.value))}
+                      className="bg-surface-container-lowest border border-white/10 font-code-label text-[10px] text-on-surface-variant rounded px-2 py-1"
+                    >
+                      <option value={100}>100</option>
+                      <option value={200}>200</option>
+                      <option value={500}>500</option>
+                    </select>
                   </div>
                 </>
               )}
@@ -386,7 +441,7 @@ export function KnowledgeScreen() {
             <div>
               <h2 className="font-headline-md text-headline-md font-bold text-primary">{activeSource?.citation}</h2>
               <p className="font-code-sm text-xs text-on-surface-variant uppercase mt-1">
-                {activeSource?.kind === 'vault' ? 'READ_ONLY_VAULT_NODE' : 'DATABASE_NOTE'}
+                {activeSource ? (SOURCE_LABEL[activeSource.kind] ?? 'DATABASE_NOTE') : ''}
               </p>
             </div>
             <button className="p-2 text-on-surface-variant hover:text-on-surface hover:bg-white/5 rounded-full transition-colors cursor-pointer" onClick={() => setActiveSource(null)}>
@@ -405,11 +460,21 @@ export function KnowledgeScreen() {
                 Failed to load source node.
                 {sourceQuery.error && ` Error: ${(sourceQuery.error as Error).message}`}
               </div>
-            ) : (
-              <pre className="font-code-body text-code-body text-on-surface whitespace-pre-wrap font-mono">
-                {sourceQuery.data?.text}
-              </pre>
-            )}
+            ) : sourceQuery.data?.text ? (() => {
+              const { labels, body } = splitUntrusted(sourceQuery.data.text);
+              return (
+                <>
+                  {labels.map((label, i) => (
+                    <span key={i} className="inline-block font-code-label text-[10px] uppercase tracking-widest px-2 py-0.5 rounded border border-white/10 bg-surface-container-lowest text-on-surface-variant mb-2 mr-2">
+                      untrusted: {label}
+                    </span>
+                  ))}
+                  <pre className="font-code-body text-code-body text-on-surface whitespace-pre-wrap font-mono">
+                    {body}
+                  </pre>
+                </>
+              );
+            })() : null}
           </div>
         </div>
       </div>

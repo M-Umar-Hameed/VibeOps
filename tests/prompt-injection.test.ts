@@ -12,6 +12,7 @@ import { resolveSyncActor } from "../src/sync/actor.js";
 import { addComment } from "../src/services/comments.js";
 
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, fenceUntrusted, UNTRUSTED_CLAUSE } from "../src/relay/prompts.js";
+import { NARRATION } from "../src/forge/runs.js";
 
 process.env.EMBED_PROVIDER = "fake";
 
@@ -303,13 +304,26 @@ describe("Prompt Injection Defenses - Pipeline Level", () => {
     expect(withNeither).not.toContain("EXPORT OUTPUTS");
   });
 
-  it("composeReviewPrompt names the checks still running when their results are not in yet", () => {
+  it("composeReviewPrompt shows check results and, on a failed check, asks for every other finding", () => {
     const input = { ticket: { title: "T", body: "B" }, plan: "P", report: "R", diff: "D" };
-    const pending = composeReviewPrompt({ ...input, pendingChecks: ["npm run lint", "npm test"] });
-    expect(pending).toContain("CHECKS RUNNING NOW");
-    expect(pending).toContain("npm run lint\nnpm test");
-    expect(pending).toContain("Do not fail the change only because the worker report lacks output");
-    expect(composeReviewPrompt(input)).not.toContain("CHECKS RUNNING NOW");
-    expect(composeReviewPrompt({ ...input, checks: "$ npm test\nexit 0", pendingChecks: ["npm test"] })).not.toContain("CHECKS RUNNING NOW");
+    const passed = composeReviewPrompt({ ...input, checks: "$ npm test\nexit 0\nok" });
+    expect(passed).toContain("CHECKS (project check commands");
+    expect(passed).toContain("$ npm test\nexit 0\nok");
+    expect(passed).not.toContain("The verdict is already FAIL");
+    const failed = composeReviewPrompt({ ...input, checks: "$ npm test\nexit 1\nboom", checksFailed: true });
+    expect(failed).toContain("The verdict is already FAIL because of the check output above. List every other Critical or Major finding so the rework fixes everything in one pass.");
+    expect(composeReviewPrompt(input)).not.toContain("CHECKS (project check commands");
+    expect(composeReviewPrompt({ ...input, checksFailed: true })).not.toContain("The verdict is already FAIL");
+  });
+
+  it("work prompt lists allowed commands and checks; narration names .forge/tmp", () => {
+    const p = composeWorkPrompt({ ticket: { title: "T", body: "B" }, plan: "P", knowledge: [], workdir: "/sandbox",
+      allowedCommands: ["npx vitest", "git rm"], checks: ["npm run typecheck"] });
+    expect(p).toContain("Shell commands you may run: npx vitest, git rm.");
+    expect(p).toContain("do not write helper scripts");
+    expect(p).toContain("The pipeline runs these checks after you finish: npm run typecheck.");
+    expect(p).toContain("never run the full suite");
+    expect(NARRATION).toContain(".forge/tmp/");
+    expect(composeWorkPrompt({ ticket: { title: "T", body: "B" }, plan: "P", knowledge: [], workdir: "/sandbox" })).not.toContain("Shell commands you may run");
   });
 });

@@ -687,6 +687,43 @@ describe("forge run resume", () => {
     expect(listRuns().find((r) => r.ticketId === ticket.id)).toBeUndefined();
   });
 
+  it("resume with an empty body reuses the failed run's picks", async () => {
+    writeFileSync(process.env.VIBEOPS_RELAY_CONFIG!, JSON.stringify({
+      workdir,
+      agents: {
+        fake: {
+          cmd: [process.execPath, FAKE_AGENT, "{prompt}", "--model", "{model}"],
+          roles: ["plan", "work", "review"],
+          models: [
+            { name: "fast", tier: "free", quality: 2 },
+            { name: "smart", tier: "expensive", quality: 5 },
+          ],
+        },
+      },
+    }));
+    const { actorId, apiKey, ticket } = await seedTicket("Resume inherit picks");
+    await ensureSandbox(workdir, ticket.id);
+    writeFileSync(join(sandboxRoot, ticket.id, "result.txt"), "some work");
+    await forgeCommit(ticket.id, "initial work");
+    await addComment(actorId, ticket.id, "The plan\nFiles: result.txt", "plan");
+    const t2 = await getTicket(ticket.id);
+    await updateTicket(actorId, ticket.id, t2.version, { status: "planned" });
+    await db.insert(forgeRuns).values({
+      id: randomUUID(), ticketId: ticket.id, status: "failed", stage: "work",
+      planAgent: "fake:smart", workAgent: "fake:smart", reviewAgent: "fake:smart",
+      startedAt: new Date(), finishedAt: new Date(),
+    });
+
+    setScript("work,review-pass", true);
+    const h = { Authorization: `Bearer ${apiKey}` };
+    const res = await app.request(`/forge/tickets/${ticket.id}/resume`, { method: "POST", headers: h });
+    expect(res.status).toBe(201);
+    const { runId } = await res.json();
+    await awaitRun(runId);
+    const run = listRuns().find((r) => r.id === runId);
+    expect(run?.agents).toEqual({ plan: "fake:smart", work: "fake:smart", review: "fake:smart" });
+  });
+
   // MUST be last test: closeDb ends the connection for subsequent tests
   it("closeDb is idempotent and does not throw", async () => {
     // Either branch: sql.end on the Postgres lane, closeEmbedded on the

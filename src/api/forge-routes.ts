@@ -8,14 +8,14 @@ import { loadRelayConfig } from "../relay/config.js";
 import { relayConfigPath, writeRelayConfig } from "../relay/bootstrap-config.js";
 import { runDoctor } from "../relay/doctor.js";
 import { parseVerdict } from "../relay/prompts.js";
-import { startPipeline, listRunsWithHistory, getRunOutput, stopRun, resolveWorkdir, hasActiveRun, latestRunStatus, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes, resolveMinFreeBytes } from "../forge/runs.js";
+import { startPipeline, listRunsWithHistory, getRunOutput, getSettledRunOutput, stopRun, resolveWorkdir, hasActiveRun, latestRunStatus, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes, parsePair, RUN_STATUSES, type RunListOpts, resolveMinFreeBytes } from "../forge/runs.js";
 import {
   sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash, sandboxActivity, sandboxWorkingDiff, withReadOnlyView,
-  attachmentsDir, exportOutputs, validateExportPath, checkSandboxDisk, listSandboxTicketIds, sandboxSizeBytes,
+  attachmentsDir, exportOutputs, validateExportPath, workdirDirtyFiles, checkSandboxDisk, listSandboxTicketIds, sandboxSizeBytes,
 } from "../forge/sandbox.js";
 import { listSkillDir } from "../forge/skills.js";
 import { indexRepoDocs } from "../services/knowledge.js";
-import { pickAgents } from "../forge/router.js";
+import { pickAgents, pairsForRole } from "../forge/router.js";
 import { runAgent } from "../relay/invoke.js";
 import { resolveCmd } from "../relay/config.js";
 import { updateTicket } from "../services/tickets.js";
@@ -46,6 +46,7 @@ const ATTACHMENT_FILE_RE = /^[0-9a-f-]{36}\.(png|jpg|gif|webp)$/;
 const ATTACHMENT_CONTENT_TYPE: Record<string, string> = {
   png: "image/png", jpg: "image/jpeg", gif: "image/gif", webp: "image/webp",
 };
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type AppEnv = { Variables: { actor: Actor } };
 
@@ -66,6 +67,29 @@ function agentPicks(body: Record<string, unknown>):
     if (val !== undefined && typeof val !== "string") return { error: `${key} must be a string` };
   }
   return { planAgent, workAgent, reviewAgent, planModel, workModel, reviewModel } as { planAgent: string; workAgent: string; reviewAgent: string; planModel?: string; workModel?: string; reviewModel?: string };
+}
+
+async function inheritPicks(ticketId: string, body: Record<string, unknown>, statuses: string[]): Promise<Record<string, unknown>> {
+  const prev = (await listRunsWithHistory(ticketId)).find((r) => statuses.includes(r.status));
+  if (!prev) return body;
+  const config = forgeConfig();
+  const out = { ...body };
+  for (const role of ["plan", "work", "review"] as const) {
+    if (body[`${role}Agent`] !== undefined || body[`${role}Model`] !== undefined) continue;
+    const { agent, model } = parsePair(prev.agents[role]);
+    const pair = pairsForRole(config, role).find((p) => p.agent === agent && p.model?.toLowerCase() === model?.toLowerCase());
+    if (pair) { out[`${role}Agent`] = pair.agent; out[`${role}Model`] = pair.model; }
+  }
+  return out;
+}
+
+const workdirLocks = new Map<string, Promise<unknown>>();
+
+async function withWorkdirLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const run = (workdirLocks.get(key) ?? Promise.resolve()).catch(() => {}).then(fn);
+  const tail = run.catch(() => {});
+  workdirLocks.set(key, tail);
+  try { return await run; } finally { if (workdirLocks.get(key) === tail) workdirLocks.delete(key); }
 }
 
 // The promote gate is a security control: only ADMIN-authored review comments
@@ -216,7 +240,29 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     }
   });
 
-  app.get("/forge/runs", requireAdmin, async (c) => c.json(await listRunsWithHistory(c.req.query("ticketId") || undefined)));
+  app.get("/forge/runs", requireAdmin, async (c) => {
+    const q = c.req.query();
+    const opts: RunListOpts = {};
+    if (q.limit !== undefined) {
+      const n = Number(q.limit);
+      if (!Number.isInteger(n) || n < 1 || n > 200) return c.json({ error: "limit must be an integer 1..200" }, 400);
+      opts.limit = n;
+    }
+    if (q.before !== undefined) {
+      if (Number.isNaN(Date.parse(q.before))) return c.json({ error: "before must be an ISO timestamp" }, 400);
+      opts.before = { startedAt: new Date(q.before).toISOString(), id: q.beforeId || undefined };
+    }
+    if (q.status !== undefined) {
+      if (!(RUN_STATUSES as readonly string[]).includes(q.status)) return c.json({ error: `status must be one of ${RUN_STATUSES.join(", ")}` }, 400);
+      opts.status = q.status as RunListOpts["status"];
+    }
+    if (q.projectId !== undefined) {
+      if (!UUID.test(q.projectId)) return c.json({ error: "projectId must be a uuid" }, 400);
+      opts.projectId = q.projectId;
+    }
+    if (q.summary === "1") opts.summary = true;
+    return c.json(await listRunsWithHistory(q.ticketId || undefined, opts));
+  });
 
   app.get("/forge/recovery", requireAdmin, async (c) => {
     return c.json({ interrupted: await listInterruptedRuns(forgeConfig()) });
@@ -224,7 +270,8 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
 
   app.get("/forge/runs/:id/output", requireAdmin, async (c) => {
     const after = Number(c.req.query("after")) || 0;
-    const out = getRunOutput(c.req.param("id"), after);
+    const id = c.req.param("id");
+    const out = getRunOutput(id, after) ?? await getSettledRunOutput(id, after);
     if (!out) return c.json({ error: "run not found" }, 404);
     return c.json(out);
   });
@@ -271,6 +318,13 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     const ticket = await getTicket(ticketId);
     // No interrupted run recorded: fall back to a normal open/planned start.
     if (item && !item.resumable) return c.json({ error: item.reason }, 409);
+    const body = (await c.req.json().catch(() => null)) ?? {};
+    const picks = agentPicks(await inheritPicks(ticketId, body, ["interrupted", "failed"]));
+    if ("error" in picks) return c.json({ error: picks.error }, 400);
+    const operatorNotes = typeof body.operatorNotes === "string" ? body.operatorNotes : undefined;
+    const requestedStage = typeof body.resumeStage === "string" && ["plan", "work", "review"].includes(body.resumeStage)
+      ? (body.resumeStage as any)
+      : undefined;
     // A crashed run leaves the ticket in_progress with its latest run interrupted;
     // the interrupted row proves nothing is running (an active run would report
     // "running" and be newer). Recover it like a planned ticket: resumeStage "work"
@@ -279,16 +333,13 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     // rejected-only guard stays separate.
     const interruptedInProgress = ticket.status === "in_progress"
       && (await latestRunStatus(ticketId)) === "interrupted";
-    const resumeStage = interruptedInProgress ? "work"
+    const resumeStage = requestedStage
+      ?? (interruptedInProgress ? "work"
       : item?.resumeMode === "review" ? "review"
-      : item?.resumeMode === "work" ? "work" : undefined;
+      : item?.resumeMode === "work" ? "work" : undefined);
     if (!resumeStage && ticket.status !== "open" && ticket.status !== "planned") {
       return c.json({ error: "ticket must be open or planned to resume" }, 409);
     }
-    const body = (await c.req.json().catch(() => null)) ?? {};
-    const picks = agentPicks(body);
-    if ("error" in picks) return c.json({ error: picks.error }, 400);
-    const operatorNotes = typeof body.operatorNotes === "string" ? body.operatorNotes : undefined;
     try {
       const { runId, doctorWarnings } = await startPipeline(c.get("actor").id, config, {
         ticketId, ...picks, operatorNotes, resumeStage,
@@ -371,75 +422,89 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
 
   app.post("/forge/tickets/:id/promote", requireAdmin, async (c) => {
     const ticketId = c.req.param("id");
-    if (await hasActiveRun(ticketId)) return c.json({ error: "run in progress for this ticket" }, 409);
-    const policy = await latestRunPolicy(ticketId);
-    if (policy && policy.paths.length && !policy.waived) {
-      return c.json({
-        error: `protected-path policy violation must be waived before promoting: ${policy.paths.join(", ")}`,
-        paths: policy.paths,
-      }, 409);
-    }
-    const verdict = await lastVerdict(ticketId);
-    if (!sandboxExists(ticketId) || verdict !== "pass") {
-      return c.json({ error: "sandbox must exist and have a passing review before promoting" }, 409);
-    }
+    const gate = async () => {
+      if (await hasActiveRun(ticketId)) return c.json({ error: "run in progress for this ticket" }, 409);
+      const policy = await latestRunPolicy(ticketId);
+      if (policy && policy.paths.length && !policy.waived) {
+        return c.json({
+          error: `protected-path policy violation must be waived before promoting: ${policy.paths.join(", ")}`,
+          paths: policy.paths,
+        }, 409);
+      }
+      const verdict = await lastVerdict(ticketId);
+      if (!sandboxExists(ticketId) || verdict !== "pass") {
+        return c.json({ error: "sandbox must exist and have a passing review before promoting" }, 409);
+      }
+      return null;
+    };
+    const blocked = await gate();
+    if (blocked) return blocked;
     const ticket = await getTicket(ticketId);
     const workdir = await resolveWorkdir(ticket.projectId, forgeConfig());
-    if (!(await hasCommitsToPromote(workdir, ticketId))) {
-      return c.json({ error: "sandbox has no commits to promote" }, 409);
-    }
-    const exportTo = parseExportTo(ticket.body ?? "");
-    if (exportTo) {
-      let dest: string;
-      try { dest = validateExportPath(exportTo, workdir); }
-      catch (e) { return c.json({ error: `EXPORT-TO refused: ${(e as Error).message}` }, 409); }
-      const n = exportOutputs(ticketId, dest);
-      await addComment(c.get("actor").id, ticketId, `forge: exported ${n} file(s) from .forge/out to ${dest}`, "comment");
-    }
-    // Default: discard the sandbox once the merge lands (reclaims the worktree +
-    // any frontendDeps node_modules copy). Set forge.discardOnPromote=false to keep
-    // the tree for debugging a promote.
-    const discardAfter = (await getSetting("forge.discardOnPromote")) !== "false";
-    // Reorder for the lost-close race: write the DB effects (promote comment + close)
-    // BEFORE the merge. The merge is the only step that rewrites workdir files, which
-    // restarts the dev file-watcher and can kill everything after it. DB writes are
-    // cheap and cannot trigger a restart, so they land first.
-    await addComment(c.get("actor").id, ticketId, "forge: promoted", "comment");
-    const beforeMerge = await getTicket(ticketId);
-    const updated = await updateTicket(c.get("actor").id, ticketId, beforeMerge.version, { status: "closed" });
-    try {
-      // Merge only. The post-merge sandbox discard is a SEPARATE step below with its own
-      // failure handling: a discard-time fault (e.g. Windows EBUSY worktree lock) must not
-      // masquerade as a merge failure and wrongly reopen a ticket whose code already landed.
-      await promoteSandbox(workdir, ticketId, ticket.title, false);
-    } catch (e) {
-      // Merge failed after we already closed the ticket. A closed ticket whose code
-      // never landed is worse than the race, so compensate: bounce it back to review
-      // with a comment naming the failure, then surface the error (onError -> 409).
-      const closed = await getTicket(ticketId);
-      await addComment(c.get("actor").id, ticketId,
-        `forge: promote merge failed, ticket reopened to review — ${(e as Error).message}`, "comment");
-      await updateTicket(c.get("actor").id, ticketId, closed.version, { status: "review" });
-      throw e;
-    }
-    // Merge landed — the code is on the base branch and the ticket stays CLOSED. Discarding
-    // the sandbox is best-effort cleanup; on Windows an EBUSY lock (e.g. a test runner still
-    // holding the worktree) can make it fail. That is NOT a promote failure: WARN and leave
-    // the ticket closed. The leftover sandbox is reclaimable via /forge/sandboxes/cleanup;
-    // a wrongly-reopened ticket is not self-correcting.
-    if (discardAfter) {
-      try {
-        await discardSandbox(workdir, ticketId);
-      } catch (e) {
-        console.warn(`forge: ${ticketId} merged but sandbox ${branchName(ticketId)} cleanup failed: ${(e as Error).message}`);
+    const lockKey = process.platform === "win32" ? resolve(workdir).toLowerCase() : resolve(workdir);
+    return withWorkdirLock(lockKey, async () => {
+      const again = await gate();
+      if (again) return again;
+      if (!(await hasCommitsToPromote(workdir, ticketId))) {
+        return c.json({ error: "sandbox has no commits to promote" }, 409);
       }
-    }
-    // Repo files just changed on disk (sandbox merged into the project repo); refresh the
-    // doc index so stale README/CLAUDE/AGENTS text stops feeding plan/work prompts. Only this
-    // project. Non-blocking, swallow failures — matches the first-time index at runs.ts:316.
-    indexRepoDocs(ticket.projectId)
-      .catch((e) => console.warn(`repo re-index after promote failed: ${(e as Error).message}`));
-    return c.json(updated);
+      const dirty = await workdirDirtyFiles(workdir);
+      if (dirty.length) {
+        return c.json({ error: `workdir has uncommitted changes; commit or stash before promoting: ${dirty.join(", ")}`, files: dirty }, 409);
+      }
+      const exportTo = parseExportTo(ticket.body ?? "");
+      if (exportTo) {
+        let dest: string;
+        try { dest = validateExportPath(exportTo, workdir); }
+        catch (e) { return c.json({ error: `EXPORT-TO refused: ${(e as Error).message}` }, 409); }
+        const n = exportOutputs(ticketId, dest);
+        await addComment(c.get("actor").id, ticketId, `forge: exported ${n} file(s) from .forge/out to ${dest}`, "comment");
+      }
+      // Default: discard the sandbox once the merge lands (reclaims the worktree +
+      // any frontendDeps node_modules copy). Set forge.discardOnPromote=false to keep
+      // the tree for debugging a promote.
+      const discardAfter = (await getSetting("forge.discardOnPromote")) !== "false";
+      // Reorder for the lost-close race: write the DB effects (promote comment + close)
+      // BEFORE the merge. The merge is the only step that rewrites workdir files, which
+      // restarts the dev file-watcher and can kill everything after it. DB writes are
+      // cheap and cannot trigger a restart, so they land first.
+      await addComment(c.get("actor").id, ticketId, "forge: promoted", "comment");
+      const beforeMerge = await getTicket(ticketId);
+      const updated = await updateTicket(c.get("actor").id, ticketId, beforeMerge.version, { status: "closed" });
+      try {
+        // Merge only. The post-merge sandbox discard is a SEPARATE step below with its own
+        // failure handling: a discard-time fault (e.g. Windows EBUSY worktree lock) must not
+        // masquerade as a merge failure and wrongly reopen a ticket whose code already landed.
+        await promoteSandbox(workdir, ticketId, ticket.title, false);
+      } catch (e) {
+        // Merge failed after we already closed the ticket. A closed ticket whose code
+        // never landed is worse than the race, so compensate: bounce it back to review
+        // with a comment naming the failure, then surface the error (onError -> 409).
+        const closed = await getTicket(ticketId);
+        await addComment(c.get("actor").id, ticketId,
+          `forge: promote merge failed, ticket reopened to review — ${(e as Error).message}`, "comment");
+        await updateTicket(c.get("actor").id, ticketId, closed.version, { status: "review" });
+        throw e;
+      }
+      // Merge landed — the code is on the base branch and the ticket stays CLOSED. Discarding
+      // the sandbox is best-effort cleanup; on Windows an EBUSY lock (e.g. a test runner still
+      // holding the worktree) can make it fail. That is NOT a promote failure: WARN and leave
+      // the ticket closed. The leftover sandbox is reclaimable via /forge/sandboxes/cleanup;
+      // a wrongly-reopened ticket is not self-correcting.
+      if (discardAfter) {
+        try {
+          await discardSandbox(workdir, ticketId);
+        } catch (e) {
+          console.warn(`forge: ${ticketId} merged but sandbox ${branchName(ticketId)} cleanup failed: ${(e as Error).message}`);
+        }
+      }
+      // Repo files just changed on disk (sandbox merged into the project repo); refresh the
+      // doc index so stale README/CLAUDE/AGENTS text stops feeding plan/work prompts. Only this
+      // project. Non-blocking, swallow failures — matches the first-time index at runs.ts:316.
+      indexRepoDocs(ticket.projectId)
+        .catch((e) => console.warn(`repo re-index after promote failed: ${(e as Error).message}`));
+      return c.json(updated);
+    });
   });
 
   app.post("/forge/tickets/:id/export", requireAdmin, async (c) => {
@@ -547,7 +612,7 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
       return c.json({ error: "no sandbox to rework: the rejected run's sandbox is gone; start a new run instead" }, 409);
     }
     const body = (await c.req.json().catch(() => null)) ?? {};
-    const picks = agentPicks(body);
+    const picks = agentPicks(await inheritPicks(ticketId, body, ["rejected"]));
     if ("error" in picks) return c.json({ error: picks.error }, 400);
     const reworkInstruction =
       "This is a rework pass on an existing sandbox with prior commits. Address ONLY the review " +

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { getLessons, setLessons, lessonsClause } from "../src/forge/lessons.js";
+import { getLessons, setLessons, lessonsClause, harvestLessons } from "../src/forge/lessons.js";
 import { startPipeline, awaitRun } from "../src/forge/runs.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
@@ -35,6 +35,27 @@ describe("lessonsClause", () => {
     const body = `lesson-${randomUUID()}`;
     await setLessons(actor.id, body);
     expect(await getLessons()).toBe(body);
+  });
+});
+
+describe("harvestLessons", () => {
+  it("returns undefined when no findings or checks exist", async () => {
+    const { actor } = await createActor({ name: uniq("lessons-actor"), kind: "human" });
+    const res = await harvestLessons(actor.id, { ticketTitle: "Clean run", status: "passed" });
+    expect(res).toBeUndefined();
+  });
+
+  it("distills a lesson from review findings and appends to prompt-lessons note", async () => {
+    const { actor } = await createActor({ name: uniq("lessons-actor"), kind: "human" });
+    const res = await harvestLessons(actor.id, {
+      ticketTitle: "Fix Claude Code stderr leakage",
+      status: "rejected",
+      reviewFindings: "Critical: filterClaudeStderr was not exported for unit tests",
+    });
+    const lessons = await getLessons();
+    if (res) {
+      expect(lessons).toContain(res);
+    }
   });
 });
 

@@ -6,6 +6,7 @@ import { randomBytes } from "node:crypto";
 import { ConflictError } from "../services/errors.js";
 import { redactSecrets } from "./redact.js";
 import { vibeopsHome } from "../runtime/home.js";
+import { restoreAgyHook } from "./agy-hook.js";
 
 export function attachmentsDir(): string {
   return process.env.VIBEOPS_ATTACHMENTS_DIR ?? join(homedir(), ".vibeops", "attachments");
@@ -55,7 +56,7 @@ export function assertTicketId(id: string): void {
   if (!UUID.test(id)) throw new Error(`invalid ticket id "${id}"`);
 }
 
-function sandboxRoot(): string {
+export function sandboxRoot(): string {
   return process.env.VIBEOPS_SANDBOX_ROOT ?? join(vibeopsHome(), ".vibeops", "sandbox");
 }
 
@@ -305,6 +306,7 @@ export async function dropReservedNames(path: string): Promise<string[]> {
 
 export async function forgeCommit(ticketId: string, title: string): Promise<boolean> {
   const path = sandboxPath(ticketId);
+  restoreAgyHook(path);
   // The exclude pathspec is required on BOTH commands. .gitignore says
   // "node_modules/" — a trailing slash matches directories, so a Windows junction
   // is ignored but a POSIX symlink (a file) is not, and `add -A` would commit the
@@ -333,6 +335,31 @@ export async function forgeCommit(ticketId: string, title: string): Promise<bool
   return true;
 }
 
+export type BaseSync = { state: "merged" | "current" | "conflict" | "unknown"; files?: string[]; base: string };
+
+export async function syncSandboxWithBase(workdir: string, ticketId: string, keepConflict = false): Promise<BaseSync> {
+  const branch = branchName(ticketId);
+  const base = (await must(workdir, "rev-parse", "HEAD")).trim();
+  if ((await git(workdir, "merge-base", "--is-ancestor", base, branch)).code === 0) return { state: "current", base };
+  const path = sandboxPath(ticketId);
+  const id = ["-c", "user.email=forge@vibeops.local", "-c", "user.name=VibeOps Forge"];
+  const lines = (s: string) => s.split("\n").map((l) => stripCR(l).trim()).filter(Boolean);
+  const tree = await git(workdir, "merge-tree", "--write-tree", "--name-only", "--no-messages", base, branch);
+  let files: string[];
+  if (tree.code === 1) files = lines(tree.out).slice(1);
+  else if (tree.code !== 0) {
+    console.warn(`syncSandboxWithBase: merge-tree failed for ${ticketId}: ${tree.out.trim()}`);
+    return { state: "unknown", base };
+  } else {
+    const merge = await git(path, ...id, "merge", "--no-ff", "--no-edit", base);
+    if (merge.code === 0) return { state: "merged", base };
+    files = lines((await git(path, "diff", "--name-only", "--diff-filter=U")).out);
+    await git(path, "merge", "--abort");
+  }
+  if (keepConflict) await git(path, ...id, "merge", "--no-commit", base);
+  return { state: "conflict", files, base };
+}
+
 export async function sandboxDiff(workdir: string, ticketId: string): Promise<string> {
   const { out } = await git(workdir, "diff", `HEAD...${branchName(ticketId)}`);
   return out.slice(0, DIFF_CAP);
@@ -345,6 +372,12 @@ export async function sandboxDiffSummary(workdir: string, ticketId: string): Pro
 
 export async function sandboxDiffNames(workdir: string, ticketId: string): Promise<string[]> {
   const { out } = await git(workdir, "diff", "--name-only", `HEAD...${branchName(ticketId)}`);
+  return out.split("\n").map((l) => l.replace(/\r$/, "").trim()).filter(Boolean);
+}
+
+export async function sandboxDiffNamesNoRenames(workdir: string, ticketId: string): Promise<string[] | null> {
+  const { code, out } = await git(workdir, "diff", "--name-only", "--no-renames", `HEAD...${branchName(ticketId)}`);
+  if (code !== 0) return null;
   return out.split("\n").map((l) => l.replace(/\r$/, "").trim()).filter(Boolean);
 }
 
@@ -463,23 +496,34 @@ function promoteMessages(ticketId: string, title: string): { subject: string; bo
   return { subject, body };
 }
 
-export async function promoteSandbox(workdir: string, ticketId: string, title: string, discardAfter = true): Promise<void> {
-  const dirty = await git(workdir, "status", "--porcelain");
-  if (dirty.out.trim()) {
+export async function workdirDirtyFiles(workdir: string): Promise<string[]> {
+  const out = await must(workdir, "status", "--porcelain", "--untracked-files=no");
+  return out.split("\n").map((l) => l.replace(/\r$/, "")).filter((l) => l.trim()).map((l) => l.slice(3));
+}
+
+export async function promoteSandbox(workdir: string, ticketId: string, title: string, discardAfter = true, retryDelayMs = 2000): Promise<void> {
+  if ((await workdirDirtyFiles(workdir)).length) {
     throw new ConflictError("workdir has uncommitted changes; commit or stash before promoting");
   }
   const { subject, body } = promoteMessages(ticketId, title);
-  const merge = await git(workdir, "merge", "--no-ff", branchName(ticketId),
-    "-m", subject, "-m", body);
+  const mergeHead = async () => (await git(workdir, "rev-parse", "-q", "--verify", "MERGE_HEAD")).code === 0;
+  let merge = await git(workdir, "merge", "--no-ff", branchName(ticketId), "-m", subject, "-m", body);
+  for (let attempt = 1; merge.code !== 0 && /index\.lock/.test(merge.out) && !(await mergeHead()); attempt++) {
+    if (attempt >= 5) throw new Error("repository busy: .git/index.lock held");
+    await new Promise((r) => setTimeout(r, retryDelayMs));
+    merge = await git(workdir, "merge", "--no-ff", branchName(ticketId), "-m", subject, "-m", body);
+  }
   if (merge.code !== 0) {
     const conflicts = await git(workdir, "diff", "--name-only", "--diff-filter=U");
-    await git(workdir, "merge", "--abort");
+    if (await mergeHead()) await git(workdir, "merge", "--abort");
     const files = conflicts.out.split("\n").map((l) => l.replace(/\r$/, "").trim()).filter(Boolean);
-    const named = files.length ? files.join(", ") : merge.out.trim().slice(0, 200);
-    throw new ConflictError(
-      `promote blocked: ${branchName(ticketId)} conflicts with the base in ${files.length} file(s): ${named}. ` +
-      `The sandbox and branch are left intact; rework the ticket and re-run, or resolve the conflict before promoting again.`,
-    );
+    if (files.length) {
+      throw new ConflictError(
+        `promote blocked: ${branchName(ticketId)} conflicts with the base in ${files.length} file(s): ${files.join(", ")}. ` +
+        `The sandbox and branch are left intact; rework the ticket and re-run, or resolve the conflict before promoting again.`,
+      );
+    }
+    throw new Error(`promote merge failed: ${merge.out.trim().slice(0, 300)}`);
   }
   if (discardAfter) await cleanup(workdir, ticketId);
 }
@@ -682,7 +726,7 @@ export function listExportOutputs(ticketId: string): string[] {
   }
 }
 
-function inside(child: string, parent: string): boolean {
+export function inside(child: string, parent: string): boolean {
   const c = process.platform === "win32" ? child.toLowerCase() : child;
   const p = process.platform === "win32" ? parent.toLowerCase() : parent;
   const rel = relative(p, c);

@@ -46,12 +46,35 @@ export function composePlanPrompt(
   ].filter(Boolean).join("\n");
 }
 
+export type ReworkContext = {
+  findings: string;
+  conflictNote?: string;
+  recentCommit?: string;
+  gitStatus?: string;
+  failingCheckOutput?: string;
+};
+
 export function composeWorkPrompt(
-  { ticket, plan, knowledge, workdir, memory, skills, operatorEvidence }: {
+  { ticket, plan, knowledge, workdir, memory, skills, operatorEvidence, allowedCommands, checks, rework }: {
     ticket: TicketLike; plan: string; knowledge: KnowledgeItem[]; workdir: string; memory?: string; skills?: string; operatorEvidence?: string[];
+    allowedCommands?: string[]; checks?: string[]; rework?: ReworkContext;
   },
 ): string {
+  const reworkHeader = rework ? [
+    `# REWORK INSTRUCTIONS (HIGHEST PRIORITY)`,
+    `You are addressing review feedback and/or fixing check failures from a previous attempt.`,
+    `Your primary goal is to satisfy the review findings and ensure all checks pass.`,
+    `Do NOT discard or rewrite working code that already passed review.`,
+    rework.conflictNote ? rework.conflictNote : "",
+    `\nPrevious review findings (address ALL of these):\n${rework.findings}`,
+    rework.failingCheckOutput ? `\nFailing check output:\n<failing-check-output>\n${rework.failingCheckOutput}\n</failing-check-output>` : "",
+    rework.recentCommit ? `\nRecent sandbox commit:\n${rework.recentCommit}` : "",
+    rework.gitStatus ? `\nUncommitted sandbox changes:\n${rework.gitStatus}` : "",
+    `\n---\n`,
+  ].filter(Boolean).join("\n") : "";
+
   return [
+    reworkHeader,
     `Ticket: ${ticket.title}`,
     ticket.body ? fenceUntrusted("ticket-body", ticket.body) : "",
     formatOperatorEvidence(operatorEvidence, "before changing code"),
@@ -62,6 +85,8 @@ export function composeWorkPrompt(
     `\nImplement this plan. Work in ${workdir}.`,
     `Change only the files the plan names. Do not edit package.json, lockfiles, tsconfig or test configuration unless the ticket body allows them with an ALLOW-PROTECTED line; such edits fail review automatically.`,
     `Run only the tests that cover the files you changed, one test file at a time; never run the full suite. The pipeline runs the project's checks after you finish.`,
+    allowedCommands?.length ? `Shell commands you may run: ${allowedCommands.join(", ")}. Any other command is denied, so do not write helper scripts to run.` : "",
+    checks?.length ? `The pipeline runs these checks after you finish: ${checks.join(", ")}. Run a check yourself only when your change could break it, and at most once.` : "",
     `\nEnd your output with a section starting REPORT:`,
     UNTRUSTED_CLAUSE,
   ].filter(Boolean).join("\n");

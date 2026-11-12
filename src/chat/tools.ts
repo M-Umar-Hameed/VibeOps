@@ -56,7 +56,7 @@ async function browserStep(
   const step = result.results.find((r) => !r.ok) ?? result.results[result.results.length - 1];
   if (!step?.ok) {
     rec(name, { instanceId }, `refused: ${step?.error ?? "unknown"}`);
-    return text(`browser refused: ${humanizeBrowserError(step?.error)}`);
+    return text(`browser refused: ${humanizeBrowserError(step?.error, step?.code)}`);
   }
   rec(name, { instanceId }, "ok");
   const val = typeof step.value === "string"
@@ -132,6 +132,12 @@ export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: stri
       async ({ instanceId, ref }) => browserStep(instanceId, [{ verb: "read", ref }], "browser_read", rec),
     ),
     tool(
+      "browser_wait",
+      "Wait until text appears on the page, up to a few seconds (read-only). Use after a click or navigate that loads content asynchronously. instanceId optional when one browser is connected.",
+      { instanceId: z.string().optional(), text: z.string() },
+      async ({ instanceId, text: want }) => browserStep(instanceId, [{ verb: "wait", text: want }], "browser_wait", rec),
+    ),
+    tool(
       "browser_tabs",
       "List the open browser tabs (id, url, title, active), optionally switching to one first by tabId (read-only; page actions then apply to the active tab). To open a URL in a NEW tab use browser_act with a newTab step.",
       { instanceId: z.string().optional(), switchTo: z.number().int().nonnegative().optional() },
@@ -165,7 +171,7 @@ export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: stri
     ),
     tool(
       "browser_act",
-      "Run mutating steps (click/type/select/press/navigate/newTab) on a browser instance; requires an act grant for targetOrigin. navigate and newTab need an act grant for the DESTINATION origin (http/https only); newTab {url} opens it in a new active tab, and later steps in the same batch run there.",
+      "Run mutating steps (click/type/select/press/navigate/newTab/wait) on a browser instance; requires an act grant for targetOrigin. navigate and newTab need an act grant for the DESTINATION origin (http/https only); newTab {url} opens it in a new active tab, and later steps in the same batch run there.",
       { instanceId: z.string().optional(), targetOrigin: z.string(), steps: z.array(z.any()) },
       async ({ instanceId: requestedId, targetOrigin, steps }) => {
         const { id: instanceId, err } = resolveInstance(requestedId);
@@ -194,7 +200,7 @@ export function buildChatTools(actor: Actor, calls: ToolCall[], projectId?: stri
         const failed = result.results.find((r) => !r.ok);
         if (failed) {
           rec("browser_act", { instanceId, targetOrigin }, `refused: ${failed.error ?? "unknown"}`);
-          return text(`browser refused: ${humanizeBrowserError(failed.error)}`);
+          return text(`browser refused: ${humanizeBrowserError(failed.error, failed.code)}`);
         }
         rec("browser_act", { instanceId, targetOrigin }, "ok");
         return text(JSON.stringify(result.snapshot ?? "").slice(0, 4000));

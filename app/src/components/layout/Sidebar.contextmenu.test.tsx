@@ -141,3 +141,10 @@ test("Index docs shows a spinner while indexing runs", async () => {
   resolve({ indexed: 1, skipped: 0, removed: 0 });
   await waitFor(() => expect(within(menu).getByRole("status")).toHaveTextContent("indexed 1"));
 });
+
+
+test("Index docs shows explanation hint", async () => {
+  renderSidebar();
+  const menu = openMenuFor("Project A");
+  expect(within(menu).getByText("Re-read this project's docs into knowledge search")).toBeInTheDocument();
+});

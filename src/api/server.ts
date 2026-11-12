@@ -98,7 +98,11 @@ async function bootNormally() {
   // Sessions auto-ingest on a 30-min interval (opt-out via setting
   // sessions.autoSync="false"; interval via sessions.autoSyncIntervalMs). Serialized
   // with the manual Sync button so the two never double-ingest. Never blocks boot.
-  void startSessionAutoSync({ runNow: true })
+  // Backfill runs once, then auto-sync starts.
+  void import("../ingest/sessions/session-project.js")
+    .then((m) => m.backfillSessionKnowledgeOnce())
+    .catch((e) => console.warn(`sessions backfill failed: ${(e as Error).message}`))
+    .then(() => startSessionAutoSync({ runNow: true }))
     .catch((e) => console.warn(`sessions auto-sync failed to start: ${(e as Error).message}`));
   // Embedded (installed desktop) mode is loopback-only; external-Postgres deployments
   // legitimately serve other hosts.

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { readIndexTail } from "./tail.js";
 import type { SessionSource, SessionDoc } from "./source.js";
 
+// ponytail: not append-cursored — .md/.txt artifacts are rewritten in place, not plain append-only JSONL; keeps tail+hash replace.
 // Antigravity's Agent Manager writes markdown artifacts (plans, task lists) under brain/<conversation>/
 // and conversation transcripts under brain/<conversation>/.system_generated/logs/transcript.jsonl
 const SUBDIRS = ["brain", "conversations"];

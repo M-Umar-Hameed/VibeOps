@@ -7,6 +7,7 @@ export type MenuItemSpec = {
   danger?: boolean;
   disabled?: boolean;
   disabledReason?: string;
+  hint?: string;
   onSelect?: () => void | string | Promise<void | string>;
   confirm?: { title: string; message: string; confirmLabel: string };
 };
@@ -114,6 +115,9 @@ export function ContextMenu({ items, x, y, label, onClose }: {
                   )}
                   {it.label}
                 </span>
+                {it.hint && !it.disabled && (
+                  <span className="block text-[10px] text-on-surface-variant/70">{it.hint}</span>
+                )}
                 {it.disabled && it.disabledReason && (
                   <span className="block text-[10px] text-on-surface-variant/70">{it.disabledReason}</span>
                 )}

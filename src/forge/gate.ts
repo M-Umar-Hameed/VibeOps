@@ -42,6 +42,20 @@ export function extractDeclaredPaths(planText: string): Set<string> {
   return set;
 }
 
+export function declaredFullPaths(planText: string): string[] {
+  return [...extractDeclaredPaths(planText)].filter((p) => p.includes("/")).sort();
+}
+
+export function overlappingDeclared(
+  mine: readonly string[],
+  others: readonly { ticketId: string; title: string; declared: readonly string[] }[],
+): { ticketId: string; title: string; files: string[] }[] {
+  const set = new Set(mine);
+  return others
+    .map((o) => ({ ticketId: o.ticketId, title: o.title, files: o.declared.filter((p) => set.has(p)).sort() }))
+    .filter((o) => o.files.length > 0);
+}
+
 // drizzle-kit generates the SQL, snapshot and journal as one unit whenever the
 // plan changes the schema. Plans name these in prose ("drizzle/ (generated)")
 // which the literal path extractor cannot see, and the trio has now produced

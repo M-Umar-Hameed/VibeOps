@@ -172,7 +172,7 @@ function prepareTrusted(doc, refMap, step) {
   if (step.verb === "click" || step.verb === "type") {
     const el = refMap.get(step.ref);
     if (!el) return { ok: false, error: "that element reference is stale - take a fresh snapshot and use its refs", code: "stale_ref" };
-    el.scrollIntoView?.({ block: "center" });
+    el.scrollIntoView?.({ block: "center", behavior: "instant" });
     if (step.verb === "click") {
       const r = el.getBoundingClientRect();
       if (r.width === 0 && r.height === 0) {
@@ -182,6 +182,10 @@ function prepareTrusted(doc, refMap, step) {
       const local = centrePoint(r);
       const hit = doc.elementFromPoint(local.x, local.y);
       if (!hit || (hit !== el && !el.contains(hit))) {
+        const r2 = el.getBoundingClientRect();
+        if (r2.left !== r.left || r2.top !== r.top) {
+          return { ...runMutation(doc, refMap, step), fallback: "scroll_unsettled" };
+        }
         return { ok: false, error: `element ${step.ref} is covered at (${Math.round(local.x)},${Math.round(local.y)})${hit ? ` by <${hit.tagName.toLowerCase()}>` : ""} - scroll, close the overlay, or take a fresh snapshot`, code: "not_hittable" };
       }
       // ponytail: hit-test is frame-local (elementFromPoint in the element's own document); an outer frame covering the iframe is not detected. Upgrade: DOM.getNodeForLocation on the top-level point from the worker.

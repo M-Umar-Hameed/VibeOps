@@ -548,4 +548,64 @@ describe("trusted mode (CDP prepare)", () => {
     )) as any;
     expect(reused.results[0].value).toBe("A");
   });
+
+  it("trusted click and type call scrollIntoView with instant behavior", async () => {
+    const doc = domAt('<button id="b1">Go</button><input id="i1" type="text">', "https://github.com/");
+    const btn = doc.querySelector("#b1") as any;
+    const input = doc.querySelector("#i1") as any;
+    btn.scrollIntoView = vi.fn();
+    input.scrollIntoView = vi.fn();
+    btn.getBoundingClientRect = () => ({ left: 10, top: 20, width: 100, height: 40 });
+    (doc as any).elementFromPoint = () => btn;
+
+    await executeSteps(doc, [{ verb: "click", ref: "ref1" }], "act", "https://github.com", { trusted: true });
+    expect(btn.scrollIntoView).toHaveBeenCalledWith({ block: "center", behavior: "instant" });
+
+    await executeSteps(doc, [{ verb: "type", ref: "ref2", text: "hello" }], "act", "https://github.com", { trusted: true });
+    expect(input.scrollIntoView).toHaveBeenCalledWith({ block: "center", behavior: "instant" });
+  });
+
+  it("unsettled scroll falls back to synthetic mutation and reports fallback", async () => {
+    const doc = domAt('<button id="b1">Go</button>', "https://github.com/");
+    const btn = doc.querySelector("#b1") as any;
+    let callCount = 0;
+    btn.getBoundingClientRect = () => {
+      callCount++;
+      return callCount === 1
+        ? { left: 10, top: 20, width: 100, height: 40 }
+        : { left: 10, top: 300, width: 100, height: 40 };
+    };
+    (doc as any).elementFromPoint = () => doc.body;
+    let clicked = false;
+    btn.addEventListener("click", () => { clicked = true; });
+
+    const out = (await executeSteps(
+      doc,
+      [{ verb: "click", ref: "ref1" }],
+      "act",
+      "https://github.com",
+      { trusted: true }
+    )) as any;
+
+    expect(out.results[0]).toEqual({ ok: true, fallback: "scroll_unsettled" });
+    expect(out.results[0].cdp).toBeUndefined();
+    expect(clicked).toBe(true);
+    expect(out.snapshot).not.toBeNull();
+  });
+
+  it("type action returns CDP type data and does not return CDP click coordinates", async () => {
+    const doc = domAt('<input id="i1" type="text" value="existing">', "https://github.com/");
+    const out = (await executeSteps(
+      doc,
+      [{ verb: "type", ref: "ref1", text: "abc" }],
+      "act",
+      "https://github.com",
+      { trusted: true }
+    )) as any;
+
+    expect(out.results[0]).toEqual({ ok: true, cdp: { verb: "type", text: "abc" } });
+    expect(out.results[0].cdp.verb).toBe("type");
+    expect((out.results[0].cdp as any).x).toBeUndefined();
+    expect((out.results[0].cdp as any).y).toBeUndefined();
+  });
 });

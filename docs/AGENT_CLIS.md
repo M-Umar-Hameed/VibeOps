@@ -13,6 +13,7 @@ type RelayAgent = {
   type?: "cli" | "sdk";
   mcp?: boolean; // written by auto-wiring as a record that the lane is registered; set false to opt out
   accounts?: RelayAccount[];
+  executable?: string; // sdk lanes only: absolute path to a Claude Code executable
 };
 
 type RelayModel = {
@@ -225,6 +226,8 @@ unrestricted; other tools are denied and logged as
 ```
 
 To fall back, change `"type"` to `"cli"` (with a `cmd`) or remove the agent.
+
+`executable` (sdk lanes only, optional): absolute path to a Claude Code executable, for example `C:/Users/<you>/.local/bin/claude.exe`. When the file exists, the SDK runs it instead of the CLI bundled with `@anthropic-ai/claude-agent-sdk`; when it is missing, the bundled CLI is used. A relative path is rejected at load. The worker CLI's stderr appears in the run output prefixed with `[sdk stderr] `, capped at 4000 characters per run.
 
 First-run setup writes this lane for you as `claude-sdk` whenever a Claude Code
 login is present on the machine, so a fresh install has a work lane even when no

@@ -22,7 +22,7 @@ export type RelayModel = { name: string; tier: ModelTier; quality: number };
 export type PromptDelivery = "argv" | "file" | "stdin";
 export const PROMPT_DELIVERIES: PromptDelivery[] = ["argv", "file", "stdin"];
 export type RelayAccount = { id: string; label: string; configDir: string; priority: number; disabled?: boolean };
-export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string; write?: boolean; promptDelivery?: PromptDelivery; projectId?: string; addDirs?: string[]; liftedRules?: string[]; skillAllowlist?: string[]; accounts?: RelayAccount[]; usage?: "exact" };
+export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string; write?: boolean; promptDelivery?: PromptDelivery; projectId?: string; addDirs?: string[]; liftedRules?: string[]; skillAllowlist?: string[]; accounts?: RelayAccount[]; usage?: "exact"; executable?: string };
 export type RelayConfig = {
   workdir: string; apiKey?: string; baseUrl?: string; pollMs?: number;
   agents: Record<string, RelayAgent>;
@@ -145,6 +145,14 @@ export function validateRelayConfig(parsed: unknown, configPath: string): RelayC
         if (typeof v !== "string") {
           throw new Error(`relay config agent "${name}" env value "${k}" must be a string`);
         }
+      }
+    }
+    if (a.executable !== undefined) {
+      if (a.type !== "sdk") {
+        throw new Error(`relay config agent "${name}" executable is only supported for type "sdk"`);
+      }
+      if (typeof a.executable !== "string" || !isAbsolute(a.executable)) {
+        throw new Error(`relay config agent "${name}" executable must be an absolute path`);
       }
     }
     if (a.skillAllowlist !== undefined && (!Array.isArray(a.skillAllowlist) || !a.skillAllowlist.every((n) => typeof n === "string"))) {

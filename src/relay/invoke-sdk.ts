@@ -18,6 +18,7 @@ const WRITE_TOOLS = new Set(["Edit", "Write"]);
 const BASH_TIMEOUT_MS = "1200000";
 const NO_BACKGROUND_TOOLS = ["SlashCommand", "Skill", "Task", "Agent", "BashOutput", "TaskOutput", "KillShell"];
 const SDK_TRANSPORT_CODES = new Set(["EPIPE", "ECONNRESET", "ERR_STREAM_DESTROYED"]);
+const STDERR_CAP = 4000;
 
 // Realpath the nearest existing ancestor, then rejoin the missing tail, so a
 // not-yet-created Write target and any symlinked ancestor both resolve
@@ -114,15 +115,39 @@ export function riskHook(workdir: string, lifted: readonly string[], onData?: (c
 
 export function buildSdkOptions(
   env: Record<string, string>, workdir: string, wallOn: boolean, allowed: string[],
-  onData?: (chunk: string) => void, model?: string, lifted: readonly string[] = [],
+  onData?: (chunk: string) => void, model?: string,
+  agentOrLifted?: Pick<RelayAgent, "executable" | "liftedRules"> | readonly string[],
+  maybeAgent?: Pick<RelayAgent, "executable" | "liftedRules">,
 ) {
+  let agent: Pick<RelayAgent, "executable" | "liftedRules"> | undefined;
+  let lifted: readonly string[] = [];
+  if (Array.isArray(agentOrLifted as unknown)) {
+    lifted = agentOrLifted as readonly string[];
+    agent = maybeAgent;
+  } else if (agentOrLifted) {
+    agent = agentOrLifted as Pick<RelayAgent, "executable" | "liftedRules">;
+    lifted = agent.liftedRules ?? [];
+  }
+  const exe = agent?.executable;
+  let stderrLeft = STDERR_CAP;
   return {
     cwd: workdir,
     ...(model ? { model } : {}),
+    ...(exe && existsSync(exe) ? { pathToClaudeCodeExecutable: exe } : {}),
     env,
     ...(wallOn ? { settingSources: [], allowedTools: allowRules(allowed) } : {}),
     disallowedTools: [...DENY_RULES, ...NO_BACKGROUND_TOOLS],
-    hooks: { PreToolUse: [{ matcher: "Bash|PowerShell", hooks: [denyBackground, riskHook(workdir, lifted, onData)] }] },
+    hooks: {
+      PreToolUse: [
+        { matcher: "Bash|PowerShell", hooks: [denyBackground, riskHook(workdir, lifted, onData)] },
+      ],
+    },
+    stderr: (data: string) => {
+      if (stderrLeft <= 0) return;
+      const s = data.slice(0, stderrLeft);
+      stderrLeft -= s.length;
+      onData?.(`[sdk stderr] ${s}`);
+    },
     canUseTool: async (toolName: string, toolInput: Record<string, unknown>) =>
       checkToolPermission(toolName, toolInput, workdir, onData, wallOn),
   };
@@ -156,7 +181,7 @@ export async function runAgentSdk(
   try {
     const response = query({
       prompt,
-      options: { ...buildSdkOptions(env, workdir, wall.on, wall.allowed, onData, model, agent.liftedRules ?? []), abortController: controller },
+      options: { ...buildSdkOptions(env, workdir, wall.on, wall.allowed, onData, model, agent), abortController: controller },
     });
     for await (const message of response) {
       if (message.type === "assistant") {

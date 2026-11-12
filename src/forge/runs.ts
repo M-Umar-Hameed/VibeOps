@@ -36,11 +36,11 @@ import { logAgentUse, startAgentSession, endAgentSession } from "../services/usa
 import { listActors } from "../services/actors.js";
 import { bump } from "../services/metrics.js";
 import { captureMemory, reportTail } from "../services/memory-capture.js";
-import { desc, isNull, sum, eq, gte, lte, and, inArray } from "drizzle-orm";
+import { desc, isNull, sum, eq, gte, lte, and, inArray, lt, or, getTableColumns } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { pidAlive } from "../db/lifecycle.js";
-import { forgeRuns, aiUsageLogs, tickets, type Ticket, type ForgeRun } from "../db/schema.js";
-import { verifyModel, MISMATCH_WARNING, computeVerificationStatus } from "./verify.js";
+import { forgeRuns, aiUsageLogs, tickets, type Ticket, type ForgeRun, type Comment } from "../db/schema.js";
+import { verifyModel, MISMATCH_WARNING, computeVerificationStatus, loadAdminIds } from "./verify.js";
 import { resolveChecks, runChecks, formatChecks, type CheckResult } from "./checks.js";
 import { runGate, resolveMutationCmd, declaredFullPaths, overlappingDeclared } from "./gate.js";
 import { emitEvent } from "../api/events.js";
@@ -112,7 +112,8 @@ const PLAN_ONLY =
   "with repository-relative paths only (src/..., tests/...), never absolute paths.";
 
 type Stage = "plan" | "work" | "review";
-type Status = "running" | "passed" | "rejected" | "failed" | "stopped" | "interrupted";
+export const RUN_STATUSES = ["running", "passed", "rejected", "failed", "stopped", "interrupted"] as const;
+type Status = typeof RUN_STATUSES[number];
 
 export type Effort = "quick" | "standard" | "max";
 
@@ -1499,6 +1500,7 @@ async function deriveStageDurations(
 }
 
 export type RunListItem = RunSummary & { persisted?: boolean; modelVerified?: boolean | "unknown"; rejectionReason?: string; failureReason?: string; stageDurationsMs?: StageDurationsMs };
+export type RunListOpts = { limit?: number; before?: { startedAt: string; id?: string }; status?: Status; projectId?: string; summary?: boolean };
 
 const HISTORY_LIMIT = 20;
 const TICKET_HISTORY_LIMIT = 200;
@@ -1506,13 +1508,26 @@ const LIST_CAP = 40;
 
 // Live runs plus recent persisted history, for the UI after a server restart
 // (live is authoritative for anything still in memory; DB fills the rest).
-export async function listRunsWithHistory(ticketId?: string): Promise<RunListItem[]> {
-  const live = ticketId ? listRuns().filter((r) => r.ticketId === ticketId) : listRuns();
+export async function listRunsWithHistory(ticketId?: string, opts: RunListOpts = {}): Promise<RunListItem[]> {
+  const projectTickets = opts.projectId
+    ? new Set((await db.select({ id: tickets.id }).from(tickets).where(eq(tickets.projectId, opts.projectId))).map((r) => r.id))
+    : null;
+  const live = listRuns().filter((r) => (!ticketId || r.ticketId === ticketId) && (!projectTickets || projectTickets.has(r.ticketId)));
   const liveIds = new Set(live.map((r) => r.id));
-  const base = db.select().from(forgeRuns).$dynamic();
-  const rows = await (ticketId ? base.where(eq(forgeRuns.ticketId, ticketId)) : base)
-    .orderBy(desc(forgeRuns.startedAt))
-    .limit(ticketId ? TICKET_HISTORY_LIMIT : HISTORY_LIMIT);
+  const before = opts.before;
+  const beforeAt = before ? new Date(before.startedAt) : undefined;
+  const base = db.select(getTableColumns(forgeRuns)).from(forgeRuns).$dynamic();
+  const rows = await (opts.projectId ? base.innerJoin(tickets, eq(forgeRuns.ticketId, tickets.id)) : base)
+    .where(and(
+      ticketId ? eq(forgeRuns.ticketId, ticketId) : undefined,
+      opts.status ? eq(forgeRuns.status, opts.status) : undefined,
+      opts.projectId ? eq(tickets.projectId, opts.projectId) : undefined,
+      beforeAt ? (before!.id
+        ? or(lt(forgeRuns.startedAt, beforeAt), and(eq(forgeRuns.startedAt, beforeAt), lt(forgeRuns.id, before!.id)))
+        : lt(forgeRuns.startedAt, beforeAt)) : undefined,
+    ))
+    .orderBy(desc(forgeRuns.startedAt), desc(forgeRuns.id))
+    .limit(opts.limit ?? (ticketId ? TICKET_HISTORY_LIMIT : HISTORY_LIMIT));
   const persisted: RunListItem[] = rows
     .filter((r) => !liveIds.has(r.id))
     .map((r) => ({
@@ -1523,23 +1538,37 @@ export async function listRunsWithHistory(ticketId?: string): Promise<RunListIte
       startedAt: r.startedAt.toISOString(),
       finishedAt: r.finishedAt ? r.finishedAt.toISOString() : undefined,
       persisted: true,
+      ...(opts.summary ? { cause: r.cause ?? undefined, causeDetail: r.causeDetail ?? undefined } : {}),
     }));
+  const isBefore = (r: RunListItem) => !before
+    || r.startedAt < before.startedAt
+    || (r.startedAt === before.startedAt && !!before.id && r.id < before.id);
   const list: RunListItem[] = [...live, ...persisted]
-    .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
-    .slice(0, ticketId ? TICKET_HISTORY_LIMIT : LIST_CAP);
+    .filter((r) => (!opts.status || r.status === opts.status) && isBefore(r))
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.id.localeCompare(a.id))
+    .slice(0, opts.limit ?? (ticketId ? TICKET_HISTORY_LIMIT : LIST_CAP));
+  if (opts.summary) return list;
+
+  const commentsByTicket = new Map<string, Promise<Comment[]>>();
+  const commentsFor = (id: string) => {
+    let p = commentsByTicket.get(id);
+    if (!p) { p = listComments(id); commentsByTicket.set(id, p); }
+    return p;
+  };
+  let admins: Promise<Set<string>> | undefined;
 
   const enrichPromises = list.map(async (item) => {
     item.modelVerified = await computeVerificationStatus(item.ticketId, {
       from: new Date(item.startedAt),
       to: item.finishedAt ? new Date(item.finishedAt) : null,
-    });
+    }, { comments: commentsFor(item.ticketId), adminIds: admins ??= loadAdminIds() });
     if (item.status !== "running" && item.finishedAt) {
       item.stageDurationsMs = await deriveStageDurations(
         item.ticketId, new Date(item.startedAt), new Date(item.finishedAt), item.checksDurationMs,
       );
     }
     if (item.status === "rejected" || item.status === "failed" || item.status === "stopped") {
-      const comments = await listComments(item.ticketId);
+      const comments = await commentsFor(item.ticketId);
       const from = new Date(item.startedAt).getTime();
       const to = item.finishedAt ? new Date(item.finishedAt).getTime() : Date.now();
       const inWindow = (c: { createdAt: Date }) => {

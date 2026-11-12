@@ -4,8 +4,8 @@ import { aiUsageLogs, agentSessions, knowledgeQueryLogs } from "../db/schema.js"
 import { getSetting } from "./settings.js";
 import { redactSecrets } from "../forge/redact.js";
 
-// We keep the fuller entry shape for call-site clarity. Headless CLIs don't report
-// real usage, so tokens are estimated. ok is tracked separately via agent_sessions.status.
+// We keep the fuller entry shape for call-site clarity. Only the sdk lane reports
+// real usage; other lanes estimate tokens and are stored with exact=false. ok is tracked separately via agent_sessions.status.
 export type UsageEntry = {
   actorId: string;
   agent: string;
@@ -37,6 +37,7 @@ export async function logAgentUse(entry: UsageEntry): Promise<void> {
       ticketId: entry.ticketId,
       actorId: entry.actorId,
       durationMs: entry.durationMs,
+      exact: entry.tokens !== undefined,
     });
   } catch (e) {
     console.warn("logAgentUse failed:", (e as Error).message);

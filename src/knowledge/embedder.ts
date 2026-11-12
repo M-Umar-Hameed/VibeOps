@@ -24,6 +24,12 @@ export const MODEL_DIMS: Record<string, number> = {
   "text-embedding-3-large": 3072,
   "text-embedding-004": 768,
   "all-MiniLM-L6-v2": 384,
+  "bge-small-en-v1.5": 384,
+  "bge-base-en-v1.5": 768,
+  "bge-m3": 1024,
+  "nomic-embed-text-v1.5": 768,
+  "nomic-embed-text": 768,
+  "potion-base-8M": 256,
 };
 
 // Matryoshka models accept output_dimension; we pin 1024 to match the vector
@@ -46,32 +52,71 @@ export function padTo(v: number[], width: number): number[] {
   return v.length >= width ? v : [...v, ...new Array(width - v.length).fill(0)];
 }
 
+export function resolveEmbedThreads(raw: string | null): number {
+  const n = Math.floor(Number(raw));
+  return raw !== null && Number.isFinite(n) ? Math.min(6, Math.max(1, n)) : 6;
+}
+
+export function resetLocalPipeline(): void {
+  pipePromises.clear();
+}
+
 // Xenova/all-MiniLM-L6-v2 main branch commit sha, verified 2026-07-12. Bump deliberately.
 const PINNED_REVISION = "751bff37182d3f1213fa05d7196b954e230abad9";
 
-// Module-scoped so all LocalEmbedder instances share one pipeline load (dedupes
+// Module-scoped so all LocalEmbedder instances share one pipeline load per model (dedupes
 // concurrent first-embed downloads) and a failed load (e.g. offline first-run)
 // doesn't stay cached as a rejection forever.
-let pipePromise: Promise<(texts: string[], opts: object) => Promise<{ tolist(): number[][] }>> | undefined;
+const pipePromises = new Map<string, Promise<(texts: string[], opts: object) => Promise<{ tolist(): number[][] }>>>();
 
 // Zero-key local model. `dim` is the TRUE model dim — the search discriminator —
 // while returned vectors are zero-padded to the vector(1024) column width
 // (padding shared zeros does not change cosine similarity).
 export class LocalEmbedder implements Embedder {
-  model = "all-MiniLM-L6-v2";
-  dim = 384;
-  private load() {
+  model: string;
+  dim: number;
+  constructor(model: string = "all-MiniLM-L6-v2", dim?: number) {
+    this.model = model;
+    this.dim = dim ?? MODEL_DIMS[model] ?? 384;
+  }
+  private async load() {
     // Lazy: the server must boot without loading ONNX; first embed pays the cost.
-    pipePromise ??= import("@huggingface/transformers").then((t) => {
-      t.env.cacheDir = join(homedir(), ".vibeops", "models");
-      return t.pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", { dtype: "q8", revision: PINNED_REVISION }) as never;
-    }).catch((e) => { pipePromise = undefined; throw e; });
-    return pipePromise;
+    let p = pipePromises.get(this.model);
+    if (!p) {
+      p = import("@huggingface/transformers").then(async (t) => {
+        t.env.cacheDir = join(homedir(), ".vibeops", "models");
+        let threads = 6;
+        try {
+          const { getSetting } = await import("../services/settings.js");
+          threads = resolveEmbedThreads(await getSetting("knowledge.embedThreads"));
+        } catch {
+          // Fall back to default
+        }
+        const hfModel = this.model.includes("/")
+          ? this.model
+          : (this.model.startsWith("nomic") ? `nomic-ai/${this.model}` : `Xenova/${this.model}`);
+        const opts: Record<string, unknown> = {
+          dtype: "q8",
+          session_options: { intraOpNumThreads: threads, interOpNumThreads: 1 },
+        };
+        if (this.model === "all-MiniLM-L6-v2") {
+          opts.revision = PINNED_REVISION;
+        }
+        return t.pipeline("feature-extraction", hfModel, opts) as never;
+      }).catch((e) => { pipePromises.delete(this.model); throw e; });
+      pipePromises.set(this.model, p);
+    }
+    return p;
   }
   async embed(texts: string[]): Promise<number[][]> {
     const pipe = await this.load();
-    const out = await pipe(texts, { pooling: "mean", normalize: true });
-    return out.tolist().map((v) => padTo(v, 1024));
+    const results: number[][] = [];
+    for (let i = 0; i < texts.length; i += 32) {
+      const slice = texts.slice(i, i + 32);
+      const out = await pipe(slice, { pooling: "mean", normalize: true });
+      results.push(...out.tolist().map((v: number[]) => padTo(v, 1024)));
+    }
+    return results;
   }
 }
 
@@ -268,11 +313,15 @@ export function getEmbedder(): Embedder {
   const provider = process.env.EMBED_PROVIDER
     ?? (process.env.VOYAGE_API_KEY ? "voyage" : "local");
   if (provider === "fake") return new FakeEmbedder(1024);
-  if (provider === "local") return new LocalEmbedder();
+  if (provider === "local") {
+    const model = process.env.EMBED_MODEL ?? "all-MiniLM-L6-v2";
+    return new LocalEmbedder(model);
+  }
   if (provider === "model2vec" || provider === "http") {
     // True model dim is the search discriminator; vectors are padded to 1024.
-    const dim = Number(process.env.EMBED_DIM) || 256;
-    return new HttpEmbedder(process.env.EMBED_MODEL ?? "model2vec", dim, process.env.EMBED_HTTP_URL ?? "", process.env.EMBED_HTTP_KEY);
+    const model = process.env.EMBED_MODEL ?? "model2vec";
+    const dim = Number(process.env.EMBED_DIM) || (MODEL_DIMS[model] ?? 256);
+    return new HttpEmbedder(model, dim, process.env.EMBED_HTTP_URL ?? "", process.env.EMBED_HTTP_KEY);
   }
   const model = process.env.EMBED_MODEL ?? "voyage-3";
   if (!MODEL_DIMS[model]) throw new Error(`unknown embed model: ${model}`);

@@ -50,3 +50,60 @@ export function lessonsClause(lessons: string): string {
   if (!lessons) return "";
   return `\n\nPrompting lessons learned (follow these):\n${lessons}`;
 }
+
+export type HarvestContext = {
+  ticketTitle: string;
+  status: string;
+  verdict?: string;
+  reviewFindings?: string;
+  checkOutput?: string;
+};
+
+export async function harvestLessons(actorId: string, ctx: HarvestContext): Promise<string | undefined> {
+  if (!ctx.reviewFindings && !ctx.checkOutput) return undefined;
+
+  const endpoint = process.env.VIBEOPS_LESSONS_ENDPOINT || "http://127.0.0.1:8086/v1/completions";
+  const prompt = [
+    "Task: Fix unit tests for auth middleware",
+    "Findings: Critical: verifyToken not exported",
+    "Rule: Always export helper functions required by unit tests.",
+    "",
+    "Task: Support stream rollback in chat",
+    "Findings: Critical: missing message rollback on error",
+    "Rule: Always restore previous state on streaming failures.",
+    "",
+    `Task: ${ctx.ticketTitle}`,
+    ctx.reviewFindings ? `Findings: ${ctx.reviewFindings.slice(0, 300).replace(/\r?\n/g, " ")}` : "",
+    ctx.checkOutput ? `Failing checks: ${ctx.checkOutput.slice(0, 200).replace(/\r?\n/g, " ")}` : "",
+    "Rule:",
+  ].filter(Boolean).join("\n");
+
+  try {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt,
+        max_tokens: 30,
+        temperature: 0.1,
+        stop: ["\n", "Task:", "Findings:"],
+      }),
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!res.ok) return undefined;
+    const data = await res.json() as { choices?: { text?: string }[] };
+    const text = (data.choices?.[0]?.text || "").trim();
+    if (!text || text.length < 5) return undefined;
+
+    const cleanLesson = text.replace(/^[-*•\s]+/, "").trim();
+    const existing = await getLessons();
+    if (existing.includes(cleanLesson)) return cleanLesson;
+
+    const updated = existing ? `${existing}\n- ${cleanLesson}` : `- ${cleanLesson}`;
+    await setLessons(actorId, updated);
+    return cleanLesson;
+  } catch {
+    return undefined;
+  }
+}
+

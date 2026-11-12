@@ -572,14 +572,9 @@ describe("forge API", () => {
   it("promote 409s when the sandbox has no commits, even with a passing review", async () => {
     const h = await adminHeaders();
     const ticket = await seedTicket();
-    setScript("plan,work,review-pass"); // no FAKE_WRITE -- work stage makes no file changes
-
-    const startRes = await app.request("/forge/pipeline", {
-      method: "POST", headers: h,
-      body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
-    });
-    const { runId } = await startRes.json();
-    await pollUntilDone(h, runId);
+    await sandbox.ensureSandbox(workdir, ticket.id);
+    const { actor: admin } = await createActor({ name: uniq("forge-admin"), kind: "human", role: "admin" });
+    await addComment(admin.id, ticket.id, "Looks good\n\nVERDICT: PASS", "review");
 
     const sandboxRes = await app.request(`/forge/tickets/${ticket.id}/sandbox`, { headers: h });
     expect((await sandboxRes.json()).lastVerdict).toBe("pass");

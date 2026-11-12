@@ -21,56 +21,52 @@ test("makeShutdown closes server then db, exits 0, and is idempotent", async () 
   expect(exit).toHaveBeenCalledWith(0);
   expect(serverClose).toHaveBeenCalledTimes(1);
   expect(closeDb).toHaveBeenCalledTimes(1);
+  exit.mockRestore();
 });
 
 test("a held keep-alive connection does not block shutdown", async () => {
+  const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
   const held = { value: false };
-  const server = http.createServer((req) => {
+  const server = http.createServer((_req, _res) => {
     held.value = true;
     // never respond
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-  const port = (server.address() as AddressInfo).port;
-
-  const req = http.get({ port, agent: new http.Agent({ keepAlive: true }) });
+  const addr = server.address() as AddressInfo;
+  const agent = new http.Agent({ keepAlive: true });
+  const req = http.get({ host: "127.0.0.1", port: addr.port, agent });
   req.on("error", () => {});
-  await vi.waitFor(() => held.value);
+  await vi.waitFor(() => {
+    if (!held.value) throw new Error("not held");
+  });
 
-  const mockExit = vi.fn(() => process.exit(0));
-  vi.mock("process", () => ({
-    exit: mockExit,
-  }));
+  const closeDb = vi.fn(async () => {});
+  const shutdown = makeShutdown(server as never, closeDb);
 
   const t0 = Date.now();
-  await makeShutdown(server as never, () => {})("test");
+  await shutdown("SIGTERM");
   const elapsed = Date.now() - t0;
 
   expect(closeDb).toHaveBeenCalledTimes(1);
-  expect(mockExit).toHaveBeenCalledWith(0);
+  expect(exit).toHaveBeenCalledWith(0);
   expect(elapsed).toBeLessThan(5000);
   expect(server.listening).toBe(false);
 
   req.destroy();
-  http.Agent.destroyAll();
-  vi.restoreAllMocks();
+  agent.destroy();
+  exit.mockRestore();
 });
 
 test("shutdown releases a pending /browser/poll waiter", async () => {
+  const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
   const id = register({ browserChannel: "chrome", profileId: "p", profileLabel: "L" });
   const p = nextBatch(id);
 
-  const mockExit = vi.fn(() => process.exit(0));
-  vi.mock("process", () => ({
-    exit: mockExit,
-  }));
+  const serverClose = vi.fn((cb: () => void) => cb());
+  const shutdown = makeShutdown({ close: serverClose } as never, async () => {});
 
-  const shutdownResult = await makeShutdown(
-    { close: (cb) => cb() } as never,
-    async () => {}
-  )("test");
-
-  expect(shutdownResult).toBe("test");
-  expect(mockExit).toHaveBeenCalledWith(0);
+  await shutdown("SIGTERM");
+  expect(exit).toHaveBeenCalledWith(0);
 
   const result = await Promise.race([p, new Promise<string>((r) => setTimeout(() => r("timeout"), 1000))]);
   expect(result).toBe(null);
@@ -78,12 +74,6 @@ test("shutdown releases a pending /browser/poll waiter", async () => {
   const later = await nextBatch(id);
   expect(later).toBe(null);
 
-  vi.restoreAllMocks();
-});
-
-  expect(serverClose).toHaveBeenCalledTimes(1);
-  expect(closeDb).toHaveBeenCalledTimes(1);
-  expect(exit).toHaveBeenCalledWith(0);
   exit.mockRestore();
 });
 

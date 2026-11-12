@@ -179,7 +179,16 @@ async function executeBatch(batch) {
   let snapshot = { instanceId, origin: "", identity: null, nodes: [] };
   let dbgTab = null;
   let dbgOk = false;
-  const first = await agentTab();
+  let first;
+  try {
+    first = await agentTab();
+  } catch (err) {
+    await submitResult(batch.batchId, {
+      results: [{ ok: false, error: String(err) }],
+      snapshot: { instanceId, origin: "", identity: null, nodes: [] },
+    });
+    return;
+  }
   await withPaintableWindow(chrome.windows, first.windowId, wantsPaint(batch), async () => {
     try {
       let failed = false;

@@ -11,7 +11,7 @@ import {
   validateExportPath, exportOutputs, copyEvidence, EVIDENCE_MAX_BYTES,
   DEPS_DIRS, resolveDepsDirs, resolveFrontendDeps,
   stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL, OPERATOR_EVIDENCE_DIR,
-  diskSpaceReader, DiskFullError, syncSandboxWithBase
+  diskSpaceReader, DiskFullError, syncSandboxWithBase, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles, conflictMarkerFiles
 } from "../src/forge/sandbox.js";
 import { vibeopsHome } from "../src/runtime/home.js";
 import { ConflictError } from "../src/services/errors.js";
@@ -138,6 +138,40 @@ describe("forge sandbox", () => {
     writeFileSync(join(workdir, "untracked.txt"), "u\n");
     await promoteSandbox(workdir, TID, "untracked ok");
     expect(existsSync(join(workdir, "b.txt"))).toBe(true);
+  });
+
+  it("conflictMarkerFiles names a file whose added lines open and close a conflict block", () => {
+    const diff = "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1,5 @@\n+<<<<<<< HEAD\n+x\n+=======\n+y\n+>>>>>>> abc\n";
+    expect(conflictMarkerFiles(diff)).toEqual(["src/a.ts"]);
+  });
+
+  it("conflictMarkerFiles ignores removed marker lines", () => {
+    const diff = "--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,3 +1 @@\n-<<<<<<< HEAD\n-x\n->>>>>>> abc\n";
+    expect(conflictMarkerFiles(diff)).toEqual([]);
+  });
+
+  it("conflictMarkerFiles ignores a marker not at line start", () => {
+    const diff = "--- a/src/a.ts\n+++ b/src/a.ts\n@@ -0,0 +1 @@\n+x <<<<<<< y\n";
+    expect(conflictMarkerFiles(diff)).toEqual([]);
+  });
+
+  it("conflictMarkerFiles detects a CRLF marker line", () => {
+    const diff = "--- a/src/a.ts\r\n+++ b/src/a.ts\r\n@@ -0,0 +1 @@\r\n+>>>>>>> abc\r\n";
+    expect(conflictMarkerFiles(diff)).toEqual(["src/a.ts"]);
+  });
+
+  it("promote refuses a branch that adds conflict markers, sandbox kept", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    writeFileSync(join(sp, "a.txt"), "<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> b\n");
+    await forgeCommit(TID, "markers");
+    let err: any;
+    try { await promoteSandbox(workdir, TID, "markers ticket"); } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(ConflictError);
+    expect(err.message).toContain("conflict markers");
+    expect(err.message).toContain("a.txt");
+    expect(sandboxExists(TID)).toBe(true);
+    expect(git(workdir, "status", "--porcelain").trim()).toBe("");
+    expect(readFileSync(join(workdir, "a.txt"), "utf-8")).toBe("hello\n"); // nothing merged
   });
 
   it("promote reports a held index.lock as busy, not a 0-file conflict", async () => {

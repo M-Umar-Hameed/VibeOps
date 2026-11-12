@@ -367,6 +367,7 @@ function applyVerification(res: { ok: boolean; output: string }, compositeName: 
 }
 
 const BASE_CONFLICT = "[forge: base conflict]";
+const CONFLICT_MARKERS = "[forge: conflict markers]";
 
 function baseSyncLine(s: BaseSync): string {
   return `\n=== FORGE base sync: ${s.state}${s.files?.length ? ` (${s.files.join(", ")})` : ""} ===\n`;
@@ -1192,6 +1193,16 @@ async function reviewStage(
       `Resolve the merge conflicts in ${files.join(", ")}; keep both sides' intent.\nVERDICT: FAIL`, "review");
     await setStatus(actorId, ticket.id, "planned");
     setCause(run, "base_conflict", "base conflict");
+    return settle(run, "rejected");
+  }
+  const markers = conflictMarkerFiles(await sandboxDiff(workdir, ticket.id));
+  if (markers.length) {
+    await addComment(actorId, ticket.id,
+      `${CONFLICT_MARKERS} ${branchName(ticket.id)} adds unresolved merge conflict markers in ${markers.length} file(s):\n` +
+      `${markers.map((f) => `  - ${f}`).join("\n")}\n` +
+      `Remove every <<<<<<< / ======= / >>>>>>> block in ${markers.join(", ")}; keep both sides' intent.\nVERDICT: FAIL`, "review");
+    await setStatus(actorId, ticket.id, "planned");
+    setCause(run, "conflict_markers", "conflict markers");
     return settle(run, "rejected");
   }
 

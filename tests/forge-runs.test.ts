@@ -19,12 +19,16 @@ import {
   awaitRun,
   latestRunPolicy,
   resolveMaxActive,
-  listInterruptedRuns
+  listInterruptedRuns,
+  resolveMinFreeBytes,
+  sweepStalledRuns,
+  logSizeReader
 } from "../src/forge/runs.js";
 import * as checksMod from "../src/forge/checks.js";
 import { lastVerdict } from "../src/api/forge-routes.js";
-import { sandboxExists, branchName, promoteSandbox, sandboxDiff, hasCommitsToPromote } from "../src/forge/sandbox.js";
+import { sandboxExists, branchName, promoteSandbox, sandboxDiff, hasCommitsToPromote, ensureSandbox, forgeCommit, diskSpaceReader } from "../src/forge/sandbox.js";
 import { vibeopsHome } from "../src/runtime/home.js";
+import { treeCpuReader } from "../src/runtime/proc-tree-cpu.js";
 import { app } from "../src/api/app.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject, updateProjectRepo } from "../src/services/projects.js";
@@ -102,12 +106,15 @@ let sandboxRoot: string;
 let counterDir: string;
 let counterFile: string;
 
+const realDiskRead = diskSpaceReader.read;
+
 beforeEach(() => {
   workdir = initRepo();
   sandboxRoot = mkdtempSync(join(tmpdir(), "forge-run-sbx-"));
   process.env.VIBEOPS_SANDBOX_ROOT = sandboxRoot;
   counterDir = mkdtempSync(join(tmpdir(), "forge-run-ctr-"));
   counterFile = join(counterDir, "counter.txt");
+  diskSpaceReader.read = () => ({ freeBytes: 1e12, totalBytes: 2e12 });
 });
 
 afterEach(() => {
@@ -120,6 +127,7 @@ afterEach(() => {
   delete process.env.FAKE_WRITE_DEPS;
   delete process.env.FAKE_TOKEN_OUT;
   delete process.env.FAKE_REVIEW_LS;
+  diskSpaceReader.read = realDiskRead;
   rmSync(workdir, { recursive: true, force: true });
   rmSync(sandboxRoot, { recursive: true, force: true });
   rmSync(counterDir, { recursive: true, force: true });
@@ -360,7 +368,7 @@ describe("forge run manager", () => {
 
   it("FAIL verdict settles rejected, bounces to planned, sandbox kept", async () => {
     const { actorId, ticket } = await seedTicket("Fail path");
-    setScript("plan,work,review-fail");
+    setScript("plan,work,review-fail", true);
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
@@ -430,7 +438,7 @@ describe("forge run manager", () => {
     g("add", "-A");
     g("commit", "-m", "add check");
 
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
@@ -450,37 +458,66 @@ describe("forge run manager", () => {
     expect(review?.body).toMatch(/VERDICT:\s*FAIL\s*$/); // forced FAIL wins, at the end
 
     expect((await getTicket(ticket.id)).status).toBe("planned");
+
+    const row = await waitForPersistedRun(runId);
+    expect(row.cause).toBe("checks");
+    expect(row.causeDetail).toContain("reviewer passed; forced by checks");
+    expect(row.causeDetail).toContain("npm run typecheck");
+    const item = (await listRunsWithHistory(ticket.id)).find((r) => r.id === runId);
+    expect(item?.rejectionReason).toContain("npm run typecheck");
+    expect(item?.rejectionReason).not.toContain("looks good");
   });
 
-  it("checks run concurrently with review: review starts before the slow check finishes", async () => {
-    const { actorId, ticket } = await seedTicket("Concurrent checks");
+  it("checks finish before review starts and the review prompt carries the check tail", async () => {
+    const { actorId, ticket } = await seedTicket("Checks before review");
     await withSetting("forge.checks", JSON.stringify([`node "${join(__dirname, "fixtures", "check-slow.mjs")}"`]), async () => {
-      setScript("plan,work,review-pass-slow");
+      setScript("plan,work,echo-prompt", true);
       const { runId } = await startPipeline(actorId, relayConfig(), {
         ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
       });
       await awaitRun(runId);
 
-      // Causality, not wall clock: the review loop must START before the
-      // concurrent check FINISHES -- that overlap is what "runs concurrently"
-      // means, and it is immune to CPU scheduling drift. Serializing checks
-      // before review (await checksPromise first) lands reviewStartedAt after
-      // checksEndedAt and fails this.
       const t = getRunTimings(runId);
       expect(t?.checksStartedAt).toBeDefined();
       expect(t?.checksEndedAt).toBeDefined();
       expect(t?.reviewStartedAt).toBeDefined();
-      expect(t!.reviewStartedAt!).toBeLessThan(t!.checksEndedAt!);
+      expect(t!.checksEndedAt!).toBeLessThanOrEqual(t!.reviewStartedAt!);
+
+      const chunk = getRunOutput(runId, 0)?.chunk ?? "";
+      const prompt = chunk.slice(chunk.indexOf("PROMPT:"));
+      expect(prompt).toContain("CHECKS (project check commands");
+      expect(prompt).toContain("check finished");
+      expect(prompt).not.toContain("CHECKS RUNNING NOW");
+    });
+  });
+
+  it("failing check still runs the reviewer with the FAIL line and settles rejected with the check tail", async () => {
+    const { actorId, ticket } = await seedTicket("Failing check reviewed");
+    await withSetting("forge.checks", JSON.stringify([`node "${join(__dirname, "fixtures", "check-fail.mjs")}"`]), async () => {
+      setScript("plan,work,echo-prompt", true);
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
 
       const output = getRunOutput(runId, 0);
-      expect(output?.status).toBe("passed");
+      expect(output?.status).toBe("rejected");
+      const prompt = (output?.chunk ?? "").slice((output?.chunk ?? "").indexOf("PROMPT:"));
+      expect(prompt).toContain("TSCHECK-ERROR");
+      expect(prompt).toContain("The verdict is already FAIL because of the check output above.");
+
+      const review = (await listComments(ticket.id)).filter((c) => c.kind === "review").pop();
+      expect(review?.body).toContain("check(s) failed");
+      expect(review?.body).toContain("TSCHECK-ERROR");
+      expect(review?.body).toMatch(/VERDICT:\s*FAIL\s*$/);
+      expect((await getTicket(ticket.id)).status).toBe("planned");
     });
   });
 
   it("stopping mid-review kills both the review agent and a concurrently running check", async () => {
     const { actorId, ticket } = await seedTicket("Stop mid-review");
     await withSetting("forge.checks", JSON.stringify([`node "${join(__dirname, "fixtures", "check-hang.mjs")}"`]), async () => {
-      setScript("plan,work,review-hang");
+      setScript("plan,work,review-hang", true);
       const { runId } = await startPipeline(actorId, relayConfig(), {
         ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
       });
@@ -488,6 +525,7 @@ describe("forge run manager", () => {
       expect(await stopRun(runId)).toBe(true);
       await awaitRun(runId);
       expect(getRunOutput(runId, 0)?.status).toBe("stopped");
+      expect((await waitForPersistedRun(runId)).cause).toBe("stopped");
     });
   }, 15_000);
 
@@ -622,6 +660,8 @@ describe("forge run manager", () => {
     const persisted = await waitForPersistedRun(runId);
     expect(persisted.status).toBe("failed");
     expect(persisted.finishedAt).toBeTruthy();
+    expect(persisted.cause).toBe("crash");
+    expect(persisted.causeDetail).toBe("worker failed");
     const item = (await listRunsWithHistory(ticket.id)).find((r) => r.id === runId);
     expect(item?.failureReason).toBe("worker failed");
   });
@@ -687,7 +727,7 @@ describe("forge run manager", () => {
     const { actorId, ticket } = await seedTicket("Skip plan path");
     await addComment(actorId, ticket.id, "seeded plan", "plan");
     await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });
-    setScript("work,review-pass");
+    setScript("work,review-pass", true);
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
@@ -733,6 +773,106 @@ describe("forge run manager", () => {
 
     const output = getRunOutput(runId, 0);
     expect(output?.chunk).toContain("=== FORGE plan");
+    expect(output?.chunk).toContain("=== FORGE ticket title/body changed since the last plan: re-planning ===");
+    const comments = await listComments(ticket.id);
+    expect(comments.filter((c) => c.kind === "plan")).toHaveLength(2);
+  });
+
+  it("gate override after a plan does not re-plan", async () => {
+    const { actorId, ticket } = await seedTicket("Override no re-plan");
+    const { apiKey } = await createActor({ name: uniq("forge-admin"), kind: "human", role: "admin" });
+    const fresh = await updateTicket(actorId, ticket.id, ticket.version, { body: "spec before plan" });
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+    const fresh2 = await updateTicket(actorId, ticket.id, fresh.version, { status: "planned" });
+    const res = await app.request(`/forge/tickets/${ticket.id}/override-gate`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}` } });
+    expect(res.status).toBe(200);
+    expect((await getTicket(ticket.id)).body).toContain("GATE-OVERRIDE: all");
+    setScript("work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).not.toContain("re-planning");
+    expect(output?.chunk).not.toContain("=== FORGE plan");
+    const comments = await listComments(ticket.id);
+    expect(comments.filter((c) => c.kind === "plan")).toHaveLength(1);
+  });
+
+  it("appending an ALLOW-FILES line does not re-plan", async () => {
+    const { actorId, ticket } = await seedTicket("ALLOW-FILES no re-plan");
+    const fresh = await updateTicket(actorId, ticket.id, ticket.version, { body: "spec before plan" });
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+    const fresh2 = await updateTicket(actorId, ticket.id, fresh.version, { body: "spec before plan\n\nALLOW-FILES: x" });
+    await updateTicket(actorId, ticket.id, fresh2.version, { status: "planned" });
+    setScript("work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).not.toContain("re-planning");
+    expect(output?.chunk).not.toContain("=== FORGE plan");
+    const comments = await listComments(ticket.id);
+    expect(comments.filter((c) => c.kind === "plan")).toHaveLength(1);
+  });
+
+  it("a null body gaining a directive does not throw or re-plan", async () => {
+    const { actorId, ticket } = await seedTicket("Null body directive");
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+    const fresh = await updateTicket(actorId, ticket.id, ticket.version, { body: "GATE-OVERRIDE: all" });
+    await updateTicket(actorId, ticket.id, fresh.version, { status: "planned" });
+    setScript("work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.status).toBe("passed");
+    expect(output?.chunk).not.toContain("re-planning");
+    const comments = await listComments(ticket.id);
+    expect(comments.filter((c) => c.kind === "plan")).toHaveLength(1);
+  });
+
+  it("adding an EVIDENCE line re-plans", async () => {
+    const { actorId, ticket } = await seedTicket("EVIDENCE re-plans");
+    const fresh = await updateTicket(actorId, ticket.id, ticket.version, { body: "spec before plan" });
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+    const fresh2 = await updateTicket(actorId, ticket.id, fresh.version, { body: "spec before plan\nEVIDENCE: qa.png" });
+    await updateTicket(actorId, ticket.id, fresh2.version, { status: "planned" });
+    setScript("plan,work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
+    expect(output?.chunk).toContain("=== FORGE ticket title/body changed since the last plan: re-planning ===");
+    const comments = await listComments(ticket.id);
+    expect(comments.filter((c) => c.kind === "plan")).toHaveLength(2);
+  });
+
+  it("real text changed together with a directive re-plans", async () => {
+    const { actorId, ticket } = await seedTicket("Text+directive re-plans");
+    const fresh = await updateTicket(actorId, ticket.id, ticket.version, { body: "spec before plan" });
+    await addComment(actorId, ticket.id, "seeded plan", "plan");
+    const fresh2 = await updateTicket(actorId, ticket.id, fresh.version, { body: "new requirement\nALLOW-FILES: x" });
+    await updateTicket(actorId, ticket.id, fresh2.version, { status: "planned" });
+    setScript("plan,work,review-pass", true);
+
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    const output = getRunOutput(runId, 0);
     expect(output?.chunk).toContain("=== FORGE ticket title/body changed since the last plan: re-planning ===");
     const comments = await listComments(ticket.id);
     expect(comments.filter((c) => c.kind === "plan")).toHaveLength(2);
@@ -888,7 +1028,7 @@ describe("forge run manager", () => {
   it("work stage editing a protected path records a durable violation without forcing the verdict", async () => {
     const { actorId, ticket } = await seedTicket("Protected path violation");
     process.env.FAKE_WRITE_PATH = "vitest.config.ts";
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
@@ -914,7 +1054,7 @@ describe("forge run manager", () => {
     await updateTicket(actorId, ticket.id, ticket.version,
       { body: "Fix the test runner.\nALLOW-PROTECTED: vitest.config.ts" });
     process.env.FAKE_WRITE_PATH = "vitest.config.ts";
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
@@ -932,7 +1072,7 @@ describe("forge run manager", () => {
   it("a run touching only src/ is unaffected by the protected-path gate", async () => {
     const { actorId, ticket } = await seedTicket("Ordinary src path");
     process.env.FAKE_WRITE_PATH = "src/feature.ts";
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
@@ -1188,6 +1328,7 @@ describe("forge run manager", () => {
     await addComment(actorId, ticket.id, "seeded plan", "plan");
     await addComment(actorId, ticket.id, "CHANGE REQUEST:\nAMEND-MARKER add the DEPS-LEAK hint and a test", "comment");
 
+    process.env.FAKE_WRITE_PATH = "forge-made.txt";
     setScript("echo-prompt");
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
@@ -1209,6 +1350,7 @@ describe("forge run manager", () => {
     await updateTicket(actorId, ticket.id, ticket.version, { status: "planned" });
     await addComment(actorId, ticket.id, "seeded plan", "plan");
 
+    process.env.FAKE_WRITE_PATH = "forge-made.txt";
     setScript("echo-prompt");
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
@@ -1618,7 +1760,7 @@ const file2 = "run2-output.txt";
     writeFileSync(join(workdir, "node_modules", "marker.txt"), "base\n");
 
     const { actorId, ticket } = await seedTicket("Deps leak test");
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
     process.env.FAKE_WRITE_DEPS = "LEAK.txt";
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
@@ -1661,7 +1803,7 @@ const file2 = "run2-output.txt";
     utimesSync(pkg, past, past);
 
     const { actorId, ticket } = await seedTicket("Deps package write");
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
     process.env.FAKE_WRITE_DEPS = "some-pkg/index.js";
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
@@ -1681,7 +1823,7 @@ const file2 = "run2-output.txt";
     writeFileSync(join(workdir, "app", "node_modules", "marker.txt"), "base\n");
 
     const { actorId, ticket } = await seedTicket("Deps leak test app deps");
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
     process.env.FAKE_WRITE_DEPS = "../app/node_modules/LEAK.txt";
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
@@ -1700,7 +1842,7 @@ const file2 = "run2-output.txt";
     writeFileSync(join(workdir, "app", "node_modules", "marker.txt"), "base\n");
 
     const { actorId, ticket } = await seedTicket("Deps leak test app deps enabled");
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
     process.env.FAKE_WRITE_ABS = join(workdir, "app", "node_modules", "LEAK.txt");
 
     await withSetting("forge.frontendDeps", "true", async () => {
@@ -1722,7 +1864,7 @@ const file2 = "run2-output.txt";
     writeFileSync(join(workdir, "node_modules", "marker.txt"), "base\n");
 
     const { actorId, ticket } = await seedTicket("Deps leak test root");
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
     process.env.FAKE_WRITE_DEPS = "LEAK2.txt";
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
@@ -1741,7 +1883,7 @@ const file2 = "run2-output.txt";
     writeFileSync(join(workdir, "site", "node_modules", "marker.txt"), "base\n");
 
     const { actorId, ticket } = await seedTicket("Deps leak site");
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
     process.env.FAKE_WRITE_ABS = join(workdir, "site", "node_modules", "LEAK.txt");
 
     await withSetting(`forge.depsDirs.${ticket.projectId}`, JSON.stringify(["node_modules", "site/node_modules"]), async () => {
@@ -1804,7 +1946,7 @@ const file2 = "run2-output.txt";
 
     // Both edit the same file but with different content to cause a real conflict.
     // FAKE_WRITE_PATH writes generic content, so we manually diverge them post-run.
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
     const r1 = await startPipeline(a1, relayConfig(), {
       ticketId: t1.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
     });
@@ -1812,7 +1954,7 @@ const file2 = "run2-output.txt";
 
     // Reset counter for the second run
     if (existsSync(counterFile)) rmSync(counterFile);
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
     const r2 = await startPipeline(a2, relayConfig(), {
       ticketId: t2.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
     });
@@ -1854,7 +1996,7 @@ const file2 = "run2-output.txt";
     const { actorId, ticket } = await seedTicket("Gate block forces fail");
     // Write a stray file not in plan (triggers file-set block)
     process.env.FAKE_WRITE_PATH = "target.txt";
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
@@ -1876,6 +2018,14 @@ const file2 = "run2-output.txt";
 
     // Ticket bounced to planned
     expect((await getTicket(ticket.id)).status).toBe("planned");
+
+    const row = await waitForPersistedRun(runId);
+    expect(row.cause).toBe("gate");
+    expect(row.causeDetail).toContain("reviewer passed; forced by gate");
+    expect(row.causeDetail).toContain("target.txt");
+    const item = (await listRunsWithHistory(ticket.id)).find((r) => r.id === runId);
+    expect(item?.rejectionReason).toContain("reviewer passed; forced by gate");
+    expect(item?.rejectionReason).not.toContain("looks good");
   });
 
   it("gate clean: model PASS is respected, ticket stays in review", async () => {
@@ -1883,7 +2033,7 @@ const file2 = "run2-output.txt";
     // No stray files - plan mentions the same file the agent writes
     await updateTicket(actorId, ticket.id, ticket.version, { body: "Write forge-made.txt" });
     process.env.FAKE_WRITE_PATH = "forge-made.txt";
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
@@ -2047,6 +2197,118 @@ const file2 = "run2-output.txt";
     const output = getRunOutput(runId, 0);
     expect(output?.chunk).toContain("Do not change, close or reopen this ticket");
   });
+
+  it("maxConcurrentChecks=1 serialises check suites across runs and the queued run is not stall-killed", async () => {
+    const { actorId: a1, ticket: t1 } = await seedTicket("Check concurrency 1");
+    const { actorId: a2, ticket: t2 } = await seedTicket("Check concurrency 2");
+
+    const counter1 = join(counterDir, "counter1.txt");
+    const counter2 = join(counterDir, "counter2.txt");
+    const file1 = "run1-output.txt";
+    const file2 = "run2-output.txt";
+
+    const config1 = (): RelayConfig => ({
+      workdir,
+      agents: {
+        fake: {
+          cmd: [process.execPath, FAKE_AGENT, "{prompt}", "--model", "{model}"],
+          roles: ["plan", "work", "review"],
+          models: [{ name: "fast", tier: "free", quality: 2 }, { name: "smart", tier: "expensive", quality: 5 }],
+          env: {
+            FAKE_SCRIPT: "plan,work,review-pass",
+            FAKE_COUNTER_FILE: counter1,
+            FAKE_WRITE_PATH: file1,
+          },
+        },
+      },
+    });
+    const config2 = (): RelayConfig => ({
+      workdir,
+      agents: {
+        fake: {
+          cmd: [process.execPath, FAKE_AGENT, "{prompt}", "--model", "{model}"],
+          roles: ["plan", "work", "review"],
+          models: [{ name: "fast", tier: "free", quality: 2 }, { name: "smart", tier: "expensive", quality: 5 }],
+          env: {
+            FAKE_SCRIPT: "plan,work,review-pass",
+            FAKE_COUNTER_FILE: counter2,
+            FAKE_WRITE_PATH: file2,
+          },
+        },
+      },
+    });
+
+    await withSettings({
+      "forge.checks": JSON.stringify([`node "${join(__dirname, "fixtures", "check-slow.mjs")}"`]),
+      "forge.maxConcurrentChecks": "1"
+    }, async () => {
+      const origLogRead = logSizeReader.read;
+      const origCpuRead = treeCpuReader.read;
+      try {
+        logSizeReader.read = (logPath) => {
+          if (waiter && logPath.includes(waiter)) return 100;
+          return origLogRead(logPath);
+        };
+        treeCpuReader.read = (pid) => origCpuRead(pid);
+
+        const r1 = await startPipeline(a1, config1(), {
+          ticketId: t1.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+        });
+        const r2 = await startPipeline(a2, config2(), {
+          ticketId: t2.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+        });
+
+        let waiter = "";
+        for (let i = 0; i < 1000; i++) {
+          const out1 = getRunOutput(r1.runId, 0)?.chunk ?? "";
+          const out2 = getRunOutput(r2.runId, 0)?.chunk ?? "";
+          if (out1.includes("forge: waiting for a check slot (1 ahead)")) { waiter = r1.runId; break; }
+          if (out2.includes("forge: waiting for a check slot (1 ahead)")) { waiter = r2.runId; break; }
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        expect(waiter).not.toBe("");
+
+        await sweepStalledRuns(Date.now(), 1000);
+        await new Promise((r) => setTimeout(r, 1200));
+        const killed = await sweepStalledRuns(Date.now(), 1000);
+        expect(killed).not.toContain(waiter);
+
+        await Promise.all([awaitRun(r1.runId), awaitRun(r2.runId)]);
+
+        expect(getRunOutput(r1.runId, 0)?.status).toBe("passed");
+        expect(getRunOutput(r2.runId, 0)?.status).toBe("passed");
+
+        const a = getRunTimings(r1.runId);
+        const b = getRunTimings(r2.runId);
+        expect(a!.checksEndedAt! <= b!.checksStartedAt! || b!.checksEndedAt! <= a!.checksStartedAt!).toBe(true);
+      } finally {
+        logSizeReader.read = origLogRead;
+        treeCpuReader.read = origCpuRead;
+      }
+    });
+  }, 30_000);
+
+  it("path-scoped check skipped when no changed path matches", async () => {
+    const { actorId, ticket } = await seedTicket("Scoped check skip");
+    await withSetting("forge.checks", JSON.stringify([{ cmd: `node "${join(__dirname, "fixtures", "check-fail.mjs")}"`, paths: ["mobile/**"] }]), async () => {
+      setScript("plan,work,review-pass", true);
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+
+      const output = getRunOutput(runId, 0);
+      expect(output?.status).toBe("passed");
+      const chunk = output?.chunk ?? "";
+      expect(chunk).toContain("=== FORGE checks ===");
+      expect(chunk).toContain("skipped (no changed path matches mobile/**)");
+
+      const comments = await listComments(ticket.id);
+      const review = comments.find((c) => c.kind === "review")?.body ?? "";
+      expect(review).toContain("[forge: checks skipped]");
+      expect(review).not.toContain("[forge: checks passed]");
+    });
+  });
 });
 
 // The SSE transport test drives emitEvent directly, so removing the emit from a
@@ -2147,6 +2409,73 @@ describe("read-only stage views", () => {
     await waitForPersistedRun(runId);
     const [item] = await listInterruptedRuns(relayConfig(), ticket.id);
     expect(item?.resumeMode).toBe("review");
+  });
+
+  it("a worker that writes nothing settles failed with cause no_changes and spawns neither checks nor review", async () => {
+    const { actorId, ticket } = await seedTicket("No changes");
+    await withSetting("forge.checks", JSON.stringify([`node "${join(__dirname, "fixtures", "check-fail.mjs")}"`]), async () => {
+      setScript("plan,work,review-pass");
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+
+      expect(getRunOutput(runId, 0)?.status).toBe("failed");
+      const chunk = getRunOutput(runId, 0)?.chunk ?? "";
+      expect(chunk).not.toContain("=== FORGE review");
+      expect(chunk).not.toContain("=== FORGE checks ===");
+      expect((await waitForPersistedRun(runId)).cause).toBe("no_changes");
+      expect((await getTicket(ticket.id)).status).toBe("planned");
+      const reports = (await listComments(ticket.id)).filter((c) => c.kind === "report");
+      expect(reports.some((c) => c.body.includes("no changes: work stage produced no diff") && c.body.includes("REPORT: changed x"))).toBe(true);
+      expect(await hasCommitsToPromote(workdir, ticket.id)).toBe(false);
+    });
+  });
+
+  it("an EXPORT-TO run that writes only .forge/out still reaches review", async () => {
+    const exportTarget = mkdtempSync(join(tmpdir(), "forge-runs-export-"));
+    try {
+      const { actorId, ticket } = await seedTicket("EXPORT-TO no commit");
+      const t = await getTicket(ticket.id);
+      await updateTicket(actorId, ticket.id, t.version, { body: `spec\nEXPORT-TO: ${exportTarget}` });
+
+      process.env.FAKE_WRITE_PATH = ".forge/out/x.txt";
+      setScript("plan,work,review-pass", true);
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+
+      const chunk = getRunOutput(runId, 0)?.chunk ?? "";
+      expect(chunk).toContain("=== FORGE review");
+      const persisted = await waitForPersistedRun(runId);
+      expect(persisted.cause).not.toBe("no_changes");
+    } finally {
+      rmSync(exportTarget, { recursive: true, force: true });
+    }
+  });
+
+  it("rework on a branch with an earlier commit short-circuits when the worker adds nothing", async () => {
+    const { actorId, ticket } = await seedTicket("Rework no change");
+    await ensureSandbox(workdir, ticket.id);
+    writeFileSync(join(sandboxRoot, ticket.id, "result.txt"), "first pass");
+    await forgeCommit(ticket.id, "first work");
+
+    const t = await getTicket(ticket.id);
+    await addComment(actorId, ticket.id, "The plan\nFiles: result.txt", "plan");
+    await updateTicket(actorId, ticket.id, t.version, { status: "planned" });
+
+    setScript("work,review-pass");
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+
+    expect(getRunOutput(runId, 0)?.status).toBe("failed");
+    const chunk = getRunOutput(runId, 0)?.chunk ?? "";
+    expect(chunk).not.toContain("=== FORGE review");
+    const persisted = await waitForPersistedRun(runId);
+    expect(persisted.cause).toBe("no_changes");
   });
 });
 
@@ -2253,6 +2582,7 @@ describe("forge evidence and EXPORT-TO end to end", () => {
         body: `spec\nEVIDENCE: ${qa}\nEVIDENCE: ${forbidden}`,
       });
 
+      process.env.FAKE_WRITE_PATH = "forge-made.txt";
       setScript("echo-prompt");
 
       const cfg = relayConfig();
@@ -2295,6 +2625,10 @@ describe("forge evidence and EXPORT-TO end to end", () => {
         body: `human spec\nEXPORT-TO: ${exportTarget}`,
       });
 
+      const sbx = await ensureSandbox(workdir, ticket.id);
+      mkdirSync(join(sbx, ".forge", "out"), { recursive: true });
+      writeFileSync(join(sbx, ".forge", "out", "post.txt"), "post\n");
+
       process.env.FAKE_WRITE_PATH = ".forge/evidence/shot.png";
       process.env.FAKE_REVIEW_LS = reviewLsFile;
       setScript("echo-prompt");
@@ -2336,5 +2670,50 @@ describe("forge evidence and EXPORT-TO end to end", () => {
     const output = getRunOutput(runId, 0);
     const chunk = output?.chunk ?? "";
     expect(chunk).not.toContain(".forge/out/");
+  });
+});
+
+describe("sandbox disk guard", () => {
+  const MB = 1024 * 1024;
+
+  describe("resolveMinFreeBytes", () => {
+    it("defaults to 2048 MB", () => {
+      expect(resolveMinFreeBytes(null)).toBe(2048 * MB);
+      expect(resolveMinFreeBytes("abc")).toBe(2048 * MB);
+      expect(resolveMinFreeBytes("0")).toBe(2048 * MB);
+      expect(resolveMinFreeBytes("-5")).toBe(2048 * MB);
+    });
+
+    it("parses valid numeric setting", () => {
+      expect(resolveMinFreeBytes("100")).toBe(100 * MB);
+    });
+  });
+
+  it("startPipeline refuses with ConflictError and creates no run when the sandbox volume is low", async () => {
+    const { actorId, ticket } = await seedTicket("Disk full start");
+    diskSpaceReader.read = () => ({ freeBytes: 100 * MB, totalBytes: 1000 * MB });
+    await expect(startPipeline(actorId, relayConfig(), { ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" })).rejects.toThrow(ConflictError);
+    await expect(startPipeline(actorId, relayConfig(), { ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" })).rejects.toThrow(/disk full/);
+    const rows = await db.select().from(forgeRuns).where(eq(forgeRuns.ticketId, ticket.id));
+    expect(rows.length).toBe(0);
+    expect((await getTicket(ticket.id)).status).toBe("open");
+  });
+
+  it("DiskFullError mid-pipeline settles failed with cause disk_full and is not resumable", async () => {
+    const { actorId, ticket } = await seedTicket("Disk full mid");
+    setScript("plan,work,review-pass", true);
+    let calls = 0;
+    diskSpaceReader.read = () => ({ freeBytes: ++calls === 1 ? 1e12 : 100 * MB, totalBytes: 2e12 });
+    const { runId } = await startPipeline(actorId, relayConfig(), { ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" });
+    await awaitRun(runId);
+    const row = await waitForPersistedRun(runId);
+    expect(row.status).toBe("failed");
+    expect(row.cause).toBe("disk_full");
+    expect(row.causeDetail).toMatch(/disk full/);
+    const [item] = await listInterruptedRuns(relayConfig(), ticket.id);
+    expect(item.resumable).toBe(false);
+    expect(item.resumeMode).toBe(null);
+    expect(item.reason).toBe("disk full on the sandbox volume; free space, then start again");
+    expect(sandboxExists(ticket.id)).toBe(false);
   });
 });

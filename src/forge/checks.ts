@@ -2,8 +2,11 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { killTree } from "../relay/invoke.js";
+import { matchAny } from "./policy.js";
 
 export type CheckResult = { command: string; code: number; tail: string; timedOut: boolean };
+export type ScopedCheck = { cmd: string; paths: string[] };
+export type CheckEntry = string | ScopedCheck;
 
 export const CHECK_TIMEOUT_MS = 5 * 60_000;
 const TAIL_LINES = 100;
@@ -11,15 +14,22 @@ const MAX_CHECKS = 10;
 const OUTPUT_CAP = 200_000;
 const EXIT_DRAIN_MS = 2_000;
 
-// forge.checks.<projectId>, then forge.checks (JSON arrays of shell commands) win;
+function isCheckEntry(c: unknown): c is CheckEntry {
+  if (typeof c === "string") return true;
+  if (typeof c !== "object" || c === null) return false;
+  const o = c as { cmd?: unknown; paths?: unknown };
+  return typeof o.cmd === "string" && Array.isArray(o.paths) && o.paths.length > 0 && o.paths.every((p) => typeof p === "string");
+}
+
+// forge.checks.<projectId>, then forge.checks (JSON arrays of shell commands or {cmd, paths}) win;
 // unset or invalid falls through to detection: package.json with a typecheck
 // script in the sandbox -> ["npm run typecheck"], else []. Detected once per run, never persisted.
-export function resolveChecks(setting: string | null, sandbox: string, fallback: string | null = null): string[] {
+export function resolveChecks(setting: string | null, sandbox: string, fallback: string | null = null): CheckEntry[] {
   for (const s of [setting, fallback]) {
     if (s === null) continue;
     try {
       const parsed: unknown = JSON.parse(s);
-      if (Array.isArray(parsed) && parsed.every((c) => typeof c === "string")) {
+      if (Array.isArray(parsed) && parsed.every(isCheckEntry)) {
         return parsed.slice(0, MAX_CHECKS);
       }
     } catch { /* invalid JSON -> next */ }
@@ -29,6 +39,19 @@ export function resolveChecks(setting: string | null, sandbox: string, fallback:
     if (pkg?.scripts?.typecheck) return ["npm run typecheck"];
   } catch { /* no package.json */ }
   return [];
+}
+
+// Plain strings always run. A scoped entry is skipped only when the changed list is known,
+// non-empty and no path matches its globs; null (diff unavailable) runs everything.
+export function selectChecks(entries: CheckEntry[], changed: string[] | null): { run: string[]; skipped: ScopedCheck[] } {
+  const run: string[] = [];
+  const skipped: ScopedCheck[] = [];
+  for (const e of entries) {
+    if (typeof e === "string") run.push(e);
+    else if (changed && changed.length && !changed.some((p) => matchAny(p, e.paths))) skipped.push(e);
+    else run.push(e.cmd);
+  }
+  return { run, skipped };
 }
 
 export function tailLines(text: string, n = TAIL_LINES): string {

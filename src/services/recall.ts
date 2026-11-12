@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or, gte } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { notes, projects, type Note } from "../db/schema.js";
 import { searchKnowledge } from "./knowledge.js";
@@ -58,8 +58,13 @@ export async function recall(
     ? or(eq(notes.scope, "global"), and(eq(notes.scope, "project"), eq(notes.refId, opts.projectId)))
     : eq(notes.scope, "global");
   const domainMatch = domains.length ? or(isNull(notes.domain), inArray(notes.domain, domains)) : isNull(notes.domain);
+  const activeStatus = eq(notes.status, "active");
+  const sourceConfidenceFilter = or(
+    eq(notes.source, "manual"),
+    and(eq(notes.source, "auto"), gte(notes.confidence, 0.7)),
+  );
   const rules = await db.select().from(notes)
-    .where(and(eq(notes.kind, "rule"), eq(notes.source, "manual"), isNull(notes.deletedAt), scope, domainMatch))
+    .where(and(eq(notes.kind, "rule"), activeStatus, sourceConfidenceFilter, isNull(notes.deletedAt), scope, domainMatch))
     .orderBy(desc(notes.createdAt)).limit(MAX_RULES);
 
   const hits = await searchKnowledge(query, { limit: opts.limit ?? 10, projectId: opts.projectId ?? undefined, caller: "recall" }, embedder);
@@ -87,6 +92,7 @@ export function partitionHits(
   const seenDecisionIds = new Set<string>();
   for (const h of hits) {
     const n = h.sourceKind === "note" ? byId.get(h.sourceRef) : undefined;
+    if (n && n.status && n.status !== "active") continue;
     if (n?.kind === "decision") {
       if (seenDecisionIds.has(h.sourceRef)) continue;
       seenDecisionIds.add(h.sourceRef);
@@ -109,7 +115,7 @@ function line(prefix: string, body: string): string {
 // even past maxChars.
 export function formatRecall(r: Recall, maxChars = RECALL_MAX_CHARS): string {
   if (!r.rules.length && !r.decisions.length && !r.knowledge.length) return "";
-  const head = `Memory (rules fire for: ${r.domains.length ? r.domains.join(", ") : "global only"}):`;
+  const head = `Memory (rules fire for: ${r.domains.length ? r.domains.join(", ") : "global only"}): evidence from prior work, verify against live state before acting;`;
   const rules = r.rules.map((n) => line(n.domain ?? "global", n.body));
   const decisions = r.decisions.map((n) => line(n.domain ?? "global", n.rationale ? `${n.body}. Rationale: ${n.rationale}` : n.body));
   const knowledge = r.knowledge.map((h) => line(`${h.sourceKind} ${h.score.toFixed(2)} ${h.createdAt.slice(0, 10)}`, h.content.slice(0, 400)));

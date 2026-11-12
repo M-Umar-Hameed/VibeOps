@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveChecks, runChecks } from "../src/forge/checks.js";
+import { resolveChecks, runChecks, selectChecks } from "../src/forge/checks.js";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -113,5 +113,42 @@ describe("forge checks", () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it("resolveChecks accepts mixed entries (string and scoped)", () => {
+    expect(resolveChecks('["npm test",{"cmd":"tsc -p mobile","paths":["mobile/**"]}]', "")).toEqual([
+      "npm test",
+      { cmd: "tsc -p mobile", paths: ["mobile/**"] }
+    ]);
+  });
+
+  it("resolveChecks falls back on malformed object entries", () => {
+    expect(resolveChecks('[{"cmd":"x"}]', "", '["npm test"]')).toEqual(["npm test"]);
+    expect(resolveChecks('[{"cmd":1,"paths":["a"]}]', "", '["npm test"]')).toEqual(["npm test"]);
+    expect(resolveChecks('[{"cmd":"x","paths":[]}]', "", '["npm test"]')).toEqual(["npm test"]);
+  });
+
+  it("selectChecks skips scoped entry on unrelated diff", () => {
+    expect(selectChecks([{ cmd: "m", paths: ["mobile/**"] }], ["src/a.ts"])).toEqual({
+      run: [],
+      skipped: [{ cmd: "m", paths: ["mobile/**"] }]
+    });
+  });
+
+  it("selectChecks runs scoped entry on matching diff", () => {
+    expect(selectChecks([{ cmd: "m", paths: ["mobile/**"] }], ["mobile/app/x.ts"]).run).toEqual(["m"]);
+  });
+
+  it("selectChecks runs scoped entry on rename out of glob (--no-renames lists both paths)", () => {
+    expect(selectChecks([{ cmd: "m", paths: ["mobile/**"] }], ["mobile/old.ts", "src/new.ts"]).run).toEqual(["m"]);
+  });
+
+  it("selectChecks always runs plain strings", () => {
+    expect(selectChecks(["npm test"], ["docs/x.md"]).run).toEqual(["npm test"]);
+  });
+
+  it("selectChecks runs everything on null or empty changed list", () => {
+    expect(selectChecks([{ cmd: "m", paths: ["mobile/**"] }], null).run).toEqual(["m"]);
+    expect(selectChecks([{ cmd: "m", paths: ["mobile/**"] }], []).run).toEqual(["m"]);
   });
 });

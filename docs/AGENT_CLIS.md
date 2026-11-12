@@ -13,6 +13,7 @@ type RelayAgent = {
   type?: "cli" | "sdk";
   mcp?: boolean; // written by auto-wiring as a record that the lane is registered; set false to opt out
   accounts?: RelayAccount[];
+  executable?: string; // sdk lanes only: absolute path to a Claude Code executable
 };
 
 type RelayModel = {
@@ -58,9 +59,9 @@ Add credentials to `relay.json` under `agents.<name>.env`, using names ending wi
 ```
 
 - **Redacted surfaces:** Literal values of variables ending in `_PASSWORD`, `_TOKEN`, `_SECRET`, or `_KEY` are replaced with `[redacted]` in run output, the run log file (rewritten when the run settles), ticket comments (Forge and relay CLI), memory capture, and knowledge ingestion. Values shorter than 4 characters are not redacted. Other environment variable names are not redacted.
-- **Sentinel warning:** Edit `relay.json` only when no Forge work stage is running. The sentinel snapshots `relay.json` and restores it after the stage, so any mid-run edits are silently reverted.
+- **Sentinel warning:** Edit `relay.json` only when no Forge work stage is running. The sentinel snapshots `relay.json` and restores it after the stage, so any mid-run edits are silently reverted. While a run is active, every VibeOps write to `relay.json` (PATCH /relay/agents/:name, POST /relay/bootstrap, account edits, MCP auto-wiring) is refused, PATCH with 409.
 - **Script usage:** Scripts read the value from `process.env.DEMO_SHOP_PASSWORD`. Never write credentials to a file, a commit, or a prompt. Redaction is best-effort: a value split across output chunks, encoded, or transformed can slip through.
-- **Agent types:** `type: "sdk"` and `type: "http"` agents ignore `env`.
+- **Agent types:** `type: "http"` agents ignore `env`. `type: "sdk"` agents merge it in the documented order: `process.env` → `agent.env` → account env (`{workdir}` substituted). The sdk lane also sets `BASH_DEFAULT_TIMEOUT_MS` and `BASH_MAX_TIMEOUT_MS` to `1200000` unless they are already set.
 
 For routing details on how roles are assigned and executed, see [docs/ROUTING.md](ROUTING.md) and [README.md#cross-model-pipeline-relay](../README.md#cross-model-pipeline-relay).
 
@@ -137,6 +138,8 @@ VibeOps does this for you: `ensureMcpWiring` (src/mcp/autowire.ts) registers the
 Install: Follow Antigravity installation docs.
 
 Login Flow: Sign in through the Antigravity CLI/app's own sign-in flow (no single flag — see Antigravity's docs). VibeOps only invokes agy once it's authenticated.
+
+Deny list: claude CLI lanes now run the PreToolUse firewall hook (`src/relay/firewall-hook.ts`) before the deny globs. Lifted ids reach the hook through `VIBEOPS_ALLOW_COMMAND`. If the hook cannot start, the call is blocked. agy lanes receive the deny list (git push, npm publish, vercel, ssh and similar) as per-run `--settings` permission rules, with or without the wall. The `find-delete-outside` and `curl-pipe` rules are not covered on agy, because its token-prefix rules cannot express them. agy work lanes in forge sandboxes get `.agents/hooks.json` (named hook `vibeops-firewall`, `run_command` PreToolUse) running `agy-firewall-hook`. The file is merged into a tracked copy if one exists, restored or removed before every forge commit, and backed up under `.forge/agy-hook-backup.json`. The deny globs stay as a second layer. Plan and review stages and non-forge agy calls get no hook. Live verification shows agy blocks denied commands and missing hook scripts, allows safe commands when the hook outputs allow, passes through lifted rule environment variables to the hook, but fails open running the command if the hook script exits 0 and prints nothing. A lane whose cmd already carries its own `--settings` (or `--restricted` for claude) does not receive the deny list.
 
 MCP Wiring: Run once to reach VibeOps tools:
 `agy mcp add --header "Authorization: Bearer <key>" vibeops http://127.0.0.1:8787/mcp`
@@ -223,6 +226,8 @@ unrestricted; other tools are denied and logged as
 ```
 
 To fall back, change `"type"` to `"cli"` (with a `cmd`) or remove the agent.
+
+`executable` (sdk lanes only, optional): absolute path to a Claude Code executable, for example `C:/Users/<you>/.local/bin/claude.exe`. When the file exists, the SDK runs it instead of the CLI bundled with `@anthropic-ai/claude-agent-sdk`; when it is missing, the bundled CLI is used. A relative path is rejected at load. The worker CLI's stderr appears in the run output prefixed with `[sdk stderr] `, capped at 4000 characters per run.
 
 First-run setup writes this lane for you as `claude-sdk` whenever a Claude Code
 login is present on the machine, so a fresh install has a work lane even when no

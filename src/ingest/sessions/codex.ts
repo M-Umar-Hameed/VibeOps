@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { readIndexTail } from "./tail.js";
+import { readJsonlDelta, TAIL_BYTES, MAX_TAIL_BYTES } from "./tail.js";
 import type { SessionSource, SessionDoc } from "./source.js";
 
 // Rollout jsonl: clean conversation text lives in event_msg lines with
@@ -33,22 +33,24 @@ function* walkJsonl(dir: string): Generator<string> {
 
 export function makeCodexSource(
   sessionsDir = join(homedir(), ".codex", "sessions"),
+  opts: { tailBytes?: number; windowBytes?: number } = {},
 ): SessionSource {
   return {
     source: "codex",
-    async listSessionDocs(sinceDays: number): Promise<SessionDoc[]> {
+    async listSessionDocs(sinceDays: number, cursors?: ReadonlyMap<string, number>): Promise<SessionDoc[]> {
       if (!existsSync(sessionsDir)) return [];
       const cutoff = Date.now() - sinceDays * 24 * 3600 * 1000;
       const docs: SessionDoc[] = [];
+      const tailBytes = opts.tailBytes ?? TAIL_BYTES;
+      const windowBytes = opts.windowBytes ?? MAX_TAIL_BYTES;
       for (const path of walkJsonl(sessionsDir)) {
         try {
           if (statSync(path).mtimeMs < cutoff) continue;
-          const t = readIndexTail(path);
-          if (!t) continue;
-          let text = extractText(t.text);
-          if (!text) continue;
-          if (text.length > 200_000) text = text.slice(-200_000);
-          docs.push({ ref: path, text, hash: t.hash });
+          const d = readJsonlDelta(path, cursors?.get(path), tailBytes, windowBytes);
+          if (!d) continue;
+          let text = d.texts.map(extractText).filter(Boolean).join("\n\n");
+          if (!d.append) { if (!text) continue; if (text.length > 200_000) text = text.slice(-200_000); }
+          docs.push({ ref: path, text, hash: d.hash, cursor: { offset: d.offset, size: d.size }, append: d.append });
         } catch (e) {
           console.warn(`codex session skipped ${path}: ${(e as Error).message}`);
         }

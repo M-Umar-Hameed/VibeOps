@@ -14,9 +14,6 @@ type RelayAgent = {
   mcp?: boolean; // written by auto-wiring as a record that the lane is registered; set false to opt out
   accounts?: RelayAccount[];
   executable?: string; // sdk lanes only: absolute path to a Claude Code executable
-  liftedRules?: string[];
-  skillAllowlist?: string[];
-  usage?: "exact";
 };
 
 type RelayModel = {

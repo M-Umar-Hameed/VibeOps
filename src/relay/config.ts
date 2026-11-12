@@ -22,11 +22,7 @@ export type RelayModel = { name: string; tier: ModelTier; quality: number };
 export type PromptDelivery = "argv" | "file" | "stdin";
 export const PROMPT_DELIVERIES: PromptDelivery[] = ["argv", "file", "stdin"];
 export type RelayAccount = { id: string; label: string; configDir: string; priority: number; disabled?: boolean };
-<<<<<<< HEAD
-export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string; write?: boolean; promptDelivery?: PromptDelivery; projectId?: string; addDirs?: string[]; skillAllowlist?: string[]; accounts?: RelayAccount[]; executable?: string };
-=======
 export type RelayAgent = { cmd: string[]; roles: string[]; timeoutMs?: number; models?: RelayModel[]; env?: Record<string, string>; type?: "cli" | "sdk" | "http"; mcp?: boolean; baseUrl?: string; keySetting?: string; write?: boolean; promptDelivery?: PromptDelivery; projectId?: string; addDirs?: string[]; liftedRules?: string[]; skillAllowlist?: string[]; accounts?: RelayAccount[]; usage?: "exact"; executable?: string };
->>>>>>> aad4f8dcc05204b093cb33f15b33c1a1fa8efb58
 export type RelayConfig = {
   workdir: string; apiKey?: string; baseUrl?: string; pollMs?: number;
   agents: Record<string, RelayAgent>;

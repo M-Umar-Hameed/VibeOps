@@ -115,8 +115,19 @@ export function riskHook(workdir: string, lifted: readonly string[], onData?: (c
 
 export function buildSdkOptions(
   env: Record<string, string>, workdir: string, wallOn: boolean, allowed: string[],
-  onData?: (chunk: string) => void, model?: string, agent?: Pick<RelayAgent, "executable">,
+  onData?: (chunk: string) => void, model?: string,
+  agentOrLifted?: Pick<RelayAgent, "executable" | "liftedRules"> | readonly string[],
+  maybeAgent?: Pick<RelayAgent, "executable" | "liftedRules">,
 ) {
+  let agent: Pick<RelayAgent, "executable" | "liftedRules"> | undefined;
+  let lifted: readonly string[] = [];
+  if (Array.isArray(agentOrLifted as unknown)) {
+    lifted = agentOrLifted as readonly string[];
+    agent = maybeAgent;
+  } else if (agentOrLifted) {
+    agent = agentOrLifted as Pick<RelayAgent, "executable" | "liftedRules">;
+    lifted = agent.liftedRules ?? [];
+  }
   const exe = agent?.executable;
   let stderrLeft = STDERR_CAP;
   return {
@@ -126,7 +137,11 @@ export function buildSdkOptions(
     env,
     ...(wallOn ? { settingSources: [], allowedTools: allowRules(allowed) } : {}),
     disallowedTools: [...DENY_RULES, ...NO_BACKGROUND_TOOLS],
-    hooks: { PreToolUse: [{ matcher: "Bash|PowerShell", hooks: [denyBackground] }] },
+    hooks: {
+      PreToolUse: [
+        { matcher: "Bash|PowerShell", hooks: [denyBackground, riskHook(workdir, lifted, onData)] },
+      ],
+    },
     stderr: (data: string) => {
       if (stderrLeft <= 0) return;
       const s = data.slice(0, stderrLeft);
@@ -166,11 +181,7 @@ export async function runAgentSdk(
   try {
     const response = query({
       prompt,
-<<<<<<< HEAD
       options: { ...buildSdkOptions(env, workdir, wall.on, wall.allowed, onData, model, agent), abortController: controller },
-=======
-      options: { ...buildSdkOptions(env, workdir, wall.on, wall.allowed, onData, model, agent.liftedRules ?? []), abortController: controller },
->>>>>>> aad4f8dcc05204b093cb33f15b33c1a1fa8efb58
     });
     for await (const message of response) {
       if (message.type === "assistant") {

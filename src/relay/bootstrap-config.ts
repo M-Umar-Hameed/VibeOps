@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { validateRelayConfig } from "./config.js";
 import type { RelayAgent, RelayConfig } from "./config.js";
+import { ConflictError } from "../services/errors.js";
 
 // cmd is absent on sdk/http lanes; config.ts validates that per type.
 type AgentEntry = Omit<RelayAgent, "cmd"> & { cmd?: string[] };
@@ -11,11 +12,18 @@ export function relayConfigPath(): string {
   return process.env.VIBEOPS_RELAY_CONFIG ?? join(homedir(), ".vibeops", "relay.json");
 }
 
+let relayWriteGuard: () => boolean = () => false;
+
+export function setRelayWriteGuard(fn: () => boolean): void {
+  relayWriteGuard = fn;
+}
+
 // The only sanctioned way to write relay.json. Checks the result against the
 // same rules loadRelayConfig applies on read, so a writer can never leave a
 // file that no route can load: the caller gets the error instead of the user
 // getting a bricked install.
 export function writeRelayConfig(cfg: unknown): RelayConfig {
+  if (relayWriteGuard()) throw new ConflictError("relay.json is locked while a Forge run is active; retry when no run is active");
   const path = relayConfigPath();
   const valid = validateRelayConfig(cfg, path);
   try {

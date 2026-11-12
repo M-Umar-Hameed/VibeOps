@@ -734,6 +734,7 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
     try {
       writeRelayConfig(cfg);
     } catch (e) {
+      if (e instanceof ConflictError) throw e;
       return c.json({ error: (e as Error).message }, 400);
     }
 

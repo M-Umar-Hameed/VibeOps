@@ -9,6 +9,7 @@ import { startTimeReader } from "../runtime/proc-start.js";
 import { treeCpuReader } from "../runtime/proc-tree-cpu.js";
 import { type ChildProcess, execFileSync } from "node:child_process";
 import { resolveCmd, loadRelayConfig, type RelayConfig, type RelayAgent } from "../relay/config.js";
+import { setRelayWriteGuard } from "../relay/bootstrap-config.js";
 import { pipelineStartWarnings, pipelineStartBlockingError, binBasename } from "../relay/doctor.js";
 import { roleStyle } from "../relay/style.js";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted, type ReworkContext } from "../relay/prompts.js";
@@ -1503,6 +1504,8 @@ export function activeStageForTicket(ticketId: string): Stage | undefined {
 export function hasAnyActiveRun(): boolean {
   return activeRuns().length > 0;
 }
+
+setRelayWriteGuard(hasAnyActiveRun);
 
 export async function hasActiveRun(ticketId: string): Promise<boolean> {
   if (activeRuns().some((r) => r.ticketId === ticketId)) return true;

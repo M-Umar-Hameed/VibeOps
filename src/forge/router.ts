@@ -50,13 +50,15 @@ export function pickAgents(
   };
 }
 
-// Rework is repeatedly failing -> step up to the next-higher-quality pair
-// once. Capped: no pair beats the current one, or attempts < 2, keep basePick.
+// Rework is repeatedly failing -> step up once within the same agent lane.
+// Capped: unknown base pair, no higher pair in the lane, or attempts < 2 keep basePick.
 export function escalate(pairs: AgentModelPair[], basePick: Pick, attempts: number): Pick {
   if (attempts < 2) return basePick;
-  const base = pairs.find((p) => p.agent === basePick.agent && p.model === basePick.model);
-  const baseQuality = base?.quality ?? 0;
-  const higher = pairs.filter((p) => p.quality > baseQuality).sort((a, b) => a.quality - b.quality);
+  const model = basePick.model?.toLowerCase();
+  const base = pairs.find((p) => p.agent === basePick.agent && p.model?.toLowerCase() === model);
+  if (!base) return basePick;
+  const higher = pairs.filter((p) => p.agent === base.agent && p.quality > base.quality)
+    .sort((a, b) => a.quality - b.quality || TIER_ORDER[a.tier] - TIER_ORDER[b.tier]);
   if (!higher.length) return basePick;
   return { agent: higher[0].agent, model: higher[0].model };
 }

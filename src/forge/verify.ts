@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { actors } from "../db/schema.js";
+import { actors, type Comment } from "../db/schema.js";
 import { listComments } from "../services/comments.js";
 
 export const MISMATCH_WARNING = "WARNING: Model routing mismatch. The agent reported using a different model than requested.";
@@ -31,20 +31,25 @@ export function verifyModel(agentName: string, requestedModel: string | undefine
   return "unknown";
 }
 
+export async function loadAdminIds(): Promise<Set<string>> {
+  const adminRows = await db.select({ id: actors.id }).from(actors).where(eq(actors.role, "admin"));
+  return new Set(adminRows.map((a) => a.id));
+}
+
 // window: scope to one run's lifetime — comments are the only persistence and
 // carry no runId, so the run's [startedAt, finishedAt] bounds are the join.
 export async function computeVerificationStatus(
   ticketId: string,
   window?: { from: Date; to?: Date | null },
+  preload?: { comments?: Promise<Comment[]>; adminIds?: Promise<Set<string>> },
 ): Promise<boolean | "unknown"> {
   try {
-    const comments = await listComments(ticketId);
+    const comments = await (preload?.comments ?? listComments(ticketId));
     // Markers are only trusted on pipeline-written comments (plan/report/
     // review) authored by an admin — same trust rule as the verdict gate.
     // Anyone can TYPE the marker string into a plain comment; it must not
     // spoof the badge.
-    const adminRows = await db.select({ id: actors.id }).from(actors).where(eq(actors.role, "admin"));
-    const adminIds = new Set(adminRows.map((a) => a.id));
+    const adminIds = await (preload?.adminIds ?? loadAdminIds());
     const PIPELINE_KINDS = new Set(["plan", "report", "review"]);
     let finalStatus: boolean | "unknown" = "unknown";
     for (const c of comments) {

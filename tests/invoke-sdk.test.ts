@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect } from "vitest";
-import { checkToolPermission, runAgentSdk, hasCredentials, buildSdkOptions, sdkEnv } from "../src/relay/invoke-sdk.js";
+import { checkToolPermission, runAgentSdk, hasCredentials, buildSdkOptions, sdkEnv, riskHook } from "../src/relay/invoke-sdk.js";
 
 describe("checkToolPermission", () => {
   const sandbox = mkdtempSync(join(tmpdir(), "sdk-sbx-"));
@@ -118,6 +118,36 @@ describe("buildSdkOptions", () => {
     }
     const ok: any = await hook({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "npx vitest run" } } as any, undefined, sig);
     expect(ok.hookSpecificOutput).toBeUndefined();
+  });
+
+  it("registers the background hook and the risk hook", () => {
+    expect(buildSdkOptions({}, tmpdir(), false, []).hooks.PreToolUse[0].hooks).toHaveLength(2);
+  });
+});
+
+describe("riskHook", () => {
+  const sig = { signal: new AbortController().signal } as any;
+  const call = (tool: string, command: string, lifted: string[] = [], onData?: (c: string) => void) =>
+    riskHook(tmpdir(), lifted, onData)({ hook_event_name: "PreToolUse", tool_name: tool, tool_input: { command } } as any, undefined, sig) as Promise<any>;
+
+  it("denies git push for Bash and PowerShell and reports it", async () => {
+    for (const tool of ["Bash", "PowerShell"]) {
+      const chunks: string[] = [];
+      const r = await call(tool, "git push", [], (c) => chunks.push(c));
+      expect(r.hookSpecificOutput.permissionDecision).toBe("deny");
+      expect(r.hookSpecificOutput.permissionDecisionReason).toContain("git-push");
+      expect(chunks[0].startsWith("\n[forge: permission-denied Bash git push")).toBe(true);
+    }
+  });
+
+  it("allows a safe command and a lifted rule", async () => {
+    expect(await call("Bash", "npm test")).toEqual({});
+    expect(await call("Bash", "git push", ["git-push"])).toEqual({});
+  });
+
+  it("uses the PowerShell dialect for the PowerShell tool", async () => {
+    const r = await call("PowerShell", "del ../x");
+    expect(r.hookSpecificOutput.permissionDecision).toBe("deny");
   });
 });
 

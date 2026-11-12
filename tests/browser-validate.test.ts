@@ -96,3 +96,37 @@ describe("validateSteps - tab verbs", () => {
     expect(validateSteps([{ verb: "switchTab", tabId: "3" }]).ok).toBe(false);
   });
 });
+
+describe("validateSteps - wait", () => {
+  it("accepts wait with text and rejects it without", () => {
+    expect(validateSteps([{ verb: "wait", text: "Done" }]).ok).toBe(true);
+    expect(validateSteps([{ verb: "wait" }])).toEqual({ ok: false, error: "wait.text must be a string" });
+  });
+  it("lists wait in the unknown-verb error", () => {
+    const r = validateSteps([{ verb: "bogus" }]) as { ok: false; error: string };
+    expect(r.error).toContain("wait");
+  });
+});
+
+describe("validateSteps - scroll", () => {
+  it("accepts scroll with ref or dy", () => {
+    expect(validateSteps([{ verb: "scroll", ref: "ref3" }]).ok).toBe(true);
+    expect(validateSteps([{ verb: "scroll", dy: 600 }]).ok).toBe(true);
+  });
+
+  it("rejects invalid scroll shapes", () => {
+    const err = "scroll takes exactly one of ref (string) or dy (finite number)";
+    expect(validateSteps([{ verb: "scroll" }])).toEqual({ ok: false, error: err });
+    expect(validateSteps([{ verb: "scroll", ref: "r", dy: 1 }])).toEqual({ ok: false, error: err });
+    expect(validateSteps([{ verb: "scroll", dy: NaN }])).toEqual({ ok: false, error: err });
+    expect(validateSteps([{ verb: "scroll", dy: "5" }])).toEqual({ ok: false, error: err });
+    expect(validateSteps([{ verb: "scroll", ref: "r", x: 1 }])).toEqual({ ok: false, error: err });
+  });
+
+  it("lists scroll in the unknown-verb error", () => {
+    const r = validateSteps([{ verb: "bogus" }]) as { ok: false; error: string };
+    expect(r.error).toBe(
+      'there is no browser action called "bogus" - use one of: click, type, select, press, snapshot, screenshot, read, navigate, clickAt, tabs, newTab, switchTab, wait, scroll',
+    );
+  });
+});

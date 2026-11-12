@@ -833,8 +833,8 @@ async function pipeline(
     let recentCommit: string | undefined;
     let gitStatus: string | undefined;
     try {
-      recentCommit = execFileSync("git", ["log", "-n", "1", "--oneline"], { cwd: sandbox, stdio: ["ignore", "pipe", "ignore"] }).toString("utf-8").trim();
-      gitStatus = execFileSync("git", ["status", "--short"], { cwd: sandbox, stdio: ["ignore", "pipe", "ignore"] }).toString("utf-8").trim();
+      recentCommit = execFileSync("git", ["log", "-n", "1", "--oneline"], { cwd: sandbox, stdio: ["ignore", "pipe", "ignore"], windowsHide: true }).toString("utf-8").trim();
+      gitStatus = execFileSync("git", ["status", "--short"], { cwd: sandbox, stdio: ["ignore", "pipe", "ignore"], windowsHide: true }).toString("utf-8").trim();
     } catch {}
     let failingCheckOutput: string | undefined;
     if (lastReview?.body && lastReview.body.includes("[forge: check(s) failed")) {

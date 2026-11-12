@@ -25,6 +25,7 @@ function toShortPath(p: string): string {
     const res = spawnSync("cmd.exe", ["/c", `for %I in ("${clean}") do @echo %~sI`], {
       encoding: "utf8",
       windowsVerbatimArguments: true,
+      windowsHide: true,
     });
     const out = res.stdout ? res.stdout.trim() : "";
     if (out && existsSync(out)) return fwd(out);

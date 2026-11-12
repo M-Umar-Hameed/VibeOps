@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readlinkSync, rmdirSync, unlinkSync, symlinkSync, statSync, readdirSync, rmSync, cpSync, copyFileSync, readFileSync, writeFileSync, lstatSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readlinkSync, rmdirSync, unlinkSync, symlinkSync, statSync, readdirSync, rmSync, cpSync, copyFileSync, readFileSync, writeFileSync, lstatSync, realpathSync, statfsSync } from "node:fs";
 import { dirname, join, resolve, isAbsolute, normalize, relative, parse, sep } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
@@ -58,6 +58,28 @@ export function assertTicketId(id: string): void {
 
 export function sandboxRoot(): string {
   return process.env.VIBEOPS_SANDBOX_ROOT ?? join(vibeopsHome(), ".vibeops", "sandbox");
+}
+
+function readDiskSpaceDefault(path: string): { freeBytes: number; totalBytes: number } {
+  let p = resolve(path);
+  while (!existsSync(p) && dirname(p) !== p) p = dirname(p);
+  const s = statfsSync(p);
+  return { freeBytes: s.bavail * s.bsize, totalBytes: s.blocks * s.bsize };
+}
+
+export const diskSpaceReader = { read: readDiskSpaceDefault };
+
+export class DiskFullError extends Error {}
+
+export function checkSandboxDisk(minBytes: number): { root: string; freeBytes: number; totalBytes: number; ok: boolean } {
+  const root = sandboxRoot();
+  const { freeBytes, totalBytes } = diskSpaceReader.read(root);
+  return { root, freeBytes, totalBytes, ok: freeBytes >= minBytes };
+}
+
+export function diskFullMessage(d: { root: string; freeBytes: number }, minBytes: number): string {
+  const mb = (b: number) => Math.floor(b / 1024 / 1024);
+  return `disk full: ${mb(d.freeBytes)} MB free on ${d.root}, need ${mb(minBytes)} MB; free space or set VIBEOPS_SANDBOX_ROOT`;
 }
 
 export function sandboxPathIn(root: string, ticketId: string): string {
@@ -241,15 +263,18 @@ function ignoreForgeDir(tree: string): void {
   writeFileSync(join(dir, ".gitignore"), "*\n");
 }
 
-export async function ensureSandbox(workdir: string, ticketId: string, frontendDeps: boolean | string[] = false, depsDirs: string[] = DEPS_DIRS): Promise<string> {
+export async function ensureSandbox(workdir: string, ticketId: string, frontendDeps: boolean | string[] = false, depsDirs: string[] = DEPS_DIRS, minFreeBytes?: number): Promise<string> {
   const path = sandboxPath(ticketId);
   if (existsSync(path)) {
     ignoreForgeDir(path);
     linkDeps(workdir, ticketId, frontendDeps, depsDirs);
     return path;
-  } // rework continues in the same tree
+  }
+  if (minFreeBytes !== undefined) {
+    const disk = checkSandboxDisk(minFreeBytes);
+    if (!disk.ok) throw new DiskFullError(diskFullMessage(disk, minFreeBytes));
+  }
   const branch = branchName(ticketId);
-  // Branch may survive a removed worktree (e.g. manual cleanup): attach, else create.
   const attach = await git(workdir, "worktree", "add", path, branch);
   if (attach.code !== 0) await must(workdir, "worktree", "add", path, "-b", branch);
   ignoreForgeDir(path);

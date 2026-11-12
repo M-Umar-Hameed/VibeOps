@@ -11,7 +11,7 @@ import {
   validateExportPath, exportOutputs, copyEvidence, EVIDENCE_MAX_BYTES,
   DEPS_DIRS, resolveDepsDirs, resolveFrontendDeps,
   stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL, OPERATOR_EVIDENCE_DIR,
-  syncSandboxWithBase
+  diskSpaceReader, DiskFullError, syncSandboxWithBase
 } from "../src/forge/sandbox.js";
 import { vibeopsHome } from "../src/runtime/home.js";
 import { ConflictError } from "../src/services/errors.js";
@@ -1021,6 +1021,37 @@ describe("operator evidence", () => {
       rmSync(srcDir, { recursive: true, force: true });
       rmSync(stagedDest, { recursive: true, force: true });
     }
+  });
+});
+
+describe("sandbox disk space guard", () => {
+  const MB = 1024 * 1024;
+  const realRead = diskSpaceReader.read;
+
+  afterEach(() => {
+    diskSpaceReader.read = realRead;
+  });
+
+  it("refuses a new sandbox when the volume is low", async () => {
+    diskSpaceReader.read = () => ({ freeBytes: 100 * MB, totalBytes: 1000 * MB });
+    await expect(ensureSandbox(workdir, TID, false, undefined, 2048 * MB)).rejects.toThrow(DiskFullError);
+    await expect(ensureSandbox(workdir, TID, false, undefined, 2048 * MB)).rejects.toThrow(/disk full: 100 MB free on .*need 2048 MB/);
+    expect(existsSync(sandboxPath(TID))).toBe(false);
+    expect(git(workdir, "worktree", "list")).not.toContain(TID);
+  });
+
+  it("creates the sandbox when space is plentiful", async () => {
+    diskSpaceReader.read = () => ({ freeBytes: 100_000 * MB, totalBytes: 200_000 * MB });
+    const path = await ensureSandbox(workdir, TID, false, undefined, 2048 * MB);
+    expect(path).toBe(sandboxPath(TID));
+    expect(existsSync(sandboxPath(TID))).toBe(true);
+  });
+
+  it("reuses an existing tree even when low", async () => {
+    await ensureSandbox(workdir, TID);
+    diskSpaceReader.read = () => ({ freeBytes: 100 * MB, totalBytes: 1000 * MB });
+    const path = await ensureSandbox(workdir, TID, false, undefined, 2048 * MB);
+    expect(path).toBe(sandboxPath(TID));
   });
 });
 

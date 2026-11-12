@@ -22,7 +22,7 @@ import { killTree, killPidTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { availableAccount } from "../relay/accounts.js";
 import { redactSecrets } from "./redact.js";
-import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxDiffNamesNoRenames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES, stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL, sandboxHeadHash, syncSandboxWithBase, type BaseSync, checkSandboxDisk, diskFullMessage, DiskFullError } from "./sandbox.js";
+import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxDiffNamesNoRenames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES, stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL, sandboxHeadHash, syncSandboxWithBase, type BaseSync, checkSandboxDisk, diskFullMessage, DiskFullError, conflictMarkerFiles } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
 import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, stripGateDirectives, parseExportTo, parseEvidence, parseAllowCommand } from "./policy.js";
 import { RISK_IDS } from "../relay/risk.js";
@@ -367,6 +367,7 @@ function applyVerification(res: { ok: boolean; output: string }, compositeName: 
 }
 
 const BASE_CONFLICT = "[forge: base conflict]";
+const CONFLICT_MARKERS = "[forge: conflict markers]";
 const CONFLICT_MARKERS = "[forge: conflict markers]";
 
 function baseSyncLine(s: BaseSync): string {

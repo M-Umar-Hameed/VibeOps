@@ -549,6 +549,13 @@ export async function promoteSandbox(workdir: string, ticketId: string, title: s
       `Rework the ticket or remove the markers before promoting.`,
     );
   }
+  const markers = conflictMarkerFiles(await sandboxDiff(workdir, ticketId));
+  if (markers.length) {
+    throw new ConflictError(
+      `promote blocked: ${branchName(ticketId)} adds unresolved merge conflict markers in ${markers.length} file(s): ${markers.join(", ")}. ` +
+      `Rework the ticket or remove the markers before promoting.`,
+    );
+  }
   const { subject, body } = promoteMessages(ticketId, title);
   const mergeHead = async () => (await git(workdir, "rev-parse", "-q", "--verify", "MERGE_HEAD")).code === 0;
   let merge = await git(workdir, "merge", "--no-ff", branchName(ticketId), "-m", subject, "-m", body);

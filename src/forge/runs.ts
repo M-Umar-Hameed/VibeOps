@@ -640,11 +640,14 @@ export async function startPipeline(
   await persistRun(run);
   run.done = pipeline(run, actorId, agents, workdir, styleSetting ?? "", lessons, config, opts.extraPrompt, opts.resumeStage).catch(async (e) => {
     append(run, `\nforge: pipeline error: ${(e as Error).message}\n`);
-    if (e instanceof DiskFullError) { run.cause = "disk_full"; run.causeDetail = e.message; }
     // Uphold the never-stuck-in_progress invariant even for unexpected throws
     // (forgeCommit/addComment failures land here, after the claim).
     await bounce(run, actorId, `pipeline error: ${(e as Error).message}`, "");
-    setCause(run, "pipeline_error", `pipeline error: ${(e as Error).message}`);
+    if (e instanceof DiskFullError) {
+      setCause(run, "disk_full", e.message);
+    } else {
+      setCause(run, "pipeline_error", `pipeline error: ${(e as Error).message}`);
+    }
     settle(run, "failed");
   }).then(() => run.persisted).catch(() => {})
     .then(() => opts.limitRetry ? undefined : retryOnNextAccount(run, actorId, config, agents, {

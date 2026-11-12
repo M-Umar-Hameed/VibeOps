@@ -164,7 +164,7 @@ if (mode === "echo-argv") {
   process.exit(0);
 }
 if (mode === "echo-prompt") {
-  if (process.env.FAKE_WRITE_PATH && (prompt.includes("Implement this plan") || prompt.includes("Do NOT run git commit"))) {
+  if (process.env.FAKE_WRITE_PATH && !prompt.includes("Worker report:") && (prompt.includes("Implement this plan") || prompt.includes("Do NOT run git commit"))) {
     const p = join(process.cwd(), process.env.FAKE_WRITE_PATH);
     mkdirSync(dirname(p), { recursive: true });
     writeFileSync(p, "edited by fake agent\n");

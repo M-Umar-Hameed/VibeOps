@@ -6,6 +6,7 @@ import { randomBytes } from "node:crypto";
 import { ConflictError } from "../services/errors.js";
 import { redactSecrets } from "./redact.js";
 import { vibeopsHome } from "../runtime/home.js";
+import { restoreAgyHook } from "./agy-hook.js";
 
 export function attachmentsDir(): string {
   return process.env.VIBEOPS_ATTACHMENTS_DIR ?? join(homedir(), ".vibeops", "attachments");
@@ -305,6 +306,7 @@ export async function dropReservedNames(path: string): Promise<string[]> {
 
 export async function forgeCommit(ticketId: string, title: string): Promise<boolean> {
   const path = sandboxPath(ticketId);
+  restoreAgyHook(path);
   // The exclude pathspec is required on BOTH commands. .gitignore says
   // "node_modules/" — a trailing slash matches directories, so a Windows junction
   // is ignored but a POSIX symlink (a file) is not, and `add -A` would commit the
@@ -370,6 +372,12 @@ export async function sandboxDiffSummary(workdir: string, ticketId: string): Pro
 
 export async function sandboxDiffNames(workdir: string, ticketId: string): Promise<string[]> {
   const { out } = await git(workdir, "diff", "--name-only", `HEAD...${branchName(ticketId)}`);
+  return out.split("\n").map((l) => l.replace(/\r$/, "").trim()).filter(Boolean);
+}
+
+export async function sandboxDiffNamesNoRenames(workdir: string, ticketId: string): Promise<string[] | null> {
+  const { code, out } = await git(workdir, "diff", "--name-only", "--no-renames", `HEAD...${branchName(ticketId)}`);
+  if (code !== 0) return null;
   return out.split("\n").map((l) => l.replace(/\r$/, "").trim()).filter(Boolean);
 }
 

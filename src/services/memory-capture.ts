@@ -38,9 +38,53 @@ export function buildExtractorRequest(text: string): { userBody: string; systemP
   };
 }
 
-// ponytail: haiku on the SDK lane is the cheapest thing already wired in. A
-// CLI or OpenRouter extractor is a later swap behind the same seam.
+// Pluggable extractor seam: supports OpenAI-compatible HTTP endpoints (local llama-server,
+// Ollama, vLLM, LM Studio, OpenRouter, Groq, OpenAI) via MEMORY_EXTRACTOR_URL, falling back
+// to the SDK chat turn lane (Anthropic Haiku) when unconfigured.
+export async function httpExtractor(text: string): Promise<Extracted | null> {
+  const rawUrl = process.env.MEMORY_EXTRACTOR_URL || process.env.EXTRACTOR_URL;
+  if (!rawUrl) return null;
+  const endpoint = rawUrl.replace(/\/+$/, "").endsWith("/chat/completions")
+    ? rawUrl
+    : `${rawUrl.replace(/\/+$/, "")}/chat/completions`;
+  const { userBody, systemPrompt } = buildExtractorRequest(text);
+  const model = process.env.MEMORY_EXTRACTOR_MODEL || process.env.EXTRACTOR_MODEL || "default";
+  const apiKey = process.env.MEMORY_EXTRACTOR_API_KEY || process.env.EXTRACTOR_API_KEY || process.env.OPENAI_API_KEY;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), EXTRACT_TIMEOUT_MS);
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userBody },
+        ],
+        temperature: 0.0,
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as any;
+    const content = data?.choices?.[0]?.message?.content || "";
+    return parseExtraction(content);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const defaultExtractor: Extractor = async (text) => {
+  if (process.env.MEMORY_EXTRACTOR_URL || process.env.EXTRACTOR_URL) {
+    const extracted = await httpExtractor(text);
+    if (extracted) return extracted;
+  }
   const { userBody, systemPrompt } = buildExtractorRequest(text);
   let abortTimer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -49,6 +93,8 @@ const defaultExtractor: Extractor = async (text) => {
       onAbort: (abort) => { abortTimer = setTimeout(abort, EXTRACT_TIMEOUT_MS); },
     });
     return res.ok ? parseExtraction(res.text) : null;
+  } catch {
+    return null;
   } finally {
     clearTimeout(abortTimer);
   }

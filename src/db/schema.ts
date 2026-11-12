@@ -1,5 +1,5 @@
 import {
-  pgTable, uuid, text, integer, timestamp, jsonb, pgEnum, index, uniqueIndex, check, vector, boolean, primaryKey,
+  pgTable, uuid, text, integer, timestamp, jsonb, pgEnum, index, uniqueIndex, check, vector, boolean, primaryKey, bigint, real,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -83,6 +83,8 @@ export const notes = pgTable("notes", {
   source: text("source").notNull().default("manual"),
   scope: noteScope("scope").notNull(),
   refId: uuid("ref_id"),
+  status: text("status").notNull().default("active"),
+  confidence: real("confidence").notNull().default(0.7),
   indexed: boolean("indexed").notNull().default(false),
   version: integer("version").notNull().default(1),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -161,6 +163,7 @@ export const aiUsageLogs = pgTable('ai_usage_logs', {
   ticketId: uuid('ticket_id'),
   actorId: uuid('actor_id'),
   durationMs: integer('duration_ms'),
+  exact: boolean('exact'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -269,4 +272,12 @@ export const chatMessages = pgTable("chat_messages", {
 
 export type ChatSession = typeof chatSessions.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
+
+// Append-only session ingest: byte offset just past the last complete JSONL line consumed, per transcript.
+export const sessionCursors = pgTable("session_cursors", {
+  sourceRef: text("source_ref").primaryKey(),
+  byteOffset: bigint("byte_offset", { mode: "number" }).notNull(),
+  fileSize: bigint("file_size", { mode: "number" }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+});
 

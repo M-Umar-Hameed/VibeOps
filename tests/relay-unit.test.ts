@@ -1,10 +1,10 @@
-import { readFileSync, writeFileSync, mkdtempSync, rmSync, readdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, readdirSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, describe, it, vi } from "vitest";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted } from "../src/relay/prompts.js";
 import { loadRelayConfig, resolveCmd } from "../src/relay/config.js";
-import { substituteCmd, runAgent, killTree } from "../src/relay/invoke.js";
+import { substituteCmd, runAgent, killTree, filterClaudeStderr } from "../src/relay/invoke.js";
 import { spawn } from "node:child_process";
 
 test("parseVerdict: PASS/FAIL/missing/garbage are fail-closed", () => {
@@ -148,6 +148,38 @@ test("substituteCmd replaces placeholders and leaves other args untouched", () =
 
 test("substituteCmd leaves cmd untouched when no placeholders match", () => {
   expect(substituteCmd(["echo", "hi"], { prompt: "x" })).toEqual(["echo", "hi"]);
+});
+
+test("filterClaudeStderr strips startup warnings and diagnostic telemetry", () => {
+  const raw = [
+    "Permission deny rule (settings.json): Bash(find C:* -delete*) has a :* that is not at the end",
+    "Warning: no stdin data received in 3s, proceeding without it.",
+    "[telemetry] session ping",
+    "fatal: genuine failure message",
+  ].join("\n");
+  const filtered = filterClaudeStderr(raw);
+  expect(filtered).not.toContain("Permission deny rule");
+  expect(filtered).not.toContain("Warning: no stdin");
+  expect(filtered).not.toContain("telemetry");
+  expect(filtered).toContain("fatal: genuine failure message");
+});
+
+test("runAgent filters diagnostic stderr on claude lane", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "vibeops-claude-"));
+  const fake = join(dir, process.platform === "win32" ? "claude.exe" : "claude");
+  copyFileSync(process.execPath, fake);
+  const scriptPath = join(dir, "script.js");
+  writeFileSync(scriptPath, "process.stderr.write('Warning: no stdin\\n'); process.stdout.write('model output');");
+  try {
+    const res = await runAgent(
+      { cmd: [fake, scriptPath], roles: [] },
+      "unused", process.cwd(),
+    );
+    expect(res.output).toBe("model output");
+    expect(res.output).not.toContain("Warning: no stdin");
+  } finally {
+    try { rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
 });
 
 test("runAgent smoke: succeeds and captures stdout", async () => {

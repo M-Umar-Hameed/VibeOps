@@ -1,16 +1,19 @@
 import { randomUUID } from "node:crypto";
-import { getLessons, lessonsClause } from "./lessons.js";
+import { getLessons, lessonsClause, harvestLessons } from "./lessons.js";
+import { isSlmWorker, evaluateTaskSizing, atomicDirective } from "./sizing.js";
 import { existsSync, openSync, readSync, fstatSync, closeSync, statSync, readdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
+import { readFile } from "node:fs/promises";
 import { vibeopsHome } from "../runtime/home.js";
 import { startTimeReader } from "../runtime/proc-start.js";
 import { treeCpuReader } from "../runtime/proc-tree-cpu.js";
-import type { ChildProcess } from "node:child_process";
+import { type ChildProcess, execFileSync } from "node:child_process";
 import { resolveCmd, loadRelayConfig, type RelayConfig, type RelayAgent } from "../relay/config.js";
-import { pipelineStartWarnings, pipelineStartBlockingError } from "../relay/doctor.js";
+import { pipelineStartWarnings, pipelineStartBlockingError, binBasename } from "../relay/doctor.js";
 import { roleStyle } from "../relay/style.js";
-import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted } from "../relay/prompts.js";
-import { loadWall } from "../relay/wall.js";
+import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted, type ReworkContext } from "../relay/prompts.js";
+import { loadWall, agyFirewallHookCommand } from "../relay/wall.js";
+import { installAgyHook, restoreAgyHook } from "./agy-hook.js";
 import { listSkills, formatSkillIndex, formatSkillBodies, parseOperatorSkills, parsePlanSkills, parseSkillAllowlist, skillsForAgent, type SkillMeta } from "./skills.js";
 import { recallBlock } from "../services/recall.js";
 import { chunkReviewDiff, mergeReviewVerdicts } from "./review-chunks.js";
@@ -18,9 +21,10 @@ import { killTree, killPidTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { availableAccount } from "../relay/accounts.js";
 import { redactSecrets } from "./redact.js";
-import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES, stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL, syncSandboxWithBase, type BaseSync } from "./sandbox.js";
+import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxDiffNamesNoRenames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES, stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL, sandboxHeadHash, syncSandboxWithBase, type BaseSync } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
-import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, stripGateDirectives, parseExportTo, parseEvidence } from "./policy.js";
+import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, stripGateDirectives, parseExportTo, parseEvidence, parseAllowCommand } from "./policy.js";
+import { RISK_IDS } from "../relay/risk.js";
 import { pickAgents, escalate, pairsForRole, resolveStrategy, type Pick, type RoutingStrategy } from "./router.js";
 import { updateTicket } from "../services/tickets.js";
 import { addComment, listComments } from "../services/comments.js";
@@ -33,13 +37,13 @@ import { logAgentUse, startAgentSession, endAgentSession } from "../services/usa
 import { listActors } from "../services/actors.js";
 import { bump } from "../services/metrics.js";
 import { captureMemory, reportTail } from "../services/memory-capture.js";
-import { desc, isNull, sum, eq, gte, lte, and, inArray } from "drizzle-orm";
+import { desc, isNull, sum, eq, gte, lte, and, inArray, lt, or, getTableColumns } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { pidAlive } from "../db/lifecycle.js";
-import { forgeRuns, aiUsageLogs, tickets, type Ticket, type ForgeRun } from "../db/schema.js";
-import { verifyModel, MISMATCH_WARNING, computeVerificationStatus } from "./verify.js";
-import { resolveChecks, runChecks, formatChecks, type CheckResult } from "./checks.js";
-import { runGate, resolveMutationCmd } from "./gate.js";
+import { forgeRuns, aiUsageLogs, tickets, type Ticket, type ForgeRun, type Comment } from "../db/schema.js";
+import { verifyModel, MISMATCH_WARNING, computeVerificationStatus, loadAdminIds } from "./verify.js";
+import { resolveChecks, runChecks, formatChecks, selectChecks, type CheckResult } from "./checks.js";
+import { runGate, resolveMutationCmd, declaredFullPaths, overlappingDeclared } from "./gate.js";
 import { emitEvent } from "../api/events.js";
 
 const OUTPUT_CAP = 400_000;
@@ -52,6 +56,34 @@ export function resolveMaxActive(setting: string | null): number {
   const n = parseInt(setting ?? "", 10);
   return Number.isInteger(n) && n >= 1 ? n : DEFAULT_MAX_ACTIVE;
 }
+
+export function resolveMaxConcurrentChecks(setting: string | null): number {
+  const n = parseInt(setting ?? "", 10);
+  return Number.isInteger(n) && n >= 1 ? n : Infinity;
+}
+let checkSlotsHeld = 0;
+const checkSlotQueue: Run[] = [];
+const CHECK_SLOT_POLL_MS = 500;
+
+async function acquireCheckSlot(run: Run): Promise<boolean> {
+  checkSlotQueue.push(run);
+  let lastAhead = -1;
+  try {
+    for (;;) {
+      if (run.stopped || run.stallReason) return false;
+      const max = resolveMaxConcurrentChecks(await getSetting("forge.maxConcurrentChecks"));
+      const pos = checkSlotQueue.indexOf(run);
+      if (pos === 0 && checkSlotsHeld < max) { checkSlotsHeld++; return true; }
+      run.lastActivityAt = Date.now();
+      const ahead = checkSlotsHeld + pos;
+      if (ahead !== lastAhead) { append(run, `\nforge: waiting for a check slot (${ahead} ahead)\n`); lastAhead = ahead; }
+      await new Promise((r) => setTimeout(r, CHECK_SLOT_POLL_MS));
+    }
+  } finally {
+    checkSlotQueue.splice(checkSlotQueue.indexOf(run), 1);
+  }
+}
+
 const MAX_EXTRA_PROMPT = 10_000;
 const MAX_OPERATOR_NOTES = 2000;
 // Was 2000 and shared across all requests, which was smaller than a single
@@ -109,7 +141,8 @@ const PLAN_ONLY =
   "with repository-relative paths only (src/..., tests/...), never absolute paths.";
 
 type Stage = "plan" | "work" | "review";
-type Status = "running" | "passed" | "rejected" | "failed" | "stopped" | "interrupted";
+export const RUN_STATUSES = ["running", "passed", "rejected", "failed", "stopped", "interrupted"] as const;
+type Status = typeof RUN_STATUSES[number];
 
 export type Effort = "quick" | "standard" | "max";
 
@@ -140,6 +173,7 @@ type Run = {
   promoteOnPass?: boolean;
   allowPaths?: string[]; gateOnlyPaths?: string[]; gateOnlySha?: string;
   limit?: { role: "plan" | "work" | "review"; account: string }; // usage limit hit this run (memory only)
+  projectId?: string; title?: string; declared?: string[]; // plan overlap check (memory only)
   output: string; startedAt: string; finishedAt?: string;
   child?: ChildProcess; // the in-flight agent CLI for the current stage, if any
   checksChild?: ChildProcess; // the concurrently-running checks command, if any
@@ -151,11 +185,11 @@ type Run = {
 
 const runs = new Map<string, Run>();
 
-export type RunSummary = Omit<Run, "output" | "child" | "checksChild" | "abort" | "stopped" | "done" | "persisted" | "pid" | "logPath" | "runToken" | "procStartedAt" | "lastLogSize" | "lastActivityAt" | "lastCpuMs" | "stallReason">;
+export type RunSummary = Omit<Run, "output" | "child" | "checksChild" | "abort" | "stopped" | "done" | "persisted" | "pid" | "logPath" | "runToken" | "procStartedAt" | "lastLogSize" | "lastActivityAt" | "lastCpuMs" | "stallReason" | "declared">;
 
 function summarize(r: Run): RunSummary {
-  const { output, child, checksChild, abort, stopped, done, persisted, pid, logPath, runToken, procStartedAt, lastLogSize, lastActivityAt, lastCpuMs, stallReason, ...rest } = r;
-  void output; void child; void checksChild; void abort; void stopped; void done; void persisted; void pid; void logPath; void runToken; void procStartedAt; void lastLogSize; void lastActivityAt; void lastCpuMs; void stallReason;
+  const { output, child, checksChild, abort, stopped, done, persisted, pid, logPath, runToken, procStartedAt, lastLogSize, lastActivityAt, lastCpuMs, stallReason, declared, ...rest } = r;
+  void output; void child; void checksChild; void abort; void stopped; void done; void persisted; void pid; void logPath; void runToken; void procStartedAt; void lastLogSize; void lastActivityAt; void lastCpuMs; void stallReason; void declared;
   return rest;
 }
 
@@ -178,11 +212,17 @@ async function writeSpecFromPlan(actorId: string, ticketId: string, body: string
 // A title/body edit after the latest plan makes that plan stale. updatedAt can't
 // tell (status writes bump it too), so read the append-only events. The plan
 // stage's own spec seed (writeSpecFromPlan) writes stripGateDirectives(plan) and
-// is not an edit.
+// is not an edit, and an edit that only adds or changes gate directive lines is
+// not one either.
+const gateDirectiveLine = /^\s*(GATE-OVERRIDE|ALLOW-PROTECTED|ALLOW-FILES|EXPORT-TO):.*$/gim;
+// EVIDENCE is left out on purpose: the planner reads it, so an EVIDENCE edit re-plans.
+const withoutGateDirectives = (t: unknown) => String(t ?? "").replace(gateDirectiveLine, "")
+  .split("\n").map((l) => l.trimEnd()).filter((l) => l).join("\n");
 async function specEditedSince(ticketId: string, since: Date, seededSpec: string): Promise<boolean> {
   return (await getTicketHistory(ticketId)).some((e) => e.action === "ticket.updated"
     && e.at.getTime() > since.getTime()
-    && (e.changes?.title !== undefined || (e.changes?.body !== undefined && e.changes.body.to !== seededSpec)));
+    && (e.changes?.title !== undefined || (e.changes?.body !== undefined && e.changes.body.to !== seededSpec
+      && withoutGateDirectives(e.changes.body.from) !== withoutGateDirectives(e.changes.body.to))));
 }
 
 
@@ -287,7 +327,7 @@ function modelOf(composited: string): string | undefined {
 
 // "agent:model" (or bare "agent") from a forge.defaultModel.<role> setting.
 // ponytail: split on the first ":" — agent/model names carry no colons today.
-function parsePair(value: string): Pick {
+export function parsePair(value: string): Pick {
   const i = value.indexOf(":");
   return i === -1 ? { agent: value } : { agent: value.slice(0, i), model: value.slice(i + 1) || undefined };
 }
@@ -328,7 +368,8 @@ function baseSyncLine(s: BaseSync): string {
 
 async function countFailedReviews(ticketId: string): Promise<number> {
   const comments = await listComments(ticketId);
-  return comments.filter((c) => c.kind === "review" && !c.body.startsWith(BASE_CONFLICT) && !parseVerdict(c.body).pass).length;
+  const sincePlan = comments.slice(comments.map((c) => c.kind).lastIndexOf("plan") + 1);
+  return sincePlan.filter((c) => c.kind === "review" && !c.body.startsWith(BASE_CONFLICT) && !parseVerdict(c.body).pass).length;
 }
 
 // Ticket's project repo if set and still on disk, else config.workdir (Inbox and
@@ -429,7 +470,7 @@ export async function startPipeline(
   opts: {
     ticketId: string; planAgent: string; workAgent: string; reviewAgent: string; extraPrompt?: string; operatorNotes?: string;
     planModel?: string; workModel?: string; reviewModel?: string; force?: boolean; effort?: Effort;
-    resumeStage?: Stage; limitRetry?: boolean;
+    resumeStage?: Stage; limitRetry?: boolean; escalate?: boolean;
   },
 ): Promise<{ runId: string; doctorWarnings: string[] }> {
   if ((opts.extraPrompt ?? "").length > MAX_EXTRA_PROMPT) throw new Error("extraPrompt too long");
@@ -490,9 +531,15 @@ export async function startPipeline(
   let workPick: Pick = resolveRole("work", opts.workAgent, opts.workModel);
   const reviewPick: Pick = resolveRole("review", opts.reviewAgent, opts.reviewModel);
 
-  if (opts.workAgent === "auto") {
+  let escalated = "";
+  if (opts.workAgent === "auto" && (effortStrategy || !defaults.work)
+    && (opts.escalate === true || (await getSetting("forge.escalate")) === "true")) {
     const attempts = await countFailedReviews(opts.ticketId);
-    workPick = escalate(pairsForRole(config, "work"), workPick, attempts);
+    const next = escalate(pairsForRole(config, "work"), workPick, attempts);
+    if (composite(next) !== composite(workPick)) {
+      escalated = `\nforge: escalated work ${composite(workPick)} -> ${composite(next)} after ${attempts} failed reviews\n`;
+    }
+    workPick = next;
   }
 
   // Cache-only doctor check: a spawn-level failure (binary renamed/missing)
@@ -581,12 +628,14 @@ export async function startPipeline(
   };
   runs.set(run.id, run);
   trim();
+  if (escalated) append(run, escalated);
   await persistRun(run);
   run.done = pipeline(run, actorId, agents, workdir, styleSetting ?? "", lessons, config, opts.extraPrompt, opts.resumeStage).catch(async (e) => {
     append(run, `\nforge: pipeline error: ${(e as Error).message}\n`);
     // Uphold the never-stuck-in_progress invariant even for unexpected throws
     // (forgeCommit/addComment failures land here, after the claim).
     await bounce(run, actorId, `pipeline error: ${(e as Error).message}`, "");
+    setCause(run, "pipeline_error", `pipeline error: ${(e as Error).message}`);
     settle(run, "failed");
   }).then(() => run.persisted).catch(() => {})
     .then(() => opts.limitRetry ? undefined : retryOnNextAccount(run, actorId, config, agents, {
@@ -743,13 +792,22 @@ async function pipeline(
     append(run, `=== FORGE plan (${run.agents.plan}) ===\n`);
     const knowledge = await getKnowledgeSafe(knowledgeQuery(ticket), ticket.projectId);
     const memory = await getMemorySafe(ticket.title, ticket.projectId);
+    const isSlm = isSlmWorker(run.agents.work, modelOf(run.agents.work));
+    let sizingClause = "";
+    if (isSlm) {
+      const sizing = await evaluateTaskSizing(ticket, priorPlan, run.agents.work, modelOf(run.agents.work));
+      sizingClause = atomicDirective(sizing);
+      if (sizing.isTooBig) {
+        append(run, `[forge: task sizing -> too broad for ${run.agents.work} (${sizing.reason}); injecting atomic directive]\n`);
+      }
+    }
     const { result: res, strayPaths: planStray } = await withReadOnlyView(workdir, ticket.id, "plan", "HEAD", (view) => {
       const opEv = operatorEvidence ? mirrorOperatorEvidence(operatorEvidence.dir, view, operatorEvidence.files) : [];
       const planPrompt = composePlanPrompt({
         ticket, knowledge, memory,
         skillIndex: formatSkillIndex(skillsForAgent(catalogue, agents.plan.skillAllowlist)),
         operatorEvidence: opEv.length ? opEv : undefined,
-      }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra;
+      }) + PLAN_ONLY + lessons + sizingClause + roleStyle("plan", styleSetting) + extra;
       return track(actorId, ticket.id, "plan", run.agents.plan, planPrompt.length, () => runAgent(
         { ...agents.plan, projectId: ticket.projectId, ...evidenceDirs }, planPrompt, view, onData,
         (child) => recordSpawn(run, child),
@@ -758,11 +816,11 @@ async function pipeline(
     });
     if (planStray.length) append(run, `\n[forge: planner changed files in its read-only copy; discarded: ${planStray.join(", ")}]\n`);
     run.child = undefined;
-    if (run.stopped) return settle(run, "stopped");
-    if (run.stallReason) { await bounce(run, actorId, run.stallReason, ""); return settle(run, "failed"); }
+    if (run.stopped) { setCause(run, "stopped"); return settle(run, "stopped"); }
+    if (run.stallReason) { await bounce(run, actorId, run.stallReason, ""); setCause(run, "stall", run.stallReason); return settle(run, "failed"); }
     applyVerification(res, run.agents.plan, run, config);
-    if (!res.ok) { await bounce(run, actorId, "planner failed", res.output); return settle(run, "failed"); }
-    if (!res.output.trim()) { await bounce(run, actorId, "planner returned an empty plan", ""); return settle(run, "failed"); }
+    if (!res.ok) { await bounce(run, actorId, "planner failed", res.output); setCause(run, "planner", "planner failed"); return settle(run, "failed"); }
+    if (!res.output.trim()) { await bounce(run, actorId, "planner returned an empty plan", ""); setCause(run, "planner", "planner returned an empty plan"); return settle(run, "failed"); }
     // Comments are the DURABLE record — redact them too, not just the console.
     await addComment(actorId, ticket.id, redactSecrets(res.output), "plan");
     ticket = await setStatus(actorId, ticket.id, "planned");
@@ -780,6 +838,18 @@ async function pipeline(
     }
   } else {
     plan = priorPlan;
+  }
+
+  run.projectId = ticket.projectId;
+  run.title = ticket.title;
+  run.declared = declaredFullPaths(plan);
+  const others = activeRuns()
+    .filter((r) => r.id !== run.id && r.projectId === run.projectId && r.declared)
+    .map((r) => ({ ticketId: r.ticketId, title: r.title ?? "", declared: r.declared! }));
+  for (const o of overlappingDeclared(run.declared, others)) {
+    const line = `forge: WARN plan overlaps ticket ${o.ticketId.slice(0, 8)} "${o.title}" on ${o.files.join(", ")}`;
+    append(run, "\n" + line + "\n");
+    addComment(actorId, ticket.id, line, "comment").catch(() => {});
   }
 
   const selectedSkills = selectSkills(plan, agents.work.skillAllowlist);
@@ -801,21 +871,46 @@ async function pipeline(
   // the same mistakes (live-hit on the first dogfood ticket).
   const lastReview = [...(await listComments(ticket.id))].reverse().find((c) => c.kind === "review");
   const conflictNote = sync?.state === "conflict" ? `\n\nResolve the merge conflicts in ${(sync.files ?? []).join(", ")}; keep both sides' intent.` : "";
-  const findings = conflictNote + (lastReview ? `\n\nPrevious review findings (address ALL of these):\n${fenceUntrusted("prior-review-findings", lastReview.body)}` : "");
+  const findings = lastReview ? fenceUntrusted("prior-review-findings", lastReview.body) : "";
+
+  let rework: ReworkContext | undefined;
+  if (lastReview || sync?.state === "conflict") {
+    let recentCommit: string | undefined;
+    let gitStatus: string | undefined;
+    try {
+      recentCommit = execFileSync("git", ["log", "-n", "1", "--oneline"], { cwd: sandbox, stdio: ["ignore", "pipe", "ignore"], windowsHide: true }).toString("utf-8").trim();
+      gitStatus = execFileSync("git", ["status", "--short"], { cwd: sandbox, stdio: ["ignore", "pipe", "ignore"], windowsHide: true }).toString("utf-8").trim();
+    } catch {}
+    let failingCheckOutput: string | undefined;
+    if (lastReview?.body && lastReview.body.includes("[forge: check(s) failed")) {
+      const match = lastReview.body.match(/\[forge: check\(s\) failed[^\n]*\]\n([\s\S]*?)(?=\nVERDICT: FAIL|$)/);
+      if (match) failingCheckOutput = match[1].trim();
+    }
+    rework = {
+      findings: findings || (conflictNote ? "Resolve merge conflicts" : ""),
+      conflictNote: conflictNote.trim() || undefined,
+      recentCommit: recentCommit || undefined,
+      gitStatus: gitStatus || undefined,
+      failingCheckOutput,
+    };
+  }
+
   const workChecks = resolveChecks(await getSetting(`forge.checks.${ticket.projectId}`), sandbox, await getSetting("forge.checks"));
+  const workCheckCmds = workChecks.map((c) => typeof c === "string" ? c : c.cmd);
   const workPrompt = composeWorkPrompt({
     ticket, plan, knowledge, workdir: sandbox, memory,
     skills: selectedSkills.bodies,
     operatorEvidence: workEv.length ? workEv : undefined,
     allowedCommands: (await loadWall(ticket.projectId, true, sandbox)).allowed,
-    checks: workChecks,
+    checks: workCheckCmds,
+    rework,
   })
     // No lessons clause here: A/B'd 2026-08-12 (docs/findings/2026-08-12-lessons-clause-ab.md).
     // On work prompts the doc measured inert - identical output on a control task, same
     // defect rate on a task its own "test isolation" line targets. Most of its lines
     // address the supervisor ("Supervisor sweeps before planning", "REPORT:/VERDICT:"),
     // which a worker cannot act on. Still injected at the plan stage, which was not tested.
-    + findings + NARRATION + (parseExportTo(ticket.body ?? "") ? EXPORT_NARRATION : "") + "\n\nDo NOT run git commit; the supervisor commits for you." + roleStyle("work", styleSetting) + extra;
+    + NARRATION + (parseExportTo(ticket.body ?? "") ? EXPORT_NARRATION : "") + "\n\nDo NOT run git commit; the supervisor commits for you." + roleStyle("work", styleSetting) + extra;
   // Sandbox-escape sentinel: snapshot known-sensitive files OUTSIDE the sandbox
   // before the work stage runs. Bash in a work lane is not OS-jailed, so a diff
   // gate (which only sees the worktree) cannot catch a write to the installed
@@ -823,10 +918,26 @@ async function pipeline(
   // into a reverted, visible, run-failing one. See docs/AGENT_CLIS.md.
   const depsBaseline = snapshotDeps(workdir, depsDirs);
   const sentinelSnaps = snapshotSensitive(resolveSensitivePaths(await getSetting("forge.sensitivePaths")));
-  const workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
-    runAgent({ ...agents.work, write: true, projectId: ticket.projectId, ...evidenceDirs }, workPrompt, sandbox, onData,
-      (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
-      modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r)));
+  const headBefore = await sandboxHeadHash(workdir, ticket.id);
+  const allowCmd = parseAllowCommand(ticket.body ?? "");
+  const unknownRules = allowCmd.filter((id) => !RISK_IDS.includes(id));
+  if (unknownRules.length) append(run, `\nforge: ALLOW-COMMAND ignores unknown rule ids: ${unknownRules.join(", ")}\n`);
+  const liftedRules = allowCmd.filter((id) => RISK_IDS.includes(id));
+  if (liftedRules.length) append(run, `\nforge: deny list lifted for this run: ${liftedRules.join(", ")}\n`);
+  const agyHook = binBasename(agents.work.cmd[0] ?? "").toLowerCase() === "agy";
+  if (agyHook) {
+    installAgyHook(sandbox, agyFirewallHookCommand());
+    append(run, "\nforge: agy firewall hook installed (.agents/hooks.json, removed before commit)\n");
+  }
+  let workRes: AgentResult;
+  try {
+    workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
+      runAgent({ ...agents.work, write: true, projectId: ticket.projectId, liftedRules, ...evidenceDirs }, workPrompt, sandbox, onData,
+        (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
+        modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r)));
+  } finally {
+    if (agyHook) restoreAgyHook(sandbox);
+  }
   run.child = undefined;
   run.abort = undefined;
   const tampered = detectAndRestore(sentinelSnaps);
@@ -845,6 +956,7 @@ async function pipeline(
       ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]"
       : "";
     await bounce(run, actorId, "sandbox escape: protected path written outside the worktree", report + note);
+    setCause(run, "sandbox_escape", "sandbox escape: protected path written outside the worktree");
     return settle(run, "failed");
   }
   const depsLeak = detectDepsLeak(depsBaseline);
@@ -864,6 +976,7 @@ async function pipeline(
       ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]"
       : "";
     await bounce(run, actorId, "deps leak: wrote through shared node_modules link", report + note);
+    setCause(run, "deps_leak", "deps leak: wrote through shared node_modules link");
     return settle(run, "failed");
   }
   if (run.stallReason) {
@@ -871,6 +984,7 @@ async function pipeline(
     const saved = await forgeCommit(ticket.id, `WIP (stalled) ${ticket.title}`);
     const note = saved ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]" : "";
     await bounce(run, actorId, run.stallReason, note);
+    setCause(run, "stall", run.stallReason);
     return settle(run, "failed");
   }
   if (run.stopped) {
@@ -884,6 +998,7 @@ async function pipeline(
       ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]"
       : "";
     await bounce(run, actorId, "run stopped", note);
+    setCause(run, "stopped");
     return settle(run, "stopped");
   }
   applyVerification(workRes, run.agents.work, run, config);
@@ -906,11 +1021,53 @@ async function pipeline(
         ? "\n\n[forge: uncommitted work was saved to the sandbox branch as a WIP commit; promote or discard after review]"
         : "";
       await bounce(run, actorId, "worker failed", workRes.output + note);
+      if (run.limit || workRes.limit) setCause(run, "usage_limit", "worker failed: usage limit");
+      else setCause(run, "crash", "worker failed");
       return settle(run, "failed");
     }
     append(run, `\nforge: worker crashed (${crashed}) after saving a diff; continuing to review\n`);
   }
-  if (!crashed) await forgeCommit(ticket.id, ticket.title);
+  if (!crashed) {
+    const committed = await forgeCommit(ticket.id, ticket.title);
+    if (!committed && (await sandboxHeadHash(workdir, ticket.id)) === headBefore
+      && !(parseExportTo(ticket.body ?? "") && listExportOutputs(ticket.id).length)) {
+      run.cause = "no_changes";
+      await bounce(run, actorId, "no changes: work stage produced no diff", redactSecrets(workRes.output));
+      return settle(run, "failed");
+    }
+  }
+  if (!crashed && (await getSetting("forge.preReviewCheck")) === "true") {
+    const preEntries = resolveChecks(await getSetting(`forge.checks.${ticket.projectId}`), sandbox, await getSetting("forge.checks"));
+    const { run: preChecks } = selectChecks(preEntries, await sandboxDiffNamesNoRenames(workdir, ticket.id).catch(() => null));
+    if (preChecks.length > 0) {
+      append(run, `\n=== FORGE pre-review check ===\n`);
+      const results = await runChecks(preChecks, sandbox);
+      const failed = results.filter((r) => r.code !== 0);
+      if (failed.length > 0) {
+        append(run, `\nforge: pre-review check failed (${failed.length} check(s)); running local rework retry before review\n`);
+        const preCheckOutput = formatChecks(results);
+        const retryPrompt = composeWorkPrompt({
+          ticket, plan, knowledge, workdir: sandbox, memory,
+          skills: selectedSkills.bodies,
+          allowedCommands: (await loadWall(ticket.projectId, true, sandbox)).allowed,
+          checks: preChecks,
+          rework: {
+            findings: "Fix failing checks before supervisor review.",
+            failingCheckOutput: preCheckOutput,
+          },
+        }) + NARRATION + "\n\nDo NOT run git commit; the supervisor commits for you.";
+        try {
+          const retryRes = await track(actorId, ticket.id, "work", run.agents.work, retryPrompt.length, () =>
+            runAgent({ ...agents.work, write: true, projectId: ticket.projectId, liftedRules, ...evidenceDirs }, retryPrompt, sandbox, onData,
+              (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
+              modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r)));
+          if (retryRes.ok) {
+            await forgeCommit(ticket.id, `${ticket.title} (pre-review fix)`);
+          }
+        } catch {}
+      }
+    }
+  }
   await addComment(actorId, ticket.id, redactSecrets(workRes.output), "report");
   void captureMemory({ actorId, text: redactSecrets(reportTail(workRes.output)), projectId: ticket.projectId ?? undefined });
   ticket = await setStatus(actorId, ticket.id, "review");
@@ -924,6 +1081,14 @@ async function pipeline(
     ? `WORKER CRASHED before finishing (${crashed}). The diff may be incomplete: check every plan step and acceptance criterion against the diff, not against the report; FAIL if any step is missing.\n\n${workRes.output}`
     : workRes.output;
   return reviewStage(run, actorId, agents.review, workdir, sandbox, ticket, plan, report, styleSetting, config, amendments, selectSkills(plan, agents.review.skillAllowlist).bodies, operatorEvidence);
+}
+
+const CAUSE_DETAIL_CAP = 300;
+
+function setCause(run: Run, cause: string, detail?: string): void {
+  if (run.finishedAt) return; // first settle wins; keep its cause
+  run.cause = cause;
+  run.causeDetail = detail ? redactSecrets(detail).slice(0, CAUSE_DETAIL_CAP) : undefined;
 }
 
 function settle(run: Run, status: Status): void {
@@ -944,6 +1109,24 @@ function settle(run: Run, status: Status): void {
   // so until this row lands a settled run still reads as active. That gap used to
   // be covered by the analyzer's extra await; deleting the analyzer exposed it.
   run.persisted = persistRun(run).catch(() => {});
+  void harvestRunLessons(run, status).catch(() => {});
+}
+
+async function harvestRunLessons(run: Run, status: Status): Promise<void> {
+  if (status !== "rejected" && status !== "failed") return;
+  const comments = await listComments(run.ticketId);
+  const lastReview = [...comments].reverse().find((c) => c.kind === "review");
+  const reviewBody = lastReview?.body ?? "";
+  if (!reviewBody.includes("VERDICT: FAIL") && !reviewBody.includes("Critical:")) return;
+  const ticket = await getTicket(run.ticketId);
+  const actorsList = await listActors();
+  const actorId = actorsList[0]?.id;
+  if (!actorId) return;
+  await harvestLessons(actorId, {
+    ticketTitle: ticket.title,
+    status,
+    reviewFindings: reviewBody,
+  });
 }
 
 // Known-benign SDK worker errors: matched only on the supervisor marker lines from invoke-sdk.ts, never worker text.
@@ -966,7 +1149,7 @@ async function reviewStage(
   append(run, `\n=== FORGE review (${run.agents.review}) ===\n`);
   const onData = (c: string) => append(run, c);
 
-  if (run.stopped) return settle(run, "stopped");
+  if (run.stopped) { setCause(run, "stopped"); return settle(run, "stopped"); }
 
   const sync = await syncSandboxWithBase(workdir, ticket.id);
   append(run, baseSyncLine(sync));
@@ -977,7 +1160,7 @@ async function reviewStage(
       `${files.map((f) => `  - ${f}`).join("\n")}\n` +
       `Resolve the merge conflicts in ${files.join(", ")}; keep both sides' intent.\nVERDICT: FAIL`, "review");
     await setStatus(actorId, ticket.id, "planned");
-    run.cause = "base_conflict";
+    setCause(run, "base_conflict", "base conflict");
     return settle(run, "rejected");
   }
 
@@ -988,7 +1171,7 @@ async function reviewStage(
   // in front of the reviewer's read time. A failing check force-fails the
   // run mechanically at verdict time, independent of the reviewer's own
   // verdict — see the gate evaluation below.
-  const checkCmds = resolveChecks(await getSetting(`forge.checks.${ticket.projectId}`), sandbox, await getSetting("forge.checks"));
+  const checkEntries = resolveChecks(await getSetting(`forge.checks.${ticket.projectId}`), sandbox, await getSetting("forge.checks"));
 
   // Protected-path policy: deterministic, evaluated on the diff (never the
   // worker's self-report). A touched protected path is an automatic Critical
@@ -999,6 +1182,9 @@ async function reviewStage(
   const changedPaths = await sandboxDiffNames(workdir, ticket.id);
   const violations = evaluateProtectedPaths(changedPaths, protectedGlobs, allowGlobs);
   run.protectedViolations = violations.length ? violations : undefined;
+
+  const { run: checkCmds, skipped: skippedChecks } = selectChecks(checkEntries, await sandboxDiffNamesNoRenames(workdir, ticket.id).catch(() => null));
+  const skippedText = skippedChecks.map((s) => `$ ${s.cmd}\nskipped (no changed path matches ${s.paths.join(", ")})`).join("\n\n");
   let protectedFinding: string | undefined;
   {
     const lines: string[] = [];
@@ -1031,7 +1217,7 @@ async function reviewStage(
   const gateBlocked = gate.findings.some(f => f.severity === "block");
   if (gate.report) append(run, `\n=== FORGE gate ===\n${gate.report}\n`);
 
-  if (run.stopped) return settle(run, "stopped");
+  if (run.stopped) { setCause(run, "stopped"); return settle(run, "stopped"); }
 
   const [diff, stat] = await Promise.all([
     sandboxDiff(workdir, ticket.id),
@@ -1042,18 +1228,28 @@ async function reviewStage(
   // each carrying the whole-diff stat so the reviewer knows what it cannot see.
   const chunks = chunkReviewDiff(elideGeneratedDiffs(diff), stat, DIFF_PROMPT_CAP);
 
-  if (run.stopped) return settle(run, "stopped");
+  if (run.stopped) { setCause(run, "stopped"); return settle(run, "stopped"); }
 
   // Checks run CONCURRENTLY with the whole review (single or chunked): the
   // reviewer only needs check RESULTS at verdict time. Checks execute in
   // `sandbox`; the review agent runs in its own read-only view, so no
   // filesystem race.
-  if (checkCmds.length) run.checksStartedAt = Date.now();
   const checksPromise: Promise<CheckResult[]> = checkCmds.length
-    ? runChecks(checkCmds, sandbox, undefined, (child) => {
-        run.checksChild = child;
-        if (run.stopped) void killTree(child);
-      }).then((results) => { run.checksChild = undefined; run.checksEndedAt = Date.now(); return results; })
+    ? (async () => {
+        if (!await acquireCheckSlot(run)) return [];
+        try {
+          run.checksStartedAt = Date.now();
+          const results = await runChecks(checkCmds, sandbox, undefined, (child) => {
+            run.checksChild = child;
+            if (run.stopped) void killTree(child);
+          });
+          run.checksChild = undefined;
+          run.checksEndedAt = Date.now();
+          return results;
+        } finally {
+          checkSlotsHeld--;
+        }
+      })()
     : Promise.resolve<CheckResult[]>([]);
 
   // One review invocation per chunk, sequential: recordSpawn tracks a single
@@ -1098,11 +1294,12 @@ async function reviewStage(
     // Never settle while checks still run in the sandbox; a resume would start a second set.
     .catch(async (e) => { await checksPromise.catch(() => {}); throw e; });
   run.child = undefined;
-  if (run.stopped) return settle(run, "stopped");
-  if (run.stallReason) { await checksPromise.catch(() => {}); await bounce(run, actorId, run.stallReason, ""); return settle(run, "failed"); }
+  if (run.stopped) { setCause(run, "stopped"); return settle(run, "stopped"); }
+  if (run.stallReason) { await checksPromise.catch(() => {}); await bounce(run, actorId, run.stallReason, ""); setCause(run, "stall", run.stallReason); return settle(run, "failed"); }
   const checkResults = await checksPromise;
   if (run.checksStartedAt !== undefined) run.checksDurationMs = Date.now() - run.checksStartedAt;
-  if (run.stopped) return settle(run, "stopped");
+  if (run.stopped) { setCause(run, "stopped"); return settle(run, "stopped"); }
+  if (run.stallReason) { await bounce(run, actorId, run.stallReason, ""); setCause(run, "stall", run.stallReason); return settle(run, "failed"); }
 
   // A reviewer that never produced a verdict (non-zero exit, thrown error, an
   // API/transport error surfaced in output, or empty output) is "could not be reached", NOT
@@ -1113,11 +1310,13 @@ async function reviewStage(
   const reviewFailure = reviewResults.find((r) => !r.ok || !r.output.trim());
   if (reviewFailure) {
     await bounce(run, actorId, "reviewer failed", reviewFailure.output);
+    setCause(run, "reviewer_failed", "reviewer failed");
     return settle(run, "failed");
   }
 
   if (reviewStray.length) {
     await bounce(run, actorId, "reviewer changed files in its read-only copy", reviewStray.join("\n"));
+    setCause(run, "reviewer_stray", "reviewer changed files in its read-only copy");
     return settle(run, "failed");
   }
 
@@ -1126,8 +1325,9 @@ async function reviewStage(
   if (checkCmds.length) {
     checksText = redactSecrets(formatChecks(checkResults));
     checksFailed = checkResults.some((r) => r.code !== 0);
-    append(run, `\n=== FORGE checks ===\n${checksText}\n`);
   }
+  const checksLog = [checksText, skippedText].filter(Boolean).join("\n\n");
+  if (checksLog) append(run, `\n=== FORGE checks ===\n${checksLog}\n`);
 
   for (const res of reviewResults) applyVerification(res, run.agents.review, run, config);
   const verdict = mergeReviewVerdicts(chunks, reviewResults.map((r) => r.output));
@@ -1143,15 +1343,25 @@ async function reviewStage(
   const checksPassedNote = (checkCmds.length && !checksFailed)
     ? `\n\n[forge: checks passed]\n${checkResults.map((r) => `$ ${r.command}\nexit ${r.code}`).join("\n")}`
     : "";
+  const checksSkippedNote = skippedChecks.length ? `\n\n[forge: checks skipped]\n${skippedText}` : "";
   const reviewBody = gateBlocked
-    ? `${verdict.raw}${checksBlockNote}${checksPassedNote}\n\n[forge: mechanical gate BLOCK — verdict forced to FAIL]\n${gate.report}\nVERDICT: FAIL`
-    : `${verdict.raw}${checksBlockNote}${checksPassedNote}`;
+    ? `${verdict.raw}${checksBlockNote}${checksPassedNote}${checksSkippedNote}\n\n[forge: mechanical gate BLOCK — verdict forced to FAIL]\n${gate.report}\nVERDICT: FAIL`
+    : `${verdict.raw}${checksBlockNote}${checksPassedNote}${checksSkippedNote}`;
   await addComment(actorId, ticket.id, redactSecrets(reviewBody), "review");
 
   if (!pass) {
     // FAIL: back to planned; sandbox kept for the rework pass. The run settles
     // "rejected" (not "passed") so the quality signal reflects the verdict, not
     // pipeline completion.
+    const firstFailed = checkResults.find((r) => r.code !== 0)?.command;
+    const gateWhy = gate.findings.filter((f) => f.severity === "block").map((f) => f.detail).join("; ");
+    if (gateBlocked || checksFailed) {
+      const forcedBy = gateBlocked && checksFailed ? "gate and checks" : gateBlocked ? "gate" : "checks";
+      const why = [gateBlocked ? `gate: ${gateWhy}` : "", checksFailed ? `check failed: ${firstFailed}` : ""].filter(Boolean).join("; ");
+      setCause(run, gateBlocked ? "gate" : "checks", verdict.pass ? `reviewer passed; forced by ${forcedBy}; ${why}` : why);
+    } else {
+      setCause(run, "reviewer", parseReason(verdict.raw));
+    }
     await setStatus(actorId, ticket.id, "planned");
     return settle(run, "rejected");
   }
@@ -1369,6 +1579,7 @@ async function deriveStageDurations(
 }
 
 export type RunListItem = RunSummary & { persisted?: boolean; modelVerified?: boolean | "unknown"; rejectionReason?: string; failureReason?: string; stageDurationsMs?: StageDurationsMs };
+export type RunListOpts = { limit?: number; before?: { startedAt: string; id?: string }; status?: Status; projectId?: string; summary?: boolean };
 
 const HISTORY_LIMIT = 20;
 const TICKET_HISTORY_LIMIT = 200;
@@ -1376,13 +1587,26 @@ const LIST_CAP = 40;
 
 // Live runs plus recent persisted history, for the UI after a server restart
 // (live is authoritative for anything still in memory; DB fills the rest).
-export async function listRunsWithHistory(ticketId?: string): Promise<RunListItem[]> {
-  const live = ticketId ? listRuns().filter((r) => r.ticketId === ticketId) : listRuns();
+export async function listRunsWithHistory(ticketId?: string, opts: RunListOpts = {}): Promise<RunListItem[]> {
+  const projectTickets = opts.projectId
+    ? new Set((await db.select({ id: tickets.id }).from(tickets).where(eq(tickets.projectId, opts.projectId))).map((r) => r.id))
+    : null;
+  const live = listRuns().filter((r) => (!ticketId || r.ticketId === ticketId) && (!projectTickets || projectTickets.has(r.ticketId)));
   const liveIds = new Set(live.map((r) => r.id));
-  const base = db.select().from(forgeRuns).$dynamic();
-  const rows = await (ticketId ? base.where(eq(forgeRuns.ticketId, ticketId)) : base)
-    .orderBy(desc(forgeRuns.startedAt))
-    .limit(ticketId ? TICKET_HISTORY_LIMIT : HISTORY_LIMIT);
+  const before = opts.before;
+  const beforeAt = before ? new Date(before.startedAt) : undefined;
+  const base = db.select(getTableColumns(forgeRuns)).from(forgeRuns).$dynamic();
+  const rows = await (opts.projectId ? base.innerJoin(tickets, eq(forgeRuns.ticketId, tickets.id)) : base)
+    .where(and(
+      ticketId ? eq(forgeRuns.ticketId, ticketId) : undefined,
+      opts.status ? eq(forgeRuns.status, opts.status) : undefined,
+      opts.projectId ? eq(tickets.projectId, opts.projectId) : undefined,
+      beforeAt ? (before!.id
+        ? or(lt(forgeRuns.startedAt, beforeAt), and(eq(forgeRuns.startedAt, beforeAt), lt(forgeRuns.id, before!.id)))
+        : lt(forgeRuns.startedAt, beforeAt)) : undefined,
+    ))
+    .orderBy(desc(forgeRuns.startedAt), desc(forgeRuns.id))
+    .limit(opts.limit ?? (ticketId ? TICKET_HISTORY_LIMIT : HISTORY_LIMIT));
   const persisted: RunListItem[] = rows
     .filter((r) => !liveIds.has(r.id))
     .map((r) => ({
@@ -1390,40 +1614,61 @@ export async function listRunsWithHistory(ticketId?: string): Promise<RunListIte
       agents: { plan: r.planAgent, work: r.workAgent, review: r.reviewAgent },
       effort: (r.effort ?? undefined) as Effort | undefined,
       checksDurationMs: r.checksDurationMs ?? undefined,
+      cause: r.cause ?? undefined, causeDetail: r.causeDetail ?? undefined,
       startedAt: r.startedAt.toISOString(),
       finishedAt: r.finishedAt ? r.finishedAt.toISOString() : undefined,
       persisted: true,
+      ...(opts.summary ? { cause: r.cause ?? undefined, causeDetail: r.causeDetail ?? undefined } : {}),
     }));
+  const isBefore = (r: RunListItem) => !before
+    || r.startedAt < before.startedAt
+    || (r.startedAt === before.startedAt && !!before.id && r.id < before.id);
   const list: RunListItem[] = [...live, ...persisted]
-    .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
-    .slice(0, ticketId ? TICKET_HISTORY_LIMIT : LIST_CAP);
+    .filter((r) => (!opts.status || r.status === opts.status) && isBefore(r))
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.id.localeCompare(a.id))
+    .slice(0, opts.limit ?? (ticketId ? TICKET_HISTORY_LIMIT : LIST_CAP));
+  if (opts.summary) return list;
+
+  const commentsByTicket = new Map<string, Promise<Comment[]>>();
+  const commentsFor = (id: string) => {
+    let p = commentsByTicket.get(id);
+    if (!p) { p = listComments(id); commentsByTicket.set(id, p); }
+    return p;
+  };
+  let admins: Promise<Set<string>> | undefined;
 
   const enrichPromises = list.map(async (item) => {
     item.modelVerified = await computeVerificationStatus(item.ticketId, {
       from: new Date(item.startedAt),
       to: item.finishedAt ? new Date(item.finishedAt) : null,
-    });
+    }, { comments: commentsFor(item.ticketId), adminIds: admins ??= loadAdminIds() });
     if (item.status !== "running" && item.finishedAt) {
       item.stageDurationsMs = await deriveStageDurations(
         item.ticketId, new Date(item.startedAt), new Date(item.finishedAt), item.checksDurationMs,
       );
     }
     if (item.status === "rejected" || item.status === "failed" || item.status === "stopped") {
-      const comments = await listComments(item.ticketId);
-      const from = new Date(item.startedAt).getTime();
-      const to = item.finishedAt ? new Date(item.finishedAt).getTime() : Date.now();
-      const inWindow = (c: { createdAt: Date }) => {
-        const at = new Date(c.createdAt).getTime();
-        return at >= from && at <= to;
-      };
-      if (item.status === "rejected") {
-        const review = [...comments].reverse().find((c) => c.kind === "review" && inWindow(c));
-        if (review) item.rejectionReason = parseReason(review.body.split("\n\n[forge: ")[0]);
+      if (item.cause) {
+        const reason = item.causeDetail || item.cause;
+        if (item.status === "rejected") item.rejectionReason = reason;
+        else item.failureReason = reason;
       } else {
-        // bounce() records why a run died as a "forge: <why>" report comment;
-        // its first line is the reason the run card shows.
-        const report = [...comments].reverse().find((c) => c.kind === "report" && c.body.startsWith("forge: ") && inWindow(c));
-        if (report) item.failureReason = report.body.split(/\r?\n/)[0].slice("forge: ".length).trim();
+        const comments = await commentsFor(item.ticketId);
+        const from = new Date(item.startedAt).getTime();
+        const to = item.finishedAt ? new Date(item.finishedAt).getTime() : Date.now();
+        const inWindow = (c: { createdAt: Date }) => {
+          const at = new Date(c.createdAt).getTime();
+          return at >= from && at <= to;
+        };
+        if (item.status === "rejected") {
+          const review = [...comments].reverse().find((c) => c.kind === "review" && inWindow(c));
+          if (review) item.rejectionReason = parseReason(review.body.split("\n\n[forge: ")[0]);
+        } else {
+          // bounce() records why a run died as a "forge: <why>" report comment;
+          // its first line is the reason the run card shows.
+          const report = [...comments].reverse().find((c) => c.kind === "report" && c.body.startsWith("forge: ") && inWindow(c));
+          if (report) item.failureReason = report.body.split(/\r?\n/)[0].slice("forge: ".length).trim();
+        }
       }
     }
   });
@@ -1437,6 +1682,18 @@ export function getRunOutput(id: string, after: number) {
   if (!r) return undefined;
   const from = Math.max(0, Math.min(after, r.output.length));
   return { chunk: r.output.slice(from), next: r.output.length, stage: r.stage, status: r.status };
+}
+
+export async function getSettledRunOutput(id: string, after: number) {
+  const [row] = await db.select().from(forgeRuns).where(eq(forgeRuns.id, id)).limit(1);
+  if (!row?.logPath) return undefined;
+  const path = resolve(row.logPath);
+  if (!path.startsWith(resolve(join(vibeopsHome(), ".vibeops", "runs")) + sep)) return undefined;
+  let text: string;
+  try { text = redactSecrets(await readFile(path, "utf-8")); } catch { return undefined; }
+  const from = Math.max(0, Math.min(after, text.length));
+  const chunk = text.slice(from, from + OUTPUT_CAP);
+  return { chunk, next: from + chunk.length, stage: row.stage, status: row.status, source: "log" as const };
 }
 
 // Test/introspection accessor: absolute timestamps for the checks-vs-review
@@ -1500,7 +1757,7 @@ export async function sweepStalledRuns(now: number, windowMs: number): Promise<s
   const stalled: string[] = [];
   for (const run of activeRuns()) {
     try {
-      if (run.stallReason) { settle(run, "failed"); continue; } // pipeline never resumed after the kill (child refused to die): force terminal
+      if (run.stallReason) { setCause(run, "stall", run.stallReason); settle(run, "failed"); continue; } // pipeline never resumed after the kill (child refused to die): force terminal
       const size = logSizeReader.read(run.logPath);
       if (size === null) { run.lastActivityAt ??= now; continue; }
       const cpu = run.pid != null ? treeCpuReader.read(run.pid) : null;
@@ -1530,7 +1787,7 @@ export async function sweepStalledRuns(now: number, windowMs: number): Promise<s
           const admin = (await listActors()).find((a) => a.role === "admin");
           if (admin) await bounce(run, admin.id, reason, note);
           else append(run, `\nforge: ${reason}\n`);
-        } finally { settle(run, "failed"); }
+        } finally { setCause(run, "stall", reason); settle(run, "failed"); }
       }
       stalled.push(run.id);
     } catch (e) {
@@ -1609,6 +1866,7 @@ function tailUntilExit(run: Run): Promise<void> {
         clearInterval(timer);
         drain();
         if (readFd !== undefined) { try { closeSync(readFd); } catch { /* best effort */ } }
+        setCause(run, run.stopped ? "stopped" : "interrupted");
         settle(run, run.stopped ? "stopped" : "interrupted");
         resolve();
       }
@@ -1637,7 +1895,7 @@ export async function markInterruptedRuns(): Promise<string[]> {
         continue;
       }
       await db.update(forgeRuns)
-        .set({ status: "interrupted", finishedAt: new Date() })
+        .set({ status: "interrupted", finishedAt: new Date(), cause: "interrupted" })
         .where(eq(forgeRuns.id, row.id));
       interrupted.push(row.ticketId);
     }

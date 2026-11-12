@@ -29,7 +29,18 @@ describe("chat browser tools", () => {
 // The extension was linked and the agent still said it could not connect: the
 // tools demanded an instanceId the model cannot discover. Omitting it must
 // target the single live instance.
-import { list as listMock } from "../src/browser/channel.js";
+import { list as listMock, submitBatch as submitMock } from "../src/browser/channel.js";
+
+describe("chat browser_wait", () => {
+  it("enqueues a wait step through the read-only path", async () => {
+    (listMock as any).mockReturnValue([{ instanceId: "i1", browserChannel: "chrome", profileId: "p", profileLabel: "Work", connectedAt: "" }]);
+    (submitMock as any).mockClear();
+    const tools = buildChatTools({ id: "a1", name: "t", kind: "human", role: "admin" } as any, []);
+    const wait = tools.find((t: any) => t.name === "browser_wait") as any;
+    await wait.handler({ instanceId: "i1", text: "Done" }, {});
+    expect(submitMock).toHaveBeenCalledWith("i1", "i1", [{ verb: "wait", text: "Done" }]);
+  });
+});
 
 describe("chat browser tools: instance auto-targeting", () => {
   it("omitted instanceId targets the single connected instance", async () => {

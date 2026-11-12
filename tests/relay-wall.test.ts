@@ -3,10 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { runAgent } from "../src/relay/invoke.js";
-import { wallCmd, allowRules, resolveAllowedCommands, DEFAULT_ALLOWED_COMMANDS, DENY_RULES, loadWall } from "../src/relay/wall.js";
+import { wallCmd, denyOnlyCmd, agyDenyCmd, allowRules, resolveAllowedCommands, DEFAULT_ALLOWED_COMMANDS, DENY_RULES, loadWall, firewallHooks } from "../src/relay/wall.js";
+import { agyPatterns, denyPatterns } from "../src/relay/risk.js";
 import { withSettings } from "./helpers/settings.js";
 
-const SETTINGS = JSON.stringify({ permissions: { allow: [...allowRules(["npm test"]), "mcp__vibeops"], deny: DENY_RULES } });
+const SETTINGS = JSON.stringify({ permissions: { allow: [...allowRules(["npm test"]), "mcp__vibeops"], deny: [...DENY_RULES, ...denyPatterns([])] }, hooks: firewallHooks() });
 const CLAUDE_FLAGS = ["--restricted", "--permission-prompts", "none",
   "--tools", "Read,Edit,Write,Glob,Grep,Bash,PowerShell", "--settings", SETTINGS];
 
@@ -199,3 +200,47 @@ test("git rm is allowed by default", () => {
   expect(allowRules(DEFAULT_ALLOWED_COMMANDS)).toContain("Bash(git rm *)");
 });
 
+
+const denyOf = (cmd: string[]) => JSON.parse(cmd[cmd.indexOf("--settings") + 1]).permissions;
+
+test("wallCmd: a lifted rule leaves the deny list, others stay", () => {
+  const deny: string[] = denyOf(wallCmd(["claude", "-p"], ["npm run"], false, [], ["git-push"])).deny;
+  expect(deny).not.toContain("Bash(git push*)");
+  expect(deny).toContain("Bash(npm run deploy*)");
+});
+
+test("denyOnlyCmd: claude gets a deny-only settings, others and settings-bearing cmds are unchanged", () => {
+  const out = denyOnlyCmd(["claude", "-p"]);
+  expect(out[out.length - 2]).toBe("--settings");
+  const perms = denyOf(out);
+  expect(perms.deny).toContain("Bash(git push*)");
+  expect(perms.allow).toBeUndefined();
+  const withSettings = ["claude", "-p", "--settings", "{}"];
+  expect(denyOnlyCmd(withSettings)).toEqual(withSettings);
+  expect(denyOnlyCmd(["codex", "exec"])).toEqual(["codex", "exec"]);
+});
+
+test("agyDenyCmd: agy gets per-run deny rules, others and settings-bearing cmds are unchanged", () => {
+  const out = agyDenyCmd(["C:\\x\\agy.exe", "--model", "m"]);
+  expect(out[out.length - 2]).toBe("--settings");
+  expect(denyOf(out).deny).toEqual(agyPatterns());
+  const withSettings = ["agy", "--settings", "{}"];
+  expect(agyDenyCmd(withSettings)).toEqual(withSettings);
+  expect(agyDenyCmd(["claude", "-p"])).toEqual(["claude", "-p"]);
+});
+
+test("denyOnlyCmd and wallCmd include PreToolUse firewall hook, agyDenyCmd does not", () => {
+  for (const cmd of [denyOnlyCmd(["claude", "-p"]), wallCmd(["claude", "-p"], ["npm test"])]) {
+    const settings = JSON.parse(cmd[cmd.indexOf("--settings") + 1]);
+    expect(settings.hooks.PreToolUse[0].matcher).toBe("Bash|PowerShell");
+    expect(settings.hooks.PreToolUse[0].hooks[0].type).toBe("command");
+    expect(settings.hooks.PreToolUse[0].hooks[0].command).toMatch(/firewall-hook/);
+    expect(settings.hooks.PreToolUse[0].hooks[0].command.endsWith(" || exit 2")).toBe(true);
+    expect(settings.permissions.deny).toContain("Bash(git push*)");
+  }
+
+  const agy = agyDenyCmd(["agy"]);
+  const agySettings = JSON.parse(agy[agy.indexOf("--settings") + 1]);
+  expect(agySettings.hooks).toBeUndefined();
+  expect(agySettings.permissions.deny).toEqual(agyPatterns());
+});

@@ -385,6 +385,18 @@ export async function syncSandboxWithBase(workdir: string, ticketId: string, kee
   return { state: "conflict", files, base };
 }
 
+// Files whose ADDED lines start a conflict block. Scans a unified diff; "=======" alone is skipped (markdown setext headings).
+export function conflictMarkerFiles(diff: string): string[] {
+  const files = new Set<string>();
+  let file = "";
+  for (const raw of diff.split("\n")) {
+    const line = raw.replace(/\r$/, "");
+    if (line.startsWith("+++ ")) { file = line.slice(4).replace(/^b\//, ""); continue; }
+    if (/^\+(<<<<<<<|>>>>>>>)( |$)/.test(line)) files.add(file);
+  }
+  return [...files];
+}
+
 export async function sandboxDiff(workdir: string, ticketId: string): Promise<string> {
   const { out } = await git(workdir, "diff", `HEAD...${branchName(ticketId)}`);
   return out.slice(0, DIFF_CAP);
@@ -529,6 +541,13 @@ export async function workdirDirtyFiles(workdir: string): Promise<string[]> {
 export async function promoteSandbox(workdir: string, ticketId: string, title: string, discardAfter = true, retryDelayMs = 2000): Promise<void> {
   if ((await workdirDirtyFiles(workdir)).length) {
     throw new ConflictError("workdir has uncommitted changes; commit or stash before promoting");
+  }
+  const markers = conflictMarkerFiles(await sandboxDiff(workdir, ticketId));
+  if (markers.length) {
+    throw new ConflictError(
+      `promote blocked: ${branchName(ticketId)} adds unresolved merge conflict markers in ${markers.length} file(s): ${markers.join(", ")}. ` +
+      `Rework the ticket or remove the markers before promoting.`,
+    );
   }
   const { subject, body } = promoteMessages(ticketId, title);
   const mergeHead = async () => (await git(workdir, "rev-parse", "-q", "--verify", "MERGE_HEAD")).code === 0;

@@ -210,6 +210,29 @@ describe("POST /forge/tickets/:id/rework", () => {
     expect(getRunOutput(runId, 0)?.chunk).not.toContain("=== FORGE plan");
   });
 
+  it("conflict markers added by the worker reject before the review agent runs", async () => {
+    const { apiKey, ticket } = await seedRejected("Rework conflict markers");
+    process.env.FAKE_WRITE_MARKERS = "1";
+    try {
+      setScript("work,review-pass");
+      const res = await app.request(`/forge/tickets/${ticket.id}/rework`, { method: "POST", headers: { Authorization: `Bearer ${apiKey}` } });
+      expect(res.status).toBe(201);
+      const { runId } = await res.json();
+      await awaitRun(runId);
+      expect(getRunOutput(runId, 0)?.status).toBe("rejected");
+      expect(listRuns().find((r) => r.id === runId)?.cause).toBe("conflict_markers");
+      const comments = await listComments(ticket.id);
+      const last = comments[comments.length - 1];
+      expect(last.kind).toBe("review");
+      expect(last.body.startsWith("[forge: conflict markers]")).toBe(true);
+      expect(last.body).toContain("markers.txt");
+      expect(last.body.trimEnd()).toMatch(/VERDICT: FAIL$/);
+      expect((await getTicket(ticket.id)).status).toBe("planned");
+    } finally {
+      delete process.env.FAKE_WRITE_MARKERS;
+    }
+  });
+
   it("rework skips planning even when the body changed after the plan", async () => {
     const { actorId, apiKey, ticket } = await seedTicket("Rework skips plan even with body edit");
     await ensureSandbox(workdir, ticket.id);

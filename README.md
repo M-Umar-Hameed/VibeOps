@@ -12,6 +12,106 @@ Vibecoding with multiple agents has a coordination problem: each agent starts co
 
 **New here?** Start with [Project State](docs/PROJECT_STATE.md) for what this is, what it set out to do, and where it stands. If you are a non-developer looking to automate work, read the [End-User Guide](docs/USER_GUIDE.md). VibeOps never asks for your AI provider API keys; you bring your own CLI and keep your usage on your existing subscriptions.
 
+## Why choose VibeOps
+
+Run Claude Code, Codex, Gemini or Cursor on their own and three things go wrong: every session starts cold, nobody checks the diff before it lands, and nothing records which agent did what. VibeOps fixes all three from one self-hosted app.
+
+```mermaid
+flowchart LR
+  CC["Claude Code"] --> V
+  CX["Codex"] --> V
+  GM["Gemini / Antigravity"] --> V
+  CU["Cursor"] --> V
+  YOU["You, in the desktop app"] --> V
+  V["VibeOps<br/>one queue, one memory, one audit trail"] --> K["Shared knowledge<br/>vault, notes, past sessions"]
+  V --> F["Forge<br/>plan, sandbox, tests, review"]
+  F --> H["Your approval, then merge"]
+```
+
+| | Agents on their own | With VibeOps |
+|---|---|---|
+| Context at session start | Cold, every time | Primed with the relevant decisions, notes and past sessions |
+| Memory across agents | None; each tool keeps its own history | One searchable index every agent reads and writes |
+| After `/clear`, compaction or transcript cleanup | That history is out of reach | Still searchable: VibeOps keeps its own copy, and a growing session only adds to it |
+| Before code lands | The agent says "done" | Tests, typecheck, scope and secret checks, a second-model review, your approval |
+| Who did what | Scattered terminal history | Append-only audit trail, one key per agent |
+| Cost | Every token on your best model | Best model plans and reviews, cheap model writes; budget caps; real token usage per account |
+
+**Memory every agent shares.** One `search_knowledge` tool, over MCP or REST, covers your markdown and PDF vault (open it in Obsidian if you like), the decision notes agents write as they work, and transcripts of past Claude Code, Codex, Antigravity and claude-mem sessions. What one agent worked out on Monday, the next agent finds on Tuesday. That memory outlives the agent's own: Claude Code and Codex transcripts are indexed append-only, so a long or compacted session never pushes its earlier work out of the index, and nothing indexed is removed when Claude Code clears or deletes its transcripts. If VibeOps was off for a few days, the next sync catches up on everything since the last one, up to 30 days. A `SessionStart` hook primes every new session with the most relevant of it before the agent types a word. Embeddings run locally by default: no API key, and nothing leaves your machine.
+
+**Work that is checked before it lands.** The best model writes the plan. A cheap or local model does the work inside an isolated git worktree. Shell commands are parsed and checked before they run, so pushes, deletes outside the workspace and piped downloads are refused. Typecheck and tests run, scope and secret gates run, a second model reviews the diff cold, and a sentinel catches any write outside the sandbox. Nothing merges until you promote it.
+
+**Ideas turned into specs, not vague tickets.** Describe an idea and a council of three personas (believer, investor, skeptic) debates it. A chairman rates it, asks you the open questions, and creates the ticket only once the spec is real.
+
+**A colleague you can talk to.** Operator Chat gives an agent real tools: knowledge search, the board, and live pages through the Chrome extension. Every finished turn becomes searchable memory, with nobody saving anything by hand.
+
+**Know who did what, and what it cost.** Each agent gets its own key and role. Every change is attributed in the audit trail. The Token Usage tab reads real usage per signed-in account from local logs, budget caps stop runaway tickets, and runs fail over to another account when one hits its usage limit.
+
+**Your accounts, your code.** Runs on the CLI subscriptions you already pay for and never asks for provider API keys. It never pushes; `git push` stays yours. It installs as a single file on Windows, macOS or Linux, with zero configuration.
+
+### Proof: same tickets, with and without supervision
+
+30 closed tickets from this repo were replayed from their parent commit twice: once with bare `claude -p` (Sonnet), once through the forge (Opus plans and reviews, Sonnet writes the code). Each result was scored against the tests the real commit added, which neither run could see. 4 tickets were dropped: 2 whose tests pass without any change, and 2 where the real commit itself timed out in the test environment.
+
+```mermaid
+xychart-beta
+    title "Tickets passing hidden tests and typecheck, out of 26"
+    x-axis ["Bare agent", "VibeOps forge"]
+    y-axis "Tickets" 0 --> 26
+    bar [6, 11]
+```
+
+```mermaid
+pie showData
+    title Paired outcome per ticket
+    "Both passed" : 6
+    "Only the forge passed" : 5
+    "Neither passed" : 15
+```
+
+| | Bare agent | VibeOps forge |
+|---|---|---|
+| Passed hidden tests and typecheck | 6 of 26 (23%) | 11 of 26 (42%) |
+| Passed hidden tests, ignoring typecheck | 7 | 11 |
+| Tickets only this side passed | 0 | 5 |
+| Median wall time per ticket | 1.7 min | 11.4 min |
+| Review rounds needed | - | 1 round: 14, 2 rounds: 8, 3 rounds: 4 |
+
+Read these with care. 26 tickets is a small sample, and the gap is not statistically significant (exact McNemar p = 0.0625). The forge never lost a ticket the bare agent won, and it costs about ten extra minutes per ticket. Hidden tests often call the exact function names of the real commit, so both pass rates understate what either side can do. The review gate is not a guarantee: 14 of the 23 tickets it approved still failed the hidden tests, which is why promotion stays a human step.
+
+### Proof: what the gate catches in daily use
+
+1,139 forge runs on 295 tickets across a 450k-line monorepo and VibeOps itself, 2026-10-14 to 2026-11-06:
+
+```mermaid
+pie showData
+    title First review result, 282 tickets
+    "Passed first review" : 151
+    "Sent back for rework" : 131
+```
+
+```mermaid
+xychart-beta
+    title "Median work-stage cost per promoted ticket, USD"
+    x-axis ["Passed first review", "Needed rework"]
+    y-axis "USD" 0 --> 3
+    bar [0.51, 2.71]
+```
+
+| Measure | Value |
+|---|---|
+| First-review pass rate | 53.5% (151 of 282) |
+| Failed reviews forced by red typecheck or tests | 120 of 293 |
+| Failed reviews forced by a scope, secret or mutation block | 100 of 293 (causes can overlap) |
+| Promoted with no extra human action | 90.7% (243 of 268) |
+| Median review time | 0.7 min |
+| Work-stage cost, passed first review | median $0.51, p90 $1.77 |
+| Work-stage cost, needed rework | median $2.71, p90 $10.08 |
+
+Supervision itself is cheap. Rework is the expensive part, and it is cheaper to pay inside a sandbox than after a merge. Full method and the gaps the audit found: [docs/evals/2026-11-09-supervision-vs-bare-agents.md](docs/evals/2026-11-09-supervision-vs-bare-agents.md).
+
+**When to skip it:** small edits you are watching yourself. The forge adds minutes per ticket.
+
 ## What it does
 
 ```mermaid
@@ -52,20 +152,24 @@ flowchart TB
 ```
 
 ```mermaid
-pie title Ticket Status
-    "Closed" : 200
-    "Open" : 1
-    "Review" : 1
+pie showData
+    title Tickets promoted through the forge, by repository
+    "VibeOps (this repo)" : 270
+    "monorepo (450k-line ERP)" : 234
+    "LibreAscent" : 11
 ```
 
 ```mermaid
-pie title Forge Run Outcomes
-    "Rejected" : 6
-    "Passed" : 5
-    "Stopped" : 1
+pie showData
+    title Forge run outcomes, 1,146 runs
+    "Failed (worker error, stall, guard)" : 412
+    "Rejected by review" : 297
+    "Passed review" : 279
+    "Interrupted (restart)" : 110
+    "Stopped by a human" : 47
 ```
 
-*Data provenance: Real counts from the running API and git history of this repository, measured August 2026.*
+*Data provenance: promoted tickets are `forge: promote` merge commits in each repository's git history, 2026-07-14 to 2026-11-11. Run outcomes come from the live run log, 2026-10-14 to 2026-11-10, across VibeOps and monorepo.*
 
 **Cross-model economics & budget caps.** Optimize costs by combining multiple models across the forge loop. Run work against open-weights models locally while relying on frontier models for review. Apply budget caps to ensure runs never spiral out of control.
 
@@ -77,7 +181,7 @@ pie title Forge Run Outcomes
 
 - **Your vault** — `~/.vibeops/vault` is created on first run and indexed automatically. Drop markdown or PDF files in, or open it as an Obsidian vault (Obsidian is optional; any editor works). Point one setting at an external vault instead if you have one.
 - **Notes** — a writeable document workspace (titled, versioned, audited, soft-deleted) agents use to persist decisions and gotchas.
-- **Session memory** — transcripts from Claude Code, claude-mem, Codex, and Antigravity are ingested so what one agent did is retrievable by every other agent.
+- **Session memory** — transcripts from Claude Code, claude-mem, Codex, and Antigravity are ingested so what one agent did is retrievable by every other agent. Claude Code and Codex transcripts are read append-only from a per-file cursor, so indexed history survives compaction, `/clear` and the agent's own transcript cleanup.
 - **Chat memory** — every completed Operator Chat turn folds its transcript into the index under the session's project, so conversations become retrievable knowledge without anyone saving anything.
 
 **Zero-key by default.** Embeddings run on a local ONNX model (all-MiniLM, ~23MB one-time download) — knowledge search works out of the box with no API key. Bring a Voyage key later if you want API-grade embeddings.
@@ -90,21 +194,33 @@ pie title Forge Run Outcomes
 
 ## What it costs, measured
 
-VibeOps is built through its own pipeline, so these are its own numbers rather than a
-demo project's.
+VibeOps is built through its own pipeline and used daily on other codebases, so these are
+real numbers rather than a demo project's.
 
-- **173 tickets** promoted through plan -> sandboxed work -> review -> human promote.
-- **5 files, +217/-23 lines** changed per promoted ticket, on average.
-- **125 tickets reached review; 50 of them (40%) did not pass the first one** and went
-  back for rework, across 74 rework rounds total.
+- **515 tickets promoted** through plan -> sandboxed work -> review -> human promote,
+  across three repositories, 2026-07-14 to 2026-11-11:
 
-Read that 40% carefully, because it is the number most likely to be oversold. It is the
-rate at which the review gate sent work back — not a proven defect count, and not a
-controlled comparison against an unsupervised agent. A model reviewed the diff and asked
-for changes; sometimes it was wrong. What it does show is that four times in ten, the
-first thing the pipeline produced was not the thing that got merged.
+  | Repository | Promoted tickets | Average change per ticket |
+  |---|---|---|
+  | VibeOps (this repo) | 270 | 5.5 files, +281/-22 lines |
+  | monorepo (450k-line ERP) | 234 | 24.7 files, +499/-119 lines |
+  | LibreAscent | 11 | 4.4 files, +158/-46 lines |
 
-**Token cost is deliberately absent, and that is the honest answer.** Until 2026-08-12
+- **1,146 forge runs on 300 tickets** in the live run log (2026-10-14 to 2026-11-10).
+  286 tickets reached review; **133 of them (46.5%) did not pass the first one** and went
+  back for rework, across 297 failed reviews in total.
+- **$558.84 of work-stage spend at Anthropic API list prices**, as reported by the
+  Claude Agent SDK lane over the same window. A ticket that passed its first review cost
+  a median $0.51 of work; one that needed rework cost a median $2.71.
+
+Read that 46.5% carefully, because it is the number most likely to be oversold. It is the
+rate at which the review gate sent work back — not a proven defect count. A model
+reviewed the diff and asked for changes; sometimes it was wrong. What it does show is
+that nearly half the time, the first thing the pipeline produced was not the thing that
+got merged. The controlled comparison against an unsupervised agent is the replay in
+[Why choose VibeOps](#why-choose-vibeops).
+
+**Dollar cost is exact on one lane only.** Until 2026-08-12
 this project was not measuring it. Headless CLI agents report no token counts, so usage
 was estimated from the length of the model's *output* alone — ignoring the prompt, which
 on a plan stage carries the ticket, the retrieved knowledge and the repo context and
@@ -118,8 +234,8 @@ them.** Those caps are enforced against the number described above, which used t
 too small — often by more than an order of magnitude. A limit that never fired before may
 now stop a run part-way through a ticket, which surfaces as a 409 refusing to start the
 next stage. The caps did not get stricter; they started being real. Genuine per-call token and dollar figures still exist only on the lane whose
-API reports them, so a with/without comparison is not published here yet rather than
-guessed at.
+API reports them (the Claude Agent SDK), which is why the spend above covers that lane's
+work stage and nothing else. Plan and review run on CLI lanes that report estimates.
 
 ## What is actually guaranteed
 
@@ -131,12 +247,25 @@ the one being made.
 - **Checks are mechanical.** Typecheck and test commands run concurrently with the
   review, and a failing check forces `VERDICT: FAIL` no matter what the reviewer
   concluded — the reviewer cannot talk a run past a red check.
-- **The reviewer is a model reading a diff.** It catches a great deal — 40% of tickets
-  here went back at least once — and it is also wrong sometimes, in both directions.
+- **The reviewer is a model reading a diff.** It catches a great deal — 46.5% of tickets
+  went back at least once — and it is also wrong sometimes, in both directions.
 - **The sandbox is a git worktree, not an OS jail.** A work agent's shell is not
   kernel-confined. Writes outside the worktree are caught by a sentinel that snapshots
   sensitive paths before the run and restores them after, which is detection and repair
   rather than prevention.
+- **Shell commands pass a parsing firewall first.** On the Claude Agent SDK, Claude Code
+  CLI and Gemini (agy) work lanes, every shell command a work agent runs
+  is parsed (quotes, heredocs, `$(...)`, `sh -c`, `eval`, `find -exec`, npm scripts)
+  and checked before it runs: pushes, publishes, deletes outside the workspace, remote
+  shells and downloads piped into a shell are refused. On a 340-command red-team set it
+  blocked 257 of 257 destructive commands with no false positives, and 65 of 66 on a
+  held-out set (the old regex list blocked 42.8% and 36.4%). If the check itself fails,
+  the command is refused. On agy the check runs as a `.agents/hooks.json` hook the forge
+  writes into each work sandbox and removes before commit; agy blocks the command if the
+  hook is missing, but would run it if the hook exited without printing a decision, and
+  the app says so at pipeline start. codex relies on its own OS sandbox and kimi has no
+  command guard. A script the agent writes and then runs is outside the firewall's view,
+  which is what the sentinel is for.
 - **VibeOps never pushes code.** It commits inside sandboxes and merges into your local
   branch on promote; `git push` stays yours. The separate, opt-in issue-tracker
   connectors are the one thing that talks outward, and only if you bind a repo and supply
@@ -351,7 +480,7 @@ External mode serves all interfaces (for LAN/VPS use) and does not auto-bootstra
 
 ## Knowledge ingestion details
 
-The vault watcher indexes `.md` and `.pdf` (PDF via a JVM-backed converter — needs Java 11+; without it PDFs are skipped with a warning). Files are hash-gated (unchanged files cost nothing on re-index) and deletions leave the index. Session ingestion (`npm run ingest:sessions` or the Sync button in the app) covers the last 30 days by default (`SESSIONS_SINCE_DAYS`), is hash-gated, and is safe to re-run. Run anything with `EMBED_PROVIDER=fake` for a no-network dry run.
+The vault watcher indexes `.md` and `.pdf` (PDF via a JVM-backed converter — needs Java 11+; without it PDFs are skipped with a warning). Files are hash-gated (unchanged files cost nothing on re-index) and deletions leave the index. Session ingestion (`npm run ingest:sessions` or the Sync button in the app) covers the last 30 days by default (`SESSIONS_SINCE_DAYS`); Claude Code/Codex transcripts are ingested append-only via a per-file byte cursor (earlier chunks are never removed as a session grows), auto-sync catches up on the days since its last completed sweep (max 30), and all sources are safe to re-run. Run anything with `EMBED_PROVIDER=fake` for a no-network dry run. Long actions (session sync, Index docs, vault sync, clear knowledge, delete project, tracker sync) run as background jobs: add `?async=1` to get `202 { jobId }` and poll `GET /jobs/:id` (state, phase, done/total, result or error); `GET /jobs?active=1` lists running jobs including auto-sync sweeps; `POST /jobs/:id/cancel` stops session ingest or index-repo between docs; without `?async=1` the endpoints still wait and return the result as before.
 
 ## Native folder picker
 

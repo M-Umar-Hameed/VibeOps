@@ -7,6 +7,7 @@ import { Wizard } from "../components/Wizard";
 import { api } from "../lib/api";
 import { checkForUpdate } from "../lib/updater";
 import { startEventStream } from "../lib/events";
+import { ActiveJobs } from "../components/JobProgress";
 
 export function Root() {
   const [showWizard, setShowWizard] = useState(false);
@@ -31,6 +32,7 @@ export function Root() {
         </div>
       </main>
       <ShortcutsPopup />
+      <ActiveJobs />
     </div>
   );
 }

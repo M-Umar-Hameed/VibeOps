@@ -86,7 +86,8 @@ export async function getAiUsage(perTicketLimit = 10) {
     provider: aiUsageLogs.provider,
     model: aiUsageLogs.model,
     tokens: sql<number>`cast(sum(${aiUsageLogs.tokens}) as integer)`,
-    cost: sql<number>`cast(sum(${aiUsageLogs.cost}) as integer)`
+    cost: sql<number>`cast(sum(${aiUsageLogs.cost}) as integer)`,
+    estimatedTokens: sql<number>`cast(coalesce(sum(case when ${aiUsageLogs.exact} is true then 0 else ${aiUsageLogs.tokens} end), 0) as integer)`
   }).from(aiUsageLogs).groupBy(aiUsageLogs.provider, aiUsageLogs.model);
 
   const agentStats = await db.select({

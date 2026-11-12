@@ -67,6 +67,11 @@ export function collectInteractive(doc) {
     results.push({ element: el, role: "tab" });
   }
 
+  // Option (react-select, headless UI, ARIA listboxes): open menus are otherwise untargetable.
+  for (const el of doc.querySelectorAll('[role="option"]')) {
+    results.push({ element: el, role: "option" });
+  }
+
   // Dedupe (element may match multiple selectors) and sort by document order
   const seen = new Set();
   const unique = [];

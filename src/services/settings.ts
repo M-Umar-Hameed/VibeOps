@@ -39,6 +39,9 @@ export async function setSetting(key: string, value: string): Promise<void> {
   if (key === "voyage.model") process.env.EMBED_MODEL = value;
   if (key === "google.api_key") process.env.GEMINI_API_KEY = value;
   if (key === "kimi.api_key" || key === "moonshot.api_key") process.env.MOONSHOT_API_KEY = value;
+  if (key === "memory.extractor_url") process.env.MEMORY_EXTRACTOR_URL = value;
+  if (key === "memory.extractor_model") process.env.MEMORY_EXTRACTOR_MODEL = value;
+  if (key === "memory.extractor_api_key") process.env.MEMORY_EXTRACTOR_API_KEY = value;
 }
 
 export async function applyEnvSettings(): Promise<void> {
@@ -50,6 +53,9 @@ export async function applyEnvSettings(): Promise<void> {
     if (key === "voyage.model") process.env.EMBED_MODEL = value;
     if (key === "google.api_key") process.env.GEMINI_API_KEY = value;
     if (key === "kimi.api_key" || key === "moonshot.api_key") process.env.MOONSHOT_API_KEY = value;
+    if (key === "memory.extractor_url") process.env.MEMORY_EXTRACTOR_URL = value;
+    if (key === "memory.extractor_model") process.env.MEMORY_EXTRACTOR_MODEL = value;
+    if (key === "memory.extractor_api_key") process.env.MEMORY_EXTRACTOR_API_KEY = value;
   }
 }
 

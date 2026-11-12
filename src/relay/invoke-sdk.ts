@@ -1,12 +1,14 @@
-import { existsSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
-import path from "node:path";
+import { existsSync, realpathSync, mkdirSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
+import path, { join } from "node:path";
 import type { RelayAgent } from "./config.js";
 import type { AgentResult } from "./invoke.js";
 import { substituteCmd } from "./invoke.js";
 import { query, type PermissionResult, type HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { loadWall, allowRules, DENY_RULES } from "./wall.js";
 import { registerEnvSecrets } from "../forge/redact.js";
+import { commandRisk } from "./risk.js";
 import { chooseAccount, allExhaustedResult, settleAccountResult } from "./accounts.js";
 
 const OUTPUT_CAP = 100_000;
@@ -16,6 +18,7 @@ const WRITE_TOOLS = new Set(["Edit", "Write"]);
 const BASH_TIMEOUT_MS = "1200000";
 const NO_BACKGROUND_TOOLS = ["SlashCommand", "Skill", "Task", "Agent", "BashOutput", "TaskOutput", "KillShell"];
 const SDK_TRANSPORT_CODES = new Set(["EPIPE", "ECONNRESET", "ERR_STREAM_DESTROYED"]);
+const STDERR_CAP = 4000;
 
 // Realpath the nearest existing ancestor, then rejoin the missing tail, so a
 // not-yet-created Write target and any symlinked ancestor both resolve
@@ -81,6 +84,12 @@ export function sdkEnv(agent: RelayAgent, workdir: string, acctEnv: Record<strin
     .filter((e): e is [string, string] => e[1] !== undefined));
   env.BASH_DEFAULT_TIMEOUT_MS ??= BASH_TIMEOUT_MS;
   env.BASH_MAX_TIMEOUT_MS ??= BASH_TIMEOUT_MS;
+  env.VIBEOPS_TEST_EMBEDDED ??= "1";
+  if (!env.VIBEOPS_HOME) {
+    const workerTestHome = join(tmpdir(), `vibeops-worker-home-${randomUUID()}`);
+    mkdirSync(workerTestHome, { recursive: true });
+    env.VIBEOPS_HOME = workerTestHome;
+  }
   return env;
 }
 
@@ -93,17 +102,52 @@ const denyBackground: HookCallback = async (input) => {
   return {};
 };
 
+export function riskHook(workdir: string, lifted: readonly string[], onData?: (chunk: string) => void): HookCallback {
+  return async (input) => {
+    const i = input as { tool_name?: string; tool_input?: { command?: unknown } };
+    if ((i.tool_name !== "Bash" && i.tool_name !== "PowerShell") || typeof i.tool_input?.command !== "string") return {};
+    const hit = commandRisk(i.tool_input.command, workdir, lifted, i.tool_name === "PowerShell" ? "powershell" : "posix");
+    if (!hit) return {};
+    onData?.(`\n[forge: permission-denied Bash ${i.tool_input.command.slice(0, 120)} (${hit.id})]\n`);
+    return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: `blocked by the forge deny list (${hit.id}): ${hit.reason}` } };
+  };
+}
+
 export function buildSdkOptions(
   env: Record<string, string>, workdir: string, wallOn: boolean, allowed: string[],
   onData?: (chunk: string) => void, model?: string,
+  agentOrLifted?: Pick<RelayAgent, "executable" | "liftedRules"> | readonly string[],
+  maybeAgent?: Pick<RelayAgent, "executable" | "liftedRules">,
 ) {
+  let agent: Pick<RelayAgent, "executable" | "liftedRules"> | undefined;
+  let lifted: readonly string[] = [];
+  if (Array.isArray(agentOrLifted as unknown)) {
+    lifted = agentOrLifted as readonly string[];
+    agent = maybeAgent;
+  } else if (agentOrLifted) {
+    agent = agentOrLifted as Pick<RelayAgent, "executable" | "liftedRules">;
+    lifted = agent.liftedRules ?? [];
+  }
+  const exe = agent?.executable;
+  let stderrLeft = STDERR_CAP;
   return {
     cwd: workdir,
     ...(model ? { model } : {}),
+    ...(exe && existsSync(exe) ? { pathToClaudeCodeExecutable: exe } : {}),
     env,
     ...(wallOn ? { settingSources: [], allowedTools: allowRules(allowed) } : {}),
     disallowedTools: [...DENY_RULES, ...NO_BACKGROUND_TOOLS],
-    hooks: { PreToolUse: [{ matcher: "Bash|PowerShell", hooks: [denyBackground] }] },
+    hooks: {
+      PreToolUse: [
+        { matcher: "Bash|PowerShell", hooks: [denyBackground, riskHook(workdir, lifted, onData)] },
+      ],
+    },
+    stderr: (data: string) => {
+      if (stderrLeft <= 0) return;
+      const s = data.slice(0, stderrLeft);
+      stderrLeft -= s.length;
+      onData?.(`[sdk stderr] ${s}`);
+    },
     canUseTool: async (toolName: string, toolInput: Record<string, unknown>) =>
       checkToolPermission(toolName, toolInput, workdir, onData, wallOn),
   };
@@ -137,7 +181,7 @@ export async function runAgentSdk(
   try {
     const response = query({
       prompt,
-      options: { ...buildSdkOptions(env, workdir, wall.on, wall.allowed, onData, model), abortController: controller },
+      options: { ...buildSdkOptions(env, workdir, wall.on, wall.allowed, onData, model, agent), abortController: controller },
     });
     for await (const message of response) {
       if (message.type === "assistant") {

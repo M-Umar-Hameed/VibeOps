@@ -1984,8 +1984,11 @@ const file2 = "run2-output.txt";
       const origLogRead = logSizeReader.read;
       const origCpuRead = treeCpuReader.read;
       try {
-        logSizeReader.read = () => 100;
-        treeCpuReader.read = () => null;
+        logSizeReader.read = (logPath) => {
+          if (waiter && logPath.includes(waiter)) return 100;
+          return origLogRead(logPath);
+        };
+        treeCpuReader.read = (pid) => origCpuRead(pid);
 
         const r1 = await startPipeline(a1, config1(), {
           ticketId: t1.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",

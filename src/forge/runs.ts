@@ -888,12 +888,13 @@ async function pipeline(
   }
 
   const workChecks = resolveChecks(await getSetting(`forge.checks.${ticket.projectId}`), sandbox, await getSetting("forge.checks"));
+  const workCheckCmds = workChecks.map((c) => typeof c === "string" ? c : c.cmd);
   const workPrompt = composeWorkPrompt({
     ticket, plan, knowledge, workdir: sandbox, memory,
     skills: selectedSkills.bodies,
     operatorEvidence: workEv.length ? workEv : undefined,
     allowedCommands: (await loadWall(ticket.projectId, true, sandbox)).allowed,
-    checks: workChecks,
+    checks: workCheckCmds,
     rework,
   })
     // No lessons clause here: A/B'd 2026-08-12 (docs/findings/2026-08-12-lessons-clause-ab.md).
@@ -1022,7 +1023,8 @@ async function pipeline(
     }
   }
   if (!crashed && (await getSetting("forge.preReviewCheck")) === "true") {
-    const preChecks = resolveChecks(await getSetting(`forge.checks.${ticket.projectId}`), sandbox, await getSetting("forge.checks"));
+    const preEntries = resolveChecks(await getSetting(`forge.checks.${ticket.projectId}`), sandbox, await getSetting("forge.checks"));
+    const { run: preChecks } = selectChecks(preEntries, await sandboxDiffNamesNoRenames(workdir, ticket.id).catch(() => null));
     if (preChecks.length > 0) {
       append(run, `\n=== FORGE pre-review check ===\n`);
       const results = await runChecks(preChecks, sandbox);

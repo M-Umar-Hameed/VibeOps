@@ -115,7 +115,8 @@ export async function loadWall(projectId?: string, write = false, workdir = ""):
     if (!write) return { on, allowed };
     const { resolveChecks } = await import("../forge/checks.js");
     const checks = resolveChecks(projectId ? await getSetting(`forge.checks.${projectId}`) : null, workdir, await getSetting("forge.checks"));
-    const simple = checks.filter((c) => {
+    const checkCmds = checks.map((c) => typeof c === "string" ? c : c.cmd);
+    const simple = checkCmds.filter((c) => {
       if (!SHELL_CONTROL.test(c)) return true;
       if (!warnedChecks.has(c)) { warnedChecks.add(c); console.warn(`forge: wall skips compound check (use a single command): ${c}`); }
       return false;

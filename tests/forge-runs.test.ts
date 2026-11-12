@@ -24,6 +24,8 @@ import {
   sweepStalledRuns,
   logSizeReader
 } from "../src/forge/runs.js";
+import * as checksMod from "../src/forge/checks.js";
+import { lastVerdict } from "../src/api/forge-routes.js";
 import { sandboxExists, branchName, promoteSandbox, sandboxDiff, hasCommitsToPromote, ensureSandbox, forgeCommit, diskSpaceReader } from "../src/forge/sandbox.js";
 import { vibeopsHome } from "../src/runtime/home.js";
 import { treeCpuReader } from "../src/runtime/proc-tree-cpu.js";
@@ -145,6 +147,7 @@ function relayConfig(): RelayConfig {
 }
 
 function setScript(script: string, write?: boolean): void {
+  if (existsSync(counterFile)) rmSync(counterFile);
   process.env.FAKE_SCRIPT = script;
   process.env.FAKE_COUNTER_FILE = counterFile;
   if (write) process.env.FAKE_WRITE = "1";
@@ -526,6 +529,120 @@ describe("forge run manager", () => {
       expect((await waitForPersistedRun(runId)).cause).toBe("stopped");
     });
   }, 15_000);
+
+  it("all checks timed out with reviewer PASS settles failed with cause check_timeout", async () => {
+    const spy = vi.spyOn(checksMod, "runChecks").mockImplementation(async (cmds) => cmds.map((command) => ({ command, code: 124, timedOut: true, tail: "[forge: check timed out after 60s]" })));
+    const { actorId, ticket } = await seedTicket("All checks timeout");
+    await withSetting("forge.checks", JSON.stringify(["chk-a", "chk-b"]), async () => {
+      setScript("plan,work,review-pass", true);
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+      const persisted = await waitForPersistedRun(runId);
+
+      expect(getRunOutput(runId, 0)?.status).toBe("failed");
+      expect(persisted.cause).toBe("check_timeout");
+
+      const comments = await listComments(ticket.id);
+      const review = comments.filter((c) => c.kind === "review").pop();
+      expect(review?.body).toContain("check(s) timed out (infra)");
+      expect(review?.body).toMatch(/VERDICT:\s*FAIL\s*$/);
+
+      const report = comments.filter((c) => c.kind === "report").pop();
+      expect(report?.body).toContain("checks timed out: chk-a, chk-b");
+
+      expect(await lastVerdict(ticket.id)).toBe("fail");
+      expect((await getTicket(ticket.id)).status).toBe("review");
+
+      const items = await listInterruptedRuns(relayConfig(), ticket.id);
+      expect(items[0]?.resumeMode).toBe("review");
+    });
+    spy.mockRestore();
+  });
+
+  it("mixed check result with real failure and timeout settles rejected", async () => {
+    const spy = vi.spyOn(checksMod, "runChecks").mockImplementation(async (cmds) => [
+      { command: cmds[0], code: 1, timedOut: false, tail: "E1" },
+      { command: cmds[1], code: 124, timedOut: true, tail: "t" },
+    ]);
+    const { actorId, ticket } = await seedTicket("Mixed failure");
+    await withSetting("forge.checks", JSON.stringify(["chk-a", "chk-b"]), async () => {
+      setScript("plan,work,review-pass", true);
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+
+      expect(getRunOutput(runId, 0)?.status).toBe("rejected");
+      expect((await getTicket(ticket.id)).status).toBe("planned");
+    });
+    spy.mockRestore();
+  });
+
+  it("second consecutive timeout settles rejected", async () => {
+    const spy = vi.spyOn(checksMod, "runChecks").mockImplementation(async (cmds) => cmds.map((command) => ({ command, code: 124, timedOut: true, tail: "[forge: check timed out after 60s]" })));
+    const { actorId, ticket } = await seedTicket("Second timeout");
+    await withSetting("forge.checks", JSON.stringify(["chk-a"]), async () => {
+      setScript("plan,work,review-pass", true);
+      const { runId: runId1 } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId1);
+      await waitForPersistedRun(runId1);
+
+      expect(getRunOutput(runId1, 0)?.status).toBe("failed");
+
+      setScript("review-pass", true);
+      const { runId: runId2 } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake", resumeStage: "review",
+      });
+      await awaitRun(runId2);
+
+      expect(getRunOutput(runId2, 0)?.status).toBe("rejected");
+      expect((await getTicket(ticket.id)).status).toBe("planned");
+    });
+    spy.mockRestore();
+  });
+
+  it("check timeout setting resolution", async () => {
+    const spy = vi.spyOn(checksMod, "runChecks");
+    const { actorId, ticket } = await seedTicket("Timeout setting");
+
+    await withSettings({ "forge.checkTimeoutMs": "abc", "forge.checks": JSON.stringify(["chk-a"]) }, async () => {
+      setScript("plan,work,review-pass", true);
+      const { runId } = await startPipeline(actorId, relayConfig(), {
+        ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+      expect(spy.mock.calls[0][2]).toBe(300_000);
+    });
+
+    spy.mockClear();
+    const { actorId: actorId2, ticket: ticket2 } = await seedTicket("Timeout clamped low");
+    await withSettings({ "forge.checkTimeoutMs": "10", "forge.checks": JSON.stringify(["chk-a"]) }, async () => {
+      setScript("plan,work,review-pass", true);
+      const { runId } = await startPipeline(actorId2, relayConfig(), {
+        ticketId: ticket2.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+      expect(spy.mock.calls[0][2]).toBe(60_000);
+    });
+
+    spy.mockClear();
+    const { actorId: actorId3, ticket: ticket3 } = await seedTicket("Timeout clamped high");
+    const perProjectKey = `forge.checkTimeoutMs.${ticket3.projectId}`;
+    await withSettings({ [perProjectKey]: "99999999", "forge.checkTimeoutMs": "120000", "forge.checks": JSON.stringify(["chk-a"]) }, async () => {
+      setScript("plan,work,review-pass", true);
+      const { runId } = await startPipeline(actorId3, relayConfig(), {
+        ticketId: ticket3.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+      });
+      await awaitRun(runId);
+      expect(spy.mock.calls[0][2]).toBe(3_600_000);
+    });
+
+    spy.mockRestore();
+  });
 
   it("worker process failure bounces to planned", async () => {
     const { actorId, ticket } = await seedTicket("Exit path");
@@ -1593,6 +1710,7 @@ const file2 = "run2-output.txt";
             FAKE_SCRIPT: "plan,work,review-pass",
             FAKE_COUNTER_FILE: counter1,
             FAKE_WRITE_PATH: file1,
+            FAKE_WRITE: "1",
           },
         },
       },
@@ -1608,6 +1726,7 @@ const file2 = "run2-output.txt";
             FAKE_SCRIPT: "plan,work,review-pass",
             FAKE_COUNTER_FILE: counter2,
             FAKE_WRITE_PATH: file2,
+            FAKE_WRITE: "1",
           },
         },
       },
@@ -2102,6 +2221,7 @@ const file2 = "run2-output.txt";
             FAKE_SCRIPT: "plan,work,review-pass",
             FAKE_COUNTER_FILE: counter1,
             FAKE_WRITE_PATH: file1,
+            FAKE_WRITE: "1",
           },
         },
       },
@@ -2117,6 +2237,7 @@ const file2 = "run2-output.txt";
             FAKE_SCRIPT: "plan,work,review-pass",
             FAKE_COUNTER_FILE: counter2,
             FAKE_WRITE_PATH: file2,
+            FAKE_WRITE: "1",
           },
         },
       },

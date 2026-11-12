@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { killTree } from "../relay/invoke.js";
 import { matchAny } from "./policy.js";
 
-export type CheckResult = { command: string; code: number; tail: string };
+export type CheckResult = { command: string; code: number; tail: string; timedOut: boolean };
 export type ScopedCheck = { cmd: string; paths: string[] };
 export type CheckEntry = string | ScopedCheck;
 
@@ -71,7 +71,9 @@ function runOne(
     let settled = false;
     let exitTimer: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => { timedOut = true; void killTree(child); }, timeoutMs);
-    const cap = (d: Buffer) => { if (out.length < OUTPUT_CAP) out += d.toString("utf-8"); };
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    const cap = (d: string) => { out += d; if (out.length > OUTPUT_CAP) out = out.slice(-OUTPUT_CAP); };
     child.stdout?.on("data", cap);
     child.stderr?.on("data", cap);
     const finish = (code: number) => {
@@ -80,7 +82,7 @@ function runOne(
       clearTimeout(timer);
       if (exitTimer) clearTimeout(exitTimer);
       if (timedOut) out += `\n[forge: check timed out after ${timeoutMs / 1000}s]`;
-      resolve({ command, code, tail: tailLines(out) });
+      resolve({ command, code: timedOut ? (code || 124) : code, tail: tailLines(out), timedOut });
     };
     child.on("close", (code) => finish(code ?? 1));
     child.on("error", (e) => { out += String(e); finish(1); });

@@ -38,12 +38,12 @@ import { logAgentUse, startAgentSession, endAgentSession } from "../services/usa
 import { listActors } from "../services/actors.js";
 import { bump } from "../services/metrics.js";
 import { captureMemory, reportTail } from "../services/memory-capture.js";
-import { desc, isNull, sum, eq, gte, lte, and, inArray, lt, or, getTableColumns } from "drizzle-orm";
+import { desc, isNull, sum, eq, gte, lte, and, inArray, lt, or, getTableColumns, ne } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { pidAlive } from "../db/lifecycle.js";
 import { forgeRuns, aiUsageLogs, tickets, type Ticket, type ForgeRun, type Comment } from "../db/schema.js";
 import { verifyModel, MISMATCH_WARNING, computeVerificationStatus, loadAdminIds } from "./verify.js";
-import { resolveChecks, runChecks, formatChecks, selectChecks, type CheckResult } from "./checks.js";
+import { resolveChecks, runChecks, formatChecks, selectChecks, CHECK_TIMEOUT_MS, type CheckResult } from "./checks.js";
 import { runGate, resolveMutationCmd, declaredFullPaths, overlappingDeclared } from "./gate.js";
 import { emitEvent } from "../api/events.js";
 
@@ -1152,6 +1152,23 @@ function benignWorkerError(output: string): string | undefined {
   return errLine ? BENIGN_SDK_ERRORS.find((e) => errLine.includes(e)) : undefined;
 }
 
+async function previousRunTimedOut(run: Run): Promise<boolean> {
+  const [row] = await db.select({ cause: forgeRuns.cause }).from(forgeRuns)
+    .where(and(eq(forgeRuns.ticketId, run.ticketId), ne(forgeRuns.id, run.id)))
+    .orderBy(desc(forgeRuns.startedAt)).limit(1);
+  return row?.cause === "check_timeout";
+}
+
+const CHECK_TIMEOUT_MIN_MS = 60_000;
+const CHECK_TIMEOUT_MAX_MS = 3_600_000;
+function resolveCheckTimeoutMs(...settings: (string | null)[]): number {
+  for (const s of settings) {
+    const n = s === null ? NaN : Number(s.trim());
+    if (Number.isInteger(n) && n > 0) return Math.min(CHECK_TIMEOUT_MAX_MS, Math.max(CHECK_TIMEOUT_MIN_MS, n));
+  }
+  return CHECK_TIMEOUT_MS;
+}
+
 // Extracted for resume-to-review: runs the review stage against an existing sandbox.
 async function reviewStage(
   run: Run, actorId: string, reviewAgent: RelayAgent, workdir: string,
@@ -1186,6 +1203,7 @@ async function reviewStage(
   // run mechanically at verdict time, independent of the reviewer's own
   // verdict — see the gate evaluation below.
   const checkEntries = resolveChecks(await getSetting(`forge.checks.${ticket.projectId}`), sandbox, await getSetting("forge.checks"));
+  const checkTimeoutMs = resolveCheckTimeoutMs(await getSetting(`forge.checkTimeoutMs.${ticket.projectId}`), await getSetting("forge.checkTimeoutMs"));
 
   // Protected-path policy: deterministic, evaluated on the diff (never the
   // worker's self-report). A touched protected path is an automatic Critical
@@ -1250,7 +1268,7 @@ async function reviewStage(
     if (await acquireCheckSlot(run)) {
       try {
         run.checksStartedAt = Date.now();
-        checkResults = await runChecks(checkCmds, sandbox, undefined, (child) => {
+        checkResults = await runChecks(checkCmds, sandbox, checkTimeoutMs, (child) => {
           run.checksChild = child;
           if (run.stopped) void killTree(child);
         });
@@ -1338,6 +1356,16 @@ async function reviewStage(
 
   for (const res of reviewResults) applyVerification(res, run.agents.review, run, config);
   const verdict = mergeReviewVerdicts(chunks, reviewResults.map((r) => r.output));
+
+  const failedChecks = checkResults.filter((r) => r.code !== 0);
+  const checksTimedOutOnly = checksFailed && failedChecks.every((r) => r.timedOut);
+  if (verdict.pass && !gateBlocked && checksTimedOutOnly && !(await previousRunTimedOut(run))) {
+    const timedOutCmds = failedChecks.map((r) => r.command).join(", ");
+    await addComment(actorId, ticket.id, redactSecrets(`${verdict.raw}\n\n[forge: check(s) timed out (infra) - verdict forced to FAIL]\n${checksText}\nVERDICT: FAIL`), "review");
+    await bounce(run, actorId, `checks timed out: ${timedOutCmds}`, checksText ?? "");
+    setCause(run, "check_timeout", `checks timed out: ${timedOutCmds}`);
+    return settle(run, "failed");
+  }
 
   // Gate block or a failing check forces FAIL regardless of the model's verdict.
   // The comment is the durable record (run output dies with the process), so it
@@ -1765,7 +1793,8 @@ export async function sweepStalledRuns(now: number, windowMs: number): Promise<s
   const stalled: string[] = [];
   for (const run of activeRuns()) {
     try {
-      if (run.stallReason) { setCause(run, "stall", run.stallReason); settle(run, "failed"); continue; } // pipeline never resumed after the kill (child refused to die): force terminal
+      if (run.stallReason) { setCause(run, "stall", run.stallReason); settle(run, "failed"); continue; }
+      if (run.checksChild) { run.lastActivityAt = now; continue; } // pipeline never resumed after the kill (child refused to die): force terminal
       const size = logSizeReader.read(run.logPath);
       if (size === null) { run.lastActivityAt ??= now; continue; }
       const cpu = run.pid != null ? treeCpuReader.read(run.pid) : null;

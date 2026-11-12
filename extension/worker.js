@@ -170,6 +170,15 @@ async function agentTab() {
 async function attachDebugger(tabId) { try { await chrome.debugger.attach({ tabId }, "1.3"); return true; } catch { return false; } }
 async function detachDebugger(tabId) { try { await chrome.debugger.detach({ tabId }); } catch { /* already detached */ } }
 
+// Injected via chrome.scripting.executeScript (serialized by toString): must not reference module scope.
+async function runInPage(steps, grant, targetOrigin, trusted, resume) {
+  const { executeSteps } = await import(chrome.runtime.getURL("execute.js"));
+  const out = await executeSteps(document, steps, grant, targetOrigin, { trusted, refMap: resume ? globalThis.__vibeopsRefs : undefined });
+  globalThis.__vibeopsRefs = out.refMap; // Map of Elements is not structured-cloneable
+  delete out.refMap;
+  return out;
+}
+
 // Tab verbs (tabs/newTab/switchTab) need chrome.tabs, so the batch is split
 // into segments: page segments inject into the agent tab, tab verbs run here
 // in between. Results go back in original order and the batch stops at the
@@ -179,7 +188,17 @@ async function executeBatch(batch) {
   let snapshot = { instanceId, origin: "", identity: null, nodes: [] };
   let dbgTab = null;
   let dbgOk = false;
-  const first = await agentTab();
+  let first;
+  try {
+    first = await agentTab();
+  } catch (err) {
+    console.error("[worker] agentTab error:", err);
+    await submitResult(batch.batchId, {
+      results: [{ ok: false, error: String(err) }],
+      snapshot: { instanceId, origin: "", identity: null, nodes: [] },
+    });
+    return;
+  }
   await withPaintableWindow(chrome.windows, first.windowId, wantsPaint(batch), async () => {
     try {
       let failed = false;
@@ -215,13 +234,7 @@ async function executeBatch(batch) {
         while (i < seg.steps.length) {
           const [{ result } = {}] = await chrome.scripting.executeScript({
             target: { tabId },
-            func: async (steps, grant, targetOrigin, trusted, resume) => {
-              const { executeSteps } = await import(chrome.runtime.getURL("execute.js"));
-              const out = await executeSteps(document, steps, grant, targetOrigin, { trusted, refMap: resume ? globalThis.__vibeopsRefs : undefined });
-              globalThis.__vibeopsRefs = out.refMap; // Map of Elements is not structured-cloneable
-              delete out.refMap;
-              return out;
-            },
+            func: runInPage,
             args: [seg.steps.slice(i), batch.grant ?? null, batch.targetOrigin ?? null, trusted, resume],
           });
           if (!result) {
@@ -257,13 +270,7 @@ async function executeBatch(batch) {
           try {
             const [{ result } = {}] = await chrome.scripting.executeScript({
               target: { tabId },
-              func: async (steps, grant, targetOrigin, trusted, resume) => {
-                const { executeSteps } = await import(chrome.runtime.getURL("execute.js"));
-                const out = await executeSteps(document, steps, grant, targetOrigin, { trusted, refMap: resume ? globalThis.__vibeopsRefs : undefined });
-                globalThis.__vibeopsRefs = out.refMap;
-                delete out.refMap;
-                return out;
-              },
+              func: runInPage,
               args: [[], batch.grant ?? null, batch.targetOrigin ?? null, trusted, true],
             });
             if (result?.snapshot) segSnap = result.snapshot;

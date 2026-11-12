@@ -20,7 +20,7 @@ import { killTree, killPidTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { availableAccount } from "../relay/accounts.js";
 import { redactSecrets } from "./redact.js";
-import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES, stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL, syncSandboxWithBase, type BaseSync } from "./sandbox.js";
+import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES, stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL, sandboxHeadHash, syncSandboxWithBase, type BaseSync } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
 import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, stripGateDirectives, parseExportTo, parseEvidence, parseAllowCommand } from "./policy.js";
 import { RISK_IDS } from "../relay/risk.js";
@@ -872,6 +872,7 @@ async function pipeline(
   // into a reverted, visible, run-failing one. See docs/AGENT_CLIS.md.
   const depsBaseline = snapshotDeps(workdir, depsDirs);
   const sentinelSnaps = snapshotSensitive(resolveSensitivePaths(await getSetting("forge.sensitivePaths")));
+  const headBefore = await sandboxHeadHash(workdir, ticket.id);
   const allowCmd = parseAllowCommand(ticket.body ?? "");
   const unknownRules = allowCmd.filter((id) => !RISK_IDS.includes(id));
   if (unknownRules.length) append(run, `\nforge: ALLOW-COMMAND ignores unknown rule ids: ${unknownRules.join(", ")}\n`);
@@ -974,7 +975,15 @@ async function pipeline(
     }
     append(run, `\nforge: worker crashed (${crashed}) after saving a diff; continuing to review\n`);
   }
-  if (!crashed) await forgeCommit(ticket.id, ticket.title);
+  if (!crashed) {
+    const committed = await forgeCommit(ticket.id, ticket.title);
+    if (!committed && (await sandboxHeadHash(workdir, ticket.id)) === headBefore
+      && !(parseExportTo(ticket.body ?? "") && listExportOutputs(ticket.id).length)) {
+      run.cause = "no_changes";
+      await bounce(run, actorId, "no changes: work stage produced no diff", redactSecrets(workRes.output));
+      return settle(run, "failed");
+    }
+  }
   if (!crashed && (await getSetting("forge.preReviewCheck")) === "true") {
     const preChecks = resolveChecks(await getSetting(`forge.checks.${ticket.projectId}`), sandbox, await getSetting("forge.checks"));
     if (preChecks.length > 0) {

@@ -193,6 +193,7 @@ describe("httpExtractor", () => {
     expect(interceptedUrl).toBe("http://127.0.0.1:8080/v1/chat/completions");
     expect(interceptedHeaders["Authorization"]).toBe("Bearer test-key");
     expect(interceptedBody.model).toBe("lfm3");
+    expect(interceptedBody.response_format).toEqual({ type: "json_object" });
     expect(res).toEqual({
       decisions: [{ text: "use lfm3 locally", rationale: "zero cost and 83 tok/s", domain: "models" }],
       rules: [{ text: "always test before handoff", domain: "testing" }],

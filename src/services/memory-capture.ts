@@ -66,6 +66,7 @@ export async function httpExtractor(text: string): Promise<Extracted | null> {
           { role: "user", content: userBody },
         ],
         temperature: 0.0,
+        response_format: { type: "json_object" },
       }),
       signal: controller.signal,
     });

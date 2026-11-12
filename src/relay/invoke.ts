@@ -188,10 +188,13 @@ export async function runAgent(
   if (process.env.ANTHROPIC_API_KEY) {
     childEnv = { ...(childEnv ?? process.env), ENABLE_PROMPT_CACHING_1H: "1" };
   }
+  const workerTestHome = join(tmpdir(), `vibeops-worker-home-${randomUUID()}`);
+  mkdirSync(workerTestHome, { recursive: true });
   childEnv = {
     ...(childEnv ?? process.env),
     [ALLOW_COMMAND_ENV]: (agent.liftedRules ?? []).join(","),
-    VIBEOPS_TEST_EMBEDDED: process.env.VIBEOPS_TEST_EMBEDDED ?? "1",
+    VIBEOPS_TEST_EMBEDDED: childEnv?.VIBEOPS_TEST_EMBEDDED ?? process.env.VIBEOPS_TEST_EMBEDDED ?? "1",
+    VIBEOPS_HOME: childEnv?.VIBEOPS_HOME ?? workerTestHome,
   };
 
   // S2-A2: with a run logPath, the stage child writes stdout+stderr straight to

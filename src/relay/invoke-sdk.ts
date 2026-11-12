@@ -1,6 +1,7 @@
-import { existsSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
-import path from "node:path";
+import { existsSync, realpathSync, mkdirSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
+import path, { join } from "node:path";
 import type { RelayAgent } from "./config.js";
 import type { AgentResult } from "./invoke.js";
 import { substituteCmd } from "./invoke.js";
@@ -82,6 +83,12 @@ export function sdkEnv(agent: RelayAgent, workdir: string, acctEnv: Record<strin
     .filter((e): e is [string, string] => e[1] !== undefined));
   env.BASH_DEFAULT_TIMEOUT_MS ??= BASH_TIMEOUT_MS;
   env.BASH_MAX_TIMEOUT_MS ??= BASH_TIMEOUT_MS;
+  env.VIBEOPS_TEST_EMBEDDED ??= "1";
+  if (!env.VIBEOPS_HOME) {
+    const workerTestHome = join(tmpdir(), `vibeops-worker-home-${randomUUID()}`);
+    mkdirSync(workerTestHome, { recursive: true });
+    env.VIBEOPS_HOME = workerTestHome;
+  }
   return env;
 }
 

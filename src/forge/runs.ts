@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getLessons, lessonsClause, harvestLessons } from "./lessons.js";
+import { isSlmWorker, evaluateTaskSizing, atomicDirective } from "./sizing.js";
 import { existsSync, openSync, readSync, fstatSync, closeSync, statSync, readdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { vibeopsHome } from "../runtime/home.js";
@@ -746,13 +747,22 @@ async function pipeline(
     append(run, `=== FORGE plan (${run.agents.plan}) ===\n`);
     const knowledge = await getKnowledgeSafe(knowledgeQuery(ticket), ticket.projectId);
     const memory = await getMemorySafe(ticket.title, ticket.projectId);
+    const isSlm = isSlmWorker(run.agents.work, modelOf(run.agents.work));
+    let sizingClause = "";
+    if (isSlm) {
+      const sizing = await evaluateTaskSizing(ticket, priorPlan, run.agents.work, modelOf(run.agents.work));
+      sizingClause = atomicDirective(sizing);
+      if (sizing.isTooBig) {
+        append(run, `[forge: task sizing -> too broad for ${run.agents.work} (${sizing.reason}); injecting atomic directive]\n`);
+      }
+    }
     const { result: res, strayPaths: planStray } = await withReadOnlyView(workdir, ticket.id, "plan", "HEAD", (view) => {
       const opEv = operatorEvidence ? mirrorOperatorEvidence(operatorEvidence.dir, view, operatorEvidence.files) : [];
       const planPrompt = composePlanPrompt({
         ticket, knowledge, memory,
         skillIndex: formatSkillIndex(skillsForAgent(catalogue, agents.plan.skillAllowlist)),
         operatorEvidence: opEv.length ? opEv : undefined,
-      }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra;
+      }) + PLAN_ONLY + lessons + sizingClause + roleStyle("plan", styleSetting) + extra;
       return track(actorId, ticket.id, "plan", run.agents.plan, planPrompt.length, () => runAgent(
         { ...agents.plan, projectId: ticket.projectId, ...evidenceDirs }, planPrompt, view, onData,
         (child) => recordSpawn(run, child),

@@ -1,6 +1,7 @@
 import type { ServerType } from "@hono/node-server";
 import { fstatSync } from "node:fs";
 import type { Server as HttpServer } from "node:http";
+import { releasePollers } from "../browser/channel.js";
 
 // Single idempotent shutdown: stop accepting connections, checkpoint the DB by
 // closing it, then exit 0. Exposed as a factory so it can be unit-tested without
@@ -29,12 +30,14 @@ export function makeShutdown(server: ServerType, closeDb: () => Promise<void>, o
     // never end their sockets, and server.close() only calls back once all have
     // ended. Stop accepting, then drop every connection, then wait (bounded).
     const closed = new Promise<void>((r) => server.close(() => r()));
+    releasePollers();
     const http = server as Partial<Pick<HttpServer, "closeIdleConnections" | "closeAllConnections">>;
     http.closeIdleConnections?.();
-    http.closeAllConnections?.();
+    const grace = setTimeout(() => http.closeAllConnections?.(), 2000);
     if (await withDeadline(closed) === "timeout") {
       console.error(`server close exceeded ${CLOSE_DEADLINE_MS}ms deadline; checkpointing anyway`);
     }
+    clearTimeout(grace);
     if (onBeforeClose) {
       try { await onBeforeClose(); }
       catch (e) { console.warn(`pre-close backup failed: ${(e as Error).message}`); }

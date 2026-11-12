@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeShutdown, installShutdown } from "../src/api/shutdown.js";
+import { register, nextBatch, BROWSER_TUNING } from "../src/browser/channel.js";
 
 test("makeShutdown closes server then db, exits 0, and is idempotent", async () => {
   const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
@@ -16,6 +17,69 @@ test("makeShutdown closes server then db, exits 0, and is idempotent", async () 
 
   await shutdown("SIGTERM");
   await shutdown("SIGTERM"); // second call is a no-op
+
+  expect(exit).toHaveBeenCalledWith(0);
+  expect(serverClose).toHaveBeenCalledTimes(1);
+  expect(closeDb).toHaveBeenCalledTimes(1);
+});
+
+test("a held keep-alive connection does not block shutdown", async () => {
+  const held = { value: false };
+  const server = http.createServer((req) => {
+    held.value = true;
+    // never respond
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+
+  const req = http.get({ port, agent: new http.Agent({ keepAlive: true }) });
+  req.on("error", () => {});
+  await vi.waitFor(() => held.value);
+
+  const mockExit = vi.fn(() => process.exit(0));
+  vi.mock("process", () => ({
+    exit: mockExit,
+  }));
+
+  const t0 = Date.now();
+  await makeShutdown(server as never, () => {})("test");
+  const elapsed = Date.now() - t0;
+
+  expect(closeDb).toHaveBeenCalledTimes(1);
+  expect(mockExit).toHaveBeenCalledWith(0);
+  expect(elapsed).toBeLessThan(5000);
+  expect(server.listening).toBe(false);
+
+  req.destroy();
+  http.Agent.destroyAll();
+  vi.restoreAllMocks();
+});
+
+test("shutdown releases a pending /browser/poll waiter", async () => {
+  const id = register({ browserChannel: "chrome", profileId: "p", profileLabel: "L" });
+  const p = nextBatch(id);
+
+  const mockExit = vi.fn(() => process.exit(0));
+  vi.mock("process", () => ({
+    exit: mockExit,
+  }));
+
+  const shutdownResult = await makeShutdown(
+    { close: (cb) => cb() } as never,
+    async () => {}
+  )("test");
+
+  expect(shutdownResult).toBe("test");
+  expect(mockExit).toHaveBeenCalledWith(0);
+
+  const result = await Promise.race([p, new Promise<string>((r) => setTimeout(() => r("timeout"), 1000))]);
+  expect(result).toBe(null);
+
+  const later = await nextBatch(id);
+  expect(later).toBe(null);
+
+  vi.restoreAllMocks();
+});
 
   expect(serverClose).toHaveBeenCalledTimes(1);
   expect(closeDb).toHaveBeenCalledTimes(1);

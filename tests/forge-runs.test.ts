@@ -2038,7 +2038,7 @@ describe("read-only stage views", () => {
   it("a worker that writes nothing settles failed with cause no_changes and spawns neither checks nor review", async () => {
     const { actorId, ticket } = await seedTicket("No changes");
     await withSetting("forge.checks", JSON.stringify([`node "${join(__dirname, "fixtures", "check-fail.mjs")}"`]), async () => {
-      setScript("plan,work,review-pass", true);
+      setScript("plan,work,review-pass");
       const { runId } = await startPipeline(actorId, relayConfig(), {
         ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
       });

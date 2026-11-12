@@ -883,20 +883,15 @@ async function pipeline(
     installAgyHook(sandbox, agyFirewallHookCommand());
     append(run, "\nforge: agy firewall hook installed (.agents/hooks.json, removed before commit)\n");
   }
-  const workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
-    runAgent({ ...agents.work, write: true, projectId: ticket.projectId, liftedRules, ...evidenceDirs }, workPrompt, sandbox, onData,
-      (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
-      modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r)));
-  if (!crashed) {
-    const committed = await forgeCommit(ticket.id, ticket.title);
-    if (!committed && (await sandboxHeadHash(workdir, ticket.id)) === headBefore
-      && !(parseExportTo(ticket.body ?? "") && listExportOutputs(ticket.id).length)) {
-      run.cause = "no_changes";
-      await bounce(run, actorId, "no changes: work stage produced no diff", redactSecrets(workRes.output));
-      return settle(run, "failed");
-    }
+  let workRes: AgentResult;
+  try {
+    workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
+      runAgent({ ...agents.work, write: true, projectId: ticket.projectId, liftedRules, ...evidenceDirs }, workPrompt, sandbox, onData,
+        (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
+        modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r)));
+  } finally {
+    if (agyHook) restoreAgyHook(sandbox);
   }
-  if (agyHook) restoreAgyHook(sandbox);
   run.child = undefined;
   run.abort = undefined;
   const tampered = detectAndRestore(sentinelSnaps);
@@ -1018,7 +1013,6 @@ async function pipeline(
           }
         } catch {}
       }
->>>>>>> 1130fc51c0e69badb7c6b12b44fc808e3461b691
     }
   }
   await addComment(actorId, ticket.id, redactSecrets(workRes.output), "report");

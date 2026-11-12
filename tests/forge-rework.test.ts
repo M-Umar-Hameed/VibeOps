@@ -46,7 +46,7 @@ async function seedTicket(title: string) {
   return { actorId: actor.id, apiKey, ticket };
 }
 
-async function seedRejected(title: string) {
+async function seedRejected(title: string, agents?: { plan?: string; work?: string; review?: string }) {
   const { actorId, apiKey, ticket } = await seedTicket(title);
   await ensureSandbox(workdir, ticket.id);
   writeFileSync(join(sandboxRoot, ticket.id, "result.txt"), "first pass");
@@ -57,7 +57,7 @@ async function seedRejected(title: string) {
   await updateTicket(actorId, ticket.id, t2.version, { status: "planned" });
   await db.insert(forgeRuns).values({
     id: randomUUID(), ticketId: ticket.id, status: "rejected", stage: "review",
-    planAgent: "auto", workAgent: "auto", reviewAgent: "auto",
+    planAgent: agents?.plan ?? "auto", workAgent: agents?.work ?? "auto", reviewAgent: agents?.review ?? "auto",
     startedAt: new Date(), finishedAt: new Date(),
   });
   return { actorId, apiKey, ticket };
@@ -85,6 +85,7 @@ let counterDir: string;
 let counterFile: string;
 
 beforeEach(async () => {
+  await clearSetting("forge.escalate");
   for (const role of ["plan", "work", "review"]) await clearSetting(`forge.defaultModel.${role}`);
   workdir = initRepo();
   sandboxRoot = mkdtempSync(join(tmpdir(), "forge-rework-sbx-"));
@@ -360,6 +361,88 @@ describe("POST /forge/tickets/:id/rework", () => {
       expect(execFileSync("git", ["merge-base", "HEAD", `forge/${ticket.id}`], { cwd: workdir }).toString().trim()).toBe(base);
       expect(execFileSync("git", ["rev-list", "--parents", "-n", "1", "HEAD"], { cwd: join(sandboxRoot, ticket.id) }).toString().trim().split(" ")).toHaveLength(3);
       expect(listRuns().find((r) => r.id === runId)!.agents.work).toBe("fake:fast");
+    });
+  });
+
+  it("an empty-body /rework reuses the previous run's three picks", async () => {
+    enableSmartModel();
+    const { apiKey, ticket } = await seedRejected("Rework reuse picks", {
+      plan: "fake:smart", work: "fake:fast", review: "fake:smart",
+    });
+    setScript("work,review-pass", true);
+    const res = await app.request(`/forge/tickets/${ticket.id}/rework`, {
+      method: "POST", headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    expect(res.status).toBe(201);
+    const { runId } = await res.json();
+    await awaitRun(runId);
+    const run = listRuns().find((r) => r.id === runId);
+    expect(run?.agents).toEqual({ plan: "fake:smart", work: "fake:fast", review: "fake:smart" });
+  });
+
+  it("an inherited lane missing from config falls back to auto", async () => {
+    enableSmartModel();
+    const { apiKey, ticket } = await seedRejected("Rework missing lane", {
+      plan: "nonexistent:model", work: "fake:fast", review: "fake:smart",
+    });
+    setScript("work,review-pass", true);
+    const res = await app.request(`/forge/tickets/${ticket.id}/rework`, {
+      method: "POST", headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    expect(res.status).toBe(201);
+    const { runId } = await res.json();
+    await awaitRun(runId);
+    const run = listRuns().find((r) => r.id === runId);
+    expect(run?.agents.plan).toBe("fake:smart");
+    expect(run?.agents.work).toBe("fake:fast");
+  });
+
+  it("an explicit body pick overrides the inherited one", async () => {
+    enableSmartModel();
+    const { apiKey, ticket } = await seedRejected("Rework override pick", {
+      plan: "fake:smart", work: "fake:fast", review: "fake:smart",
+    });
+    setScript("work,review-pass", true);
+    const res = await app.request(`/forge/tickets/${ticket.id}/rework`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ workAgent: "fake", workModel: "smart" }),
+    });
+    expect(res.status).toBe(201);
+    const { runId } = await res.json();
+    await awaitRun(runId);
+    const run = listRuns().find((r) => r.id === runId);
+    expect(run?.agents.work).toBe("fake:smart");
+    expect(run?.agents.plan).toBe("fake:smart");
+  });
+
+  it("escalation is off by default and on with forge.escalate=true", async () => {
+    enableSmartModel();
+    const { actorId, apiKey, ticket } = await seedRejected("Escalation check");
+    await addComment(actorId, ticket.id, "- Critical: still bug\nVERDICT: FAIL", "review");
+
+    await withSetting("forge.defaultModel.work", "fake:fast", async () => {
+      setScript("work,review-pass", true);
+      const resOff = await app.request(`/forge/tickets/${ticket.id}/rework`, {
+        method: "POST", headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      expect(resOff.status).toBe(201);
+      const { runId: runIdOff } = await resOff.json();
+      await awaitRun(runIdOff);
+      expect(listRuns().find((r) => r.id === runIdOff)?.agents.work).toBe("fake:fast");
+    });
+
+    await withSetting("forge.escalate", "true", async () => {
+      setScript("work,review-pass", true);
+      const resOn = await app.request(`/forge/tickets/${ticket.id}/rework`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ workAgent: "auto" }),
+      });
+      expect(resOn.status).toBe(201);
+      const { runId: runIdOn } = await resOn.json();
+      await awaitRun(runIdOn);
+      expect(listRuns().find((r) => r.id === runIdOn)?.agents.work).toBe("fake:smart");
     });
   });
 });

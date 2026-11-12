@@ -291,7 +291,7 @@ function modelOf(composited: string): string | undefined {
 
 // "agent:model" (or bare "agent") from a forge.defaultModel.<role> setting.
 // ponytail: split on the first ":" — agent/model names carry no colons today.
-function parsePair(value: string): Pick {
+export function parsePair(value: string): Pick {
   const i = value.indexOf(":");
   return i === -1 ? { agent: value } : { agent: value.slice(0, i), model: value.slice(i + 1) || undefined };
 }
@@ -332,7 +332,8 @@ function baseSyncLine(s: BaseSync): string {
 
 async function countFailedReviews(ticketId: string): Promise<number> {
   const comments = await listComments(ticketId);
-  return comments.filter((c) => c.kind === "review" && !c.body.startsWith(BASE_CONFLICT) && !parseVerdict(c.body).pass).length;
+  const sincePlan = comments.slice(comments.map((c) => c.kind).lastIndexOf("plan") + 1);
+  return sincePlan.filter((c) => c.kind === "review" && !c.body.startsWith(BASE_CONFLICT) && !parseVerdict(c.body).pass).length;
 }
 
 // Ticket's project repo if set and still on disk, else config.workdir (Inbox and
@@ -433,7 +434,7 @@ export async function startPipeline(
   opts: {
     ticketId: string; planAgent: string; workAgent: string; reviewAgent: string; extraPrompt?: string; operatorNotes?: string;
     planModel?: string; workModel?: string; reviewModel?: string; force?: boolean; effort?: Effort;
-    resumeStage?: Stage; limitRetry?: boolean;
+    resumeStage?: Stage; limitRetry?: boolean; escalate?: boolean;
   },
 ): Promise<{ runId: string; doctorWarnings: string[] }> {
   if ((opts.extraPrompt ?? "").length > MAX_EXTRA_PROMPT) throw new Error("extraPrompt too long");
@@ -494,9 +495,15 @@ export async function startPipeline(
   let workPick: Pick = resolveRole("work", opts.workAgent, opts.workModel);
   const reviewPick: Pick = resolveRole("review", opts.reviewAgent, opts.reviewModel);
 
-  if (opts.workAgent === "auto") {
+  let escalated = "";
+  if (opts.workAgent === "auto" && (effortStrategy || !defaults.work)
+    && (opts.escalate === true || (await getSetting("forge.escalate")) === "true")) {
     const attempts = await countFailedReviews(opts.ticketId);
-    workPick = escalate(pairsForRole(config, "work"), workPick, attempts);
+    const next = escalate(pairsForRole(config, "work"), workPick, attempts);
+    if (composite(next) !== composite(workPick)) {
+      escalated = `\nforge: escalated work ${composite(workPick)} -> ${composite(next)} after ${attempts} failed reviews\n`;
+    }
+    workPick = next;
   }
 
   // Cache-only doctor check: a spawn-level failure (binary renamed/missing)
@@ -585,6 +592,7 @@ export async function startPipeline(
   };
   runs.set(run.id, run);
   trim();
+  if (escalated) append(run, escalated);
   await persistRun(run);
   run.done = pipeline(run, actorId, agents, workdir, styleSetting ?? "", lessons, config, opts.extraPrompt, opts.resumeStage).catch(async (e) => {
     append(run, `\nforge: pipeline error: ${(e as Error).message}\n`);

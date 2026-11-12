@@ -397,6 +397,22 @@ export function conflictMarkerFiles(diff: string): string[] {
   return [...files];
 }
 
+// Test titles the diff adds more than once in the same file (a worker re-inserting the same block).
+// ponytail: added lines only; a title re-added next to an untouched existing copy is not caught. Read the whole file if that shows up.
+export function duplicateAddedTestTitles(diff: string): string[] {
+  const TITLE = /\b(?:it|test)(?:\.(?:only|skip|todo|concurrent))?\(\s*(["'`])(.+?)\1/;
+  const seen = new Map<string, number>();
+  let file = "";
+  for (const raw of diff.split("\n")) {
+    const line = raw.replace(/\r$/, "");
+    if (line.startsWith("+++ ")) { file = line.slice(4).replace(/^b\//, ""); continue; }
+    if (!line.startsWith("+")) continue;
+    const m = TITLE.exec(line);
+    if (m) { const key = `${file}: "${m[2]}"`; seen.set(key, (seen.get(key) ?? 0) + 1); }
+  }
+  return [...seen].filter(([, n]) => n > 1).map(([key]) => key);
+}
+
 export async function sandboxDiff(workdir: string, ticketId: string): Promise<string> {
   const { out } = await git(workdir, "diff", `HEAD...${branchName(ticketId)}`);
   return out.slice(0, DIFF_CAP);

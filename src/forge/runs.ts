@@ -22,7 +22,7 @@ import { killTree, killPidTree, type AgentResult } from "../relay/invoke.js";
 import { runAgent } from "../relay/dispatch.js";
 import { availableAccount } from "../relay/accounts.js";
 import { redactSecrets } from "./redact.js";
-import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxDiffNamesNoRenames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES, stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL, sandboxHeadHash, syncSandboxWithBase, type BaseSync, checkSandboxDisk, diskFullMessage, DiskFullError, conflictMarkerFiles } from "./sandbox.js";
+import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxDiffNamesNoRenames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES, stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL, sandboxHeadHash, syncSandboxWithBase, type BaseSync, checkSandboxDisk, diskFullMessage, DiskFullError, conflictMarkerFiles, duplicateAddedTestTitles } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
 import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, stripGateDirectives, parseExportTo, parseEvidence, parseAllowCommand } from "./policy.js";
 import { RISK_IDS } from "../relay/risk.js";
@@ -368,6 +368,7 @@ function applyVerification(res: { ok: boolean; output: string }, compositeName: 
 
 const BASE_CONFLICT = "[forge: base conflict]";
 const CONFLICT_MARKERS = "[forge: conflict markers]";
+const DUPLICATE_TESTS = "[forge: duplicate tests]";
 
 function baseSyncLine(s: BaseSync): string {
   return `\n=== FORGE base sync: ${s.state}${s.files?.length ? ` (${s.files.join(", ")})` : ""} ===\n`;
@@ -1195,7 +1196,8 @@ async function reviewStage(
     setCause(run, "base_conflict", "base conflict");
     return settle(run, "rejected");
   }
-  const markers = conflictMarkerFiles(await sandboxDiff(workdir, ticket.id));
+  const guardDiff = await sandboxDiff(workdir, ticket.id);
+  const markers = conflictMarkerFiles(guardDiff);
   if (markers.length) {
     await addComment(actorId, ticket.id,
       `${CONFLICT_MARKERS} ${branchName(ticket.id)} adds unresolved merge conflict markers in ${markers.length} file(s):\n` +
@@ -1203,6 +1205,25 @@ async function reviewStage(
       `Remove every <<<<<<< / ======= / >>>>>>> block in ${markers.join(", ")}; keep both sides' intent.\nVERDICT: FAIL`, "review");
     await setStatus(actorId, ticket.id, "planned");
     setCause(run, "conflict_markers", "conflict markers");
+    return settle(run, "rejected");
+  }
+  const dupes = duplicateAddedTestTitles(guardDiff);
+  if (dupes.length) {
+    await addComment(actorId, ticket.id,
+      `${DUPLICATE_TESTS} ${branchName(ticket.id)} adds the same test title more than once:\n` +
+      `${dupes.map((d) => `  - ${d}`).join("\n")}\n` +
+      `Keep one copy of each test and delete the repeated block.\nVERDICT: FAIL`, "review");
+    await setStatus(actorId, ticket.id, "planned");
+    setCause(run, "duplicate_tests", "duplicate tests");
+    return settle(run, "rejected");
+  }
+  if (dupes.length) {
+    await addComment(actorId, ticket.id,
+      `${DUPLICATE_TESTS} ${branchName(ticket.id)} adds the same test title more than once:\n` +
+      `${dupes.map((d) => `  - ${d}`).join("\n")}\n` +
+      `Keep one copy of each test and delete the repeated block.\nVERDICT: FAIL`, "review");
+    await setStatus(actorId, ticket.id, "planned");
+    setCause(run, "duplicate_tests", "duplicate tests");
     return settle(run, "rejected");
   }
 

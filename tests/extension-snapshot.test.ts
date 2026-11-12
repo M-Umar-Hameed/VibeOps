@@ -193,3 +193,11 @@ it("a contenteditable editor is collected as a textbox even without role", () =>
   const items = collectInteractive(doc);
   expect(items.some((i: any) => i.role === "textbox" && i.element.id === "ed")).toBe(true);
 });
+
+it("collects role=option elements as option role with text as name", () => {
+  const doc = dom('<div role="listbox"><div role="option">Free</div><div role="option">Paid</div></div>');
+  const snap = buildSnapshot(doc, "inst1");
+  expect(snap.nodes.length).toBe(2);
+  expect(snap.nodes[0]).toMatchObject({ ref: "ref1", role: "option", name: "Free" });
+  expect(snap.nodes[1]).toMatchObject({ ref: "ref2", role: "option", name: "Paid" });
+});

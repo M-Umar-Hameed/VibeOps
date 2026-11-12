@@ -5,7 +5,7 @@ import { notes } from "../src/db/schema.js";
 import { createActor } from "../src/services/actors.js";
 import { createProject } from "../src/services/projects.js";
 import { setSetting, deleteSetting } from "../src/services/settings.js";
-import { captureMemory, setMemoryExtractor, parseExtraction, reportTail, buildExtractorRequest } from "../src/services/memory-capture.js";
+import { captureMemory, setMemoryExtractor, parseExtraction, reportTail, buildExtractorRequest, httpExtractor } from "../src/services/memory-capture.js";
 import { UNTRUSTED_CLAUSE } from "../src/relay/prompts.js";
 import * as store from "../src/chat/store.js";
 import { setChatAgent, runTurn } from "../src/chat/turns.js";
@@ -140,5 +140,62 @@ describe("chat turn capture", () => {
     expect(row?.source).toBe("auto");
     expect(seen).toContain("should we lint?");
     expect(seen).toContain("we decided to always lint");
+  });
+});
+
+describe("httpExtractor", () => {
+  const origEnv = { ...process.env };
+  const origFetch = globalThis.fetch;
+
+  afterEach(() => {
+    process.env = { ...origEnv };
+    globalThis.fetch = origFetch;
+  });
+
+  it("returns null when no MEMORY_EXTRACTOR_URL or EXTRACTOR_URL is configured", async () => {
+    delete process.env.MEMORY_EXTRACTOR_URL;
+    delete process.env.EXTRACTOR_URL;
+    const res = await httpExtractor("test transcript");
+    expect(res).toBeNull();
+  });
+
+  it("queries the OpenAI-compatible HTTP endpoint and parses extracted memory", async () => {
+    process.env.MEMORY_EXTRACTOR_URL = "http://127.0.0.1:8080/v1";
+    process.env.MEMORY_EXTRACTOR_MODEL = "lfm3";
+    process.env.MEMORY_EXTRACTOR_API_KEY = "test-key";
+
+    let interceptedUrl = "";
+    let interceptedHeaders: any = {};
+    let interceptedBody: any = {};
+
+    globalThis.fetch = (async (url: any, init: any) => {
+      interceptedUrl = String(url);
+      interceptedHeaders = init?.headers;
+      interceptedBody = JSON.parse(init?.body as string);
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  decisions: [{ text: "use lfm3 locally", rationale: "zero cost and 83 tok/s", domain: "models" }],
+                  rules: [{ text: "always test before handoff", domain: "testing" }],
+                }),
+              },
+            },
+          ],
+        }),
+      } as any;
+    }) as any;
+
+    const res = await httpExtractor("transcript content");
+    expect(interceptedUrl).toBe("http://127.0.0.1:8080/v1/chat/completions");
+    expect(interceptedHeaders["Authorization"]).toBe("Bearer test-key");
+    expect(interceptedBody.model).toBe("lfm3");
+    expect(res).toEqual({
+      decisions: [{ text: "use lfm3 locally", rationale: "zero cost and 83 tok/s", domain: "models" }],
+      rules: [{ text: "always test before handoff", domain: "testing" }],
+    });
   });
 });

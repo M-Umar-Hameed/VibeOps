@@ -1,16 +1,18 @@
 import { randomUUID } from "node:crypto";
-import { getLessons, lessonsClause } from "./lessons.js";
+import { getLessons, lessonsClause, harvestLessons } from "./lessons.js";
+import { isSlmWorker, evaluateTaskSizing, atomicDirective } from "./sizing.js";
 import { existsSync, openSync, readSync, fstatSync, closeSync, statSync, readdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { vibeopsHome } from "../runtime/home.js";
 import { startTimeReader } from "../runtime/proc-start.js";
 import { treeCpuReader } from "../runtime/proc-tree-cpu.js";
-import type { ChildProcess } from "node:child_process";
+import { type ChildProcess, execFileSync } from "node:child_process";
 import { resolveCmd, loadRelayConfig, type RelayConfig, type RelayAgent } from "../relay/config.js";
-import { pipelineStartWarnings, pipelineStartBlockingError } from "../relay/doctor.js";
+import { pipelineStartWarnings, pipelineStartBlockingError, binBasename } from "../relay/doctor.js";
 import { roleStyle } from "../relay/style.js";
-import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted } from "../relay/prompts.js";
-import { loadWall } from "../relay/wall.js";
+import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted, type ReworkContext } from "../relay/prompts.js";
+import { loadWall, agyFirewallHookCommand } from "../relay/wall.js";
+import { installAgyHook, restoreAgyHook } from "./agy-hook.js";
 import { listSkills, formatSkillIndex, formatSkillBodies, parseOperatorSkills, parsePlanSkills, parseSkillAllowlist, skillsForAgent, type SkillMeta } from "./skills.js";
 import { recallBlock } from "../services/recall.js";
 import { chunkReviewDiff, mergeReviewVerdicts } from "./review-chunks.js";
@@ -20,7 +22,8 @@ import { availableAccount } from "../relay/accounts.js";
 import { redactSecrets } from "./redact.js";
 import { ensureSandbox, forgeCommit, sandboxDiff, sandboxDiffSummary, sandboxDiffNames, sandboxRangePatch, sandboxExists, hasCommitsToPromote, snapshotDeps, detectDepsLeak, discardSandbox, listSandboxTicketIds, sandboxSizeBytes, isLiveWorktree, deleteOrphanIfLinkFree, pruneWorktreeRegistrations, listForgeBranches, deleteMergedBranch, withReadOnlyView, branchName, viewsRoot, resolveDepsDirs, resolveFrontendDeps, copyEvidence, listExportOutputs, attachmentsDir, EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES, stageOperatorEvidence, mirrorOperatorEvidence, OPERATOR_EVIDENCE_MAX_FILES, OPERATOR_EVIDENCE_MAX_TOTAL, sandboxHeadHash, syncSandboxWithBase, type BaseSync } from "./sandbox.js";
 import { resolveSensitivePaths, snapshotSensitive, detectAndRestore } from "./sentinel.js";
-import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, stripGateDirectives, parseExportTo, parseEvidence } from "./policy.js";
+import { resolveProtectedPaths, parseAllowProtected, evaluateProtectedPaths, stripGateDirectives, parseExportTo, parseEvidence, parseAllowCommand } from "./policy.js";
+import { RISK_IDS } from "../relay/risk.js";
 import { pickAgents, escalate, pairsForRole, resolveStrategy, type Pick, type RoutingStrategy } from "./router.js";
 import { updateTicket } from "../services/tickets.js";
 import { addComment, listComments } from "../services/comments.js";
@@ -39,7 +42,7 @@ import { pidAlive } from "../db/lifecycle.js";
 import { forgeRuns, aiUsageLogs, tickets, type Ticket, type ForgeRun } from "../db/schema.js";
 import { verifyModel, MISMATCH_WARNING, computeVerificationStatus } from "./verify.js";
 import { resolveChecks, runChecks, formatChecks, type CheckResult } from "./checks.js";
-import { runGate, resolveMutationCmd } from "./gate.js";
+import { runGate, resolveMutationCmd, declaredFullPaths, overlappingDeclared } from "./gate.js";
 import { emitEvent } from "../api/events.js";
 
 const OUTPUT_CAP = 400_000;
@@ -140,6 +143,7 @@ type Run = {
   promoteOnPass?: boolean;
   allowPaths?: string[]; gateOnlyPaths?: string[]; gateOnlySha?: string;
   limit?: { role: "plan" | "work" | "review"; account: string }; // usage limit hit this run (memory only)
+  projectId?: string; title?: string; declared?: string[]; // plan overlap check (memory only)
   output: string; startedAt: string; finishedAt?: string;
   child?: ChildProcess; // the in-flight agent CLI for the current stage, if any
   checksChild?: ChildProcess; // the concurrently-running checks command, if any
@@ -151,11 +155,11 @@ type Run = {
 
 const runs = new Map<string, Run>();
 
-export type RunSummary = Omit<Run, "output" | "child" | "checksChild" | "abort" | "stopped" | "done" | "persisted" | "pid" | "logPath" | "runToken" | "procStartedAt" | "lastLogSize" | "lastActivityAt" | "lastCpuMs" | "stallReason">;
+export type RunSummary = Omit<Run, "output" | "child" | "checksChild" | "abort" | "stopped" | "done" | "persisted" | "pid" | "logPath" | "runToken" | "procStartedAt" | "lastLogSize" | "lastActivityAt" | "lastCpuMs" | "stallReason" | "declared">;
 
 function summarize(r: Run): RunSummary {
-  const { output, child, checksChild, abort, stopped, done, persisted, pid, logPath, runToken, procStartedAt, lastLogSize, lastActivityAt, lastCpuMs, stallReason, ...rest } = r;
-  void output; void child; void checksChild; void abort; void stopped; void done; void persisted; void pid; void logPath; void runToken; void procStartedAt; void lastLogSize; void lastActivityAt; void lastCpuMs; void stallReason;
+  const { output, child, checksChild, abort, stopped, done, persisted, pid, logPath, runToken, procStartedAt, lastLogSize, lastActivityAt, lastCpuMs, stallReason, declared, ...rest } = r;
+  void output; void child; void checksChild; void abort; void stopped; void done; void persisted; void pid; void logPath; void runToken; void procStartedAt; void lastLogSize; void lastActivityAt; void lastCpuMs; void stallReason; void declared;
   return rest;
 }
 
@@ -743,13 +747,22 @@ async function pipeline(
     append(run, `=== FORGE plan (${run.agents.plan}) ===\n`);
     const knowledge = await getKnowledgeSafe(knowledgeQuery(ticket), ticket.projectId);
     const memory = await getMemorySafe(ticket.title, ticket.projectId);
+    const isSlm = isSlmWorker(run.agents.work, modelOf(run.agents.work));
+    let sizingClause = "";
+    if (isSlm) {
+      const sizing = await evaluateTaskSizing(ticket, priorPlan, run.agents.work, modelOf(run.agents.work));
+      sizingClause = atomicDirective(sizing);
+      if (sizing.isTooBig) {
+        append(run, `[forge: task sizing -> too broad for ${run.agents.work} (${sizing.reason}); injecting atomic directive]\n`);
+      }
+    }
     const { result: res, strayPaths: planStray } = await withReadOnlyView(workdir, ticket.id, "plan", "HEAD", (view) => {
       const opEv = operatorEvidence ? mirrorOperatorEvidence(operatorEvidence.dir, view, operatorEvidence.files) : [];
       const planPrompt = composePlanPrompt({
         ticket, knowledge, memory,
         skillIndex: formatSkillIndex(skillsForAgent(catalogue, agents.plan.skillAllowlist)),
         operatorEvidence: opEv.length ? opEv : undefined,
-      }) + PLAN_ONLY + lessons + roleStyle("plan", styleSetting) + extra;
+      }) + PLAN_ONLY + lessons + sizingClause + roleStyle("plan", styleSetting) + extra;
       return track(actorId, ticket.id, "plan", run.agents.plan, planPrompt.length, () => runAgent(
         { ...agents.plan, projectId: ticket.projectId, ...evidenceDirs }, planPrompt, view, onData,
         (child) => recordSpawn(run, child),
@@ -782,6 +795,18 @@ async function pipeline(
     plan = priorPlan;
   }
 
+  run.projectId = ticket.projectId;
+  run.title = ticket.title;
+  run.declared = declaredFullPaths(plan);
+  const others = activeRuns()
+    .filter((r) => r.id !== run.id && r.projectId === run.projectId && r.declared)
+    .map((r) => ({ ticketId: r.ticketId, title: r.title ?? "", declared: r.declared! }));
+  for (const o of overlappingDeclared(run.declared, others)) {
+    const line = `forge: WARN plan overlaps ticket ${o.ticketId.slice(0, 8)} "${o.title}" on ${o.files.join(", ")}`;
+    append(run, "\n" + line + "\n");
+    addComment(actorId, ticket.id, line, "comment").catch(() => {});
+  }
+
   const selectedSkills = selectSkills(plan, agents.work.skillAllowlist);
   if (selectedSkills.names.length) append(run, `\nforge: skills attached: ${selectedSkills.names.join(", ")}\n`);
 
@@ -801,7 +826,30 @@ async function pipeline(
   // the same mistakes (live-hit on the first dogfood ticket).
   const lastReview = [...(await listComments(ticket.id))].reverse().find((c) => c.kind === "review");
   const conflictNote = sync?.state === "conflict" ? `\n\nResolve the merge conflicts in ${(sync.files ?? []).join(", ")}; keep both sides' intent.` : "";
-  const findings = conflictNote + (lastReview ? `\n\nPrevious review findings (address ALL of these):\n${fenceUntrusted("prior-review-findings", lastReview.body)}` : "");
+  const findings = lastReview ? fenceUntrusted("prior-review-findings", lastReview.body) : "";
+
+  let rework: ReworkContext | undefined;
+  if (lastReview || sync?.state === "conflict") {
+    let recentCommit: string | undefined;
+    let gitStatus: string | undefined;
+    try {
+      recentCommit = execFileSync("git", ["log", "-n", "1", "--oneline"], { cwd: sandbox, stdio: ["ignore", "pipe", "ignore"], windowsHide: true }).toString("utf-8").trim();
+      gitStatus = execFileSync("git", ["status", "--short"], { cwd: sandbox, stdio: ["ignore", "pipe", "ignore"], windowsHide: true }).toString("utf-8").trim();
+    } catch {}
+    let failingCheckOutput: string | undefined;
+    if (lastReview?.body && lastReview.body.includes("[forge: check(s) failed")) {
+      const match = lastReview.body.match(/\[forge: check\(s\) failed[^\n]*\]\n([\s\S]*?)(?=\nVERDICT: FAIL|$)/);
+      if (match) failingCheckOutput = match[1].trim();
+    }
+    rework = {
+      findings: findings || (conflictNote ? "Resolve merge conflicts" : ""),
+      conflictNote: conflictNote.trim() || undefined,
+      recentCommit: recentCommit || undefined,
+      gitStatus: gitStatus || undefined,
+      failingCheckOutput,
+    };
+  }
+
   const workChecks = resolveChecks(await getSetting(`forge.checks.${ticket.projectId}`), sandbox, await getSetting("forge.checks"));
   const workPrompt = composeWorkPrompt({
     ticket, plan, knowledge, workdir: sandbox, memory,
@@ -809,13 +857,14 @@ async function pipeline(
     operatorEvidence: workEv.length ? workEv : undefined,
     allowedCommands: (await loadWall(ticket.projectId, true, sandbox)).allowed,
     checks: workChecks,
+    rework,
   })
     // No lessons clause here: A/B'd 2026-08-12 (docs/findings/2026-08-12-lessons-clause-ab.md).
     // On work prompts the doc measured inert - identical output on a control task, same
     // defect rate on a task its own "test isolation" line targets. Most of its lines
     // address the supervisor ("Supervisor sweeps before planning", "REPORT:/VERDICT:"),
     // which a worker cannot act on. Still injected at the plan stage, which was not tested.
-    + findings + NARRATION + (parseExportTo(ticket.body ?? "") ? EXPORT_NARRATION : "") + "\n\nDo NOT run git commit; the supervisor commits for you." + roleStyle("work", styleSetting) + extra;
+    + NARRATION + (parseExportTo(ticket.body ?? "") ? EXPORT_NARRATION : "") + "\n\nDo NOT run git commit; the supervisor commits for you." + roleStyle("work", styleSetting) + extra;
   // Sandbox-escape sentinel: snapshot known-sensitive files OUTSIDE the sandbox
   // before the work stage runs. Bash in a work lane is not OS-jailed, so a diff
   // gate (which only sees the worktree) cannot catch a write to the installed
@@ -825,9 +874,37 @@ async function pipeline(
   const sentinelSnaps = snapshotSensitive(resolveSensitivePaths(await getSetting("forge.sensitivePaths")));
   const headBefore = await sandboxHeadHash(workdir, ticket.id);
   const workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
-    runAgent({ ...agents.work, write: true, projectId: ticket.projectId, ...evidenceDirs }, workPrompt, sandbox, onData,
+    runAgent({ ...agents.work, write: true, projectId: ticket.projectId, liftedRules, ...evidenceDirs }, workPrompt, sandbox, onData,
       (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
       modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r)));
+  const allowCmd = parseAllowCommand(ticket.body ?? "");
+  if (!crashed) {
+    const committed = await forgeCommit(ticket.id, ticket.title);
+    if (!committed && (await sandboxHeadHash(workdir, ticket.id)) === headBefore
+      && !(parseExportTo(ticket.body ?? "") && listExportOutputs(ticket.id).length)) {
+      run.cause = "no_changes";
+      await bounce(run, actorId, "no changes: work stage produced no diff", redactSecrets(workRes.output));
+      return settle(run, "failed");
+    }
+  }
+  const unknownRules = allowCmd.filter((id) => !RISK_IDS.includes(id));
+  if (unknownRules.length) append(run, `\nforge: ALLOW-COMMAND ignores unknown rule ids: ${unknownRules.join(", ")}\n`);
+  const liftedRules = allowCmd.filter((id) => RISK_IDS.includes(id));
+  if (liftedRules.length) append(run, `\nforge: deny list lifted for this run: ${liftedRules.join(", ")}\n`);
+  const agyHook = binBasename(agents.work.cmd[0] ?? "").toLowerCase() === "agy";
+  if (agyHook) {
+    installAgyHook(sandbox, agyFirewallHookCommand());
+    append(run, "\nforge: agy firewall hook installed (.agents/hooks.json, removed before commit)\n");
+  }
+  let workRes: AgentResult;
+  try {
+    workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
+      runAgent({ ...agents.work, write: true, projectId: ticket.projectId, liftedRules, ...evidenceDirs }, workPrompt, sandbox, onData,
+        (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
+        modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r)));
+  } finally {
+    if (agyHook) restoreAgyHook(sandbox);
+  }
   run.child = undefined;
   run.abort = undefined;
   const tampered = detectAndRestore(sentinelSnaps);
@@ -920,6 +997,38 @@ async function pipeline(
       return settle(run, "failed");
     }
   }
+  if (!crashed && (await getSetting("forge.preReviewCheck")) === "true") {
+    const preChecks = resolveChecks(await getSetting(`forge.checks.${ticket.projectId}`), sandbox, await getSetting("forge.checks"));
+    if (preChecks.length > 0) {
+      append(run, `\n=== FORGE pre-review check ===\n`);
+      const results = await runChecks(preChecks, sandbox);
+      const failed = results.filter((r) => r.code !== 0);
+      if (failed.length > 0) {
+        append(run, `\nforge: pre-review check failed (${failed.length} check(s)); running local rework retry before review\n`);
+        const preCheckOutput = formatChecks(results);
+        const retryPrompt = composeWorkPrompt({
+          ticket, plan, knowledge, workdir: sandbox, memory,
+          skills: selectedSkills.bodies,
+          allowedCommands: (await loadWall(ticket.projectId, true, sandbox)).allowed,
+          checks: preChecks,
+          rework: {
+            findings: "Fix failing checks before supervisor review.",
+            failingCheckOutput: preCheckOutput,
+          },
+        }) + NARRATION + "\n\nDo NOT run git commit; the supervisor commits for you.";
+        try {
+          const retryRes = await track(actorId, ticket.id, "work", run.agents.work, retryPrompt.length, () =>
+            runAgent({ ...agents.work, write: true, projectId: ticket.projectId, liftedRules, ...evidenceDirs }, retryPrompt, sandbox, onData,
+              (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
+              modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r)));
+          if (retryRes.ok) {
+            await forgeCommit(ticket.id, `${ticket.title} (pre-review fix)`);
+          }
+        } catch {}
+      }
+>>>>>>> 1130fc51c0e69badb7c6b12b44fc808e3461b691
+    }
+  }
   await addComment(actorId, ticket.id, redactSecrets(workRes.output), "report");
   void captureMemory({ actorId, text: redactSecrets(reportTail(workRes.output)), projectId: ticket.projectId ?? undefined });
   ticket = await setStatus(actorId, ticket.id, "review");
@@ -953,6 +1062,24 @@ function settle(run: Run, status: Status): void {
   // so until this row lands a settled run still reads as active. That gap used to
   // be covered by the analyzer's extra await; deleting the analyzer exposed it.
   run.persisted = persistRun(run).catch(() => {});
+  void harvestRunLessons(run, status).catch(() => {});
+}
+
+async function harvestRunLessons(run: Run, status: Status): Promise<void> {
+  if (status !== "rejected" && status !== "failed") return;
+  const comments = await listComments(run.ticketId);
+  const lastReview = [...comments].reverse().find((c) => c.kind === "review");
+  const reviewBody = lastReview?.body ?? "";
+  if (!reviewBody.includes("VERDICT: FAIL") && !reviewBody.includes("Critical:")) return;
+  const ticket = await getTicket(run.ticketId);
+  const actorsList = await listActors();
+  const actorId = actorsList[0]?.id;
+  if (!actorId) return;
+  await harvestLessons(actorId, {
+    ticketTitle: ticket.title,
+    status,
+    reviewFindings: reviewBody,
+  });
 }
 
 // Known-benign SDK worker errors: matched only on the supervisor marker lines from invoke-sdk.ts, never worker text.

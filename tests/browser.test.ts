@@ -1,4 +1,5 @@
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
+import { usesCdp, keyEventParams, keySequence, centrePoint, frameOffset, wheelParams, dispatchCdp } from "../extension/cdp.js";
 import { createActor } from "../src/services/actors.js";
 import { app } from "../src/api/app.js";
 import { BROWSER_TUNING } from "../src/browser/channel.js";
@@ -440,4 +441,177 @@ test("tabs is read-tier: no targetOrigin or grant needed to enqueue", async () =
   });
   // 504: enqueued and nobody collected it in this test - the gate let it through.
   expect(res.status).toBe(504);
+});
+
+test("scroll is read-tier: no targetOrigin or grant needed to enqueue", async () => {
+  BROWSER_TUNING.batchTimeoutMs = 100;
+  const h = await memberHeaders();
+  const id = await registerInstance(h);
+  const res = await app.request("/browser/batches", {
+    method: "POST",
+    headers: h,
+    body: JSON.stringify({ instanceId: id, tenant: "acme", steps: [{ verb: "scroll", dy: 400 }] }),
+  });
+  expect(res.status).toBe(504);
+});
+
+test("cdp: keyEventParams returns expected mappings for Enter", () => {
+  expect(keyEventParams("Enter")).toEqual({
+    key: "Enter",
+    code: "Enter",
+    windowsVirtualKeyCode: 13,
+    nativeVirtualKeyCode: 13,
+    text: "\r",
+  });
+});
+
+test("cdp: keyEventParams returns expected code and VK with text for single char keys", () => {
+  const a = keyEventParams("a");
+  expect(a.code).toBe("KeyA");
+  expect(a.windowsVirtualKeyCode).toBe(65);
+  expect(a.text).toBe("a");
+
+  const space = keyEventParams(" ");
+  expect(space.code).toBe("Space");
+  expect(space.windowsVirtualKeyCode).toBe(32);
+  expect(space.text).toBe(" ");
+});
+
+test("cdp: keyEventParams returns expected VK and omits text property for non-text keys", () => {
+  const tab = keyEventParams("Tab");
+  expect(tab.windowsVirtualKeyCode).toBe(9);
+  expect(tab).not.toHaveProperty("text");
+
+  const esc = keyEventParams("Escape");
+  expect(esc.windowsVirtualKeyCode).toBe(27);
+  expect(esc).not.toHaveProperty("text");
+
+  const down = keyEventParams("ArrowDown");
+  expect(down.windowsVirtualKeyCode).toBe(40);
+  expect(down).not.toHaveProperty("text");
+});
+
+test("cdp: keySequence returns rawKeyDown, char, keyUp sequence for keys with text, and rawKeyDown, keyUp for keys without text", () => {
+  expect(keySequence("Enter").map((p: any) => p.type)).toEqual(["rawKeyDown", "char", "keyUp"]);
+  expect(keySequence("Tab").map((p: any) => p.type)).toEqual(["rawKeyDown", "keyUp"]);
+});
+
+test("cdp: centrePoint computes element centre with offset", () => {
+  expect(centrePoint({ left: 10, top: 20, width: 100, height: 40 }, { x: 5, y: 7 })).toEqual({ x: 65, y: 47 });
+});
+
+test("cdp: frameOffset walks frames, sums rects, and catches cross-origin access", () => {
+  expect(frameOffset({ frameElement: null } as any)).toEqual({ x: 0, y: 0 });
+
+  const fakeView2 = { frameElement: null };
+  const fakeView1 = {
+    frameElement: {
+      getBoundingClientRect: () => ({ left: 10, top: 20 }),
+      ownerDocument: { defaultView: fakeView2 },
+    },
+  };
+  (fakeView2 as any).frameElement = {
+    getBoundingClientRect: () => ({ left: 5, top: 15 }),
+    ownerDocument: { defaultView: { frameElement: null } },
+  };
+  expect(frameOffset(fakeView1 as any)).toEqual({ x: 15, y: 35 });
+
+  const throwingView = {
+    frameElement: {
+      getBoundingClientRect: () => ({ left: 8, top: 12 }),
+      ownerDocument: {
+        get defaultView() {
+          return {
+            get frameElement() {
+              throw new Error("cross-origin");
+            },
+          };
+        },
+      },
+    },
+  };
+  expect(frameOffset(throwingView as any)).toEqual({ x: 8, y: 12 });
+});
+
+test("cdp: wheelParams returns mouseWheel params at viewport centre with dy", () => {
+  expect(wheelParams(800, 600, 300)).toEqual({
+    type: "mouseWheel",
+    x: 400,
+    y: 300,
+    deltaX: 0,
+    deltaY: 300,
+  });
+});
+
+test("cdp: dispatchCdp sends commands for click, type, press, scroll and rejects unknown", async () => {
+  const send = vi.fn().mockResolvedValue({});
+
+  // click
+  await dispatchCdp(send, { verb: "click", x: 5, y: 6 });
+  expect(send).toHaveBeenNthCalledWith(1, "Input.dispatchMouseEvent", { type: "mouseMoved", x: 5, y: 6 });
+  expect(send).toHaveBeenNthCalledWith(2, "Input.dispatchMouseEvent", { type: "mousePressed", x: 5, y: 6, button: "left", buttons: 1, clickCount: 1 });
+  expect(send).toHaveBeenNthCalledWith(3, "Input.dispatchMouseEvent", { type: "mouseReleased", x: 5, y: 6, button: "left", buttons: 0, clickCount: 1 });
+  send.mockClear();
+
+  // type
+  await dispatchCdp(send, { verb: "type", text: "hi" });
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(send).toHaveBeenCalledWith("Input.insertText", { text: "hi" });
+  send.mockClear();
+
+  // press
+  await dispatchCdp(send, { verb: "press", key: "Enter" });
+  expect(send).toHaveBeenCalledTimes(3);
+  expect(send).toHaveBeenNthCalledWith(1, "Input.dispatchKeyEvent", {
+    type: "rawKeyDown",
+    key: "Enter",
+    code: "Enter",
+    windowsVirtualKeyCode: 13,
+    nativeVirtualKeyCode: 13,
+  });
+  expect(send).toHaveBeenNthCalledWith(2, "Input.dispatchKeyEvent", {
+    type: "char",
+    key: "Enter",
+    code: "Enter",
+    windowsVirtualKeyCode: 13,
+    nativeVirtualKeyCode: 13,
+    text: "\r",
+    unmodifiedText: "\r",
+  });
+  expect(send).toHaveBeenNthCalledWith(3, "Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: "Enter",
+    code: "Enter",
+    windowsVirtualKeyCode: 13,
+    nativeVirtualKeyCode: 13,
+  });
+  send.mockClear();
+
+  // scroll
+  await dispatchCdp(send, { verb: "scroll", dy: 300, w: 800, h: 600 });
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(send).toHaveBeenCalledWith("Input.dispatchMouseEvent", {
+    type: "mouseWheel",
+    x: 400,
+    y: 300,
+    deltaX: 0,
+    deltaY: 300,
+  });
+  send.mockClear();
+
+  // unknown verb rejects
+  await expect(dispatchCdp(send, { verb: "unknown" } as any)).rejects.toThrow();
+});
+
+test("cdp: usesCdp identifies steps eligible for CDP", () => {
+  expect(usesCdp({ verb: "click", ref: "ref1" })).toBe(true);
+  expect(usesCdp({ verb: "clickAt", x: 10, y: 10 })).toBe(true);
+  expect(usesCdp({ verb: "type", ref: "ref1", text: "hi" })).toBe(true);
+  expect(usesCdp({ verb: "press", key: "Enter" })).toBe(true);
+  expect(usesCdp({ verb: "scroll", dy: 1 })).toBe(true);
+
+  expect(usesCdp({ verb: "scroll", ref: "ref1" })).toBe(false);
+  expect(usesCdp({ verb: "select", ref: "ref1", option: "opt" })).toBe(false);
+  expect(usesCdp({ verb: "navigate", url: "https://example.com" })).toBe(false);
+  expect(usesCdp({ verb: "read", ref: "ref1" })).toBe(false);
 });

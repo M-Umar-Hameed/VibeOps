@@ -358,7 +358,7 @@ describe("forge run manager", () => {
 
   it("FAIL verdict settles rejected, bounces to planned, sandbox kept", async () => {
     const { actorId, ticket } = await seedTicket("Fail path");
-    setScript("plan,work,review-fail", true);
+    setScript("plan,work,review-fail", true, true);
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
@@ -772,7 +772,7 @@ describe("forge run manager", () => {
   it("work stage editing a protected path records a durable violation without forcing the verdict", async () => {
     const { actorId, ticket } = await seedTicket("Protected path violation");
     process.env.FAKE_WRITE_PATH = "vitest.config.ts";
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
@@ -798,7 +798,7 @@ describe("forge run manager", () => {
     await updateTicket(actorId, ticket.id, ticket.version,
       { body: "Fix the test runner.\nALLOW-PROTECTED: vitest.config.ts" });
     process.env.FAKE_WRITE_PATH = "vitest.config.ts";
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
@@ -816,7 +816,7 @@ describe("forge run manager", () => {
   it("a run touching only src/ is unaffected by the protected-path gate", async () => {
     const { actorId, ticket } = await seedTicket("Ordinary src path");
     process.env.FAKE_WRITE_PATH = "src/feature.ts";
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
@@ -1504,7 +1504,7 @@ const file2 = "run2-output.txt";
     writeFileSync(join(workdir, "node_modules", "marker.txt"), "base\n");
 
     const { actorId, ticket } = await seedTicket("Deps leak test");
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
     process.env.FAKE_WRITE_DEPS = "LEAK.txt";
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
@@ -1547,7 +1547,7 @@ const file2 = "run2-output.txt";
     utimesSync(pkg, past, past);
 
     const { actorId, ticket } = await seedTicket("Deps package write");
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
     process.env.FAKE_WRITE_DEPS = "some-pkg/index.js";
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
@@ -1567,7 +1567,7 @@ const file2 = "run2-output.txt";
     writeFileSync(join(workdir, "app", "node_modules", "marker.txt"), "base\n");
 
     const { actorId, ticket } = await seedTicket("Deps leak test app deps");
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
     process.env.FAKE_WRITE_DEPS = "../app/node_modules/LEAK.txt";
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
@@ -1586,7 +1586,7 @@ const file2 = "run2-output.txt";
     writeFileSync(join(workdir, "app", "node_modules", "marker.txt"), "base\n");
 
     const { actorId, ticket } = await seedTicket("Deps leak test app deps enabled");
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
     process.env.FAKE_WRITE_ABS = join(workdir, "app", "node_modules", "LEAK.txt");
 
     await withSetting("forge.frontendDeps", "true", async () => {
@@ -1608,7 +1608,7 @@ const file2 = "run2-output.txt";
     writeFileSync(join(workdir, "node_modules", "marker.txt"), "base\n");
 
     const { actorId, ticket } = await seedTicket("Deps leak test root");
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
     process.env.FAKE_WRITE_DEPS = "LEAK2.txt";
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
@@ -1627,7 +1627,7 @@ const file2 = "run2-output.txt";
     writeFileSync(join(workdir, "site", "node_modules", "marker.txt"), "base\n");
 
     const { actorId, ticket } = await seedTicket("Deps leak site");
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
     process.env.FAKE_WRITE_ABS = join(workdir, "site", "node_modules", "LEAK.txt");
 
     await withSetting(`forge.depsDirs.${ticket.projectId}`, JSON.stringify(["node_modules", "site/node_modules"]), async () => {
@@ -1740,7 +1740,7 @@ const file2 = "run2-output.txt";
     const { actorId, ticket } = await seedTicket("Gate block forces fail");
     // Write a stray file not in plan (triggers file-set block)
     process.env.FAKE_WRITE_PATH = "target.txt";
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
@@ -1769,7 +1769,7 @@ const file2 = "run2-output.txt";
     // No stray files - plan mentions the same file the agent writes
     await updateTicket(actorId, ticket.id, ticket.version, { body: "Write forge-made.txt" });
     process.env.FAKE_WRITE_PATH = "forge-made.txt";
-    setScript("plan,work,review-pass");
+    setScript("plan,work,review-pass", true);
 
     const { runId } = await startPipeline(actorId, relayConfig(), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
@@ -2038,7 +2038,7 @@ describe("read-only stage views", () => {
   it("a worker that writes nothing settles failed with cause no_changes and spawns neither checks nor review", async () => {
     const { actorId, ticket } = await seedTicket("No changes");
     await withSetting("forge.checks", JSON.stringify([`node "${join(__dirname, "fixtures", "check-fail.mjs")}"`]), async () => {
-      setScript("plan,work,review-pass");
+      setScript("plan,work,review-pass", true);
       const { runId } = await startPipeline(actorId, relayConfig(), {
         ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
       });
@@ -2064,7 +2064,7 @@ describe("read-only stage views", () => {
       await updateTicket(actorId, ticket.id, t.version, { body: `spec\nEXPORT-TO: ${exportTarget}` });
 
       process.env.FAKE_WRITE_PATH = ".forge/out/x.txt";
-      setScript("plan,work,review-pass");
+      setScript("plan,work,review-pass", true);
       const { runId } = await startPipeline(actorId, relayConfig(), {
         ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
       });

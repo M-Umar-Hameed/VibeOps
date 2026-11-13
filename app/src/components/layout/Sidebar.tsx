@@ -352,6 +352,19 @@ export function Sidebar({ setIsOpen = (_v: boolean) => {} }) {
           </div>
         </div>
       </div>
+      <div className="shrink-0 border-t border-white/10 px-4 py-3">
+        <button
+          type="button"
+          onClick={async () => {
+            if (!confirm("Restart VibeOps server? Active Forge runs will be interrupted.")) return;
+            try { await api.post("/system/shutdown"); } catch {}
+          }}
+          className="w-full flex items-center gap-2 px-2 py-2 text-sm text-on-surface-variant hover:text-error hover:bg-error/10 rounded transition-all"
+        >
+          <span className="material-symbols-outlined text-sm">restart_alt</span>
+          Restart server
+        </button>
+      </div>
       {menu && (
         <ProjectContextMenu
           project={menu.project}

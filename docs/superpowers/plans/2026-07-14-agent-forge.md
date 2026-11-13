@@ -525,9 +525,9 @@ const KEEP_FINISHED = 20;
 const MAX_EXTRA_PROMPT = 10_000;
 
 const NARRATION =
-  "\n\nNarrate your reasoning out loud as you work: before each step, print what " +
-  "you are about to do and why. Your narration is read live by the supervisor " +
-  "and by the reviewing model.";
+ "\n\nBefore each step, print what you are about to do and why. " +
+"Your progress log is read live by the supervisor and by the reviewing model."
+
 
 type Stage = "plan" | "work" | "review";
 type Status = "running" | "passed" | "failed" | "stopped";

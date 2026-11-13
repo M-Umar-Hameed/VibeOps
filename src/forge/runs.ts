@@ -117,9 +117,8 @@ export function reviewDiffPayload(fullDiff: string, stat: string, cap = DIFF_PRO
 }
 
 export const NARRATION =
-  "\n\nNarrate your reasoning out loud as you work: before each step, print what " +
-  "you are about to do and why. Your narration is read live by the supervisor " +
-  "and by the reviewing model." +
+  "\n\nBefore each step, print what you are about to do and why. " +
+"Your progress log is read live by the supervisor and by the reviewing model." +
   // Absolute paths make sandboxed workers write at the REAL repo, which their
   // own workspace security then denies (live incident: agy asked for write
   // approval on D:\...\src, wrote nothing, and reported success anyway).

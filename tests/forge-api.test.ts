@@ -1568,8 +1568,9 @@ it("boot reconcile does NOT touch a review ticket whose last run failed", async 
         const ticketBadPath = await createTicket(adminActor.id, {
           projectId: project.id, title: "Bad export path", body: `EXPORT-TO: ${badPath}`,
         });
+        rmSync(counterFile, { force: true });
         setScript("plan,work,review-pass", true);
-        const startBad = await app.request("/forge/pipeline", {
+        const startBad =await app.request("/forge/pipeline", {
           method: "POST", headers: h,
           body: JSON.stringify({ ticketId: ticketBadPath.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
         });
@@ -1582,8 +1583,9 @@ it("boot reconcile does NOT touch a review ticket whose last run failed", async 
         const exportTicket = await createTicket(adminActor.id, {
           projectId: project.id, title: "Export only ticket", body: `EXPORT-TO: ${exportDest}`,
         });
+        rmSync(counterFile, { force: true });
         setScript("plan,work,review-pass", true);
-        const startGood = await app.request("/forge/pipeline", {
+        const startGood =await app.request("/forge/pipeline", {
           method: "POST", headers: h,
           body: JSON.stringify({ ticketId: exportTicket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
         });

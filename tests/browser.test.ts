@@ -87,6 +87,27 @@ test("batch round trip resolves with the result the fake client posts", async ()
   expect(await batchRes.json()).toEqual(canned);
 });
 
+test("timings flag is delivered only when requested; result returns verbatim", async () => {
+  const h = await memberHeaders();
+  const id = await registerInstance(h);
+  const canned = {
+    results: [{ ok: true }],
+    snapshot: { instanceId: id, origin: "https://x", identity: null, nodes: [] },
+    timings: { agentTab: 1 },
+  };
+  const post = (extra: object) =>
+    app.request("/browser/batches", {
+      method: "POST",
+      headers: h,
+      body: JSON.stringify({ instanceId: id, tenant: "acme", steps: [{ verb: "snapshot" }], ...extra }),
+    });
+  const [timed, c1] = await Promise.all([post({ timings: true }), fakeClientCycle(h, id, canned)]);
+  expect(c1.batch.timings).toBe(true);
+  expect(await timed.json()).toEqual(canned);
+  const [, c2] = await Promise.all([post({}), fakeClientCycle(h, id, canned)]);
+  expect(c2.batch).not.toHaveProperty("timings");
+});
+
 test("unknown verb is rejected 400 and nothing is enqueued", async () => {
   BROWSER_TUNING.pollTimeoutMs = 80;
   const h = await memberHeaders();

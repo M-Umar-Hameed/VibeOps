@@ -39,6 +39,7 @@ export type DeliveredBatch = {
   steps: ActionStep[];
   grant?: "act";
   targetOrigin?: string;
+  timings?: true;
 };
 
 // Transport: HTTP long-poll on the existing Hono server — zero new deps, same
@@ -61,6 +62,7 @@ type Pending = {
   steps: ActionStep[];
   grant?: "act";
   targetOrigin?: string;
+  timings?: true;
   resolve: (r: BatchResult | null) => void; // null => batch timeout (route maps to 504)
   timer: ReturnType<typeof setTimeout>;
   settled: boolean;
@@ -130,7 +132,7 @@ function pump(inst: Instance): void {
   const w = inst.waiter;
   inst.waiter = null;
   clearTimeout(w.timer);
-  w.resolve({ batchId: batch.batchId, instanceId: inst.meta.instanceId, tenant: batch.tenant, steps: batch.steps, grant: batch.grant, targetOrigin: batch.targetOrigin });
+  w.resolve({ batchId: batch.batchId, instanceId: inst.meta.instanceId, tenant: batch.tenant, steps: batch.steps, grant: batch.grant, targetOrigin: batch.targetOrigin, ...(batch.timings ? { timings: true as const } : {}) });
 }
 
 // GET /browser/poll: next batch for this instance, or null on ~25s timeout (204).
@@ -144,7 +146,7 @@ export function nextBatch(instanceId: string): Promise<DeliveredBatch | null> {
     if (!inst.inFlight && inst.queue.length > 0) {
       const batch = inst.queue.shift()!;
       inst.inFlight = batch;
-      resolve({ batchId: batch.batchId, instanceId, tenant: batch.tenant, steps: batch.steps, grant: batch.grant, targetOrigin: batch.targetOrigin });
+      resolve({ batchId: batch.batchId, instanceId, tenant: batch.tenant, steps: batch.steps, grant: batch.grant, targetOrigin: batch.targetOrigin, ...(batch.timings ? { timings: true as const } : {}) });
       return;
     }
     // Single poller per instance (MVP): retire any prior waiter as a 204.
@@ -168,10 +170,11 @@ export function submitBatch(
   tenant: string,
   steps: ActionStep[],
   delivery?: { grant: "act"; targetOrigin: string },
+  opts?: { timings?: true },
 ): Promise<BatchResult | null> {
   const inst = live(instances.get(instanceId), Date.now());
   if (!inst) return Promise.resolve(null); // route guarantees existence; defensive only
-  return submitScreened(inst, instanceId, tenant, steps, delivery);
+  return submitScreened(inst, instanceId, tenant, steps, delivery, opts);
 }
 
 // Every act path (chat tools, MCP verbs, the HTTP route) reaches the browser
@@ -183,13 +186,14 @@ async function submitScreened(
   tenant: string,
   steps: ActionStep[],
   delivery?: { grant: "act"; targetOrigin: string },
+  opts?: { timings?: true },
 ): Promise<BatchResult | null> {
   if (delivery?.grant === "act") {
     const { actRiskRefusal } = await import("./risk.js");
     const refusal = await actRiskRefusal(steps, delivery.targetOrigin);
     if (refusal) return { results: [{ ok: false, error: refusal }], snapshot: null };
   }
-  return enqueueBatch(inst, instanceId, tenant, steps, delivery);
+  return enqueueBatch(inst, instanceId, tenant, steps, delivery, opts);
 }
 
 function enqueueBatch(
@@ -198,6 +202,7 @@ function enqueueBatch(
   tenant: string,
   steps: ActionStep[],
   delivery?: { grant: "act"; targetOrigin: string },
+  opts?: { timings?: true },
 ): Promise<BatchResult | null> {
   return new Promise<BatchResult | null>((resolve) => {
     const batch: Pending = {
@@ -206,6 +211,7 @@ function enqueueBatch(
       steps,
       grant: delivery?.grant,
       targetOrigin: delivery?.targetOrigin,
+      timings: opts?.timings,
       resolve,
       settled: false,
       timer: setTimeout(() => {

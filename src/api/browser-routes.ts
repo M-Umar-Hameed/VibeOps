@@ -71,7 +71,7 @@ export function registerBrowserRoutes(app: Hono<AppEnv>): void {
 
   app.post("/browser/batches", async (c) => {
     const body = await c.req.json().catch(() => null);
-    const { instanceId, tenant, steps, targetOrigin } = (body ?? {}) as { instanceId?: unknown; tenant?: unknown; steps?: unknown; targetOrigin?: unknown };
+    const { instanceId, tenant, steps, targetOrigin, timings } = (body ?? {}) as { instanceId?: unknown; tenant?: unknown; steps?: unknown; targetOrigin?: unknown; timings?: unknown };
     if (typeof instanceId !== "string" || !exists(instanceId)) return c.json({ error: "unknown instance" }, 404);
     if (typeof tenant !== "string" || !tenant.trim()) return c.json({ error: "tenant required" }, 400);
     const v = validateSteps(steps);
@@ -89,7 +89,7 @@ export function registerBrowserRoutes(app: Hono<AppEnv>): void {
       }
       delivery = { grant: "act", targetOrigin };
     }
-    const result = await submitBatch(instanceId, tenant, v.steps, delivery);
+    const result = await submitBatch(instanceId, tenant, v.steps, delivery, timings === true ? { timings: true } : undefined);
     if (!result) return c.json({ error: "batch timed out" }, 504);
     return c.json(result);
   });

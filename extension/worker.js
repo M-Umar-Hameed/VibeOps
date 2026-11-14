@@ -6,6 +6,7 @@
 import { splitSegments } from "./segments.js";
 import { dispatchCdp, usesCdp } from "./cdp.js";
 import { withPaintableWindow, needsDebugger, keepPageLive, captureScreenshotVia, wantsPaint, createDebuggerLease } from "./window.js";
+import { createPhaseTimer } from "./timings.js";
 
 const API_BASE = "http://127.0.0.1:8787";
 
@@ -179,13 +180,19 @@ const dbgLease = createDebuggerLease({
 chrome.debugger.onDetach.addListener((source) => dbgLease.dropped(source.tabId));
 
 // Injected via chrome.scripting.executeScript (serialized by toString): must not reference module scope.
-async function runInPage(steps, grant, targetOrigin, trusted, resume) {
+async function runInPage(steps, grant, targetOrigin, trusted, resume, timed) {
+  const t0 = performance.now();
   const { executeSteps } = await import(chrome.runtime.getURL("execute.js"));
+  const t1 = performance.now();
   const out = await executeSteps(document, steps, grant, targetOrigin, { trusted, refMap: resume ? globalThis.__vibeopsRefs : undefined });
   globalThis.__vibeopsRefs = out.refMap; // Map of Elements is not structured-cloneable
   delete out.refMap;
+  if (timed) out.pageMs = { import: t1 - t0, execute: performance.now() - t1 };
   return out;
 }
+
+// Submit + re-minimize of the previous timed batch; both land after its result is sent.
+let prevTail = null;
 
 // Tab verbs (tabs/newTab/switchTab) need chrome.tabs, so the batch is split
 // into segments: page segments inject into the agent tab, tab verbs run here
@@ -194,9 +201,26 @@ async function runInPage(steps, grant, targetOrigin, trusted, resume) {
 async function executeBatch(batch) {
   const results = new Array(batch.steps.length);
   let snapshot = { instanceId, origin: "", identity: null, nodes: [] };
+  const timer = createPhaseTimer(batch.timings === true);
+  const prev = prevTail;
+  prevTail = null;
+  const t0 = performance.now();
+  const pageArgs = (a) => (timer.on ? [...a, true] : a); // untimed args stay byte-identical
+  const pageTime = (prefix, result) => {
+    if (!result?.pageMs) return;
+    timer.add(`${prefix}.import`, result.pageMs.import);
+    timer.add(`${prefix}.execute`, result.pageMs.execute);
+    delete result.pageMs;
+  };
+  const windows = timer.on
+    ? {
+        get: (id) => timer.time("window.get", () => chrome.windows.get(id)),
+        update: (id, p) => timer.time(p.state === "minimized" ? "window.minimize" : "window.restore", () => chrome.windows.update(id, p)),
+      }
+    : chrome.windows;
   let first;
   try {
-    first = await agentTab();
+    first = await timer.time("agentTab", agentTab);
   } catch (err) {
     console.error("[worker] agentTab error:", err);
     await submitResult(batch.batchId, {
@@ -205,12 +229,12 @@ async function executeBatch(batch) {
     });
     return;
   }
-  await withPaintableWindow(chrome.windows, first.windowId, wantsPaint(batch), async () => {
+  await withPaintableWindow(windows, first.windowId, wantsPaint(batch), async () => {
     try {
       let failed = false;
       for (const seg of splitSegments(batch.steps)) {
         if (failed) break;
-        const tab = await agentTab();
+        const tab = await timer.time("agentTab", agentTab);
         if (seg.kind === "tab") {
           const r = await runTabStep(seg.step, batch.grant ?? null, batch.targetOrigin ?? null, tab.windowId);
           results[seg.start] = r;
@@ -226,16 +250,17 @@ async function executeBatch(batch) {
           break;
         }
         const tabId = tab.id;
-        if (needsDebugger(batch.grant, seg.steps)) await dbgLease.acquire(tabId);
+        if (needsDebugger(batch.grant, seg.steps)) await timer.time("lease", () => dbgLease.acquire(tabId));
         const attached = dbgLease.holds(tabId);
         const trusted = batch.grant === "act" && attached;
         let i = 0, resume = false, segSnap = null;
         while (i < seg.steps.length) {
-          const [{ result } = {}] = await chrome.scripting.executeScript({
+          const [{ result } = {}] = await timer.time("executeScript", () => chrome.scripting.executeScript({
             target: { tabId },
             func: runInPage,
-            args: [seg.steps.slice(i), batch.grant ?? null, batch.targetOrigin ?? null, trusted, resume],
-          });
+            args: pageArgs([seg.steps.slice(i), batch.grant ?? null, batch.targetOrigin ?? null, trusted, resume]),
+          }));
+          pageTime("page", result);
           if (!result) {
             results[seg.start + i] = { ok: false, error: "the page navigated away before the remaining steps could run - take a fresh snapshot and retry them", code: "page_navigated" };
             failed = true;
@@ -244,12 +269,15 @@ async function executeBatch(batch) {
           for (let j = 0; j < result.results.length; j++) {
             const step = seg.steps[i + j];
             let r = step?.verb === "screenshot"
-              ? await captureScreenshotVia({ cdpReady: attached, send: (m, p) => chrome.debugger.sendCommand({ tabId }, m, p), captureVisibleTab: () => chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }) })
+              ? await timer.time("screenshot", () => captureScreenshotVia({ cdpReady: attached, send: (m, p) => chrome.debugger.sendCommand({ tabId }, m, p), captureVisibleTab: () => chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }) }))
               : result.results[j];
             if (r === undefined) break;
             if (r.cdp) {
               try {
-                await dispatchCdp((method, params) => chrome.debugger.sendCommand({ tabId }, method, params), r.cdp);
+                await timer.time("dispatchCdp", () => dispatchCdp(
+                  (method, params) => timer.time(`cdp.${method}${params?.type ? "." + params.type : ""}`, () => chrome.debugger.sendCommand({ tabId }, method, params)),
+                  r.cdp,
+                ));
                 r = { ok: true, path: "cdp" };
               } catch (err) {
                 r = { ok: false, error: `trusted input failed: ${String(err)}`, code: "cdp_failed", path: "cdp" };
@@ -267,11 +295,12 @@ async function executeBatch(batch) {
         }
         if (segSnap === null) {
           try {
-            const [{ result } = {}] = await chrome.scripting.executeScript({
+            const [{ result } = {}] = await timer.time("snapshotScript", () => chrome.scripting.executeScript({
               target: { tabId },
               func: runInPage,
-              args: [[], batch.grant ?? null, batch.targetOrigin ?? null, trusted, true],
-            });
+              args: pageArgs([[], batch.grant ?? null, batch.targetOrigin ?? null, trusted, true]),
+            }));
+            pageTime("snapshotPage", result);
             if (result?.snapshot) segSnap = result.snapshot;
           } catch {
             // Keep previous snapshot
@@ -280,7 +309,9 @@ async function executeBatch(batch) {
         snapshot = segSnap ?? snapshot;
       }
       snapshot.instanceId = instanceId;
-      await submitResult(batch.batchId, { results: results.filter((r) => r !== undefined), snapshot });
+      const payload = { results: results.filter((r) => r !== undefined), snapshot };
+      if (timer.on) payload.timings = { ...timer.result(), total: Math.round((performance.now() - t0) * 10) / 10, ...(prev ? { prev } : {}) };
+      await timer.time("submit", () => submitResult(batch.batchId, payload));
     } catch (err) {
       console.error("[worker] Execute error:", err);
       await submitResult(batch.batchId, {
@@ -291,6 +322,10 @@ async function executeBatch(batch) {
       dbgLease.release();
     }
   });
+  if (timer.on) {
+    const late = timer.result();
+    prevTail = { submit: late.submit ?? 0, "window.minimize": late["window.minimize"] ?? 0 };
+  }
 }
 
 const NEW_TAB_LOAD_MS = 15000;

@@ -1,6 +1,8 @@
 // Semantic snapshot builder — Epic C §1.1
 // Pure functions operating on a passed document node; no global DOM constructors.
 
+import { frameOffset } from "./cdp.js";
+
 const LANDMARK_TAGS = new Set(["main", "nav", "header", "footer", "aside", "form", "section"]);
 const LANDMARK_ROLES = new Set([
   "main",
@@ -19,78 +21,57 @@ const LANDMARK_ROLES = new Set([
  * @param {Document} doc
  * @returns {Array<{element: Element, role: string}>}
  */
+// Order = role precedence when an element matches several. Option covers react-select / ARIA listboxes.
+const ROLE_SELECTORS = [
+  ["button", 'button, [role="button"], input[type="button"], input[type="submit"], input[type="reset"]'],
+  ["link", 'a[href], [role="link"]'],
+  ["textbox", 'input[type="text"], input[type="email"], input[type="password"], input[type="search"], input[type="tel"], input[type="url"], input[type="number"], input:not([type]), textarea, [role="textbox"], [contenteditable="true"], [contenteditable=""]'],
+  ["combobox", 'select, [role="combobox"]'],
+  ["checkbox", 'input[type="checkbox"], [role="checkbox"]'],
+  ["radio", 'input[type="radio"], [role="radio"]'],
+  ["menuitem", '[role="menuitem"]'],
+  ["tab", '[role="tab"]'],
+  ["option", '[role="option"]'],
+];
+const INTERACTIVE = ROLE_SELECTORS.map(([, s]) => s).join(", ");
+
+function roleOf(el) {
+  for (const [role, sel] of ROLE_SELECTORS) if (el.matches(sel)) return role;
+  return null;
+}
+
+// ponytail: the getComputedStyle fallback (jsdom) checks the element itself only; Chrome's checkVisibility covers hidden ancestors.
+// Zero-size elements are still offered: jsdom reports 0x0 for everything, and execute.js sends them down the synthetic path.
+function isOffered(el) {
+  if (el.closest('[aria-hidden="true"]')) return false;
+  if (typeof el.checkVisibility === "function") return el.checkVisibility({ checkVisibilityCSS: true, visibilityProperty: true });
+  const s = el.ownerDocument.defaultView?.getComputedStyle(el);
+  return !s || (s.display !== "none" && s.visibility !== "hidden");
+}
+
+/**
+ * Collect interactive elements in document order, entering open shadow roots
+ * (at the host's position) and same-origin frames. Returns array of { element, role }.
+ * @param {Document} doc
+ * @returns {Array<{element: Element, role: string}>}
+ */
 export function collectInteractive(doc) {
-  const results = [];
-
-  // Button
-  for (const el of doc.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"], input[type="reset"]')) {
-    results.push({ element: el, role: "button" });
-  }
-
-  // Link
-  for (const el of doc.querySelectorAll('a[href], [role="link"]')) {
-    results.push({ element: el, role: "link" });
-  }
-
-  // Textbox
-  for (const el of doc.querySelectorAll(
-    'input[type="text"], input[type="email"], input[type="password"], input[type="search"], input[type="tel"], input[type="url"], input[type="number"], input:not([type]), textarea, [role="textbox"], [contenteditable="true"], [contenteditable=""]'
-  )) {
-    // input without type defaults to text, but skip if already collected
-    const tag = el.tagName.toLowerCase();
-    if (tag === "input" && !el.getAttribute("type") && results.some((r) => r.element === el)) continue;
-    results.push({ element: el, role: "textbox" });
-  }
-
-  // Combobox
-  for (const el of doc.querySelectorAll('select, [role="combobox"]')) {
-    results.push({ element: el, role: "combobox" });
-  }
-
-  // Checkbox
-  for (const el of doc.querySelectorAll('input[type="checkbox"], [role="checkbox"]')) {
-    results.push({ element: el, role: "checkbox" });
-  }
-
-  // Radio
-  for (const el of doc.querySelectorAll('input[type="radio"], [role="radio"]')) {
-    results.push({ element: el, role: "radio" });
-  }
-
-  // Menuitem
-  for (const el of doc.querySelectorAll('[role="menuitem"]')) {
-    results.push({ element: el, role: "menuitem" });
-  }
-
-  // Tab
-  for (const el of doc.querySelectorAll('[role="tab"]')) {
-    results.push({ element: el, role: "tab" });
-  }
-
-  // Option (react-select, headless UI, ARIA listboxes): open menus are otherwise untargetable.
-  for (const el of doc.querySelectorAll('[role="option"]')) {
-    results.push({ element: el, role: "option" });
-  }
-
-  // Dedupe (element may match multiple selectors) and sort by document order
-  const seen = new Set();
-  const unique = [];
-  for (const item of results) {
-    if (!seen.has(item.element)) {
-      seen.add(item.element);
-      unique.push(item);
+  const out = [];
+  const visit = (root) => {
+    const w = root.ownerDocument.createTreeWalker(root, 1 /* NodeFilter.SHOW_ELEMENT */);
+    for (let el = w.nextNode(); el; el = w.nextNode()) {
+      if (el.matches(INTERACTIVE) && isOffered(el)) out.push({ element: el, role: roleOf(el) });
+      if (el.shadowRoot) visit(el.shadowRoot); // closed roots are null: out of reach by design
+      if (el.tagName === "IFRAME" || el.tagName === "FRAME") {
+        let fd = null;
+        try { fd = el.contentDocument; } catch { fd = null; } // cross-origin: null or throws; stays out of scope
+        const sameOrigin = fd && (fd.location?.origin === doc.location?.origin || fd.URL === "about:blank" || fd.URL === "about:srcdoc");
+        if (sameOrigin && fd.documentElement) visit(fd.documentElement);
+      }
     }
-  }
-
-  // Sort by document position
-  unique.sort((a, b) => {
-    const pos = a.element.compareDocumentPosition(b.element);
-    if (pos & 4) return -1; // b follows a
-    if (pos & 2) return 1; // a follows b
-    return 0;
-  });
-
-  return unique;
+  };
+  visit(doc.documentElement);
+  return out;
 }
 
 /**
@@ -99,24 +80,38 @@ export function collectInteractive(doc) {
  * @param {Document} doc
  * @returns {string}
  */
-function getAccessibleName(el, doc) {
+function getAccessibleName(el, doc, ctx) {
   // 1. aria-label
   const ariaLabel = el.getAttribute("aria-label");
   if (ariaLabel && ariaLabel.trim()) {
     return ariaLabel.trim();
   }
 
-  // 2. label[for=id] or ancestor <label>
+  // aria-labelledby: ids resolve in the element's own root (document, shadow root or frame)
+  const root = typeof el.getRootNode === "function" && typeof el.getRootNode().getElementById === "function" ? el.getRootNode() : doc;
+  const by = el.getAttribute("aria-labelledby");
+  if (by) {
+    const text = by.split(/\s+/).map((i) => root.getElementById(i)?.textContent ?? "").join(" ").replace(/\s+/g, " ").trim();
+    if (text) return text;
+  }
+
+  // 2. label[for=id] or ancestor <label>. Lookup built once per root (first label wins).
   const id = el.getAttribute("id");
   if (id) {
-    // Find label by iterating (avoid CSS.escape which requires global)
-    const labels = doc.querySelectorAll("label[for]");
-    for (const labelFor of labels) {
-      if (labelFor.getAttribute("for") === id) {
-        const text = (labelFor.textContent || "").replace(/\s+/g, " ").trim();
-        if (text) return text;
-        break;
+    ctx.labels ??= new Map();
+    let m = ctx.labels.get(root);
+    if (!m) {
+      m = new Map();
+      for (const l of root.querySelectorAll("label[for]")) {
+        const f = l.getAttribute("for");
+        if (!m.has(f)) m.set(f, l);
       }
+      ctx.labels.set(root, m);
+    }
+    const labelFor = m.get(id);
+    if (labelFor) {
+      const text = (labelFor.textContent || "").replace(/\s+/g, " ").trim();
+      if (text) return text;
     }
   }
 
@@ -181,7 +176,7 @@ function getState(el, role) {
  * @param {Document} doc
  * @returns {string}
  */
-function getAnchor(el, doc) {
+function getAnchor(el, doc, ctx) {
   const parts = [];
 
   // Walk ancestors from element up to root, collect landmarks
@@ -216,7 +211,7 @@ function getAnchor(el, doc) {
 
   // Fallback: nearest preceding heading
   // Walk backwards through document to find heading before this element
-  const allHeadings = doc.querySelectorAll("h1, h2, h3, h4, h5, h6");
+  const allHeadings = (ctx.headings ??= doc.querySelectorAll("h1, h2, h3, h4, h5, h6"));
   let nearestHeading = null;
   for (const h of allHeadings) {
     const pos = h.compareDocumentPosition(el);
@@ -250,9 +245,11 @@ function getRect(el, view) {
   try {
     const r = el.getBoundingClientRect();
     if (!r || (r.width === 0 && r.height === 0)) return null;
+    // Framed elements: rect is frame-viewport-relative; add the frame chain's offset.
+    const o = el.ownerDocument.defaultView === view ? null : frameOffset(el.ownerDocument.defaultView);
     return {
-      x: r.left + (view.scrollX || 0),
-      y: r.top + (view.scrollY || 0),
+      x: r.left + (o?.x ?? 0) + (view.scrollX || 0),
+      y: r.top + (o?.y ?? 0) + (view.scrollY || 0),
       w: r.width,
       h: r.height,
     };
@@ -270,13 +267,14 @@ function getRect(el, view) {
 export function buildSnapshot(doc, instanceId) {
   const view = doc.defaultView || { scrollX: 0, scrollY: 0, devicePixelRatio: 1, innerWidth: 0, innerHeight: 0 };
   const interactive = collectInteractive(doc);
+  const ctx = {};
   const nodes = interactive.map((item, i) => {
     const { element, role } = item;
     const node = {
       ref: `ref${i + 1}`,
       role,
-      name: getAccessibleName(element, doc),
-      anchor: getAnchor(element, doc),
+      name: getAccessibleName(element, doc, ctx),
+      anchor: getAnchor(element, doc, ctx),
       rect: getRect(element, view),
     };
 

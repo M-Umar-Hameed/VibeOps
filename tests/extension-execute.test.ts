@@ -265,7 +265,6 @@ describe("rich editors and real key events", () => {
   it("wait succeeds when text appears and times out with a code otherwise", async () => {
     const saved = { ...WAIT_TUNING };
     WAIT_TUNING.timeoutMs = 300;
-    WAIT_TUNING.pollMs = 20;
     try {
       const doc = dom("<body><p>Loading</p></body>");
       setTimeout(() => { doc.body.append("Done"); }, 50);
@@ -277,6 +276,64 @@ describe("rich editors and real key events", () => {
     } finally {
       Object.assign(WAIT_TUNING, saved);
     }
+  });
+  it("wait returns as soon as the text appears", async () => {
+    const saved = { ...WAIT_TUNING };
+    WAIT_TUNING.timeoutMs = 10000;
+    try {
+      const doc = dom("<body><p>Loading</p></body>");
+      setTimeout(() => { doc.body.append("Done"); }, 20);
+      const t0 = performance.now();
+      const ok = (await executeSteps(doc, [{ verb: "wait", text: "Done" }])) as any;
+      const elapsed = performance.now() - t0;
+      console.log(JSON.stringify({ waitElapsedMs: Math.round(elapsed) }));
+      expect(ok.results[0]).toEqual({ ok: true });
+      expect(elapsed).toBeLessThan(80);
+    } finally {
+      Object.assign(WAIT_TUNING, saved);
+    }
+  });
+  it("wait timeout leaves no observer running", async () => {
+    const saved = { ...WAIT_TUNING };
+    WAIT_TUNING.timeoutMs = 50;
+    try {
+      const doc = dom("<body>x</body>");
+      const spy = vi.spyOn((doc.defaultView as any).MutationObserver.prototype, "disconnect");
+      const never = (await executeSteps(doc, [{ verb: "wait", text: "Nope" }])) as any;
+      expect(never.results[0].code).toBe("wait_timeout");
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.assign(WAIT_TUNING, saved);
+    }
+  });
+});
+
+describe("trusted click across roots", () => {
+  const box = (left: number, top: number, width: number, height: number) => ({ left, top, right: left + width, bottom: top + height, width, height, x: left, y: top });
+  it("trusted click on a shadow element hit-tests inside its shadow root", async () => {
+    const doc = domAt('<div id="host"></div>', "https://a.test/");
+    const host = doc.getElementById("host") as any;
+    const root = host.attachShadow({ mode: "open" });
+    root.innerHTML = "<button>S</button>";
+    const btn = root.querySelector("button") as any;
+    btn.getBoundingClientRect = () => box(10, 20, 100, 40);
+    root.elementFromPoint = () => btn;
+    (doc as any).elementFromPoint = () => host;
+    const res = (await executeSteps(doc, [{ verb: "click", ref: "ref1" }], "act", "https://a.test", { trusted: true })) as any;
+    expect(res.results[0].cdp.verb).toBe("click");
+  });
+  it("trusted click on a framed element offsets by the frame rect", async () => {
+    const doc = domAt('<iframe id="f"></iframe>', "https://a.test/");
+    const iframe = doc.getElementById("f") as any;
+    const fd = iframe.contentDocument;
+    fd.body.innerHTML = "<button>F</button>";
+    const btn = fd.querySelector("button");
+    btn.getBoundingClientRect = () => box(10, 20, 100, 40);
+    fd.elementFromPoint = () => btn;
+    iframe.getBoundingClientRect = () => box(0, 100, 300, 150);
+    (doc as any).elementFromPoint = () => iframe;
+    const res = (await executeSteps(doc, [{ verb: "click", ref: "ref1" }], "act", "https://a.test", { trusted: true })) as any;
+    expect(res.results[0].cdp).toEqual({ verb: "click", x: 60, y: 140 });
   });
 });
 

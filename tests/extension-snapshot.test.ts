@@ -150,6 +150,13 @@ describe("buildSnapshot", () => {
   });
 });
 
+describe("role precedence", () => {
+  it("matches the old pass order when an element fits several roles", () => {
+    const doc = dom('<a href="#" role="button">x</a><input role="checkbox"><div role="tab" contenteditable="true">t</div>');
+    expect(collectInteractive(doc).map((i) => i.role)).toEqual(["button", "textbox", "textbox"]);
+  });
+});
+
 describe("T1: rects and viewport metadata", () => {
   it("carries viewport metadata captured with the rects", () => {
     const doc = dom("<html><body><button>Go</button></body></html>");

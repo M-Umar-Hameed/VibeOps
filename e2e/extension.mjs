@@ -161,6 +161,19 @@ async function runBench(sw, instanceId) {
     report.type = await time([{ verb: "type", ref: ref("bench-type"), text: "bench" }]);
     report.waitAfter50ms = await time([{ verb: "click", ref: ref("bench-reveal") }, { verb: "wait", text: "bench-ready" }]); // includes the click; subtract report.click
     report.screenshot = await time([{ verb: "screenshot" }]);
+    // Raw attach+detach cost, independent of worker behaviour, so it stays meaningful once the debugger is leased.
+    report.debuggerAttachDetach = stats(await sw.evaluate(async () => {
+      const { agentTabId } = await chrome.storage.session.get("agentTabId");
+      const xs = [];
+      for (let i = 0; i < 20; i++) {
+        try { await chrome.debugger.detach({ tabId: agentTabId }); } catch { /* not attached */ }
+        const t = performance.now();
+        await chrome.debugger.attach({ tabId: agentTabId }, "1.3");
+        await chrome.debugger.detach({ tabId: agentTabId });
+        xs.push(performance.now() - t);
+      }
+      return xs;
+    }));
     const patched = await sw.evaluate(() => {
       const orig = chrome.debugger.attach;
       globalThis.__benchAttach = { orig, n: 0 };
@@ -170,6 +183,13 @@ async function runBench(sw, instanceId) {
     if (patched) {
       for (let i = 0; i < 10; i++) await batch([{ verb: "click", ref: ref("bench-click") }]);
       report.debuggerAttachCallsPer10ActionBatches = await sw.evaluate(() => { const { orig, n } = globalThis.__benchAttach; chrome.debugger.attach = orig; delete globalThis.__benchAttach; return n; });
+      // The lease must release the attachment after the idle window. 11000 mirrors DEBUGGER_IDLE_MS (10000) in extension/window.js plus 1 s.
+      await new Promise((r) => setTimeout(r, 11000));
+      const stillAttached = await sw.evaluate(async () => {
+        const { agentTabId } = await chrome.storage.session.get("agentTabId");
+        return (await chrome.debugger.getTargets()).some((t) => t.attached && t.tabId === agentTabId);
+      });
+      assert.equal(stillAttached, false, "debugger still attached after idle window");
     } else {
       report.debuggerAttachCallsPer10ActionBatches = null;
       report.debuggerAttachNote = "chrome.debugger.attach not patchable from the service worker";

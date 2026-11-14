@@ -6,7 +6,7 @@ import {
   isTestPath, extractDeclaredPaths, unexpectedFiles,
   extractAcceptanceCriteria, unmatchedCriteria, mutationCandidate,
   isDocPath, addedLinesByFile, extractCitations, resolveCitation,
-  declaredFullPaths, overlappingDeclared,
+  declaredFullPaths, overlappingDeclared, plannedFiles, missingPlannedFiles,
 } from "../src/forge/gate.js";
 
 describe("declaredFullPaths", () => {
@@ -24,6 +24,34 @@ describe("overlappingDeclared", () => {
   });
   it("ignores basename-only overlap", () => {
     expect(overlappingDeclared(["a.ts"], [{ ticketId: "t1", title: "One", declared: ["src/a.ts"] }])).toEqual([]);
+  });
+});
+
+describe("plannedFiles", () => {
+  it("parses a normal line", () => {
+    expect(plannedFiles("1. do it\nFiles: src/a.ts, tests/a.test.ts\n")).toEqual(["src/a.ts", "tests/a.test.ts"]);
+  });
+  it("strips backticks, ./ and markdown bold", () => {
+    expect(plannedFiles("  **Files:** `./src/a.ts`, `tests/a.test.ts`")).toEqual(["src/a.ts", "tests/a.test.ts"]);
+  });
+  it("last Files line wins", () => {
+    expect(plannedFiles("Files: old.ts\nmore\nFiles: new.ts")).toEqual(["new.ts"]);
+  });
+  it("Files: none is empty", () => {
+    expect(plannedFiles("Files: none")).toEqual([]);
+    expect(plannedFiles("Files: None")).toEqual([]);
+  });
+  it("no Files line is empty", () => {
+    expect(plannedFiles("Edit src/a.ts\nSkills: none")).toEqual([]);
+  });
+});
+
+describe("missingPlannedFiles", () => {
+  it("keeps plan order", () => {
+    expect(missingPlannedFiles(["z.ts", "a.ts", "m.ts"], ["a.ts"])).toEqual(["z.ts", "m.ts"]);
+  });
+  it("returns [] when all present", () => {
+    expect(missingPlannedFiles(["a.ts", "tests/a.test.ts"], ["tests/a.test.ts", "a.ts", "x.ts"])).toEqual([]);
   });
 });
 

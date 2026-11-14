@@ -46,6 +46,24 @@ export function declaredFullPaths(planText: string): string[] {
   return [...extractDeclaredPaths(planText)].filter((p) => p.includes("/")).sort();
 }
 
+// Strict manifest: the plan's LAST "Files:" line (composePlanPrompt asks for it).
+// Unlike extractDeclaredPaths, this lists only files the worker must change.
+export function plannedFiles(planText: string): string[] {
+  const m = planText.split(/\r?\n/)
+    .map((l) => l.match(/^\s*\*{0,2}Files\*{0,2}:\*{0,2}(.*)$/))
+    .filter((x): x is RegExpMatchArray => !!x)
+    .pop();
+  if (!m) return [];
+  return m[1].replace(/\*+\s*$/, "").split(",")
+    .map((p) => p.trim().replace(/^`+|`+$/g, "").trim().replace(/^\.\//, ""))
+    .filter((p) => p && p.toLowerCase() !== "none");
+}
+
+export function missingPlannedFiles(planned: string[], changed: string[]): string[] {
+  const have = new Set(changed);
+  return planned.filter((p) => !have.has(p));
+}
+
 export function overlappingDeclared(
   mine: readonly string[],
   others: readonly { ticketId: string; title: string; declared: readonly string[] }[],

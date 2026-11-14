@@ -8,7 +8,7 @@ coordinates earn their place?* — and lays out the implementation order.
 
 **Our ref-based clicks are already "pixel perfect" — in fact they cannot miss.**
 The extension resolves a `ref` from the accessibility snapshot to the live element
-and calls `el.click()` (extension/execute.js:122). There is no coordinate to get
+and calls `el.click()` (`runMutation` in extension/execute.js). There is no coordinate to get
 wrong: no scroll offset, no zoom, no DPI scaling, no layout shift between look and
 click. Pixel coordinates are the *less* reliable grounding, not the more.
 
@@ -137,3 +137,14 @@ take image input. T4 only after T3 shows its residual need. T5 is rejected outri
 
 - Accuracy: `tests/extension-accuracy.test.ts` (jsdom, normal lane). Known gaps are `it.fails`; closing one turns it red — flip it to `it`.
 - Latency: `npm run e2e:extension -- --bench` (live sidecar on :8787 + real Chrome) prints one JSON line: median/p95 over 20 iterations for snapshot (50 / 2,000 elements), click, type, wait-after-50 ms, screenshot, and debugger attach calls per 10 action batches. Without `--bench` the e2e run is unchanged.
+
+### Extension 2/2 changes (2026-11-14)
+
+- Debugger lease: the attachment is kept 10 s after the last batch and re-attached on `onDetach`; the debugging banner stays visible for that window.
+- `wait` resolves on DOM mutation instead of a 100 ms poll; same 10 s timeout.
+- Snapshot collects in one walk, entering open shadow roots and same-origin frames (cross-origin frames and closed roots are excluded).
+- Hidden elements (`display:none`, `visibility:hidden`, `aria-hidden`) are not offered; zero-size elements still are.
+- `aria-labelledby` names elements.
+- The trusted-click hit-test walks up same-origin frames; a covering outer element returns `not_hittable`.
+- Detached refs return `stale_ref`; there is no re-resolve by role and name.
+- Two accuracy gaps remain `it.fails`: zero-size filtering (jsdom reports 0x0 for every element) and insert-before-target (refs are positional; needs a ref-format change).

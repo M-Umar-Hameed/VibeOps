@@ -15,6 +15,7 @@ test("agentTab throwing reports the error via /browser/results", async () => {
       onMessage: { addListener: vi.fn() },
       onInstalled: { addListener: vi.fn() },
     },
+    debugger: { onDetach: { addListener: vi.fn() } },
     alarms: {
       create: vi.fn(),
       onAlarm: { addListener: vi.fn() },

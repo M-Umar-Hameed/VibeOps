@@ -10,7 +10,13 @@ const MUTATING_VERBS = new Set(["click", "type", "select", "press", "clickAt"]);
 // step fails past this. Mutable so a jsdom test can shrink it if needed.
 export const NAV_TUNING = { loadTimeoutMs: 15000 };
 
-export const WAIT_TUNING = { timeoutMs: 10000, pollMs: 100 };
+export const WAIT_TUNING = { timeoutMs: 10000 };
+
+// A ref whose element left the document is stale, same as an unknown ref.
+function liveRef(refMap, ref) {
+  const el = refMap.get(ref);
+  return el && el.isConnected ? el : undefined;
+}
 
 /**
  * Build ref→element map from interactive elements.
@@ -26,13 +32,16 @@ function buildRefMap(doc) {
   return map;
 }
 
-async function waitForText(doc, text) {
-  const deadline = Date.now() + WAIT_TUNING.timeoutMs;
-  for (;;) {
-    if ((doc.body?.innerText ?? doc.body?.textContent ?? "").includes(text)) return true;
-    if (Date.now() >= deadline) return false;
-    await new Promise((r) => setTimeout(r, WAIT_TUNING.pollMs));
-  }
+function waitForText(doc, text) {
+  const view = doc.defaultView;
+  const has = () => (doc.body?.innerText ?? doc.body?.textContent ?? "").includes(text);
+  if (has()) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const finish = (ok) => { obs.disconnect(); view.clearTimeout(timer); resolve(ok); };
+    const obs = new view.MutationObserver(() => { if (has()) finish(true); });
+    const timer = view.setTimeout(() => finish(has()), WAIT_TUNING.timeoutMs);
+    obs.observe(doc.documentElement, { childList: true, subtree: true, characterData: true, attributes: true });
+  });
 }
 
 export async function executeSteps(doc, steps, grant, targetOrigin, opts = {}) {
@@ -76,7 +85,7 @@ export async function executeSteps(doc, steps, grant, targetOrigin, opts = {}) {
     } else if (step.verb === "snapshot") {
       result = { ok: true };
     } else if (step.verb === "read") {
-      const el = refMap.get(step.ref);
+      const el = liveRef(refMap, step.ref);
       if (!el) {
         result = { ok: false, error: "that element reference is stale - take a fresh snapshot and use its refs", code: "stale_ref" };
       } else {
@@ -92,7 +101,7 @@ export async function executeSteps(doc, steps, grant, targetOrigin, opts = {}) {
       }
     } else if (step.verb === "scroll") {
       if (typeof step.ref === "string") {
-        const el = refMap.get(step.ref);
+        const el = liveRef(refMap, step.ref);
         if (!el) {
           result = { ok: false, error: "that element reference is stale - take a fresh snapshot and use its refs", code: "stale_ref" };
         } else {
@@ -170,8 +179,10 @@ function prepareTrusted(doc, refMap, step) {
     return { ok: true, cdp: { verb: "click", x: p.vx + o.x, y: p.vy + o.y } };
   }
   if (step.verb === "click" || step.verb === "type") {
-    const el = refMap.get(step.ref);
+    const el = liveRef(refMap, step.ref);
     if (!el) return { ok: false, error: "that element reference is stale - take a fresh snapshot and use its refs", code: "stale_ref" };
+    const edoc = el.ownerDocument;
+    const eview = edoc.defaultView;
     el.scrollIntoView?.({ block: "center", behavior: "instant" });
     if (step.verb === "click") {
       const r = el.getBoundingClientRect();
@@ -180,7 +191,10 @@ function prepareTrusted(doc, refMap, step) {
         return null;
       }
       const local = centrePoint(r);
-      const hit = doc.elementFromPoint(local.x, local.y);
+      // Hit-test in the element's own root: a document-level hit retargets to the shadow host.
+      const root = el.getRootNode();
+      const hitRoot = typeof root.elementFromPoint === "function" ? root : edoc;
+      const hit = hitRoot.elementFromPoint(local.x, local.y);
       if (!hit || (hit !== el && !el.contains(hit))) {
         const r2 = el.getBoundingClientRect();
         if (r2.left !== r.left || r2.top !== r.top) {
@@ -188,13 +202,25 @@ function prepareTrusted(doc, refMap, step) {
         }
         return { ok: false, error: `element ${step.ref} is covered at (${Math.round(local.x)},${Math.round(local.y)})${hit ? ` by <${hit.tagName.toLowerCase()}>` : ""} - scroll, close the overlay, or take a fresh snapshot`, code: "not_hittable" };
       }
-      // ponytail: hit-test is frame-local (elementFromPoint in the element's own document); an outer frame covering the iframe is not detected. Upgrade: DOM.getNodeForLocation on the top-level point from the worker.
-      return { ok: true, cdp: { verb: "click", ...centrePoint(r, frameOffset(view)) } };
+      // Walk up same-origin frames: the frame element must be what the parent sees at the mapped point. Cross-origin parents end the walk (out of scope).
+      let px = local.x, py = local.y, w = eview;
+      for (;;) {
+        let fe = null;
+        try { fe = w.frameElement; } catch { fe = null; }
+        if (!fe) break;
+        const fr = fe.getBoundingClientRect();
+        px += fr.left; py += fr.top;
+        const pdoc = fe.ownerDocument;
+        const top = pdoc.elementFromPoint(px, py);
+        if (top !== fe) return { ok: false, error: `element ${step.ref} is covered at (${Math.round(px)},${Math.round(py)})${top ? ` by <${top.tagName.toLowerCase()}>` : ""} - scroll, close the overlay, or take a fresh snapshot`, code: "not_hittable" };
+        w = pdoc.defaultView;
+      }
+      return { ok: true, cdp: { verb: "click", ...centrePoint(r, frameOffset(eview)) } };
     }
     if (step.verb === "type") {
       el.focus();
       if (el.isContentEditable || el.getAttribute("contenteditable") !== null) {
-        doc.getSelection()?.selectAllChildren(el);
+        edoc.getSelection()?.selectAllChildren(el);
       } else if (typeof el.select === "function") {
         el.select();
       }
@@ -205,7 +231,7 @@ function prepareTrusted(doc, refMap, step) {
 }
 
 function runMutation(doc, refMap, step) {
-  const view = doc.defaultView;
+  let view = doc.defaultView;
   if (step.verb === "press") {
     const el = doc.activeElement || doc.body;
     // Real key sequence: frameworks check code/keyCode and listen on keypress,
@@ -235,8 +261,10 @@ function runMutation(doc, refMap, step) {
     }));
     return { ok: true };
   }
-  const el = refMap.get(step.ref);
+  const el = liveRef(refMap, step.ref);
   if (!el) return { ok: false, error: "that element reference is stale - take a fresh snapshot and use its refs", code: "stale_ref" };
+  // Element verbs use the element's own realm (it may live in a same-origin frame).
+  view = el.ownerDocument.defaultView;
   if (step.verb === "click") {
     el.scrollIntoView?.({ block: "center" });
     if (el.getAttribute("role") === "option") {
@@ -256,7 +284,7 @@ function runMutation(doc, refMap, step) {
       // would so the editor's own input handling sees it.
       el.focus();
       let inserted = false;
-      try { inserted = doc.execCommand && doc.execCommand("insertText", false, step.text); } catch { inserted = false; }
+      try { inserted = el.ownerDocument.execCommand && el.ownerDocument.execCommand("insertText", false, step.text); } catch { inserted = false; }
       if (!inserted) {
         el.textContent = step.text;
         el.dispatchEvent(new view.InputEvent("input", { bubbles: true, inputType: "insertText", data: step.text }));

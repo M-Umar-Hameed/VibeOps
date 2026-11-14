@@ -9,7 +9,14 @@ permissions:
   contents: write
 
 jobs:
+  # Typecheck + full test suite (ci.yml) on the exact commit being released.
+  # CI was red for 36 runs while v0.2.1 and earlier still published, because this
+  # workflow never looked at it. Nothing below can start unless this job passes.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   build:
+    needs: ci
     strategy:
       fail-fast: false
       matrix:

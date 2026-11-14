@@ -30,6 +30,11 @@ describe("toOpenAiTools", () => {
     expect(tabs.parameters.required).toEqual([]);
   });
 
+  it("plain z.number() gets no spurious minimum", () => {
+    const [t] = toOpenAiTools([{ name: "t", description: "d", inputSchema: { n: z.number() } } as any]);
+    expect(t.parameters.properties.n).toEqual({ type: "number" });
+  });
+
   it("browser_act has an array-typed steps param and it is required", () => {
     const tools = buildChatTools(fakeActor, []);
     const act = toOpenAiTools(tools).find((s) => s.name === "browser_act")!;

@@ -1,8 +1,7 @@
-// Converts the SDK chat tools (zod v3 raw-shape input) into OpenAI-compatible
+// Converts the SDK chat tools (zod v4 raw-shape input) into OpenAI-compatible
 // function schemas for the http (OpenRouter) lane's tool-calling loop.
-// ponytail: hand-rolled for the small subset of zod kinds buildChatTools
-// actually uses (string/number/array/any/optional) - zod-to-json-schema is
-// not installed and zod/v4's toJSONSchema only accepts v4 schemas.
+// ponytail: hand-rolled for the subset buildChatTools uses (string/number/array/any/optional);
+// z.toJSONSchema adds safe-int min/max bounds the OpenAI schema does not need.
 import { z } from "zod";
 import type { buildChatTools } from "./tools.js";
 import type { ToolDef } from "./http-lane.js";
@@ -10,21 +9,21 @@ import type { ToolDef } from "./http-lane.js";
 type SdkTool = ReturnType<typeof buildChatTools>[number];
 
 function zodToJsonSchema(schema: any): unknown {
-  const def = schema?._def;
-  switch (def?.typeName) {
-    case "ZodOptional":
+  const def = schema?._zod?.def;
+  switch (def?.type) {
+    case "optional":
       return zodToJsonSchema(def.innerType);
-    case "ZodString":
+    case "string":
       return { type: "string" };
-    case "ZodNumber": {
-      const checks: { kind: string; value?: number }[] = def.checks ?? [];
-      const out: Record<string, unknown> = { type: checks.some((c) => c.kind === "int") ? "integer" : "number" };
-      const min = checks.find((c) => c.kind === "min");
-      if (min) out.minimum = min.value;
+    case "number": {
+      const out: Record<string, unknown> = { type: schema.isInt ? "integer" : "number" };
+      const min = schema.minValue;
+      // .int() alone sets minValue to MIN_SAFE_INTEGER; only emit real bounds.
+      if (typeof min === "number" && min > Number.MIN_SAFE_INTEGER) out.minimum = min;
       return out;
     }
-    case "ZodArray":
-      return { type: "array", items: zodToJsonSchema(def.type) };
+    case "array":
+      return { type: "array", items: zodToJsonSchema(def.element) };
     default:
       // Unknown kind (incl. ZodAny) -> accept anything rather than throw.
       return {};
@@ -41,7 +40,7 @@ export function toOpenAiTools(
     const required: string[] = [];
     for (const [key, schema] of Object.entries(t.inputSchema)) {
       properties[key] = zodToJsonSchema(schema);
-      if ((schema as any)?._def?.typeName !== "ZodOptional") required.push(key);
+      if ((schema as any)?._zod?.def?.type !== "optional") required.push(key);
     }
     return { name: t.name, description: t.description, parameters: { type: "object", properties, required } };
   });

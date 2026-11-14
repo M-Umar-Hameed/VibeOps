@@ -184,7 +184,7 @@ VibeOps does this for you: `ensureMcpWiring` (src/mcp/autowire.ts) registers the
 ```json
 "kimi": {
   "cmd": ["kimi", "-p", "{promptFile}"],
-  "roles": ["work"],
+  "roles": ["plan", "review"],
   "mcp": true,
   "models": [
     {
@@ -244,8 +244,8 @@ actually confines a work agent's *writes* depends entirely on the lane:
 | --- | --- | --- |
 | `claude` (CLI) | **Walled at launch.** VibeOps adds `--restricted` (file tools confined to the working folder), `--permission-mode acceptEdits` for the work stage only (other roles get no edit rights), `--permission-prompts none`, and allow rules from `forge.allowedCommands`; the prompt goes on stdin. Any other shell command is denied. | Claude Code `--restricted` (application-level, not an OS boundary) |
 | `agy` (`--dangerously-skip-permissions`) | **Not OS-confined; shell commands gated in forge stages.** Runs with `--dangerously-skip-permissions`; `--sandbox` is not added (Windows effect unverified). In forge plan, work (including the pre-review retry) and review stages VibeOps writes `.agents/hooks.json` (`vibeops-firewall`, `run_command` PreToolUse → `agy-firewall-hook`) before spawning agy and removes it before commit or view check; if the hook cannot be installed agy is not spawned and the run fails. File-edit tools are not gated. Chat, council, relay runner and diff-explain agy calls get no hook, only the `--settings` deny globs. | `.agents/hooks.json` firewall hook (forge stages) + per-run `--settings` deny globs |
-| `codex` (`--sandbox workspace-write`) | Confined to the workspace/cwd. VibeOps adds `--sandbox workspace-write` at launch when the cmd has none. | codex's own OS-level workspace-write sandbox |
-| `kimi` (`-p` print mode) | **Not confined beyond cwd.** Print mode auto-approves tools inside the worktree; it is not an OS write-jail. | Kimi CLI behaviour (not an OS boundary) |
+| `codex` (`--sandbox workspace-write`) | Confined to the workspace/cwd. VibeOps adds `--sandbox workspace-write` at launch when the cmd has none, wall on or off. The forge firewall is not wired: Codex's hook/.rules format was not confirmed from Codex documentation; forge pipeline start warns. | codex's own OS-level workspace-write sandbox (no command deny list) |
+| `kimi` (`-p` print mode) | **Work role refused.** kimi offers no command hook for the forge firewall, so `runAgent` refuses kimi work calls, auto routing skips kimi for work, and the doctor reports `workRefused`. Plan and review stay available. Unverified against a real kimi CLI. | VibeOps (`runAgent` refusal) |
 | `sdk` lane | `Write`/`Edit` are confined to the sandbox by `checkToolPermission`; `allowedTools` from `forge.allowedCommands`; any other `Bash` call is denied. | Tool-permission gate (application-level, not an OS boundary) |
 
 The wall is on by default; set `forge.agentWall` to `false` to turn it off. `forge.allowedCommands` (JSON string array) overrides the default allow-list: `npm test`, `npm run`, `npx vitest`, `npx tsc`, `git status`, `git diff`, `git log`, `git show`.
@@ -254,7 +254,7 @@ Limits: the allow-list runs project code (`npm test`, `npm run`, `npx` scripts),
 
 ### The Bash gap and the sentinel (interim control)
 
-A work agent's shell (in the `agy` and `kimi` lanes, or any lane with the wall off) can copy, move, or
+A work agent's shell (in the `agy` lane, or any lane with the wall off) can copy, move, or
 delete files **outside** the sandbox. This escapes every diff-based control: a
 write outside the worktree produces no git diff, so the protected-path policy
 never sees it. It reached the installed application

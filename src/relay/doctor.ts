@@ -23,6 +23,15 @@ const PROBE_ARGS: Record<string, string[]> = {
   kimi: ["--version"],
 };
 
+// Lanes whose CLI gives VibeOps no command hook for the forge firewall: the work role is refused, plan/review stay.
+// ponytail: kimi only, unverified against a real kimi CLI (not installed when written); replace with a hook adapter if kimi ships one.
+const WORK_REFUSED: Record<string, string> = {
+  kimi: "kimi offers no command hook VibeOps can run the forge firewall through, so it cannot take the work role; plan and review stay available (unverified against a real kimi CLI)",
+};
+export function workRoleRefusal(cmd0: string | undefined): string | undefined {
+  return cmd0 ? WORK_REFUSED[binBasename(cmd0).toLowerCase()] : undefined;
+}
+
 // Only binaries with a KNOWN local auth file get a reader; anything else
 // reports known:false rather than guessing at a file format we haven't seen.
 const AUTH_READERS: Record<string, (homeDir: string) => boolean> = {
@@ -108,6 +117,8 @@ export type AgentDoctorStatus = {
   // (claude, kimi, agy, gemini). Omitted otherwise -- never flag what we
   // cannot verify.
   mcp?: McpRegStatus;
+  // present only for a lane that cannot take the work role
+  workRefused?: string;
 };
 
 export function binBasename(cmd0: string): string {
@@ -175,8 +186,10 @@ export async function runDoctor(
     if (!opts.fresh && cached && cached.expiresAt > now) return cached.status;
 
     const probe = await probeBinary(cmd0);
+    const workRefused = workRoleRefusal(cmd0);
     const status: AgentDoctorStatus = {
       name, binary: binBasename(cmd0), probe, auth: checkAuth(cmd0, homeDir),
+      ...(workRefused ? { workRefused } : {}),
       mcp: await mcpRegStatus(name, cmd0, homeDir, now, opts.fresh),
       lastChecked: new Date(now).toISOString(),
     };
@@ -204,6 +217,7 @@ export function pipelineStartWarnings(config: RelayConfig, agentNames: string[])
     seen.add(name);
     const cmd0 = config.agents[name]?.cmd?.[0];
     if (cmd0 && binBasename(cmd0).toLowerCase() === "agy") warnings.push(`agent "${name}" (agy): the forge firewall runs as a .agents/hooks.json hook in forge plan, work and review stages (not chat, council, relay runner or diff-explain calls), but agy runs the command anyway if the hook exits without printing a decision (a missing hook script blocks)`);
+    if (cmd0 && binBasename(cmd0).toLowerCase() === "codex") warnings.push(`agent "${name}" (codex): the forge firewall is not wired for codex; work runs under codex's own --sandbox workspace-write, so commands such as git push are not checked by the firewall`);
     const s = cachedStatus(config, name);
     if (s && !s.probe.ok) warnings.push(`agent "${name}" (${s.binary}): ${s.probe.error ?? "probe failed"}`);
   }

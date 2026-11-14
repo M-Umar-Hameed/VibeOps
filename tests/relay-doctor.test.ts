@@ -167,6 +167,24 @@ test("runDoctor: mcp:true claude lane with no CLI present reports unregistered",
   expect(s.mcp?.addCommand).toContain("claude mcp add");
 });
 
+test("runDoctor: kimi-basename lane reports workRefused", async () => {
+  const name = uniq("kimi");
+  const home = mkTmp("doctor-kimi-");
+  const cfg: RelayConfig = { workdir: tmpdir(), agents: { [name]: { cmd: [join(home, "kimi")], roles: ["plan", "review"] } } };
+  const [s] = await runDoctor(cfg, { homeDir: home, fresh: true });
+  expect(s.workRefused).toMatch(/no command hook/);
+});
+
+test("runDoctor: non-kimi lane has no workRefused", async () => {
+  const [s] = await runDoctor(configWith(uniq("plain"), EXIT0), { fresh: true });
+  expect(s.workRefused).toBeUndefined();
+});
+
+test("pipelineStartWarnings: codex-basename agent warns the firewall is not wired", () => {
+  const cfg: RelayConfig = { workdir: tmpdir(), agents: { cx: { cmd: ["codex", "exec"], roles: ["work"] } } };
+  expect(pipelineStartWarnings(cfg, ["cx"])).toContain(`agent "cx" (codex): the forge firewall is not wired for codex; work runs under codex's own --sandbox workspace-write, so commands such as git push are not checked by the firewall`);
+});
+
 test("runDoctor: agy lane with no mcp key but registered settings reports registered", async () => {
   const name = uniq("agy-nomcp-reg");
   const home = mkTmp("doctor-agy-nomcp-");

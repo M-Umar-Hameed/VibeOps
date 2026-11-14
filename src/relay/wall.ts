@@ -69,7 +69,7 @@ export const DENY_RULES = ["Bash(git *--output*)", "PowerShell(git *--output*)"]
 // --restricted confines its file tools to the working folder, edit rights only
 // when write is true (the work stage); shell commands pass through the PreToolUse
 // firewall hook and only allow-listed commands run; claude also gets the firewall
-// hook and deny list when the wall is off (denyOnlyCmd); plan/work/review agents can also read the attachments folder (operator evidence, chat attachments). codex: its own OS sandbox. Other programs are not walled here.
+// hook and deny list when the wall is off (denyOnlyCmd); plan/work/review agents can also read the attachments folder (operator evidence, chat attachments). codex: its own OS sandbox (workspace-write), wall on or off; the forge firewall is not wired for codex. Other programs are not walled here.
 export function wallCmd(cmd: string[], allowed: string[], write = false, addDirs: string[] = [], lifted: readonly string[] = []): string[] {
   const bin = binBasename(cmd[0]).toLowerCase();
   if (bin === "claude") {
@@ -83,15 +83,21 @@ export function wallCmd(cmd: string[], allowed: string[], write = false, addDirs
       "--settings", JSON.stringify({ permissions: { allow: [...allowRules(allowed), "mcp__vibeops"], deny: [...DENY_RULES, ...denyPatterns(lifted)] }, hooks: firewallHooks() }),
       ...addDirs.flatMap((d) => ["--add-dir", d])];
   }
-  if (bin === "codex") {
-    const i = cmd.indexOf("exec");
-    if (i === -1 || cmd.some((p) => p === "-s" || p.startsWith("--sandbox") || p === "--dangerously-bypass-approvals-and-sandbox")) return cmd;
-    return [...cmd.slice(0, i + 1), "--sandbox", "workspace-write", ...cmd.slice(i + 1)];
-  }
+  if (bin === "codex") return codexConfineCmd(cmd);
   return cmd;
 }
 
+// codex: forge firewall not wired (Codex hook/.rules format not confirmed from docs); confinement is codex's own OS sandbox, wall on or off.
+// ponytail: approval flag not added; placement on `codex exec` unverified (codex exec --help could not run). Add --ask-for-approval never once verified.
+export function codexConfineCmd(cmd: string[]): string[] {
+  if (binBasename(cmd[0]).toLowerCase() !== "codex") return cmd;
+  const i = cmd.indexOf("exec");
+  if (i === -1 || cmd.some((p) => p === "-s" || p.startsWith("--sandbox") || p === "--dangerously-bypass-approvals-and-sandbox")) return cmd;
+  return [...cmd.slice(0, i + 1), "--sandbox", "workspace-write", ...cmd.slice(i + 1)];
+}
+
 export function denyOnlyCmd(cmd: string[], lifted: readonly string[] = []): string[] {
+  if (binBasename(cmd[0]).toLowerCase() === "codex") return codexConfineCmd(cmd);
   if (binBasename(cmd[0]).toLowerCase() !== "claude" || cmd.includes("--settings")) return cmd;
   return [...cmd, "--settings", JSON.stringify({ permissions: { deny: [...DENY_RULES, ...denyPatterns(lifted)] }, hooks: firewallHooks() })];
 }

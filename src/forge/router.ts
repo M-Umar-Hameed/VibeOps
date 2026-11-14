@@ -1,4 +1,5 @@
 import type { RelayConfig, ModelTier } from "../relay/config.js";
+import { workRoleRefusal } from "../relay/doctor.js";
 
 export type Pick = { agent: string; model?: string };
 export type RoutingStrategy = "cheapest-first" | "quality-first" | "balanced";
@@ -15,6 +16,7 @@ export function pairsForRole(config: RelayConfig, role: Role): AgentModelPair[] 
   const pairs: AgentModelPair[] = [];
   for (const [name, agent] of Object.entries(config.agents)) {
     if (!agent.roles.includes(role)) continue;
+    if (role === "work" && workRoleRefusal(agent.cmd?.[0])) continue;
     if (agent.models?.length) {
       for (const m of agent.models) pairs.push({ agent: name, model: m.name, tier: m.tier, quality: m.quality });
     } else {

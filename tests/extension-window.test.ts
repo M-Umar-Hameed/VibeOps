@@ -5,8 +5,81 @@ import {
   needsDebugger,
   keepPageLive,
   captureScreenshotVia,
+  createDebuggerLease,
   MAX_SCREENSHOT_B64,
 } from "../extension/window.js";
+
+describe("createDebuggerLease", () => {
+  function setup(attachImpl: () => Promise<boolean> = async () => true) {
+    vi.useFakeTimers();
+    const attach = vi.fn(attachImpl);
+    const detach = vi.fn(async (_t: number) => {});
+    const keepLive = vi.fn(async (_t: number) => {});
+    return { attach, detach, keepLive, lease: createDebuggerLease({ attach, detach, keepLive }) };
+  }
+
+  it("10 consecutive same-tab batches attach once, detach after idle", async () => {
+    const { attach, detach, keepLive, lease } = setup();
+    for (let i = 0; i < 10; i++) { await lease.acquire(7); lease.release(); }
+    expect(attach).toHaveBeenCalledTimes(1);
+    expect(keepLive).toHaveBeenCalledTimes(1);
+    expect(detach).toHaveBeenCalledTimes(0);
+    vi.advanceTimersByTime(10000);
+    await vi.runAllTimersAsync();
+    expect(detach).toHaveBeenCalledTimes(1);
+    expect(detach).toHaveBeenCalledWith(7);
+    expect(lease.holds(7)).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("switching tabs detaches the old one before attaching the new", async () => {
+    const { attach, detach, lease } = setup();
+    await lease.acquire(7);
+    await lease.acquire(8);
+    expect(detach).toHaveBeenCalledWith(7);
+    expect(detach.mock.invocationCallOrder[0]).toBeLessThan(attach.mock.invocationCallOrder[1]);
+    expect(lease.holds(8)).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it("retries once after detaching a stale session", async () => {
+    let n = 0;
+    const { attach, detach, lease } = setup(async () => ++n > 1);
+    expect(await lease.acquire(7)).toBe(true);
+    expect(attach).toHaveBeenCalledTimes(2);
+    expect(detach).toHaveBeenCalledWith(7);
+    expect(detach.mock.invocationCallOrder[0]).toBeGreaterThan(attach.mock.invocationCallOrder[0]);
+    expect(detach.mock.invocationCallOrder[0]).toBeLessThan(attach.mock.invocationCallOrder[1]);
+    vi.useRealTimers();
+  });
+
+  it("returns false when attach always fails", async () => {
+    const { lease } = setup(async () => false);
+    expect(await lease.acquire(7)).toBe(false);
+    expect(lease.holds(7)).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("dropped forces a re-attach", async () => {
+    const { attach, lease } = setup();
+    await lease.acquire(7);
+    lease.dropped(7);
+    await lease.acquire(7);
+    expect(attach).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
+  it("acquire before idle expiry cancels the detach timer", async () => {
+    const { detach, lease } = setup();
+    await lease.acquire(7);
+    lease.release();
+    await lease.acquire(7);
+    vi.advanceTimersByTime(10000);
+    await vi.runAllTimersAsync();
+    expect(detach).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+});
 
 describe("withPaintableWindow", () => {
   it("restores minimized window with focused:false before run and re-minimizes after", async () => {

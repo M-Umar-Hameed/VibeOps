@@ -53,12 +53,10 @@ describe("shadow root", () => {
     expect(root.querySelector("button").textContent).toBe("Shadow target");
     expect(names(doc)).toContain("Light button");
   });
-  // gap: collectInteractive queries doc.querySelectorAll only (snapshot.js:22)
-  it.fails("GAP: snapshot lists the shadow button", () => {
+  it("snapshot lists the shadow button", () => {
     expect(names(setup().doc)).toContain("Shadow target");
   });
-  // gap: no ref exists for a shadow element (snapshot.js:22)
-  it.fails("GAP: click on its ref reaches the shadow button", async () => {
+  it("click on its ref reaches the shadow button", async () => {
     const { doc, hits } = setup();
     const r = await act(doc, [click(refFor(doc, "Shadow target"))]);
     expect(r.ok).toBe(true);
@@ -79,12 +77,10 @@ describe("same-origin iframe", () => {
     expect(fd.querySelector("button").textContent).toBe("Framed button");
     expect(names(doc)).toContain("Top button");
   });
-  // gap: no frame traversal in snapshot.js
-  it.fails("GAP: top-level snapshot lists the framed button", () => {
+  it("top-level snapshot lists the framed button", () => {
     expect(names(setup().doc)).toContain("Framed button");
   });
-  // gap: no top-level ref reaches into a frame (snapshot.js has no frame traversal)
-  it.fails("GAP: click via a top-level ref reaches the framed button", async () => {
+  it("click via a top-level ref reaches the framed button", async () => {
     const { doc, hits } = setup();
     const r = await act(doc, [click(refFor(doc, "Framed button"))]);
     expect(r.ok).toBe(true);
@@ -108,24 +104,21 @@ describe("hidden elements", () => {
     const none = [...doc.querySelectorAll("button")].find((b: any) => b.textContent === "Display none");
     expect(doc.defaultView.getComputedStyle(none).display).toBe("none");
   });
-  // gap: no visibility filter in snapshot.js
-  it.fails("GAP: display:none is not offered", () => {
+  it("display:none is not offered", () => {
     expect(names(setup().doc)).not.toContain("Display none");
   });
-  // gap: no visibility filter in snapshot.js
-  it.fails("GAP: visibility:hidden is not offered", () => {
+  it("visibility:hidden is not offered", () => {
     expect(names(setup().doc)).not.toContain("Visibility hidden");
   });
-  // gap: no aria-hidden filter in snapshot.js
-  it.fails("GAP: aria-hidden subtree is not offered", () => {
+  it("aria-hidden subtree is not offered", () => {
     expect(names(setup().doc)).not.toContain("Aria hidden");
   });
-  // gap: zero-size is listed with rect:null (snapshot.js:252)
+  // Stays a gap: jsdom reports 0x0 for every element, so a size filter cannot be checked here,
+  // and zero-size controls keep the synthetic path (execute.js prepareTrusted).
   it.fails("GAP: zero-size is not offered", () => {
     expect(names(setup().doc)).not.toContain("Zero size");
   });
-  // gap: every ref is clickable, including the display:none one (snapshot.js has no filter)
-  it.fails("GAP: no ref reaches the display:none button", async () => {
+  it("no ref reaches the display:none button", async () => {
     const { doc, hits } = setup();
     const count = collectInteractive(doc).length;
     for (let i = 1; i <= count + 1; i++) await act(doc, [click(`ref${i}`)]);
@@ -146,15 +139,15 @@ describe("stale ref", () => {
     expect((await act(doc, [click("ref9")])).code).toBe("stale_ref");
     expect(refFor(doc, "Save")).toBe("ref1");
   });
-  // gap: a detached Element in the resumed refMap is still clicked (execute.js:41,238)
-  it.fails("GAP: re-rendered element with a resumed refMap returns stale_ref", async () => {
+  it("re-rendered element with a resumed refMap returns stale_ref", async () => {
     const { doc, save } = setup();
     const first = await run(doc, [{ verb: "snapshot" }]);
     save.replaceWith(save.cloneNode(true));
     const r = await act(doc, [click("ref1")], { refMap: first.refMap });
     expect(r.code).toBe("stale_ref");
   });
-  // gap: refs are positional and rebuilt per batch (execute.js:20-27, worker.js:233)
+  // Stays a gap: refs are positional and rebuilt per batch; fixing it needs stable ref
+  // identity carried between batches (a ref-format change).
   it.fails("GAP: insert before the target, ref1 then targets a different element", async () => {
     const { doc, save, hits } = setup();
     const del = doc.createElement("button");
@@ -186,8 +179,7 @@ describe("covered target", () => {
     const r = await act(doc, [click(refFor(doc, "Pay"))], { trusted: true });
     expect(r.code).toBe("not_hittable");
   });
-  // gap: hit-test is frame-local, an outer-document cover is not seen (execute.js:191)
-  it.fails("GAP: outer-document scrim over an iframe returns not_hittable", async () => {
+  it("outer-document scrim over an iframe returns not_hittable", async () => {
     const { doc } = setup();
     const fd = frameDoc(doc);
     const btn = fd.querySelector("button");
@@ -216,25 +208,23 @@ describe("accessible name", () => {
     }
     expect([...doc.querySelectorAll("input")].map((el: any) => el.value)).toEqual(["v0", "v1", "v2"]);
   });
-  // gap: no aria-labelledby in getAccessibleName (snapshot.js:102)
-  it.fails("GAP: aria-labelledby names an input", () => {
+  it("aria-labelledby names an input", () => {
     expect(nodes(load("accessible-name.html")).filter((n) => n.role === "textbox")[1].name).toBe("Password");
   });
-  // gap: no aria-labelledby in getAccessibleName (snapshot.js:102)
-  it.fails("GAP: aria-labelledby names a role=button", () => {
+  it("aria-labelledby names a role=button", () => {
     expect(nodes(load("accessible-name.html")).find((n) => n.role === "button").name).toBe("Go now");
   });
 });
 
 describe("snapshot operation count (jsdom)", () => {
   const LANDMARK = "main,nav,header,footer,aside,form,section,[role=main],[role=navigation],[role=banner],[role=contentinfo],[role=complementary],[role=region],[role=form],[role=search]";
+  // Collection is one tree walk (0 doc.querySelectorAll); the label[for] map and the
+  // heading list are each built once, only if some element needs them.
   function expectedQsa(doc: any) {
-    let n = 9; // role passes, snapshot.js:26-71
-    for (const { element } of collectInteractive(doc)) {
-      if (!(element.getAttribute("aria-label") || "").trim() && element.getAttribute("id")) n++; // label[for], snapshot.js:113
-      if (!element.parentElement?.closest(LANDMARK)) n++; // heading fallback, snapshot.js:219
-    }
-    return n;
+    const items = collectInteractive(doc);
+    const labels = items.some(({ element }) => !(element.getAttribute("aria-label") || "").trim() && element.getAttribute("id"));
+    const headings = items.some(({ element }) => !element.parentElement?.closest(LANDMARK));
+    return (labels ? 1 : 0) + (headings ? 1 : 0);
   }
   async function countOps(doc: any, fn: () => unknown) {
     const view = doc.defaultView, proto = view.Element.prototype;
@@ -246,7 +236,7 @@ describe("snapshot operation count (jsdom)", () => {
     try { return { result: (await fn()) as any, counts }; }
     finally { delete doc.querySelectorAll; proto.getBoundingClientRect = origRect; view.getComputedStyle = origStyle; }
   }
-  // Pins, not targets: 2/2 updates them when it optimises.
+  // Pins of the measured counts after the 2/2 optimisations.
   it.each([50, 2000])("buildSnapshot and snapshot step on a %i-element page", async (n) => {
     const doc = new JSDOM(benchPage(n), { url: `${ORIGIN}/` }).window.document;
     const want = expectedQsa(doc);
@@ -256,7 +246,7 @@ describe("snapshot operation count (jsdom)", () => {
     expect(snap.result.nodes.length).toBe(n);
     expect(snap.counts.querySelectorAll).toBe(want);
     expect(snap.counts.layoutReads).toBe(n);
-    expect(step.counts.querySelectorAll).toBe(want + 9); // + buildRefMap pass, execute.js:41
+    expect(step.counts.querySelectorAll).toBe(want); // buildRefMap adds no query
     expect(step.counts.layoutReads).toBe(n);
   }, 60_000);
 });

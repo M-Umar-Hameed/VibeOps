@@ -5,7 +5,7 @@
 // throws before the batch is ever reported and the server sees a 504.
 import { splitSegments } from "./segments.js";
 import { dispatchCdp, usesCdp } from "./cdp.js";
-import { withPaintableWindow, needsDebugger, keepPageLive, captureScreenshotVia, wantsPaint } from "./window.js";
+import { withPaintableWindow, needsDebugger, keepPageLive, captureScreenshotVia, wantsPaint, createDebuggerLease } from "./window.js";
 
 const API_BASE = "http://127.0.0.1:8787";
 
@@ -170,6 +170,14 @@ async function agentTab() {
 async function attachDebugger(tabId) { try { await chrome.debugger.attach({ tabId }, "1.3"); return true; } catch { return false; } }
 async function detachDebugger(tabId) { try { await chrome.debugger.detach({ tabId }); } catch { /* already detached */ } }
 
+const dbgLease = createDebuggerLease({
+  attach: attachDebugger,
+  detach: detachDebugger,
+  keepLive: (tabId) => keepPageLive((m, p) => chrome.debugger.sendCommand({ tabId }, m, p)),
+});
+// Banner cancelled, tab closed, or DevTools took over: forget it so the next batch re-attaches.
+chrome.debugger.onDetach.addListener((source) => dbgLease.dropped(source.tabId));
+
 // Injected via chrome.scripting.executeScript (serialized by toString): must not reference module scope.
 async function runInPage(steps, grant, targetOrigin, trusted, resume) {
   const { executeSteps } = await import(chrome.runtime.getURL("execute.js"));
@@ -186,8 +194,6 @@ async function runInPage(steps, grant, targetOrigin, trusted, resume) {
 async function executeBatch(batch) {
   const results = new Array(batch.steps.length);
   let snapshot = { instanceId, origin: "", identity: null, nodes: [] };
-  let dbgTab = null;
-  let dbgOk = false;
   let first;
   try {
     first = await agentTab();
@@ -220,15 +226,8 @@ async function executeBatch(batch) {
           break;
         }
         const tabId = tab.id;
-        if (needsDebugger(batch.grant, seg.steps)) {
-          if (dbgTab !== tabId) {
-            if (dbgOk) await detachDebugger(dbgTab);
-            dbgOk = await attachDebugger(tabId);
-            dbgTab = tabId;
-            if (dbgOk) await keepPageLive((m, p) => chrome.debugger.sendCommand({ tabId }, m, p));
-          }
-        }
-        const attached = dbgOk && dbgTab === tabId;
+        if (needsDebugger(batch.grant, seg.steps)) await dbgLease.acquire(tabId);
+        const attached = dbgLease.holds(tabId);
         const trusted = batch.grant === "act" && attached;
         let i = 0, resume = false, segSnap = null;
         while (i < seg.steps.length) {
@@ -289,7 +288,7 @@ async function executeBatch(batch) {
         snapshot: { instanceId, origin: "", identity: null, nodes: [] },
       });
     } finally {
-      if (dbgOk) await detachDebugger(dbgTab);
+      dbgLease.release();
     }
   });
 }

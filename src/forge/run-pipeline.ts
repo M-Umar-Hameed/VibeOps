@@ -24,7 +24,7 @@ import { listActors } from "../services/actors.js";
 import { captureMemory, reportTail } from "../services/memory-capture.js";
 import { type Ticket } from "../db/schema.js";
 import { resolveChecks, runChecks, formatChecks, selectChecks } from "./checks.js";
-import { declaredFullPaths, overlappingDeclared } from "./gate.js";
+import { declaredFullPaths, overlappingDeclared, plannedFiles, missingPlannedFiles } from "./gate.js";
 import { type Run, type Stage, append, enterStage, recordSpawn, setCause, settle, bounce, setStatus, activeRuns } from "./run-state.js";
 import { track, noteAccount, modelOf, applyVerification } from "./run-agents.js";
 import { knowledgeQuery, getKnowledgeSafe, getMemorySafe } from "./run-knowledge.js";
@@ -353,6 +353,20 @@ export async function pipeline(
   if (unknownRules.length) append(run, `\nforge: ALLOW-COMMAND ignores unknown rule ids: ${unknownRules.join(", ")}\n`);
   const liftedRules = allowCmd.filter((id) => RISK_IDS.includes(id));
   if (liftedRules.length) append(run, `\nforge: deny list lifted for this run: ${liftedRules.join(", ")}\n`);
+
+  // One local work retry before review (pre-review check failure, missing planned files).
+  // Never fails the run: an agent error is logged and the pipeline continues to review.
+  const retryWork = async (label: string, prompt: string, commitTitle: string): Promise<void> => {
+    const retryPrompt = prompt + NARRATION + "\n\nDo NOT run git commit; the supervisor commits for you.";
+    try {
+      const retryRes = await withAgyHook(agents.work.cmd, sandbox, agyFirewallHookCommand, () => track(actorId, ticket.id, "work", run.agents.work, retryPrompt.length, () =>
+        runAgent({ ...agents.work, write: true, projectId: ticket.projectId, liftedRules, ...evidenceDirs }, retryPrompt, sandbox, onData,
+          (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
+          modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r))));
+      if (retryRes.ok) await forgeCommit(ticket.id, commitTitle);
+    } catch (e) { append(run, `\nforge: ${label} retry skipped: ${(e as Error).message}\n`); }
+  };
+
   const workRes: AgentResult = await withAgyHook(agents.work.cmd, sandbox, agyFirewallHookCommand, () =>
     track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
       runAgent({ ...agents.work, write: true, projectId: ticket.projectId, liftedRules, ...evidenceDirs }, workPrompt, sandbox, onData,
@@ -457,6 +471,21 @@ export async function pipeline(
       return settle(run, "failed");
     }
   }
+  if (!crashed) {
+    const changed = await sandboxDiffNamesNoRenames(workdir, ticket.id).catch(() => null);
+    const missing = changed ? missingPlannedFiles(plannedFiles(plan), changed) : [];
+    if (missing.length) {
+      append(run, `\nforge: planned file(s) not changed: ${missing.join(", ")}; running one local retry before review\n`);
+      await retryWork("missing-files", composeWorkPrompt({
+        ticket, plan, knowledge, workdir: sandbox, memory,
+        skills: selectedSkills.bodies,
+        operatorEvidence: workEv.length ? workEv : undefined,
+        allowedCommands: (await loadWall(ticket.projectId, true, sandbox)).allowed,
+        checks: workCheckCmds,
+        rework: { findings: `The plan requires these files, tests included, but your diff does not change them: ${missing.join(", ")}. Create, modify or delete each one as the plan says. Do not redo work already in the sandbox.` },
+      }), `${ticket.title} (missing files)`);
+    }
+  }
   if (!crashed && (await getSetting("forge.preReviewCheck")) === "true") {
     const preEntries = resolveChecks(await getSetting(`forge.checks.${ticket.projectId}`), sandbox, await getSetting("forge.checks"));
     const { run: preChecks } = selectChecks(preEntries, await sandboxDiffNamesNoRenames(workdir, ticket.id).catch(() => null));
@@ -467,7 +496,7 @@ export async function pipeline(
       if (failed.length > 0) {
         append(run, `\nforge: pre-review check failed (${failed.length} check(s)); running local rework retry before review\n`);
         const preCheckOutput = formatChecks(results);
-        const retryPrompt = composeWorkPrompt({
+        await retryWork("pre-review", composeWorkPrompt({
           ticket, plan, knowledge, workdir: sandbox, memory,
           skills: selectedSkills.bodies,
           allowedCommands: (await loadWall(ticket.projectId, true, sandbox)).allowed,
@@ -476,16 +505,7 @@ export async function pipeline(
             findings: "Fix failing checks before supervisor review.",
             failingCheckOutput: preCheckOutput,
           },
-        }) + NARRATION + "\n\nDo NOT run git commit; the supervisor commits for you.";
-        try {
-          const retryRes = await withAgyHook(agents.work.cmd, sandbox, agyFirewallHookCommand, () => track(actorId, ticket.id, "work", run.agents.work, retryPrompt.length, () =>
-            runAgent({ ...agents.work, write: true, projectId: ticket.projectId, liftedRules, ...evidenceDirs }, retryPrompt, sandbox, onData,
-              (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
-              modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r))));
-          if (retryRes.ok) {
-            await forgeCommit(ticket.id, `${ticket.title} (pre-review fix)`);
-          }
-        } catch (e) { append(run, `\nforge: pre-review retry skipped: ${(e as Error).message}\n`); }
+        }), `${ticket.title} (pre-review fix)`);
       }
     }
   }

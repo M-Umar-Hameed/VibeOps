@@ -2722,3 +2722,46 @@ describe("sandbox disk guard", () => {
     expect(sandboxExists(ticket.id)).toBe(false);
   });
 });
+
+describe("missing planned files retry", () => {
+  let cwdOut: string, promptOut: string;
+  beforeEach(() => {
+    cwdOut = join(counterDir, "cwd.txt");
+    promptOut = join(counterDir, "prompt.txt");
+    process.env.FAKE_CWD_OUT = cwdOut;
+    process.env.FAKE_PROMPT_OUT = promptOut;
+  });
+  afterEach(() => {
+    delete process.env.FAKE_CWD_OUT;
+    delete process.env.FAKE_PROMPT_OUT;
+  });
+  const modes = () => readFileSync(cwdOut, "utf-8").trim().split("\n").map((l) => l.split("\t")[0]);
+
+  it("retries once before review when the first pass skips a planned file", async () => {
+    const { actorId, ticket } = await seedTicket("Missing planned file");
+    setScript("plan-files,work,work,review-pass", true);
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+    const chunk = getRunOutput(runId, 0)?.chunk ?? "";
+    expect(chunk).toContain("forge: planned file(s) not changed: tests/missing.test.ts; running one local retry before review");
+    expect(modes().filter((m) => m === "work")).toHaveLength(2);
+    // FAKE_PROMPT_OUT keeps the last work prompt = the retry prompt
+    expect(readFileSync(promptOut, "utf-8")).toContain("your diff does not change them: tests/missing.test.ts");
+    expect(chunk.indexOf("planned file(s) not changed")).toBeLessThan(chunk.indexOf("=== FORGE review"));
+    expect(modes()).toContain("review-pass");
+  });
+
+  it("no retry when every planned file changed", async () => {
+    const { actorId, ticket } = await seedTicket("All planned files changed");
+    setScript("plan-files-ok,work,review-pass", true);
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await awaitRun(runId);
+    expect(getRunOutput(runId, 0)?.chunk ?? "").not.toContain("planned file(s) not changed");
+    expect(modes().filter((m) => m === "work")).toHaveLength(1);
+    expect(modes()).toContain("review-pass");
+  });
+});

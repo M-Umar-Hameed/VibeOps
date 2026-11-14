@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { installAgyHook, restoreAgyHook, AGY_HOOK_NAME } from "../src/forge/agy-hook.js";
+import { installAgyHook, restoreAgyHook, AGY_HOOK_NAME, needsAgyHook, withAgyHook } from "../src/forge/agy-hook.js";
+import { templates } from "../src/relay/bootstrap-config.js";
 import { ensureSandbox, forgeCommit, sandboxPath } from "../src/forge/sandbox.js";
 
 const TID = "11111111-2222-3333-4444-555555555555";

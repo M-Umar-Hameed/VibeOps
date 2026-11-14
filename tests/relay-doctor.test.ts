@@ -203,7 +203,7 @@ test("pipelineStartWarnings: agy-basename agent produces firewall warning, non-a
   };
   const agyWarnings = pipelineStartWarnings(cfg, [agyName]);
   expect(agyWarnings).toEqual([
-    `agent "${agyName}" (agy): the forge firewall runs as a .agents/hooks.json hook in work sandboxes, but agy runs the command anyway if the hook exits without printing a decision (a missing hook script blocks)`,
+    `agent "${agyName}" (agy): the forge firewall runs as a .agents/hooks.json hook in forge plan, work and review stages (not chat, council, relay runner or diff-explain calls), but agy runs the command anyway if the hook exits without printing a decision (a missing hook script blocks)`,
   ]);
 
   const claudeWarnings = pipelineStartWarnings(cfg, [claudeName]);

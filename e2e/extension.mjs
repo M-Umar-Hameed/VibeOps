@@ -2,17 +2,22 @@
 // Proves the three things jsdom cannot: the options page links through the real
 // UI, a batch round-trips through a real service worker, and the 30s heartbeat
 // alarm is actually scheduled in the browser. Run: npm run e2e:extension
+// Latency benchmark: npm run e2e:extension -- --bench
 // ponytail: plain node + asserts, no test runner - one file, three checks.
 import { chromium } from "playwright";
 import { strict as assert } from "node:assert";
 import { readFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createServer } from "node:http";
+import { benchPage } from "./bench-pages.mjs";
 
 const API = "http://127.0.0.1:8787";
 const { apiKey } = JSON.parse(readFileSync(join(process.env.USERPROFILE || process.env.HOME, ".vibeops/credentials.json"), "utf8"));
 const extPath = resolve(import.meta.dirname, "../extension");
 const H = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+const BENCH = process.argv.includes("--bench");
+const BENCH_ITERATIONS = 20;
 
 const health = await fetch(`${API}/browser/instances`, { headers: H }).catch(() => null);
 if (!health?.ok) { console.error("sidecar not answering on :8787 - start it first"); process.exit(2); }
@@ -92,6 +97,8 @@ try {
     await fetch(`${API}/settings/browserGrants`, { method: "PATCH", headers: H, body: JSON.stringify({ value: prior ?? "[]" }) });
   }
 
+  if (BENCH) await runBench(sw, mine.instanceId); // before check 5, which poisons the key
+
   // 5. A session the server does not vouch for must never read as Linked.
   // LAST on purpose: the bogus key poisons the worker's polling for anything after.
   await page.goto(`chrome-extension://${extId}/options.html`);
@@ -108,4 +115,68 @@ try {
   console.log("PASS");
 } finally {
   await ctx.close();
+}
+
+// nearest-rank percentile; q in (0,1]
+function pct(xs, q) { const s = [...xs].sort((a, b) => a - b); return s[Math.max(0, Math.ceil(q * s.length) - 1)]; }
+function stats(xs) { const r = (v) => Math.round(v * 10) / 10; return { n: xs.length, medianMs: r(pct(xs, 0.5)), p95Ms: r(pct(xs, 0.95)) }; }
+
+// Latency baseline for browser extension 2/2. Timings are client-observed
+// POST /browser/batches round trips (server enqueue -> extension result).
+async function runBench(sw, instanceId) {
+  const server = createServer((req, res) => {
+    const n = req.url === "/large" ? 2000 : req.url === "/small" ? 50 : 0;
+    if (!n) { res.writeHead(404).end(); return; }
+    res.writeHead(200, { "Content-Type": "text/html" }).end(benchPage(n));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const benchOrigin = `http://127.0.0.1:${server.address().port}`;
+  const prior = (await (await fetch(`${API}/settings/browserGrants`, { headers: H })).json()).value;
+  const withGrant = JSON.stringify([...(prior ? JSON.parse(prior) : []).filter((g) => g.origin !== benchOrigin), { origin: benchOrigin, mode: "act" }]);
+  await fetch(`${API}/settings/browserGrants`, { method: "PATCH", headers: H, body: JSON.stringify({ value: withGrant }) });
+  const batch = async (steps) => {
+    const t0 = performance.now();
+    const res = await fetch(`${API}/browser/batches`, { method: "POST", headers: H,
+      body: JSON.stringify({ instanceId, tenant: "e2e", targetOrigin: benchOrigin, steps }) });
+    const body = await res.json();
+    const ms = performance.now() - t0;
+    assert.equal(res.status, 200, `bench batch returned ${res.status}`);
+    const bad = body.results.find((r) => !r.ok);
+    assert.ok(!bad, `bench step failed: ${JSON.stringify(bad)}`);
+    return { ms, body };
+  };
+  const time = async (steps) => { await batch(steps); const xs = []; for (let i = 0; i < BENCH_ITERATIONS; i++) xs.push((await batch(steps)).ms); return stats(xs); }; // 1 warm-up discarded
+  try {
+    const report = { bench: "extension-latency", iterations: BENCH_ITERATIONS };
+    await batch([{ verb: "newTab", url: `${benchOrigin}/large` }]);
+    const large = (await batch([{ verb: "snapshot" }])).body.snapshot.nodes.length;
+    assert.ok(large >= 2000, `large page snapshot has ${large} nodes`);
+    report.snapshotLarge = { elements: large, ...(await time([{ verb: "snapshot" }])) };
+    await batch([{ verb: "newTab", url: `${benchOrigin}/small` }]);
+    const nodes = (await batch([{ verb: "snapshot" }])).body.snapshot.nodes;
+    assert.ok(nodes.length >= 50, `small page snapshot has ${nodes.length} nodes`);
+    const ref = (name) => { const n = nodes.find((x) => x.name === name); assert.ok(n, `bench page has no ${name}`); return n.ref; };
+    report.snapshotSmall = { elements: nodes.length, ...(await time([{ verb: "snapshot" }])) };
+    report.click = await time([{ verb: "click", ref: ref("bench-click") }]);
+    report.type = await time([{ verb: "type", ref: ref("bench-type"), text: "bench" }]);
+    report.waitAfter50ms = await time([{ verb: "click", ref: ref("bench-reveal") }, { verb: "wait", text: "bench-ready" }]); // includes the click; subtract report.click
+    report.screenshot = await time([{ verb: "screenshot" }]);
+    const patched = await sw.evaluate(() => {
+      const orig = chrome.debugger.attach;
+      globalThis.__benchAttach = { orig, n: 0 };
+      try { chrome.debugger.attach = (...a) => { globalThis.__benchAttach.n++; return orig.apply(chrome.debugger, a); }; } catch { return false; }
+      return chrome.debugger.attach !== orig;
+    });
+    if (patched) {
+      for (let i = 0; i < 10; i++) await batch([{ verb: "click", ref: ref("bench-click") }]);
+      report.debuggerAttachCallsPer10ActionBatches = await sw.evaluate(() => { const { orig, n } = globalThis.__benchAttach; chrome.debugger.attach = orig; delete globalThis.__benchAttach; return n; });
+    } else {
+      report.debuggerAttachCallsPer10ActionBatches = null;
+      report.debuggerAttachNote = "chrome.debugger.attach not patchable from the service worker";
+    }
+    console.log(JSON.stringify(report));
+  } finally {
+    await fetch(`${API}/settings/browserGrants`, { method: "PATCH", headers: H, body: JSON.stringify({ value: prior ?? "[]" }) });
+    server.close();
+  }
 }

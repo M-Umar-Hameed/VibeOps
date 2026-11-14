@@ -23,6 +23,7 @@ test("composePlanPrompt includes ticket title and knowledge", () => {
   expect(prompt).toContain("Fix the widget");
   expect(prompt).toContain("widgets are fiddly");
   expect(prompt).toContain('write "unmeasured" instead of guessing');
+  expect(prompt).toContain('"Files: none"');
 });
 
 test("composeWorkPrompt includes plan and the mandatory REPORT instruction", () => {

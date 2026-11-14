@@ -40,6 +40,7 @@ export function composePlanPrompt(
     skillIndex ? `\n${skillIndex}\nEnd the plan with one line "Skills: a, b" naming at most 3 skills from this list the worker must follow, or "Skills: none".` : "",
     `\nWrite an implementation plan for this ticket, with concrete acceptance criteria.`,
     `Name every file the worker will create or modify, including test files, by repository-relative path; the review gate blocks any changed file the plan does not name.`,
+    `Also write one plain-text line "Files: path/a.ts, tests/a.test.ts" that lists exactly the repository-relative files the worker must create, modify or delete, test files included, and no file the worker only reads; write "Files: none" when the ticket changes no tracked file. If the plan ends with a Skills line, put the Files line above it.`,
     `Follow the repository's CLAUDE.md and AGENTS.md and any guideline document they name for the paths you touch. ` +
     `Every number in the plan (test counts, line numbers, baselines, sizes) must come from something you ran or read in this session; write "unmeasured" instead of guessing.`,
     UNTRUSTED_CLAUSE,

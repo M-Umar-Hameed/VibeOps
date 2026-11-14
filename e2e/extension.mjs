@@ -161,19 +161,6 @@ async function runBench(sw, instanceId) {
     report.type = await time([{ verb: "type", ref: ref("bench-type"), text: "bench" }]);
     report.waitAfter50ms = await time([{ verb: "click", ref: ref("bench-reveal") }, { verb: "wait", text: "bench-ready" }]); // includes the click; subtract report.click
     report.screenshot = await time([{ verb: "screenshot" }]);
-    // Raw attach+detach cost, independent of worker behaviour, so it stays meaningful once the debugger is leased.
-    report.debuggerAttachDetach = stats(await sw.evaluate(async () => {
-      const { agentTabId } = await chrome.storage.session.get("agentTabId");
-      const xs = [];
-      for (let i = 0; i < 20; i++) {
-        try { await chrome.debugger.detach({ tabId: agentTabId }); } catch { /* not attached */ }
-        const t = performance.now();
-        await chrome.debugger.attach({ tabId: agentTabId }, "1.3");
-        await chrome.debugger.detach({ tabId: agentTabId });
-        xs.push(performance.now() - t);
-      }
-      return xs;
-    }));
     const patched = await sw.evaluate(() => {
       const orig = chrome.debugger.attach;
       globalThis.__benchAttach = { orig, n: 0 };
@@ -190,6 +177,18 @@ async function runBench(sw, instanceId) {
         return (await chrome.debugger.getTargets()).some((t) => t.attached && t.tabId === agentTabId);
       });
       assert.equal(stillAttached, false, "debugger still attached after idle window");
+      // Raw attach+detach cost. Runs last, after the lease released, because a direct detach does not fire onDetach and would leave the lease stale.
+      report.debuggerAttachDetach = stats(await sw.evaluate(async () => {
+        const { agentTabId } = await chrome.storage.session.get("agentTabId");
+        const xs = [];
+        for (let i = 0; i < 20; i++) {
+          const t = performance.now();
+          await chrome.debugger.attach({ tabId: agentTabId }, "1.3");
+          await chrome.debugger.detach({ tabId: agentTabId });
+          xs.push(performance.now() - t);
+        }
+        return xs;
+      }));
     } else {
       report.debuggerAttachCallsPer10ActionBatches = null;
       report.debuggerAttachNote = "chrome.debugger.attach not patchable from the service worker";

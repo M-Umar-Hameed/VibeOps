@@ -293,6 +293,23 @@ describe("rich editors and real key events", () => {
       Object.assign(WAIT_TUNING, saved);
     }
   });
+  it("wait sees text revealed by toggling an attribute", async () => {
+    const saved = { ...WAIT_TUNING };
+    WAIT_TUNING.timeoutMs = 2000;
+    try {
+      const doc = dom('<body><p id="m" hidden>Secret</p></body>');
+      const m = doc.getElementById("m")!;
+      // jsdom has no innerText; emulate Chrome, which omits hidden text.
+      Object.defineProperty(doc.body, "innerText", { get: () => (m.hasAttribute("hidden") ? "" : "Secret") });
+      setTimeout(() => m.removeAttribute("hidden"), 20);
+      const t0 = performance.now();
+      const ok = (await executeSteps(doc, [{ verb: "wait", text: "Secret" }])) as any;
+      expect(ok.results[0]).toEqual({ ok: true });
+      expect(performance.now() - t0).toBeLessThan(500);
+    } finally {
+      Object.assign(WAIT_TUNING, saved);
+    }
+  });
   it("wait timeout leaves no observer running", async () => {
     const saved = { ...WAIT_TUNING };
     WAIT_TUNING.timeoutMs = 50;

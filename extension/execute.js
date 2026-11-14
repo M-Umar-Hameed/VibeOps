@@ -40,7 +40,7 @@ function waitForText(doc, text) {
     const finish = (ok) => { obs.disconnect(); view.clearTimeout(timer); resolve(ok); };
     const obs = new view.MutationObserver(() => { if (has()) finish(true); });
     const timer = view.setTimeout(() => finish(has()), WAIT_TUNING.timeoutMs);
-    obs.observe(doc.documentElement, { childList: true, subtree: true, characterData: true });
+    obs.observe(doc.documentElement, { childList: true, subtree: true, characterData: true, attributes: true });
   });
 }
 

@@ -55,7 +55,9 @@ export async function createProject(input: { key: string; name: string }, execut
     const [p] = await executor.insert(projects).values({ key: input.key, name: input.name }).returning();
     return p;
   } catch (e) {
-    if (String((e as { code?: string }).code) === "23505") {
+    // drizzle-orm >=0.45 wraps driver errors in DrizzleQueryError; the pg code moves to .cause.
+    const err = e as { code?: string; cause?: { code?: string } };
+    if (String(err.code ?? err.cause?.code) === "23505") {
       throw new ConflictError(`project key already exists: ${input.key}`);
     }
     throw e;

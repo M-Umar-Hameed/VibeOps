@@ -92,8 +92,8 @@ export async function buildServer(apiKey: string) {
   server.registerTool("laya_decide",
     { description: "Answer a structured decision with a local model in one forward pass: no text generation, so no hallucination. The schema's properties must be booleans, enums, or integers with an integer minimum/maximum; free strings, arrays and nested objects are rejected. Returns decided values plus per-field confidence, or an unavailable error when the local model is not configured. Use for choice, score and yes/no decisions, never for open questions, summarisation or code.",
       inputSchema: {
-        state: z.record(z.unknown()),
-        schema: z.record(z.unknown()),
+        state: z.record(z.string(), z.unknown()),
+        schema: z.record(z.string(), z.unknown()),
         minConfidence: z.number().min(0).max(1).optional(),
       } },
     async ({ state, schema, minConfidence }) => {

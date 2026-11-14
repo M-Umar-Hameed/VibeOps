@@ -168,6 +168,7 @@ async function waitForStage(runId: string, stage: string, timeoutMs = 5000): Pro
 describe("forge SDK lane (integration through runs.ts)", () => {
   it("persists real SDK tokens and cost for the work stage (no live call)", async () => {
     const { actorId, ticket } = await seedTicket("SDK telemetry path");
+    sdkState.writeFile = true;
 
     const { runId } = await startPipeline(actorId, relayConfig("plan,review-pass"), {
       ticketId: ticket.id, planAgent: "fake", workAgent: "sdkw", reviewAgent: "fake",

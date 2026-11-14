@@ -1,6 +1,6 @@
 # VibeOps — what it is, what we set out to build, where it stands
 
-Last updated 2026-09-05 at commit `ead0101` (989 commits since 2026-07-07). This is the one document to read first. It says what the app is for, what the intended scope was, what has actually shipped, and what is still open. Detailed architecture lives in `VibeOps.md`; per-feature designs live in `docs/superpowers/specs/`; the end-user walkthrough is `docs/USER_GUIDE.md`.
+Last updated 2026-11-14 at commit `2ef2d8d` (1314 commits since 2026-07-07). This is the one document to read first. It says what the app is for, what the intended scope was, what has actually shipped, and what is still open. Detailed architecture lives in `VibeOps.md`; per-feature designs live in `docs/superpowers/specs/`; the end-user walkthrough is `docs/USER_GUIDE.md`.
 
 ## What the app is
 
@@ -28,7 +28,7 @@ Phases 1 to 4 were the original plan (ticket engine, knowledge/RAG, desktop app,
 
 **Knowledge and memory.** pgvector index over vault markdown and PDFs, notes, session transcripts from Claude Code / Codex / Antigravity / claude-mem, repo content and chat. Local zero-key embedder by default, Voyage optional. Scoped global / project / ticket. `search_knowledge` on MCP and chat. As of 2026-08-22: typed memory (decisions with rationale, domain-scoped rules, handoffs) on the notes table, a `recall` service that fires rules by exact domain and decisions by similarity, injection into every chat lane and into forge plan/work prompts, `/recall` and `/prime` routes for Claude Code hooks with an installer, `save_decision`/`save_rule` tools, background auto-capture after chat turns and work stages, and `*handoff`.
 
-**Forge pipeline.** Plan -> sandboxed work in a git worktree -> checks (typecheck, tests) -> protected-path policy -> adversarial review -> human promote. Sandbox-escape sentinel restores any bytes written outside the worktree; deps-leak guard; mutation gate; file-set gate (files outside the plan's declared set block automatically); budget caps; run survival across sidecar restarts (pid plus process start time identity; reattach on boot); stall sweep; review chunking for oversized diffs; lessons clause on plan prompts (A/B-tested, deliberately absent on work prompts).
+**Forge pipeline.** Plan -> sandboxed work in a git worktree -> checks (typecheck, tests) -> protected-path policy -> adversarial review -> human promote. Sandbox-escape sentinel restores any bytes written outside the worktree; deps-leak guard; mutation gate; file-set gate (files outside the plan's declared set block automatically); budget caps; run survival across sidecar restarts (pid plus process start time identity; reattach on boot); stall sweep; review chunking for oversized diffs; lessons clause on plan prompts (A/B-tested, deliberately absent on work prompts). Since September: a shell-parsing command firewall replaces the `commandRisk` regex, in front of the SDK lane in-process and in front of the claude and agy CLI lanes as a PreToolUse hook (agy through a sandbox `.agents/hooks.json`), with a standalone copy in `blueprint/`; path-scoped checks plus a global cap on concurrent check suites; a sandbox disk guard that refuses to create a sandbox when the volume is below the free-space floor, throws `DiskFullError` and names `VIBEOPS_SANDBOX_ROOT`; and a structured cause recorded on every run settle (for example `no_changes`).
 
 **Agent relay.** `~/.vibeops/relay.json` declares lanes: `cli` (any command with `{prompt}`/`{model}` placeholders), `sdk` (Claude Agent SDK, tool-capable), and since 2026-08-22 `http` (OpenAI-compatible endpoints, chat plus the plan/review pipeline stages; work is excluded). Live lanes today: claude, claude-sdk, agy (Gemini), kimi, openrouter; codex declared but not installed. Model router with verification levels (parsed model banners where the CLI prints one, best-effort otherwise). Agent doctor checks binaries and sign-in state.
 
@@ -40,13 +40,13 @@ Phases 1 to 4 were the original plan (ticket engine, knowledge/RAG, desktop app,
 
 **Browser extension.** MV3 Chrome extension linked to the sidecar with an origin-scoped grant model (read free; act requires a per-origin grant the agent cannot self-issue; refusals name the exact setting). Verbs: snapshot (accessibility tree with refs and geometry), read, click, type, select, press, navigate, clickAt, screenshot, set-of-marks (numbered boxes on a screenshot so any model, vision or not, can pick a target), tabs, newTab, switchTab. Heartbeat via a 30 s alarm so the worker survives Chrome's idle kill; the options page only claims LINKED when the server confirms the session. Playwright e2e runs it in real Chrome against the live sidecar.
 
-**Operations.** Pipeline overhead measured (work stage dominates because agents run full suites; review is 0 to 1 min); the optimization plan (quick wins and structural tiers) is complete, including the 500 MB sidecar payload cut and the run-survival chain. Test lanes: parallel Postgres slices when Docker is up, serial embedded PGlite otherwise; a shared-stack safety fix so a sandbox can no longer destroy the test database.
+**Operations.** Pipeline overhead measured (work stage dominates because agents run full suites; review is 0 to 1 min); the optimization plan (quick wins and structural tiers) is complete, including the 500 MB sidecar payload cut and the run-survival chain. Test lanes: parallel Postgres slices when Docker is up, serial embedded PGlite otherwise; a shared-stack safety fix so a sandbox can no longer destroy the test database. The supervision-vs-bare-agents audit behind the README's why-choose numbers is `docs/evals/2026-11-09-supervision-vs-bare-agents.md`.
 
 ## What we have achieved, by the numbers
 
-- 938 commits over 47 days; published releases v0.1.2 through v0.1.6 (v0.1.6 tag predates the latest chat, tab and memory work; next release is 0.1.8).
-- Server suite: 187 files on the embedded lane, 175 passing files; the 5 failing files are the fixed Docker-only set (global-setup, relay-pipeline, sidecar-payload, forge-resume, one vector-dim test) and pass when Docker is up. App suite: 245 passing. Extension e2e: 5 checks in real Chrome.
-- 31 design specs under `docs/superpowers/specs/`, each implemented through the forge or, where the pipeline was too slow for the slice, directly with the same review discipline.
+- 1314 commits over 129 days; tags v0.1.0 through v0.2.1. The app version is stamped from the tag by `.github/workflows/release-build.yml`; the committed version fields (`package.json`, `app/package.json`, `tauri.conf.json` at 0.1.8, `Cargo.toml` at 0.1.0) lag the tags and were left alone pending an owner decision.
+- Server suite (embedded PGlite lane): unmeasured in this refresh. App suite (vitest): unmeasured. Extension e2e: unmeasured. Master is red: the fixes are pending in the unpromoted tickets "Red master 1/2" and "Red master 2/2". No green claim is made. Test files on disk: 236 server (`tests/*.test.ts`), 59 app (`app/src/**/*.test.{ts,tsx}`).
+- 34 design specs under `docs/superpowers/specs/`, each implemented through the forge or, where the pipeline was too slow for the slice, directly with the same review discipline.
 - The board is the record: every incident this project hit (stalled runs, orphaned agents, corrupted embedded DB, release mismatches, extension disconnects, silent chat failures) exists as a ticket with its diagnosis and fix.
 
 ## What is open
@@ -54,8 +54,9 @@ Phases 1 to 4 were the original plan (ticket engine, knowledge/RAG, desktop app,
 Tracked on the board, all under the VibeOps project:
 
 - `1421c63f` - owner's future plan: customer notification automation.
+- "Red master 1/2" and "Red master 2/2" - not promoted; the server suite is red until they land.
 
-Closed on 2026-09-05, all through the forge (plan claude, work agy, review claude): `ec60336d` closed work orders reachable on the Forge screen with per-ticket run history; `137789e4` installer shuts the sidecar down through `POST /system/shutdown` before replacing node.exe; `c98f7617` doctor detects an mcp:true lane with no MCP server registered; `ef1a2bb5` installed skills reach every pipeline lane (the planner sees the catalogue and names up to three, work and review receive their full text). Also landed directly: every child process the sidecar spawns is hidden on Windows (console windows no longer flash and steal focus), and a curated skill pack (seven superpowers skills, frontend-design, mcp-builder) ships in `vibeops-pack` behind a root `.claude-plugin/marketplace.json`, installable from Settings > Plugins.
+Historical, closed on 2026-09-05, all through the forge (plan claude, work agy, review claude): `ec60336d` closed work orders reachable on the Forge screen with per-ticket run history; `137789e4` installer shuts the sidecar down through `POST /system/shutdown` before replacing node.exe; `c98f7617` doctor detects an mcp:true lane with no MCP server registered; `ef1a2bb5` installed skills reach every pipeline lane (the planner sees the catalogue and names up to three, work and review receive their full text). Also landed directly: every child process the sidecar spawns is hidden on Windows (console windows no longer flash and steal focus), and a curated skill pack (seven superpowers skills, frontend-design, mcp-builder) ships in `vibeops-pack` behind a root `.claude-plugin/marketplace.json`, installable from Settings > Plugins.
 Process flaws found in the 2026-09-05 audit of the 200 closed tickets, and what changed:
 
 - Reviewers raised syntax or JSX-balance findings by counting hunks in the diff (12 tickets carried a finding later shown false). The review prompt now requires CHECKS output or a quoted compiler run for any compile-class finding.
@@ -68,7 +69,7 @@ Known limits worth stating plainly:
 - The code-graph half of basemode (tree-sitter map injected before a file is touched) was deferred on purpose; only the memory half is built.
 - OpenRouter can run the plan and review pipeline stages (text-in/text-out, served by a chat completion), but not work: that needs an agent harness that can edit files, which a chat-completions endpoint cannot provide.
 - Full desktop control (S2-B style) was rejected by the owner; the browser extension is the automation surface.
-- Docker-only tests cannot run in a Docker-less session; a green embedded lane plus the fixed failure set is the accepted signal.
+- Docker-only tests cannot run in a Docker-less session; the embedded lane is currently red (failing files unmeasured here; see "Red master 1/2" and "2/2"), and Docker-only tests are not run in a Docker-less session.
 
 ## How work gets done here
 

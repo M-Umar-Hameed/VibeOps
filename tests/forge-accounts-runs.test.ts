@@ -50,7 +50,7 @@ afterEach(() => {
 });
 
 function config(accounts?: RelayAccount[], extraEnv: Record<string, string> = {}): RelayConfig {
-  const env = { FAKE_SCRIPT: "plan,work,review-pass", FAKE_COUNTER_FILE: join(scratch, "ctr.txt"), ...extraEnv };
+  const env = { FAKE_SCRIPT: "plan,work,review-pass", FAKE_COUNTER_FILE: join(scratch, "ctr.txt"), FAKE_WRITE: "1", ...extraEnv };
   return { workdir, agents: { fake: { cmd: [bin, FAKE_AGENT, "{prompt}"], roles: ["plan", "work", "review"], env, ...(accounts ? { accounts } : {}) } } };
 }
 const runsFor = (ticketId: string) => db.select().from(forgeRuns).where(eq(forgeRuns.ticketId, ticketId)).orderBy(asc(forgeRuns.startedAt));

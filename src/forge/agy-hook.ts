@@ -1,7 +1,24 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, rmdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
+import { binBasename } from "../relay/doctor.js";
+
 export const AGY_HOOK_NAME = "vibeops-firewall";
+
+export const needsAgyHook = (cmd: readonly string[]): boolean => binBasename(cmd[0] ?? "").toLowerCase() === "agy";
+
+// Fail closed: if install throws, fn never runs (agy never spawns) and the partial install is undone.
+export async function withAgyHook<T>(cmd: readonly string[], root: string, hookCommand: () => string, fn: () => Promise<T> | T, onInstalled?: () => void): Promise<T> {
+  if (!needsAgyHook(cmd)) return fn();
+  try {
+    installAgyHook(root, hookCommand());
+  } catch (e) {
+    try { restoreAgyHook(root); } catch { /* backup removed in restore's finally */ }
+    throw e;
+  }
+  onInstalled?.();
+  try { return await fn(); } finally { restoreAgyHook(root); }
+}
 const hookFile = (root: string) => join(root, ".agents", "hooks.json");
 const backupFile = (root: string) => join(root, ".forge", "agy-hook-backup.json");
 type Backup = { existed: boolean; b64?: string; createdDir: boolean };

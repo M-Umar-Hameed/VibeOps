@@ -72,7 +72,7 @@ afterEach(() => {
 function relayConfig(agentName: string): RelayConfig {
   return {
     workdir,
-    agents: { [agentName]: { cmd: [process.execPath, FAKE_AGENT, "{prompt}"], roles: ["plan", "work", "review"] } },
+    agents: { [agentName]: { cmd: [process.execPath, FAKE_AGENT, "{prompt}"], roles: ["plan", "work", "review"], env: { FAKE_WRITE: "1" } } },
   };
 }
 

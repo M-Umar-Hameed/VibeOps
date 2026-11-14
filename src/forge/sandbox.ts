@@ -407,7 +407,7 @@ export function duplicateAddedTestTitles(diff: string): string[] {
     const line = raw.replace(/\r$/, "");
     if (line.startsWith("+++ ")) { file = line.slice(4).replace(/^b\//, ""); continue; }
     if (!line.startsWith("+")) continue;
-    const m = TITLE.exec(line);
+    const m = line.match(TITLE);
     if (m) { const key = `${file}: "${m[2]}"`; seen.set(key, (seen.get(key) ?? 0) + 1); }
   }
   return [...seen].filter(([, n]) => n > 1).map(([key]) => key);

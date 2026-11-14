@@ -10,11 +10,11 @@ import { treeCpuReader } from "../runtime/proc-tree-cpu.js";
 import { type ChildProcess, execFileSync } from "node:child_process";
 import { resolveCmd, loadRelayConfig, type RelayConfig, type RelayAgent } from "../relay/config.js";
 import { setRelayWriteGuard } from "../relay/bootstrap-config.js";
-import { pipelineStartWarnings, pipelineStartBlockingError, binBasename } from "../relay/doctor.js";
+import { pipelineStartWarnings, pipelineStartBlockingError } from "../relay/doctor.js";
 import { roleStyle } from "../relay/style.js";
 import { composePlanPrompt, composeWorkPrompt, composeReviewPrompt, parseVerdict, parseReason, fenceUntrusted, type ReworkContext } from "../relay/prompts.js";
 import { loadWall, agyFirewallHookCommand } from "../relay/wall.js";
-import { installAgyHook, restoreAgyHook } from "./agy-hook.js";
+import { withAgyHook } from "./agy-hook.js";
 import { listSkills, formatSkillIndex, formatSkillBodies, parseOperatorSkills, parsePlanSkills, parseSkillAllowlist, skillsForAgent, type SkillMeta } from "./skills.js";
 import { recallBlock } from "../services/recall.js";
 import { chunkReviewDiff, mergeReviewVerdicts } from "./review-chunks.js";
@@ -823,11 +823,12 @@ async function pipeline(
         skillIndex: formatSkillIndex(skillsForAgent(catalogue, agents.plan.skillAllowlist)),
         operatorEvidence: opEv.length ? opEv : undefined,
       }) + PLAN_ONLY + lessons + sizingClause + roleStyle("plan", styleSetting) + extra;
-      return track(actorId, ticket.id, "plan", run.agents.plan, planPrompt.length, () => runAgent(
+      return withAgyHook(agents.plan.cmd, view, agyFirewallHookCommand, () => track(actorId, ticket.id, "plan", run.agents.plan, planPrompt.length, () => runAgent(
         { ...agents.plan, projectId: ticket.projectId, ...evidenceDirs }, planPrompt, view, onData,
         (child) => recordSpawn(run, child),
         undefined, modelOf(run.agents.plan), run.logPath,
-      ).then((r) => noteAccount(run, "plan", r)));
+      ).then((r) => noteAccount(run, "plan", r))),
+      () => append(run, "\nforge: agy firewall hook installed for plan (.agents/hooks.json, removed before the view is checked)\n"));
     });
     if (planStray.length) append(run, `\n[forge: planner changed files in its read-only copy; discarded: ${planStray.join(", ")}]\n`);
     run.child = undefined;
@@ -939,20 +940,12 @@ async function pipeline(
   if (unknownRules.length) append(run, `\nforge: ALLOW-COMMAND ignores unknown rule ids: ${unknownRules.join(", ")}\n`);
   const liftedRules = allowCmd.filter((id) => RISK_IDS.includes(id));
   if (liftedRules.length) append(run, `\nforge: deny list lifted for this run: ${liftedRules.join(", ")}\n`);
-  const agyHook = binBasename(agents.work.cmd[0] ?? "").toLowerCase() === "agy";
-  if (agyHook) {
-    installAgyHook(sandbox, agyFirewallHookCommand());
-    append(run, "\nforge: agy firewall hook installed (.agents/hooks.json, removed before commit)\n");
-  }
-  let workRes: AgentResult;
-  try {
-    workRes = await track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
+  const workRes: AgentResult = await withAgyHook(agents.work.cmd, sandbox, agyFirewallHookCommand, () =>
+    track(actorId, ticket.id, "work", run.agents.work, workPrompt.length, () =>
       runAgent({ ...agents.work, write: true, projectId: ticket.projectId, liftedRules, ...evidenceDirs }, workPrompt, sandbox, onData,
         (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
-        modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r)));
-  } finally {
-    if (agyHook) restoreAgyHook(sandbox);
-  }
+        modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r))),
+    () => append(run, "\nforge: agy firewall hook installed (.agents/hooks.json, removed before commit)\n"));
   run.child = undefined;
   run.abort = undefined;
   const tampered = detectAndRestore(sentinelSnaps);
@@ -1072,14 +1065,14 @@ async function pipeline(
           },
         }) + NARRATION + "\n\nDo NOT run git commit; the supervisor commits for you.";
         try {
-          const retryRes = await track(actorId, ticket.id, "work", run.agents.work, retryPrompt.length, () =>
+          const retryRes = await withAgyHook(agents.work.cmd, sandbox, agyFirewallHookCommand, () => track(actorId, ticket.id, "work", run.agents.work, retryPrompt.length, () =>
             runAgent({ ...agents.work, write: true, projectId: ticket.projectId, liftedRules, ...evidenceDirs }, retryPrompt, sandbox, onData,
               (child) => recordSpawn(run, child), (abort) => { run.abort = abort; },
-              modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r)));
+              modelOf(run.agents.work), run.logPath).then((r) => noteAccount(run, "work", r))));
           if (retryRes.ok) {
             await forgeCommit(ticket.id, `${ticket.title} (pre-review fix)`);
           }
-        } catch {}
+        } catch (e) { append(run, `\nforge: pre-review retry skipped: ${(e as Error).message}\n`); }
       }
     }
   }
@@ -1343,13 +1336,13 @@ async function reviewStage(
         memory: memory || undefined,
         operatorEvidence: opEv.length ? opEv : undefined,
       }) + roleStyle("review", styleSetting);
-      results.push(await track(actorId, ticket.id, "review", run.agents.review, reviewPrompt.length, () => runAgent(
+      results.push(await withAgyHook(reviewer.cmd ?? [], view, agyFirewallHookCommand, () => track(actorId, ticket.id, "review", run.agents.review, reviewPrompt.length, () => runAgent(
         reviewer,
         reviewPrompt,
         view, onData,
         (child) => recordSpawn(run, child),
         undefined, modelOf(run.agents.review), run.logPath,
-      ).then((r) => noteAccount(run, "review", r))));
+      ).then((r) => noteAccount(run, "review", r)))));
     }
     return results;
   });

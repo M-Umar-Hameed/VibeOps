@@ -132,3 +132,8 @@ model already in the roster. T3 is where "which model can use this" stops
 mattering — every vision model can read an annotated PNG and answer with a number,
 which also serves the all-lanes goal (ticket f060b85a) for lanes whose CLI can
 take image input. T4 only after T3 shows its residual need. T5 is rejected outright.
+
+## Measuring (baseline for the extension speed/accuracy work)
+
+- Accuracy: `tests/extension-accuracy.test.ts` (jsdom, normal lane). Known gaps are `it.fails`; closing one turns it red — flip it to `it`.
+- Latency: `npm run e2e:extension -- --bench` (live sidecar on :8787 + real Chrome) prints one JSON line: median/p95 over 20 iterations for snapshot (50 / 2,000 elements), click, type, wait-after-50 ms, screenshot, and debugger attach calls per 10 action batches. Without `--bench` the e2e run is unchanged.

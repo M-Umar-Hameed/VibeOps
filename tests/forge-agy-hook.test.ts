@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { installAgyHook, restoreAgyHook, AGY_HOOK_NAME } from "../src/forge/agy-hook.js";
+import { installAgyHook, restoreAgyHook, AGY_HOOK_NAME, needsAgyHook, withAgyHook } from "../src/forge/agy-hook.js";
+import { templates } from "../src/relay/bootstrap-config.js";
 import { ensureSandbox, forgeCommit, sandboxPath } from "../src/forge/sandbox.js";
 
 const TID = "11111111-2222-3333-4444-555555555555";
@@ -107,5 +108,64 @@ describe("forge agy-hook install and restore", () => {
     const committed = await forgeCommit(TID, "normal commit");
     expect(committed).toBe(true);
     expect(git(sp, "ls-tree", "-r", "--name-only", "HEAD")).toContain("b.txt");
+  });
+});
+
+describe("withAgyHook", () => {
+  const AGY = ["agy", "--dangerously-skip-permissions"];
+
+  it("needsAgyHook covers both shipped agy templates and only agy", () => {
+    const t = templates();
+    for (const k of ["agy", "agy_local"]) {
+      expect(t[k].cmd ?? []).toContain("--dangerously-skip-permissions");
+      expect(needsAgyHook(t[k].cmd ?? [])).toBe(true);
+    }
+    expect(needsAgyHook(["claude", "-p", "x"])).toBe(false);
+    expect(needsAgyHook([process.execPath, "x.mjs"])).toBe(false);
+  });
+
+  it("hook is present while fn runs and gone after", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    let seen = false;
+    await withAgyHook(AGY, sp, () => "dummy", async () => {
+      const p = JSON.parse(readFileSync(join(sp, ".agents", "hooks.json"), "utf-8")) as Record<string, unknown>;
+      seen = AGY_HOOK_NAME in p;
+    });
+    expect(seen).toBe(true);
+    expect(existsSync(join(sp, ".agents"))).toBe(false);
+    expect(existsSync(join(sp, ".forge", "agy-hook-backup.json"))).toBe(false);
+  });
+
+  it("restores when fn throws", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    await expect(withAgyHook(AGY, sp, () => "dummy", async () => { throw new Error("boom"); })).rejects.toThrow("boom");
+    expect(existsSync(join(sp, ".agents"))).toBe(false);
+    expect(existsSync(join(sp, ".forge", "agy-hook-backup.json"))).toBe(false);
+  });
+
+  it("fails closed when the hook command thunk throws: fn never runs", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    let calls = 0;
+    await expect(withAgyHook(AGY, sp, () => { throw new Error("no hook script"); }, async () => { calls++; })).rejects.toThrow("no hook script");
+    expect(calls).toBe(0);
+    expect(existsSync(join(sp, ".agents", "hooks.json"))).toBe(false);
+    expect(existsSync(join(sp, ".forge", "agy-hook-backup.json"))).toBe(false);
+  });
+
+  it("fails closed on partial install write: fn never runs, no backup left, .agents untouched", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    writeFileSync(join(sp, ".agents"), "i am a file\n");
+    let calls = 0;
+    await expect(withAgyHook(AGY, sp, () => "dummy", async () => { calls++; })).rejects.toThrow();
+    expect(calls).toBe(0);
+    expect(existsSync(join(sp, ".forge", "agy-hook-backup.json"))).toBe(false);
+    expect(readFileSync(join(sp, ".agents"), "utf-8")).toBe("i am a file\n");
+  });
+
+  it("non-agy cmd: fn runs, no hook file", async () => {
+    const sp = await ensureSandbox(workdir, TID);
+    let had = true;
+    await withAgyHook(["claude"], sp, () => "dummy", () => { had = existsSync(join(sp, ".agents", "hooks.json")); });
+    expect(had).toBe(false);
   });
 });

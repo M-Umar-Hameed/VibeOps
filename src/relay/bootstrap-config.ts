@@ -56,7 +56,7 @@ export function templates(): Record<string, AgentEntry> {
     agy: { cmd: ["agy", "--model", "{model}", "--dangerously-skip-permissions", "--print-timeout", "30m"], roles: ["work", "plan"], models: modelsFor("agy") },
     agy_local: { cmd: [join(homedir(), "AppData", "Local", "agy", "bin", "agy.exe"), "--model", "{model}", "--dangerously-skip-permissions", "--print-timeout", "30m"], roles: ["work", "plan"], models: modelsFor("agy") },
     codex: { cmd: ["codex", "exec", "-C", "{workdir}", "--model", "{model}", "{prompt}"], roles: ["work"], models: modelsFor("codex") },
-    kimi: { cmd: ["kimi", "--model", "{model}", "-p", "{promptFile}"], roles: ["work"], models: modelsFor("kimi") },
+    kimi: { cmd: ["kimi", "--model", "{model}", "-p", "{promptFile}"], roles: ["plan", "review"], models: modelsFor("kimi") },
     gemini: { cmd: ["gemini", "prompt", "--", "{prompt}"], roles: ["plan", "review"], models: modelsFor("gemini") },
   };
 }

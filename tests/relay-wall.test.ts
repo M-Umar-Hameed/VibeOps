@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { runAgent } from "../src/relay/invoke.js";
-import { wallCmd, denyOnlyCmd, agyDenyCmd, allowRules, resolveAllowedCommands, DEFAULT_ALLOWED_COMMANDS, DENY_RULES, loadWall, firewallHooks } from "../src/relay/wall.js";
+import { wallCmd, denyOnlyCmd, agyDenyCmd, allowRules, resolveAllowedCommands, DEFAULT_ALLOWED_COMMANDS, DENY_RULES, loadWall, firewallHooks, codexConfineCmd } from "../src/relay/wall.js";
+import { workRoleRefusal } from "../src/relay/doctor.js";
 import { agyPatterns, denyPatterns } from "../src/relay/risk.js";
 import { withSettings } from "./helpers/settings.js";
 
@@ -209,7 +210,20 @@ test("wallCmd: a lifted rule leaves the deny list, others stay", () => {
   expect(deny).toContain("Bash(npm run deploy*)");
 });
 
-test("denyOnlyCmd: claude gets a deny-only settings, others and settings-bearing cmds are unchanged", () => {
+test("codexConfineCmd: non-codex unchanged, no exec unchanged", () => {
+  expect(codexConfineCmd(["agy", "-p"])).toEqual(["agy", "-p"]);
+  expect(codexConfineCmd(["codex", "login"])).toEqual(["codex", "login"]);
+});
+
+test("runAgent refuses kimi work without spawning; doctor helper flags only kimi", async () => {
+  const r = await runAgent({ cmd: ["kimi", "-p", "{promptFile}"], roles: ["work"], write: true }, "x", tmpdir());
+  expect(r.ok).toBe(false);
+  expect(r.output).toMatch(/cannot take the work role/);
+  expect(workRoleRefusal("C:\\x\\Kimi.exe")).toBeDefined();
+  expect(workRoleRefusal("codex")).toBeUndefined();
+});
+
+test("denyOnlyCmd: claude gets a deny-only settings, codex gets the sandbox, settings-bearing cmds are unchanged", () => {
   const out = denyOnlyCmd(["claude", "-p"]);
   expect(out[out.length - 2]).toBe("--settings");
   const perms = denyOf(out);
@@ -217,7 +231,7 @@ test("denyOnlyCmd: claude gets a deny-only settings, others and settings-bearing
   expect(perms.allow).toBeUndefined();
   const withSettings = ["claude", "-p", "--settings", "{}"];
   expect(denyOnlyCmd(withSettings)).toEqual(withSettings);
-  expect(denyOnlyCmd(["codex", "exec"])).toEqual(["codex", "exec"]);
+  expect(denyOnlyCmd(["codex", "exec"])).toEqual(["codex", "exec", "--sandbox", "workspace-write"]);
 });
 
 test("agyDenyCmd: agy gets per-run deny rules, others and settings-bearing cmds are unchanged", () => {

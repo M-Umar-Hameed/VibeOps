@@ -7,6 +7,7 @@ import { join, dirname } from "node:path";
 import type { RelayAgent, PromptDelivery } from "./config.js";
 import { pidAlive } from "../db/lifecycle.js";
 import { winCommand } from "./win-bin.js";
+import { workRoleRefusal } from "./doctor.js";
 import { loadWall, wallCmd, denyOnlyCmd, agyDenyCmd, ALLOW_COMMAND_ENV } from "./wall.js";
 import { registerEnvSecrets } from "../forge/redact.js";
 import { chooseAccount, allExhaustedResult, settleAccountResult, laneKind } from "./accounts.js";
@@ -124,6 +125,13 @@ export async function runAgent(
   // (incident: council 118ebebf). Name the real cause instead.
   if (!existsSync(workdir)) {
     const msg = `\n[forge: agent could not be started: working folder does not exist: ${workdir}]\n`;
+    onData?.(msg);
+    return { ok: false, output: msg };
+  }
+
+  const refused = agent.write === true ? workRoleRefusal(agent.cmd[0]) : undefined;
+  if (refused) {
+    const msg = `\n[forge: ${refused}]\n`;
     onData?.(msg);
     return { ok: false, output: msg };
   }

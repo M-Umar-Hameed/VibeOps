@@ -24,6 +24,16 @@ function config(): RelayConfig {
   };
 }
 
+test("pairsForRole: kimi lane skipped for work, kept for plan", () => {
+  const cfg: RelayConfig = { workdir: ".", agents: {
+    kimi: { cmd: ["kimi"], roles: ["plan", "work"] },
+    plain: { cmd: ["x"], roles: ["plan", "work"] },
+  } };
+  expect(pairsForRole(cfg, "work").some((p) => p.agent === "kimi")).toBe(false);
+  expect(pairsForRole(cfg, "work").some((p) => p.agent === "plain")).toBe(true);
+  expect(pairsForRole(cfg, "plan").some((p) => p.agent === "kimi")).toBe(true);
+});
+
 test("pairsForRole: model-less agents default to tier cheap, quality 3", () => {
   const pairs = pairsForRole(config(), "work");
   const plain = pairs.find((p) => p.agent === "plain");

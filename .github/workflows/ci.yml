@@ -8,6 +8,8 @@ on:
     branches:
       - '**'
   pull_request:
+  # release-build.yml calls this before building, so no release ships while CI is red.
+  workflow_call:
 
 jobs:
   test:

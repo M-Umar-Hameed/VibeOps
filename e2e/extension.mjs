@@ -172,9 +172,12 @@ async function runBench(sw, instanceId) {
       report.debuggerAttachCallsPer10ActionBatches = await sw.evaluate(() => { const { orig, n } = globalThis.__benchAttach; chrome.debugger.attach = orig; delete globalThis.__benchAttach; return n; });
       // The lease must release the attachment after the idle window. 11000 mirrors DEBUGGER_IDLE_MS (10000) in extension/window.js plus 1 s.
       await new Promise((r) => setTimeout(r, 11000));
+      // getTargets().attached stays true here because Playwright keeps its own CDP session on every page; the extension's own attach fails only while the lease still holds the tab.
       const stillAttached = await sw.evaluate(async () => {
         const { agentTabId } = await chrome.storage.session.get("agentTabId");
-        return (await chrome.debugger.getTargets()).some((t) => t.attached && t.tabId === agentTabId);
+        try { await chrome.debugger.attach({ tabId: agentTabId }, "1.3"); } catch { return true; }
+        await chrome.debugger.detach({ tabId: agentTabId });
+        return false;
       });
       assert.equal(stillAttached, false, "debugger still attached after idle window");
       // Raw attach+detach cost. Runs last, after the lease released, because a direct detach does not fire onDetach and would leave the lease stale.

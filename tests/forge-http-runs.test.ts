@@ -95,7 +95,7 @@ function relayConfig(fakeRoles: string[], fakeScript: string, httpRole: string):
       fake: {
         cmd: [process.execPath, FAKE_AGENT, "{prompt}"],
         roles: fakeRoles,
-        env: { FAKE_SCRIPT: fakeScript, FAKE_COUNTER_FILE: counterFile },
+        env: { FAKE_SCRIPT: fakeScript, FAKE_COUNTER_FILE: counterFile, FAKE_WRITE: "1" },
       },
       openrouter: {
         cmd: [], type: "http", baseUrl: `http://127.0.0.1:${port}/v1`, keySetting: "orRunsTestKey",
@@ -107,7 +107,7 @@ function relayConfig(fakeRoles: string[], fakeScript: string, httpRole: string):
 
 describe("forge http lane (integration through runs.ts)", () => {
   it("plan stage on an http lane posts the plan comment from the mock's reply", async () => {
-    handler = (_req, res) => json(res, 200, { choices: [{ message: { content: "1. do the thing via openrouter" } }] });
+    handler = (_req, res) => json(res, 200, { choices: [{ message: { content: "1. do the thing via openrouter\nFiles: forge-made.txt" } }] });
     const { actorId, ticket } = await seedTicket("HTTP plan lane");
 
     await withSetting("orRunsTestKey", "sk-or-test", async () => {
@@ -165,7 +165,7 @@ describe("forge http lane (integration through runs.ts)", () => {
     // string it stores on the run; a model id that itself contains a colon (the
     // OpenRouter ":free" suffix convention) must not be truncated there.
     const httpAgentModule = await import("../src/relay/http-agent.js");
-    const spy = vi.spyOn(httpAgentModule, "runHttpAgent").mockResolvedValue({ ok: true, output: "1. do it" });
+    const spy = vi.spyOn(httpAgentModule, "runHttpAgent").mockResolvedValue({ ok: true, output: "1. do it\nFiles: forge-made.txt" });
     const modelId = "meta-llama/llama-3.1-8b-instruct:free";
     try {
       const { actorId, ticket } = await seedTicket("HTTP colon-suffixed model id");

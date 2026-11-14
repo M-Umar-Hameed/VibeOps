@@ -58,6 +58,7 @@ function config(opts: { script: string; counterFile: string; writeAbs?: string }
   const env: Record<string, string> = {
     FAKE_SCRIPT: opts.script,
     FAKE_COUNTER_FILE: opts.counterFile,
+    FAKE_WRITE: "1",
   };
   if (opts.writeAbs) env.FAKE_WRITE_ABS = opts.writeAbs;
   return {

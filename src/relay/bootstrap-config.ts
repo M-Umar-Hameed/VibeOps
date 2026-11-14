@@ -48,7 +48,7 @@ function sandboxDir(): string {
 
 import { getKnownModelsForAgent } from "./known-models.js";
 
-function templates(): Record<string, AgentEntry> {
+export function templates(): Record<string, AgentEntry> {
   const modelsFor = (agent: string) =>
     getKnownModelsForAgent(agent).map((k) => ({ name: k.id || k.name, tier: k.tier, quality: k.quality }));
   return {

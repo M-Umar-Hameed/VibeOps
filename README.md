@@ -323,10 +323,10 @@ single-writer and has no inter-process locking, so a second process opening
 is not theoretical: it destroyed this project's database three times in one day, every
 time by running a backup or a probe script against a live server. Hard kills are fine
 (the write-ahead log replays on restart); a concurrent open is not. The data directory now
-takes an exclusive lock on open and a second opener is refused rather than admitted, and
+takes an OS-held exclusive lock on open (released by the OS when the process dies, even on
+a hard kill) and a second opener is refused rather than admitted, and
 `npm run backup` reads `postmaster.pid` and refuses to run while a live process holds the
-directory. A stale lock left by a hard kill is reclaimed automatically once its pid is
-confirmed dead. A manual `cp -r` still has no guard, so the advice above stands.
+directory. A manual `cp -r` still has no guard, so the advice above stands.
 
 Useful scripts: `npm run ingest:sessions` (index recent agent sessions), `npm run ingest:watch` (standalone vault watcher), `npm run mcp` (stdio MCP server for external-Postgres setups), `npm test`.
 

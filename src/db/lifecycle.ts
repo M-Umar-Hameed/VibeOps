@@ -1,8 +1,10 @@
-import { existsSync, openSync, closeSync, writeSync, readFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, unlinkSync } from "node:fs";
+import net from "node:net";
+import { createHash } from "node:crypto";
+import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import type { PGlite } from "@electric-sql/pglite";
 import { latestGoodSnapshot } from "./snapshots.js";
-import { startTimeReader } from "../runtime/proc-start.js";
 
 // Thrown when the embedded cluster cannot be opened (typically a corrupt WAL
 // after an unclean shutdown). Carries the data dir and the pre-recovery backup
@@ -24,18 +26,18 @@ export class EmbeddedDbOpenError extends Error {
   }
 }
 
-const LOCK_FILE = ".vibeops-lock";
-
-// Thrown when another process already holds the embedded data dir. A live holder
-// is NEVER displaced - concurrent open corrupts PGlite (four production incidents).
+// Thrown when another process already holds the embedded data dir. The lock is
+// OS-held (see acquireLock) and freed by the kernel on process death, so a holder
+// is always live and is NEVER displaced - concurrent open corrupts PGlite.
+// holderPid is known only for a same-process holder; cross-process it is null.
 export class EmbeddedDbLockedError extends Error {
   constructor(readonly dataDir: string, readonly holderPid: number | null) {
     super(
       holderPid !== null
         ? `Embedded database at ${dataDir} is held by another process (PID ${holderPid}). ` +
           `Stop that process before opening the database; concurrent access corrupts the data directory.`
-        : `Embedded database at ${dataDir} has a lock file (${join(dataDir, LOCK_FILE)}) with an ` +
-          `unreadable PID. If no vibeops process is running, delete that file and retry.`,
+        : `Embedded database at ${dataDir} is held by another VibeOps process. ` +
+          `Stop that process before opening the database; concurrent access corrupts the data directory.`,
     );
     this.name = "EmbeddedDbLockedError";
   }
@@ -49,53 +51,72 @@ export function pidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
-// Lock body is "<pid> <OS start time>". The start time tells a live holder apart
-// from an unrelated process that later reused its pid (Windows recycles pids fast;
-// a stale lock naming a pid now owned by another app kept the sidecar down for days).
-// An old pid-only lock carries no start time and falls back to the liveness check.
-function readLock(lockPath: string): { pid: number; started: string | null } | null {
+const LEGACY_LOCK_FILE = ".vibeops-lock"; // pid file from earlier versions: ignored, removed once the OS lock is held
+const held = new Map<string, net.Server>();
+
+// Lock = exclusive local listener named after the data dir. The OS owns it and
+// frees it when the process dies (even taskkill /F / SIGKILL): no stale state, no reclaim race.
+export function lockAddress(dataDir: string): string {
+  const abs = resolve(dataDir);
+  const hash = createHash("sha256")
+    .update(process.platform === "win32" ? abs.toLowerCase() : abs)
+    .digest("hex").slice(0, 32);
+  if (process.platform === "win32") return `\\\\.\\pipe\\vibeops-db-${hash}`;
+  if (process.platform === "linux") return `\0vibeops-db-${hash}`; // abstract socket: no file, nothing stale
+  return join(tmpdir(), `vibeops-db-${hash}.sock`);
+}
+
+function listenExclusive(addr: string): Promise<net.Server> {
+  return new Promise((res, rej) => {
+    const s = net.createServer((c) => c.destroy());
+    s.once("error", rej);
+    s.listen(addr, () => {
+      s.off("error", rej);
+      // An unhandled error on the held lock would crash the server; log it instead.
+      s.on("error", (e) => console.error(`embedded db lock listener error: ${(e as Error).message}`));
+      s.unref();
+      res(s);
+    });
+  });
+}
+
+function inUse(e: unknown): boolean {
+  const code = (e as NodeJS.ErrnoException).code;
+  return code === "EADDRINUSE" || (process.platform === "win32" && code === "EACCES");
+}
+
+// ponytail: socket-file platforms only (not win32/linux, not shipped). Unlinking a
+// refused socket is a residual check-then-act race; upgrade path is flock via a native addon.
+function staleSocketFile(addr: string): Promise<boolean> {
+  if (process.platform === "win32" || process.platform === "linux") return Promise.resolve(false);
+  return new Promise((res) => {
+    const c = net.connect(addr);
+    c.once("connect", () => { c.destroy(); res(false); });
+    c.once("error", (e) => { const code = (e as NodeJS.ErrnoException).code; res(code === "ECONNREFUSED" || code === "ENOENT"); });
+  });
+}
+
+async function acquireLock(dataDir: string): Promise<void> {
+  const addr = lockAddress(dataDir);
+  if (held.has(addr)) throw new EmbeddedDbLockedError(dataDir, process.pid);
+  let server: net.Server;
   try {
-    const [pidText, started] = readFileSync(lockPath, "utf-8").trim().split(/\s+/);
-    const pid = parseInt(pidText, 10);
-    return Number.isNaN(pid) ? null : { pid, started: started || null };
-  } catch { return null; }
-}
-
-// Alive AND, when the lock recorded one, started at the same moment. A different
-// start time means the pid was recycled, so the real holder is gone.
-function holderAlive(holder: { pid: number; started: string | null }): boolean {
-  if (!pidAlive(holder.pid)) return false;
-  if (holder.started === null) return true;
-  const now = startTimeReader.read(holder.pid);
-  return now === null || now === holder.started; // unreadable stays alive: never displace a live holder
-}
-
-// Atomic exclusive create. If the lock exists: a live OR unreadable holder ->
-// refuse; a dead holder -> reclaim (stale from a hard kill, survivable) and retry.
-// NEVER reclaims on age/time - a time-based steal is exactly how live DBs corrupt.
-function acquireLock(dataDir: string): void {
-  const lockPath = join(dataDir, LOCK_FILE);
-  for (;;) {
-    let fd: number;
-    try {
-      fd = openSync(lockPath, "wx");
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      const holder = readLock(lockPath);
-      if (holder === null || holderAlive(holder)) {
-        throw new EmbeddedDbLockedError(dataDir, holder?.pid ?? null);
-      }
-      unlinkSync(lockPath); // dead pid: reclaim, then retry the exclusive create
-      continue;
-    }
-    const started = startTimeReader.read(process.pid);
-    try { writeSync(fd, started ? `${process.pid} ${started}` : String(process.pid)); } finally { closeSync(fd); }
-    return;
+    server = await listenExclusive(addr);
+  } catch (e) {
+    if (!inUse(e)) throw e;
+    if (!(await staleSocketFile(addr))) throw new EmbeddedDbLockedError(dataDir, null);
+    try { unlinkSync(addr); } catch { /* already gone */ }
+    try { server = await listenExclusive(addr); }
+    catch (e2) { if (inUse(e2)) throw new EmbeddedDbLockedError(dataDir, null); throw e2; }
   }
+  held.set(addr, server);
+  try { unlinkSync(join(dataDir, LEGACY_LOCK_FILE)); } catch { /* absent */ }
 }
 
 function releaseLock(dataDir: string): void {
-  try { unlinkSync(join(dataDir, LOCK_FILE)); } catch { /* best effort */ }
+  const addr = lockAddress(dataDir);
+  held.get(addr)?.close();
+  held.delete(addr);
 }
 
 export type OpenDeps = {
@@ -111,18 +132,11 @@ export async function openEmbedded(
   dataDir: string,
   deps: OpenDeps,
 ): Promise<{ client: PGlite }> {
-  const isFresh = !existsSync(join(dataDir, "PG_VERSION"));
-  acquireLock(dataDir);
-  if (isFresh) {
-    unlinkSync(join(dataDir, LOCK_FILE));
-  }
+  await acquireLock(dataDir); // held for the whole open, fresh dir included
   let client: PGlite;
   try {
     client = deps.makeClient(dataDir);
     await client.exec("CREATE EXTENSION IF NOT EXISTS vector");
-    if (isFresh) {
-      acquireLock(dataDir);
-    }
   } catch (reason) {
     releaseLock(dataDir);
     const backupPath = existsSync(dataDir) ? latestGoodSnapshot(dataDir) : null;

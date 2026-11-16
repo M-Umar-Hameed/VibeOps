@@ -131,8 +131,13 @@ default is conservative but harmless.
 
 ---
 
+## Update 2026-11-16: OS-held data-dir lock
+The `.vibeops-lock` pid file is gone. It had two holes: stale-lock reclaim was a check-then-act race (two starters after a hard kill could both unlink and both open), and a fresh data directory was unlocked while PGlite initialised it. `openEmbedded` now holds an exclusive local listener named after the data dir (Windows named pipe `\\.\pipe\vibeops-db-<hash>`, Linux abstract socket) from before `makeClient` until `closeEmbedded`. The kernel frees it on any process death, including taskkill /F and SIGKILL, so there is no stale state to reclaim. A second opener gets `EmbeddedDbLockedError`. Old `.vibeops-lock` files are ignored and removed. `postmaster.pid` stays the clean-shutdown signal.
+
 ## Test Files
 
 - `tests/helpers/hard-kill-repro.mts` — child process for kill testing
 - `tests/hard-kill-repro.test.ts` — automated repro confirming WAL replay survives hard kill
 - `tests/backup-lock.test.ts` — proves backup CLI refuses when server holds the data dir
+- `tests/db-lock.test.ts` — two-process race, hard-kill release, fresh-dir lock
+- `tests/helpers/db-lock-child.mts` — child for those tests

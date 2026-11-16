@@ -70,7 +70,13 @@ function listenExclusive(addr: string): Promise<net.Server> {
   return new Promise((res, rej) => {
     const s = net.createServer((c) => c.destroy());
     s.once("error", rej);
-    s.listen(addr, () => { s.off("error", rej); s.unref(); res(s); });
+    s.listen(addr, () => {
+      s.off("error", rej);
+      // An unhandled error on the held lock would crash the server; log it instead.
+      s.on("error", (e) => console.error(`embedded db lock listener error: ${(e as Error).message}`));
+      s.unref();
+      res(s);
+    });
   });
 }
 

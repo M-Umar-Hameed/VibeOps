@@ -44,6 +44,7 @@ The original shared vault at `~/.vibeops/vault` still works and is indexed as a 
 - **Red dot in Agent Doctor:** The CLI is either not installed or not authenticated. Run the vendor login command again.
 - **Empty diff on forge run:** This is often caused by missing agent permission flags (e.g., missing `--sandbox` or dangerously flags).
 - **Where logs live:** Agent token usage is observed by VibeOps from local session logs, across ALL projects, and surfaced in the UI under Settings > AI Models > Token Usage.
+- **Desktop server log:** The desktop app writes the embedded server's output (startup, recovery reports, crashes, database aborts) and one line per server start and exit to `~/.vibeops/logs/sidecar.log` (under `$VIBEOPS_HOME` if set). When it passes 10 MB it is moved to `sidecar.log.1` at the next app start; attach both files when reporting a database failure.
 
 ## Database recovery
 

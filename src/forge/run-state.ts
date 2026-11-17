@@ -36,6 +36,7 @@ export type Run = {
   lastLogSize?: number;      // last observed logPath size (stall detection)
   lastActivityAt?: number;  // epoch ms of last log growth or busy CPU; the stall clock resets here
   lastCpuMs?: number;       // last process-tree CPU reading
+  lastWorktreeFp?: string;  // last sandbox worktree fingerprint (work stage stall detection)
   stallReason?: string;     // set by the sweep; the pipeline posts it as the report
   logPath: string;     // stable per-run log path (recorded only; reattach ticket writes it)
   runToken: string;    // value of env VIBEOPS_RUN_TOKEN handed to every stage child
@@ -61,11 +62,11 @@ export type Run = {
 
 export const runs = new Map<string, Run>();
 
-export type RunSummary = Omit<Run, "output" | "child" | "checksChild" | "abort" | "stopped" | "done" | "persisted" | "pid" | "logPath" | "runToken" | "procStartedAt" | "lastLogSize" | "lastActivityAt" | "lastCpuMs" | "stallReason" | "declared">;
+export type RunSummary = Omit<Run, "output" | "child" | "checksChild" | "abort" | "stopped" | "done" | "persisted" | "pid" | "logPath" | "runToken" | "procStartedAt" | "lastLogSize" | "lastActivityAt" | "lastCpuMs" | "lastWorktreeFp" | "stallReason" | "declared">;
 
 export function summarize(r: Run): RunSummary {
-  const { output, child, checksChild, abort, stopped, done, persisted, pid, logPath, runToken, procStartedAt, lastLogSize, lastActivityAt, lastCpuMs, stallReason, declared, ...rest } = r;
-  void output; void child; void checksChild; void abort; void stopped; void done; void persisted; void pid; void logPath; void runToken; void procStartedAt; void lastLogSize; void lastActivityAt; void lastCpuMs; void stallReason; void declared;
+  const { output, child, checksChild, abort, stopped, done, persisted, pid, logPath, runToken, procStartedAt, lastLogSize, lastActivityAt, lastCpuMs, lastWorktreeFp, stallReason, declared, ...rest } = r;
+  void output; void child; void checksChild; void abort; void stopped; void done; void persisted; void pid; void logPath; void runToken; void procStartedAt; void lastLogSize; void lastActivityAt; void lastCpuMs; void lastWorktreeFp; void stallReason; void declared;
   return rest;
 }
 

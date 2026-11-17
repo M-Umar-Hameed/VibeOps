@@ -115,7 +115,7 @@ function readProcTable(): Map<number, ProcEntry> | null {
   return readPsProcTable();
 }
 
-// ponytail: a grandchild whose parent died is re-parented and missed, and the reader does one process-table read per active run per sweep (batch these if many runs are ever active at once).
+// ponytail: a grandchild whose parent died is re-parented and missed. On Windows every command a CLI runs through Git Bash hits this (bash's fork leaves a dead pid in the parent chain, so e.g. vitest under bash.exe is never reached from run.pid); the stall sweeper's worktree fingerprint (src/forge/stall-sweep.ts) covers that case for work stages. One process-table read per active run per sweep (batch these if many runs are ever active at once).
 function readTreeCpuMsDefault(pid: number): number | null {
   try {
     const table = readProcTable();

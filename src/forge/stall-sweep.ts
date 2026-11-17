@@ -1,14 +1,18 @@
 import { statSync } from "node:fs";
+import { join } from "node:path";
+import { execFile } from "node:child_process";
 import { treeCpuReader } from "../runtime/proc-tree-cpu.js";
 import { killTree, killPidTree } from "../relay/invoke.js";
-import { forgeCommit } from "./sandbox.js";
+import { forgeCommit, sandboxPath } from "./sandbox.js";
 import { getTicket } from "../services/history.js";
 import { listActors } from "../services/actors.js";
 import { getSetting } from "../services/settings.js";
 import { activeRuns, setCause, settle, bounce, append } from "./run-state.js";
 
-// Server-side stall detector. Silence in both the log and process-tree CPU is
-// the signal: a run whose log file has not grown and whose process tree used no
+// Server-side stall detector. Silence in the log, in process-tree CPU and (work
+// stage) in the sandbox worktree is the signal. Tree CPU misses commands started
+// through Git Bash on Windows (its fork leaves a dead pid in the parent chain);
+// the worktree fingerprint covers edit-and-test loops. A run whose log file has not grown and whose process tree used no
 // CPU for windowMs is wedged (agent alive but blocked, typically on a child `npm
 // test` that never exits), while a legitimately long stage narrates or runs tests
 // so its clock keeps resetting. The per-child setTimeout in invoke.ts cannot
@@ -33,6 +37,32 @@ export const logSizeReader = {
   },
 };
 
+// Third activity signal: a work stage that changes its sandbox worktree is not stalled.
+// Covers workers whose log stays silent until the session ends and whose commands
+// escape the tree-CPU walk (Git Bash on Windows leaves a dead pid in the parent chain).
+// Fingerprint = count + newest mtime of modified/untracked, non-ignored files.
+// ponytail: an edit that restores a file's exact count and mtime is missed; the
+// count catches deletions. Upgrade path: hash the path list if that ever matters.
+export const worktreeFingerprintReader = {
+  read(ticketId: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      let cwd: string;
+      try { cwd = sandboxPath(ticketId); } catch { resolve(null); return; }
+      execFile("git", ["ls-files", "-m", "-o", "--exclude-standard", "-z"],
+        { cwd, windowsHide: true, timeout: 10_000, maxBuffer: 16 * 1024 * 1024 },
+        (err, stdout) => {
+          if (err) { resolve(null); return; }
+          const files = stdout.split("\0").filter(Boolean);
+          let max = 0;
+          for (const f of files) {
+            try { max = Math.max(max, statSync(join(cwd, f)).mtimeMs); } catch { /* deleted: count still changes */ }
+          }
+          resolve(`${files.length}:${max}`);
+        });
+    });
+  },
+};
+
 // At least 1s of tree CPU since the previous sweep (60s cadence in server.ts,
 // so about 1.7% of one core) counts as activity. An idle agent blocked on a
 // wedged child stays under it.
@@ -49,9 +79,12 @@ export async function sweepStalledRuns(now: number, windowMs: number): Promise<s
       const cpu = run.pid != null ? treeCpuReader.read(run.pid) : null;
       const grew = run.lastLogSize === undefined || size > run.lastLogSize;
       const busy = cpu !== null && (run.lastCpuMs === undefined || cpu - run.lastCpuMs >= BUSY_CPU_MS);
+      const fp = run.stage === "work" ? await worktreeFingerprintReader.read(run.ticketId).catch(() => null) : null;
+      const edited = fp !== null && fp !== run.lastWorktreeFp;
       run.lastLogSize = size;
       if (cpu !== null) run.lastCpuMs = cpu;
-      if (grew || busy) { run.lastActivityAt = now; continue; }
+      if (fp !== null) run.lastWorktreeFp = fp;
+      if (grew || busy || edited) { run.lastActivityAt = now; continue; }
       const since = run.lastActivityAt ?? now;
       if (now - since <= windowMs) continue;
       const mins = Math.round((now - since) / 60_000);

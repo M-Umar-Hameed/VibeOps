@@ -126,7 +126,9 @@ export const TicketListPane = memo(function TicketListPane({
                 >
                   <div className="text-sm font-medium truncate">{t.title}</div>
                   {t.activeRun && (
-                    <div className="mt-2 text-[10px] font-code-label bg-secondary/20 text-secondary px-2 py-1 rounded inline-block uppercase">{t.activeRun.stage} running</div>
+                    <div className="mt-2 text-[10px] font-code-label bg-secondary/20 text-secondary px-2 py-1 rounded inline-block max-w-full truncate align-bottom uppercase">
+                      {`${t.activeRun.stage} running${t.activeRun.agent ? ` - ${t.activeRun.agent}` : ""}`}
+                    </div>
                   )}
                   {status === "review" && t.sandbox?.lastVerdict === "pass" && (
                     <div className="mt-2 text-[10px] font-code-label bg-green-500/20 text-green-400 px-2 py-1 rounded inline-block">PASS - awaiting promote</div>

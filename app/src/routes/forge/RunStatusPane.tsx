@@ -8,6 +8,7 @@ type RunStatusPaneProps = {
   runChunks: string[];
   runOutput: string;
   runStage: string;
+  runAgent?: string;
   runStatus: string;
   runError: string;
   outputUnavailable: boolean;
@@ -26,6 +27,7 @@ export const RunStatusPane = memo(function RunStatusPane({
   runChunks,
   runOutput,
   runStage,
+  runAgent,
   runStatus,
   runError,
   outputUnavailable,
@@ -58,9 +60,10 @@ export const RunStatusPane = memo(function RunStatusPane({
           </div>
           <div className="p-4 space-y-3">
             <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-              <div>
+              <div className="min-w-0 max-w-full truncate">
                 <span className="text-on-surface-variant">Stage: </span>
                 <span className="text-on-surface font-medium" data-testid="run-stage-label">{stageLabel(runStage)}</span>
+                {runAgent && <span className="text-on-surface font-medium" data-testid="run-stage-agent">{` - ${runAgent}`}</span>}
               </div>
               {runStatus === "running" && runStartedAt !== null && (
                 <div>

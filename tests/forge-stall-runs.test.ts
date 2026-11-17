@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { treeCpuReader } from "../src/runtime/proc-tree-cpu.js";
 import { hasCommitsToPromote } from "../src/forge/sandbox.js";
+import { worktreeFingerprintReader } from "../src/forge/stall-sweep.js";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -76,11 +77,11 @@ async function waitForStage(runId: string, stage: string, timeoutMs = 5000) {
   }
   throw new Error(`timed out waiting for stage "${stage}"`);
 }
-async function waitForPid(runId: string, timeoutMs = 5000) {
+async function waitForPid(runId: string, timeoutMs = 5000, stage = "work") {
   const start = Date.now();
   for (;;) {
     const [row] = await db.select().from(forgeRuns).where(eq(forgeRuns.id, runId));
-    if (row?.stage === "work" && row?.pid != null) return;
+    if (row?.stage === stage && row?.pid != null) return;
     if (Date.now() - start > timeoutMs) throw new Error("timed out waiting for pid");
     await new Promise((r) => setTimeout(r, 20));
   }
@@ -107,8 +108,10 @@ describe("forge stall detection", () => {
 
     const origLog = logSizeReader.read;
     const origCpu = treeCpuReader.read;
+    const origFp = worktreeFingerprintReader.read;
     logSizeReader.read = () => 100; // constant: never grows
     treeCpuReader.read = () => 5;
+    worktreeFingerprintReader.read = async () => "1:5"; // constant: worktree unchanged
     try {
       const t0 = 1_700_000_000_000;
       expect(await sweepStalledRuns(t0, WINDOW)).toEqual([]);            // first sight: seed only
@@ -117,6 +120,7 @@ describe("forge stall detection", () => {
     } finally {
       logSizeReader.read = origLog;
       treeCpuReader.read = origCpu;
+      worktreeFingerprintReader.read = origFp;
     }
 
     await awaitRun(runId);
@@ -130,6 +134,98 @@ describe("forge stall detection", () => {
     expect(report!.body).toContain("uncommitted work was saved to the sandbox branch as a WIP commit");
     const item = (await listRunsWithHistory(ticket.id)).find((r) => r.id === runId);
     expect(item?.failureReason).toMatch(/^stopped by the stall timer after \d+ minutes without activity in work stage/);
+  }, 20_000);
+
+  it("a work stage whose worktree keeps changing is not swept, even with a silent log and idle CPU", async () => {
+    const { actorId, ticket } = await seedTicket("worktree changing");
+    setScript("plan,work-hang");
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await waitForStage(runId, "work");
+    await waitForPid(runId);
+
+    const origLog = logSizeReader.read;
+    const origCpu = treeCpuReader.read;
+    const origFp = worktreeFingerprintReader.read;
+    logSizeReader.read = () => 100;
+    treeCpuReader.read = () => 5;
+    let k = 0;
+    worktreeFingerprintReader.read = async () => `${++k}:${k}`;
+    try {
+      const t0 = 1_700_000_000_000;
+      expect(await sweepStalledRuns(t0, WINDOW)).toEqual([]);
+      expect(await sweepStalledRuns(t0 + WINDOW + 60_000, WINDOW)).toEqual([]);
+      expect(await sweepStalledRuns(t0 + 2 * WINDOW + 120_000, WINDOW)).toEqual([]);
+      expect(getRunOutput(runId, 0)?.status).toBe("running");
+    } finally {
+      logSizeReader.read = origLog;
+      treeCpuReader.read = origCpu;
+      worktreeFingerprintReader.read = origFp;
+      await stopRun(runId);
+      await awaitRun(runId);
+    }
+  }, 20_000);
+
+  it("a null worktree fingerprint is no signal: the clock is not reset and the sweep does not throw", async () => {
+    const { actorId, ticket } = await seedTicket("worktree null");
+    setScript("plan,work-hang");
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await waitForStage(runId, "work");
+    await waitForPid(runId);
+
+    const origLog = logSizeReader.read;
+    const origCpu = treeCpuReader.read;
+    const origFp = worktreeFingerprintReader.read;
+    logSizeReader.read = () => 100;
+    treeCpuReader.read = () => 5;
+    worktreeFingerprintReader.read = async () => null;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const t0 = 1_700_000_000_000;
+      expect(await sweepStalledRuns(t0, WINDOW)).toEqual([]);
+      expect(await sweepStalledRuns(t0 + WINDOW + 60_000, WINDOW)).toEqual([runId]);
+      expect(warn.mock.calls.some((c) => String(c[0]).includes("stall sweep skipped"))).toBe(false);
+    } finally {
+      logSizeReader.read = origLog;
+      treeCpuReader.read = origCpu;
+      worktreeFingerprintReader.read = origFp;
+      warn.mockRestore();
+    }
+    await awaitRun(runId);
+    expect(getRunOutput(runId, 0)?.status).toBe("failed");
+  }, 20_000);
+
+  it("the worktree fingerprint is not consulted outside the work stage", async () => {
+    const { actorId, ticket } = await seedTicket("worktree plan stage");
+    setScript("plan-hang");
+    const { runId } = await startPipeline(actorId, relayConfig(), {
+      ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake",
+    });
+    await waitForStage(runId, "plan");
+    await waitForPid(runId, 5000, "plan");
+
+    const origLog = logSizeReader.read;
+    const origCpu = treeCpuReader.read;
+    const origFp = worktreeFingerprintReader.read;
+    logSizeReader.read = () => 100;
+    treeCpuReader.read = () => 5;
+    const fp = vi.fn(async () => `${Math.random()}`);
+    worktreeFingerprintReader.read = fp;
+    try {
+      const t0 = 1_700_000_000_000;
+      expect(await sweepStalledRuns(t0, WINDOW)).toEqual([]);
+      expect(await sweepStalledRuns(t0 + WINDOW + 60_000, WINDOW)).toEqual([runId]);
+      expect(fp).not.toHaveBeenCalled();
+    } finally {
+      logSizeReader.read = origLog;
+      treeCpuReader.read = origCpu;
+      worktreeFingerprintReader.read = origFp;
+    }
+    await awaitRun(runId);
+    expect(getRunOutput(runId, 0)?.status).toBe("failed");
   }, 20_000);
 
   it("a silent run with a live busy child process is not swept", async () => {

@@ -94,6 +94,10 @@ export function ForgeScreen() {
 
   const run = useForgeRun(selectedTicket, ticketRuns, runsQ, queryClient, { planAgent, workAgent, reviewAgent });
 
+  const latestRun = ticketRuns[0];
+  const runAgent: string | undefined =
+    latestRun && (!run.activeRunId || latestRun.id === run.activeRunId) ? latestRun.agents?.[run.runStage] || undefined : undefined;
+
   useEffect(() => {
     if (selectedTicket) run.resetForTicket();
   }, [selectedTicket?.id]);
@@ -166,7 +170,7 @@ export function ForgeScreen() {
             />
 
             <RunStatusPane
-              activeRunId={run.activeRunId} runChunks={run.runChunks} runOutput={run.runOutput} runStage={run.runStage}
+              activeRunId={run.activeRunId} runChunks={run.runChunks} runOutput={run.runOutput} runStage={run.runStage} runAgent={runAgent}
               runStatus={run.runStatus} runError={run.runError} outputUnavailable={run.outputUnavailable}
               showDetails={run.showDetails} setShowDetails={run.setShowDetails} runStartedAt={run.runStartedAt}
               nowMs={run.nowMs} sandboxActivity={run.sandboxActivity} rejectionReason={ticketRuns[0]?.rejectionReason}

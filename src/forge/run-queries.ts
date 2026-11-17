@@ -19,6 +19,11 @@ export function activeStageForTicket(ticketId: string): Stage | undefined {
   return activeRuns().find((r) => r.ticketId === ticketId)?.stage;
 }
 
+export function activeRunForTicket(ticketId: string): { stage: Stage; agent: string } | undefined {
+  const r = activeRuns().find((x) => x.ticketId === ticketId);
+  return r ? { stage: r.stage, agent: r.agents[r.stage] } : undefined;
+}
+
 // Settings account edits write relay.json, which the sentinel restores around a work stage.
 export function hasAnyActiveRun(): boolean {
   return activeRuns().length > 0;

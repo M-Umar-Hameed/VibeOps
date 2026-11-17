@@ -33,7 +33,7 @@ export { parsePair, checkBudget } from "./run-agents.js";
 export { knowledgeQuery, rankForgeKnowledge } from "./run-knowledge.js";
 export { resolveMaxConcurrentChecks, DIFF_PROMPT_CAP, elideGeneratedDiffs, reviewDiffPayload } from "./review-stage.js";
 export { resolveMinFreeBytes, NARRATION } from "./run-pipeline.js";
-export { listRuns, activeStageForTicket, hasAnyActiveRun, hasActiveRun, latestRunStatus, latestRunPolicy, markPolicyWaived, listRunsWithHistory, getRunOutput, getSettledRunOutput, getRunTimings, settleAll, awaitRun, type RunPolicy, type StageDurationsMs, type RunListItem, type RunListOpts } from "./run-queries.js";
+export { listRuns, activeStageForTicket, activeRunForTicket, hasAnyActiveRun, hasActiveRun, latestRunStatus, latestRunPolicy, markPolicyWaived, listRunsWithHistory, getRunOutput, getSettledRunOutput, getRunTimings, settleAll, awaitRun, type RunPolicy, type StageDurationsMs, type RunListItem, type RunListOpts } from "./run-queries.js";
 export { resolveStallWindowMs, logSizeReader, sweepStalledRuns, sweepStalledRunsWithConfig } from "./stall-sweep.js";
 export { markInterruptedRuns } from "./run-reattach.js";
 

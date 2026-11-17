@@ -18,7 +18,7 @@ import * as knowledgeSvc from "../src/services/knowledge.js";
 import { resolveSyncActor } from "../src/sync/actor.js";
 import { addComment, listComments } from "../src/services/comments.js";
 import * as commentsSvc from "../src/services/comments.js";
-import { settleAll, reconcileMergedTickets, stopRun, awaitRun, activeStageForTicket } from "../src/forge/runs.js";
+import { settleAll, reconcileMergedTickets, stopRun, awaitRun, activeStageForTicket, listRuns } from "../src/forge/runs.js";
 import { withSetting } from "./helpers/settings.js";
 import * as sandbox from "../src/forge/sandbox.js";
 
@@ -1188,6 +1188,33 @@ it("PATCH /relay/agents/:name returns 409 while a run is active and leaves relay
   expect(JSON.parse(readFileSync(relayConfigPath, "utf-8")).agents.fake.roles).toEqual(["plan", "work"]);
 }, 15000);
 
+it("GET /tickets returns activeRun.stage and activeRun.agent for a ticket with an active run", async () => {
+  const h = await adminHeaders();
+  const ticket = await seedTicket();
+  setScript("plan,slow");
+  const startRes = await app.request("/forge/pipeline", {
+    method: "POST", headers: h,
+    body: JSON.stringify({ ticketId: ticket.id, planAgent: "fake", workAgent: "fake", reviewAgent: "fake" }),
+  });
+  const { runId } = await startRes.json();
+  try {
+    const deadline = Date.now() + 10_000;
+    while (activeStageForTicket(ticket.id) !== "work") {
+      if (Date.now() > deadline) throw new Error("run never reached work stage");
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const rows = await (await app.request("/tickets", { headers: h })).json();
+    const row = rows.find((t: any) => t.id === ticket.id);
+    expect(row.activeRun.stage).toBe("work");
+    expect(row.activeRun.agent).toBe(listRuns().find((r) => r.id === runId)!.agents.work);
+    expect(typeof row.activeRun.agent).toBe("string");
+    expect(row.activeRun.agent.length).toBeGreaterThan(0);
+  } finally {
+    await stopRun(runId);
+    await awaitRun(runId);
+  }
+}, 15000);
+
 it("PATCH /relay/agents/:name with models: [] drops the models key instead of writing an empty array", async () => {
   const h = await adminHeaders();
   const { readFileSync } = await import("node:fs");
@@ -1402,7 +1429,7 @@ it("boot reconcile does NOT touch a review ticket whose last run failed", async 
       const res = await app.request(`/tickets?projectId=${project.id}`, { headers: h });
       expect(res.status).toBe(200);
       const rows = await res.json() as any[];
-      expect(rows.find((r) => r.id === live.id).activeRun).toEqual({ stage: "work" });
+      expect(rows.find((r) => r.id === live.id).activeRun).toEqual({ stage: "work", agent: "fake" });
       expect(rows.find((r) => r.id === idle.id).activeRun).toBeUndefined();
     } finally {
       await stopRun(runId);

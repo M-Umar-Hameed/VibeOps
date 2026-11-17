@@ -96,3 +96,40 @@ test("RunStatusPane re-renders when runStage changes", () => {
   expect(renders).toBe(2);
   expect(screen.getByTestId("run-stage-label").textContent).toBe("Writing and editing code");
 });
+
+const paneProps = {
+  activeRunId: "r1", runChunks: ["c"], runOutput: "c", runStage: "work", runStatus: "running", runError: "",
+  outputUnavailable: false, showDetails: false, setShowDetails: vi.fn(), runStartedAt: 1000, nowMs: 2000,
+  sandboxActivity: null, onOpenActivityFile: vi.fn(),
+};
+
+test("RunStatusPane shows the agent next to the stage when given one", () => {
+  render(<RunStatusPane {...paneProps} runAgent="deepseek:deepseek-9b" />);
+  expect(screen.getByTestId("run-stage-agent").textContent).toBe(" - deepseek:deepseek-9b");
+  expect(screen.getByTestId("run-stage-label").textContent).toBe("Writing and editing code");
+});
+
+test("RunStatusPane renders no agent text when none is given", () => {
+  render(<RunStatusPane {...paneProps} />);
+  expect(screen.queryByTestId("run-stage-agent")).toBeNull();
+  expect(screen.getByTestId("run-stage-label").textContent).toBe("Writing and editing code");
+});
+
+const listProps = {
+  selectedTicketId: null, activeProjectId: "p1", agents: [] as Agent[], workDefaultModel: "",
+  planAgent: "auto::", workAgent: "auto::", reviewAgent: "auto::",
+  onSelectTicket: vi.fn(), onTicketCreated: vi.fn(), ticketsError: "",
+};
+
+test("TicketListPane badge shows the agent when activeRun.agent is present", () => {
+  const tickets: Ticket[] = [{ id: "t1", title: "T", status: "open", version: 1, body: null, activeRun: { stage: "work", agent: "deepseek:deepseek-9b" } }];
+  render(wrap(<TicketListPane {...listProps} tickets={tickets} />));
+  expect(screen.getByText("work running - deepseek:deepseek-9b")).toBeInTheDocument();
+});
+
+test("TicketListPane badge keeps the old text when activeRun.agent is absent", () => {
+  const tickets: Ticket[] = [{ id: "t1", title: "T", status: "open", version: 1, body: null, activeRun: { stage: "work" } }];
+  render(wrap(<TicketListPane {...listProps} tickets={tickets} />));
+  expect(screen.getByText("work running")).toBeInTheDocument();
+  expect(screen.queryByText(/ - /)).toBeNull();
+});

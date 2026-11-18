@@ -24,7 +24,11 @@ type PipelineSettingsPaneProps = {
   onStop: () => void;
   onResume: () => void;
   recovery?: { resumable: boolean; reason: string };
+  autoPicks?: Partial<Record<Role, string>>;
+  runAgents?: Partial<Record<Role, string>>;
 };
+
+type Role = "plan" | "work" | "review";
 
 export function PipelineSettingsPane({
   agents,
@@ -49,7 +53,16 @@ export function PipelineSettingsPane({
   onStop,
   onResume,
   recovery,
+  autoPicks,
+  runAgents,
 }: PipelineSettingsPaneProps) {
+  // An active run's agents win: the selects do not describe a run already started.
+  function pickLine(role: Role, value: string) {
+    const text = runAgents?.[role] ? `Running: ${runAgents[role]}`
+      : value === "auto::" && autoPicks?.[role] ? `Auto: ${autoPicks[role]}` : "";
+    return text ? <div data-testid={`pick-${role}`} className="text-[10px] text-on-surface-variant truncate">{text}</div> : null;
+  }
+
   const planAgents = agents.filter(a => a.roles.includes("plan"));
   const workAgents = agents.filter(a => a.roles.includes("work"));
   const reviewAgents = agents.filter(a => a.roles.includes("review"));
@@ -77,7 +90,7 @@ export function PipelineSettingsPane({
       <h3 className="font-headline-sm text-on-surface font-bold border-b border-white/5 pb-2">Pipeline Settings</h3>
       
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 min-w-0">
           <label className="text-xs font-code-sm text-on-surface-variant uppercase">Plan Model</label>
           <select value={planAgent} onChange={e => setPlanAgent(e.target.value)} className="bg-surface-container/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface outline-none cursor-pointer">
             <option value="auto::">Auto (routing strategy)</option>
@@ -85,6 +98,7 @@ export function PipelineSettingsPane({
               <option key={`${o.agent}::${o.model}`} value={`${o.agent}::${o.model}`}>{o.label}</option>
             ))}
           </select>
+          {pickLine("plan", planAgent)}
           <div className="flex flex-wrap gap-2 mt-1">
             {planAgents.map(a => (
               <span key={a.name} className="inline-flex items-center gap-1 text-[10px] text-on-surface-variant">
@@ -94,7 +108,7 @@ export function PipelineSettingsPane({
             ))}
           </div>
         </div>
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 min-w-0">
           <label className="text-xs font-code-sm text-on-surface-variant uppercase">Work Model</label>
           <select value={workAgent} onChange={e => setWorkAgent(e.target.value)} className="bg-surface-container/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface outline-none cursor-pointer">
             <option value="auto::">Auto (routing strategy)</option>
@@ -102,6 +116,7 @@ export function PipelineSettingsPane({
               <option key={`${o.agent}::${o.model}`} value={`${o.agent}::${o.model}`}>{o.label}</option>
             ))}
           </select>
+          {pickLine("work", workAgent)}
           <div className="flex flex-wrap gap-2 mt-1">
             {workAgents.map(a => (
               <span key={a.name} className="inline-flex items-center gap-1 text-[10px] text-on-surface-variant">
@@ -111,7 +126,7 @@ export function PipelineSettingsPane({
             ))}
           </div>
         </div>
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 min-w-0">
           <label className="text-xs font-code-sm text-on-surface-variant uppercase">Review Model</label>
           <select value={reviewAgent} onChange={e => setReviewAgent(e.target.value)} className="bg-surface-container/50 border border-white/10 rounded px-3 py-2 text-sm text-on-surface outline-none cursor-pointer">
             <option value="auto::">Auto (routing strategy)</option>
@@ -119,6 +134,7 @@ export function PipelineSettingsPane({
               <option key={`${o.agent}::${o.model}`} value={`${o.agent}::${o.model}`}>{o.label}</option>
             ))}
           </select>
+          {pickLine("review", reviewAgent)}
           <div className="flex flex-wrap gap-2 mt-1">
             {reviewAgents.map(a => (
               <span key={a.name} className="inline-flex items-center gap-1 text-[10px] text-on-surface-variant">

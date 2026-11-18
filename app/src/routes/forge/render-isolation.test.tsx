@@ -4,6 +4,7 @@ import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TicketListPane } from "./TicketListPane.js";
 import { RunStatusPane } from "./RunStatusPane.js";
+import { PipelineSettingsPane } from "./PipelineSettingsPane.js";
 import type { Ticket, Agent } from "./types.js";
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -113,6 +114,34 @@ test("RunStatusPane renders no agent text when none is given", () => {
   render(<RunStatusPane {...paneProps} />);
   expect(screen.queryByTestId("run-stage-agent")).toBeNull();
   expect(screen.getByTestId("run-stage-label").textContent).toBe("Writing and editing code");
+});
+
+const settingsProps = {
+  agents: [] as Agent[], skills: [], doctorStatuses: {}, tickets: [] as Ticket[],
+  planAgent: "auto::", setPlanAgent: vi.fn(), workAgent: "claude::Sonnet", setWorkAgent: vi.fn(),
+  reviewAgent: "auto::", setReviewAgent: vi.fn(), extraPrompt: "", onExtraPromptChange: vi.fn(),
+  activeRunId: null, isSubmitting: false, interruptedRun: false, runStage: "", runStatus: "", runError: "",
+  onRun: vi.fn(), onStop: vi.fn(), onResume: vi.fn(),
+};
+const picks = { plan: "claude:Opus", work: "agy:gemini-3.8-flash-high", review: "claude:Opus" };
+
+test("PipelineSettingsPane shows the auto pick under auto selects only", () => {
+  render(wrap(<PipelineSettingsPane {...settingsProps} autoPicks={picks} />));
+  expect(screen.getByTestId("pick-plan").textContent).toBe("Auto: claude:Opus");
+  expect(screen.getByTestId("pick-review").textContent).toBe("Auto: claude:Opus");
+  expect(screen.queryByTestId("pick-work")).toBeNull();
+});
+
+test("PipelineSettingsPane shows no pick line before picks arrive", () => {
+  render(wrap(<PipelineSettingsPane {...settingsProps} />));
+  expect(screen.queryByTestId("pick-plan")).toBeNull();
+});
+
+test("PipelineSettingsPane shows the active run's agents for all three roles", () => {
+  render(wrap(<PipelineSettingsPane {...settingsProps} autoPicks={picks} runAgents={{ plan: "claude:Opus", work: "deepseek:deepseek-9b", review: "claude:Sonnet" }} />));
+  expect(screen.getByTestId("pick-plan").textContent).toBe("Running: claude:Opus");
+  expect(screen.getByTestId("pick-work").textContent).toBe("Running: deepseek:deepseek-9b");
+  expect(screen.getByTestId("pick-review").textContent).toBe("Running: claude:Sonnet");
 });
 
 const listProps = {

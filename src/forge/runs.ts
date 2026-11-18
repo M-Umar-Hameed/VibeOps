@@ -29,7 +29,7 @@ import { pipeline, resolveMinFreeBytes } from "./run-pipeline.js";
 import { hasActiveRun, latestRunStatus } from "./run-queries.js";
 
 export { RUN_STATUSES, type Effort, type RunSummary } from "./run-state.js";
-export { parsePair, checkBudget } from "./run-agents.js";
+export { parsePair, checkBudget, composite } from "./run-agents.js";
 export { knowledgeQuery, rankForgeKnowledge } from "./run-knowledge.js";
 export { resolveMaxConcurrentChecks, DIFF_PROMPT_CAP, elideGeneratedDiffs, reviewDiffPayload } from "./review-stage.js";
 export { resolveMinFreeBytes, NARRATION } from "./run-pipeline.js";
@@ -147,21 +147,15 @@ export async function cleanupMergedSandboxes(config: RelayConfig): Promise<Sandb
   return { discarded, reclaimedBytes, orphans, deletedOrphans, prunedRegistrations, deletedBranches, keptBranches };
 }
 
-export async function startPipeline(
-  actorId: string, config: RelayConfig,
+// Lane and model for each role. GET /forge/auto-picks calls this too, so the
+// pick the UI previews is the pick a run gets.
+export async function resolvePicks(
+  config: RelayConfig,
   opts: {
-    ticketId: string; planAgent: string; workAgent: string; reviewAgent: string; extraPrompt?: string; operatorNotes?: string;
-    planModel?: string; workModel?: string; reviewModel?: string; force?: boolean; effort?: Effort;
-    resumeStage?: Stage; limitRetry?: boolean; escalate?: boolean;
+    ticketId: string; planAgent: string; workAgent: string; reviewAgent: string;
+    planModel?: string; workModel?: string; reviewModel?: string; effort?: Effort; escalate?: boolean;
   },
-): Promise<{ runId: string; doctorWarnings: string[] }> {
-  if ((opts.extraPrompt ?? "").length > MAX_EXTRA_PROMPT) throw new Error("extraPrompt too long");
-
-  if (!opts.force) {
-    const budget = await checkBudget(opts.ticketId);
-    if (!budget.ok) throw new ConflictError(budget.reason);
-  }
-
+): Promise<{ planPick: Pick; workPick: Pick; reviewPick: Pick; escalated: string }> {
   const strategyRaw = await getSetting("ai.routing_strategy");
   // The settings UI stores cost/max; the router speaks cheapest-first/
   // quality-first. Accept both vocabularies (the control was silently a
@@ -170,9 +164,7 @@ export async function startPipeline(
     strategyRaw === "cheapest-first" || strategyRaw === "cost" ? "cheapest-first"
     : strategyRaw === "quality-first" || strategyRaw === "max" ? "quality-first"
     : "balanced";
-  const styleSetting = await getSetting("agents.commProfile");
-  const lessons = lessonsClause(await getLessons());
-  let auto: { plan: Pick; work: Pick; review: Pick } | undefined;
+  let auto:{ plan: Pick; work: Pick; review: Pick } | undefined;
 
   // Per-run effort preset overrides the global strategy for auto-resolved
   // roles only; explicit agent/model picks below never consult it.
@@ -223,6 +215,27 @@ export async function startPipeline(
     }
     workPick = next;
   }
+  return { planPick, workPick, reviewPick, escalated };
+}
+
+export async function startPipeline(
+  actorId: string, config: RelayConfig,
+  opts: {
+    ticketId: string; planAgent: string; workAgent: string; reviewAgent: string; extraPrompt?: string; operatorNotes?: string;
+    planModel?: string; workModel?: string; reviewModel?: string; force?: boolean; effort?: Effort;
+    resumeStage?: Stage; limitRetry?: boolean; escalate?: boolean;
+  },
+): Promise<{ runId: string; doctorWarnings: string[] }> {
+  if ((opts.extraPrompt ?? "").length > MAX_EXTRA_PROMPT) throw new Error("extraPrompt too long");
+
+  if (!opts.force) {
+    const budget = await checkBudget(opts.ticketId);
+    if (!budget.ok) throw new ConflictError(budget.reason);
+  }
+
+  const styleSetting = await getSetting("agents.commProfile");
+  const lessons = lessonsClause(await getLessons());
+  const { planPick, workPick, reviewPick, escalated } = await resolvePicks(config, opts);
 
   // Cache-only doctor check: a spawn-level failure (binary renamed/missing)
   // fails fast here instead of stalling silently mid-pipeline; a soft failure

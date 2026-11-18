@@ -461,6 +461,25 @@ describe("forge API", () => {
     });
   });
 
+  it("GET /forge/auto-picks previews what auto resolves to and starts no run", async () => {
+    const h = await adminHeaders();
+    const ticket = await seedTicket();
+    const before = listRuns().length;
+
+    const res = await app.request(`/forge/auto-picks?ticketId=${ticket.id}`, { headers: h });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ plan: "fake", work: "fake", review: "fake" });
+
+    await withSetting("forge.defaultModel.work", "fake:fast", async () => {
+      const withDefault = await app.request(`/forge/auto-picks?ticketId=${ticket.id}`, { headers: h });
+      expect(await withDefault.json()).toEqual({ plan: "fake", work: "fake:fast", review: "fake" });
+    });
+
+    expect(listRuns().length).toBe(before);
+    expect((await app.request("/forge/auto-picks", { headers: h })).status).toBe(400);
+    expect((await app.request(`/forge/auto-picks?ticketId=${randomUUID()}`, { headers: h })).status).toBe(404);
+  });
+
   it("POST /forge/pipeline returns 400 for missing fields and unknown agent", async () => {
     const h = await adminHeaders();
     const ticket = await seedTicket();

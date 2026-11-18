@@ -8,7 +8,7 @@ import { loadRelayConfig } from "../relay/config.js";
 import { relayConfigPath, writeRelayConfig } from "../relay/bootstrap-config.js";
 import { runDoctor } from "../relay/doctor.js";
 import { parseVerdict } from "../relay/prompts.js";
-import { startPipeline, listRunsWithHistory, getRunOutput, getSettledRunOutput, stopRun, resolveWorkdir, hasActiveRun, latestRunStatus, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes, parsePair, RUN_STATUSES, type RunListOpts, resolveMinFreeBytes } from "../forge/runs.js";
+import { startPipeline, resolvePicks, composite, listRunsWithHistory, getRunOutput, getSettledRunOutput, stopRun, resolveWorkdir, hasActiveRun, latestRunStatus, reviewDiffPayload, activeStageForTicket, latestRunPolicy, markPolicyWaived, listInterruptedRuns, cleanupMergedSandboxes, parsePair, RUN_STATUSES, type RunListOpts, resolveMinFreeBytes } from "../forge/runs.js";
 import {
   sandboxExists, branchName, sandboxDiff, promoteSandbox, discardSandbox, assertTicketId, hasCommitsToPromote, sandboxDiffSummary, sandboxHeadHash, sandboxActivity, sandboxWorkingDiff, withReadOnlyView,
   attachmentsDir, exportOutputs, validateExportPath, workdirDirtyFiles, checkSandboxDisk, listSandboxTicketIds, sandboxSizeBytes,
@@ -206,6 +206,19 @@ export function registerForgeRoutes(app: Hono<AppEnv>): void {
       return c.json({ error: (e as Error).message }, 400);
     }
     return c.json(await runDoctor(config, { fresh }));
+  });
+
+  app.get("/forge/auto-picks", requireAdmin, async (c) => {
+    const ticketId = c.req.query("ticketId") ?? "";
+    if (!UUID.test(ticketId)) return c.json({ error: "ticketId required" }, 400);
+    await getTicket(ticketId);
+    if (!existsSync(relayConfigPath())) return c.json({});
+    try {
+      const p = await resolvePicks(forgeConfig(), { ticketId, planAgent: "auto", workAgent: "auto", reviewAgent: "auto" });
+      return c.json({ plan: composite(p.planPick), work: composite(p.workPick), review: composite(p.reviewPick) });
+    } catch (e) {
+      return c.json({ error: (e as Error).message }, 400);
+    }
   });
 
   app.post("/forge/pipeline", requireAdmin, async (c) => {

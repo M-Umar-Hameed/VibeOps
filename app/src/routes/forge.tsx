@@ -94,6 +94,13 @@ export function ForgeScreen() {
 
   const run = useForgeRun(selectedTicket, ticketRuns, runsQ, queryClient, { planAgent, workAgent, reviewAgent });
 
+  const autoPicksQ = useQuery({
+    queryKey: ["forge", "auto-picks", selectedTicket?.id],
+    queryFn: () => api.get(`/forge/auto-picks?ticketId=${encodeURIComponent(selectedTicket!.id)}`) as Promise<Partial<Record<"plan" | "work" | "review", string>>>,
+    enabled: !!selectedTicket,
+  });
+  const activeRunAgents = run.activeRunId ? ticketRuns.find((r: any) => r.id === run.activeRunId)?.agents : undefined;
+
   const latestRun = ticketRuns[0];
   const runAgent: string | undefined =
     latestRun && (!run.activeRunId || latestRun.id === run.activeRunId) ? latestRun.agents?.[run.runStage] || undefined : undefined;
@@ -167,6 +174,7 @@ export function ForgeScreen() {
               onExtraPromptChange={run.setExtraPrompt} activeRunId={run.activeRunId} isSubmitting={run.isSubmitting}
               interruptedRun={run.interruptedRun} runStage={run.runStage} runStatus={run.runStatus} runError={run.runError}
               onRun={run.handleRun} onStop={run.handleStop} onResume={run.handleResume}
+              autoPicks={autoPicksQ.data} runAgents={activeRunAgents}
             />
 
             <RunStatusPane

@@ -121,6 +121,9 @@ try {
 function pct(xs, q) { const s = [...xs].sort((a, b) => a - b); return s[Math.max(0, Math.ceil(q * s.length) - 1)]; }
 function stats(xs) { const r = (v) => Math.round(v * 10) / 10; return { n: xs.length, medianMs: r(pct(xs, 0.5)), p95Ms: r(pct(xs, 0.95)) }; }
 
+function flat(o, p = "") { return Object.entries(o ?? {}).reduce((a, [k, v]) => (v && typeof v === "object" ? Object.assign(a, flat(v, `${p}${k}.`)) : (a[p + k] = v, a)), {}); }
+function phaseStats(rows) { const keys = [...new Set(rows.flatMap(Object.keys))]; return Object.fromEntries(keys.map((k) => [k, stats(rows.map((r) => r[k]).filter((v) => typeof v === "number"))])); }
+
 // Latency baseline for browser extension 2/2. Timings are client-observed
 // POST /browser/batches round trips (server enqueue -> extension result).
 async function runBench(sw, instanceId) {
@@ -134,10 +137,10 @@ async function runBench(sw, instanceId) {
   const prior = (await (await fetch(`${API}/settings/browserGrants`, { headers: H })).json()).value;
   const withGrant = JSON.stringify([...(prior ? JSON.parse(prior) : []).filter((g) => g.origin !== benchOrigin), { origin: benchOrigin, mode: "act" }]);
   await fetch(`${API}/settings/browserGrants`, { method: "PATCH", headers: H, body: JSON.stringify({ value: withGrant }) });
-  const batch = async (steps) => {
+  const batch = async (steps, extra = {}) => {
     const t0 = performance.now();
     const res = await fetch(`${API}/browser/batches`, { method: "POST", headers: H,
-      body: JSON.stringify({ instanceId, tenant: "e2e", targetOrigin: benchOrigin, steps }) });
+      body: JSON.stringify({ instanceId, tenant: "e2e", targetOrigin: benchOrigin, steps, ...extra }) });
     const body = await res.json();
     const ms = performance.now() - t0;
     assert.equal(res.status, 200, `bench batch returned ${res.status}`);
@@ -145,7 +148,19 @@ async function runBench(sw, instanceId) {
     assert.ok(!bad, `bench step failed: ${JSON.stringify(bad)}`);
     return { ms, body };
   };
-  const time = async (steps) => { await batch(steps); const xs = []; for (let i = 0; i < BENCH_ITERATIONS; i++) xs.push((await batch(steps)).ms); return stats(xs); }; // 1 warm-up discarded
+  const time = async (steps, withPhases = false) => { // 1 warm-up discarded
+    await batch(steps);
+    const xs = [], rows = [];
+    for (let i = 0; i < BENCH_ITERATIONS; i++) {
+      const r = await batch(steps, withPhases ? { timings: true } : {});
+      xs.push(r.ms);
+      if (withPhases) {
+        assert.ok(r.body.timings, "extension returned no timings - reload the unpacked extension");
+        rows.push(flat(r.body.timings));
+      }
+    }
+    return withPhases ? { ...stats(xs), phases: phaseStats(rows) } : stats(xs);
+  };
   try {
     const report = { bench: "extension-latency", iterations: BENCH_ITERATIONS };
     await batch([{ verb: "newTab", url: `${benchOrigin}/large` }]);
@@ -157,8 +172,8 @@ async function runBench(sw, instanceId) {
     assert.ok(nodes.length >= 50, `small page snapshot has ${nodes.length} nodes`);
     const ref = (name) => { const n = nodes.find((x) => x.name === name); assert.ok(n, `bench page has no ${name}`); return n.ref; };
     report.snapshotSmall = { elements: nodes.length, ...(await time([{ verb: "snapshot" }])) };
-    report.click = await time([{ verb: "click", ref: ref("bench-click") }]);
-    report.type = await time([{ verb: "type", ref: ref("bench-type"), text: "bench" }]);
+    report.click = await time([{ verb: "click", ref: ref("bench-click") }], true);
+    report.type = await time([{ verb: "type", ref: ref("bench-type"), text: "bench" }], true);
     report.waitAfter50ms = await time([{ verb: "click", ref: ref("bench-reveal") }, { verb: "wait", text: "bench-ready" }]); // includes the click; subtract report.click
     report.screenshot = await time([{ verb: "screenshot" }]);
     const patched = await sw.evaluate(() => {

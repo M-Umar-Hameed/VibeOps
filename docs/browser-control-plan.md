@@ -137,6 +137,8 @@ take image input. T4 only after T3 shows its residual need. T5 is rejected outri
 
 - Accuracy: `tests/extension-accuracy.test.ts` (jsdom, normal lane). Known gaps are `it.fails`; closing one turns it red — flip it to `it`.
 - Latency: `npm run e2e:extension -- --bench` (live sidecar on :8787 + real Chrome) prints one JSON line: median/p95 over 20 iterations for snapshot (50 / 2,000 elements), click, type, wait-after-50 ms, screenshot, and debugger attach calls per 10 action batches. Without `--bench` the e2e run is unchanged.
+- Phase timings: a `POST /browser/batches` body with `timings: true` is passed through to the extension, which adds `result.timings` (ms per awaited phase: agentTab, window.*, lease, executeScript, page.import/execute, dispatchCdp, one `cdp.<method>.<type>` per Input event, snapshotScript, total; `prev` holds the previous timed batch's submit and re-minimize, which land after its result is sent). Without the flag, delivery and result are unchanged.
+- The bench requests it for click and type and adds `phases` (median/p95 per phase) to those two entries. Phase figures are pending the owner's run: `npm run e2e:extension -- --bench` (live sidecar on :8787, real Chrome, extension reloaded).
 
 ### Extension 2/2 changes (2026-11-14)
 

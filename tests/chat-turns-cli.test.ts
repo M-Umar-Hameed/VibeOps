@@ -15,9 +15,12 @@ vi.mock("../src/relay/doctor.js", () => ({
   mcpRegistration: (...args: any[]) => mcpRegMock(...args),
 }));
 
-vi.mock("../src/relay/config.js", () => ({
+// The turn creates the workdir, and "/test-workdir" is not writable on Linux.
+vi.mock("../src/relay/config.js", async () => {
+  const workdir = (await import("node:path")).join((await import("node:os")).tmpdir(), "vibeops-chat-turns-cli-test");
+  return {
   loadRelayConfig: () => ({
-    workdir: "/test-workdir",
+    workdir,
     agents: {
       "claude-cli": { cmd: ["claude", "-p", "{promptFile}"], roles: ["work"], mcp: true },
       agy: { cmd: ["agy", "{model}"], roles: ["plan", "work"] },
@@ -26,7 +29,8 @@ vi.mock("../src/relay/config.js", () => ({
     },
   }),
   resolveCmd: (agent: any) => agent.cmd,
-}));
+  };
+});
 
 vi.mock("../src/chat/store.js", () => ({
   getSession: (...args: any[]) => getSessionMock(...args),

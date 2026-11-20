@@ -1124,7 +1124,8 @@ describe("syncSandboxWithBase", () => {
     const res = await syncSandboxWithBase(workdir, TID2);
     expect(res).toEqual({ state: "conflict", files: ["a.txt"], base: git(workdir, "rev-parse", "HEAD").trim() });
     expect(git(workdir, "rev-parse", branchName(TID2)).trim()).toBe(headB);
-    expect(git(spB, "status", "--porcelain").trim()).toBe("");
+    // The linked node_modules is a symlink on POSIX, which "node_modules/" in .gitignore does not match.
+    expect(git(spB, "status", "--porcelain", "--", ".", ":(exclude)node_modules").trim()).toBe("");
     expect(git(workdir, "status", "--porcelain").trim()).toBe("");
   });
 

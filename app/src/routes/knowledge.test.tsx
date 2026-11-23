@@ -8,8 +8,9 @@ const notesSave = vi.fn();
 const notesUpdate = vi.fn();
 const notesRemove = vi.fn();
 const knowledgeGetSource = vi.fn();
+const knowledgeSearch = vi.fn();
 vi.mock("../api/knowledge.js", () => ({ knowledge: {
-  search: vi.fn(async () => [{ content: "backup nightly", sourceKind: "vault", sourceRef: "sop.md", score: 1, citation: "sop.md" }]),
+  search: (...a: any[]) => knowledgeSearch(...a),
   getSource: (...a: any[]) => knowledgeGetSource(...a),
 } }));
 vi.mock("../api/notes.js", () => ({ notes: {
@@ -33,6 +34,7 @@ const note = { id: "n1", actorId: "a1", body: "First line\nmore body", title: nu
 
 beforeEach(() => {
   mockProjectId = null;
+  knowledgeSearch.mockReset().mockResolvedValue([{ content: "backup nightly", sourceKind: "vault", sourceRef: "sop.md", score: 1, citation: "sop.md" }]);
   notesList.mockReset().mockResolvedValue([]);
   notesSave.mockReset().mockResolvedValue({ id: "n1" });
   notesUpdate.mockReset().mockResolvedValue({ ...note, version: 2 });
@@ -158,6 +160,66 @@ test("switching the active project changes the graph query key and refetches", a
   mockProjectId = "proj-B";
   rerender(wrapStable(<KnowledgeScreen />));
   await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/knowledge/graph", { query: { limit: "200", project: "proj-B" } }));
+});
+
+const runSearch = () => {
+  fireEvent.change(screen.getByPlaceholderText(/Search Obsidian Vault/i), { target: { value: "backup" } });
+  fireEvent.click(screen.getByText("Scan"));
+};
+
+test("search sends the active project", async () => {
+  mockProjectId = "proj-A";
+  render(wrap(<KnowledgeScreen />));
+  runSearch();
+  await waitFor(() => expect(knowledgeSearch).toHaveBeenCalledWith("backup", undefined, "proj-A"));
+});
+
+test("search omits project when none is active", async () => {
+  render(wrap(<KnowledgeScreen />));
+  runSearch();
+  await waitFor(() => expect(knowledgeSearch).toHaveBeenCalledWith("backup", undefined, null));
+});
+
+test("switching the active project refetches search", async () => {
+  const client = new QueryClient();
+  const wrapStable = (ui: any) => <QueryClientProvider client={client}>{ui}</QueryClientProvider>;
+  mockProjectId = "proj-A";
+  const { rerender } = render(wrapStable(<KnowledgeScreen />));
+  runSearch();
+  await waitFor(() => expect(knowledgeSearch).toHaveBeenCalledWith("backup", undefined, "proj-A"));
+  mockProjectId = "proj-B";
+  rerender(wrapStable(<KnowledgeScreen />));
+  await waitFor(() => expect(knowledgeSearch).toHaveBeenCalledWith("backup", undefined, "proj-B"));
+});
+
+test("sessions request sends the active project and refetches on switch", async () => {
+  apiFetch.mockImplementation(async (url: string) => (url === "/knowledge/sessions" ? [] : {}));
+  const client = new QueryClient();
+  const wrapStable = (ui: any) => <QueryClientProvider client={client}>{ui}</QueryClientProvider>;
+  mockProjectId = "proj-A";
+  const { rerender } = render(wrapStable(<KnowledgeScreen />));
+  fireEvent.click(screen.getByText("Sessions"));
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/knowledge/sessions", { query: { project: "proj-A" } }));
+  mockProjectId = "proj-B";
+  rerender(wrapStable(<KnowledgeScreen />));
+  await waitFor(() => expect(apiFetch).toHaveBeenCalledWith("/knowledge/sessions", { query: { project: "proj-B" } }));
+});
+
+test("sessions request omits project when none is active", async () => {
+  apiFetch.mockImplementation(async (url: string) => (url === "/knowledge/sessions" ? [] : {}));
+  render(wrap(<KnowledgeScreen />));
+  fireEvent.click(screen.getByText("Sessions"));
+  await waitFor(() => expect(apiFetch.mock.calls.some((c) => c[0] === "/knowledge/sessions")).toBe(true));
+  const call = apiFetch.mock.calls.find((c) => c[0] === "/knowledge/sessions")!;
+  expect(call[1]).toBeUndefined();
+});
+
+test("footnote says what is shared", () => {
+  apiFetch.mockImplementation(async (url: string) => (url === "/knowledge/graph" ? { nodes: [], edges: [] } : {}));
+  render(wrap(<KnowledgeScreen />));
+  fireEvent.click(screen.getByText("Graph"));
+  expect(screen.getByText(/Global notes and the shared vault appear in every project/)).toBeInTheDocument();
+  expect(screen.queryByText(/shared across all projects/)).toBeNull();
 });
 
 test("graph renders each kind with its color and shape, and the legend matches", async () => {

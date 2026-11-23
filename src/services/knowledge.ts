@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { statSync, readdirSync } from "node:fs";
+import { statSync, readdirSync, readFileSync } from "node:fs";
 import { readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { resolveProjectVaultPath } from "../ingest/vault-path.js";
@@ -348,7 +348,43 @@ export async function insertNoteEmbedding(noteId: string, body: string, embedder
   });
 }
 
-function walkRepoDocs(root: string, currentDir = root, depth = 0, files: string[] = []): string[] {
+export type GitignoreDirs = { anyDepth: Set<string>; rooted: Set<string> };
+
+const GITIGNORE_DIR_RE = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
+
+// Plain dir names / literal paths only; wildcards, classes, negations ignored.
+export function parseGitignoreDirs(text: string): GitignoreDirs {
+  const out: GitignoreDirs = { anyDepth: new Set(), rooted: new Set() };
+  for (const raw of text.split(/\r?\n/)) {
+    let line = raw.trim();
+    if (!line || line.startsWith("#") || line.startsWith("!")) continue;
+    const anchored = line.startsWith("/");
+    if (anchored) line = line.slice(1);
+    if (line.endsWith("/")) line = line.slice(0, -1);
+    if (!GITIGNORE_DIR_RE.test(line)) continue;
+    const segs = line.split("/");
+    if (segs.some((s) => s === "." || s === "..")) continue;
+    if (!anchored && segs.length === 1) out.anyDepth.add(line);
+    else out.rooted.add(line);
+  }
+  return out;
+}
+
+function readGitignoreDirs(root: string): GitignoreDirs {
+  try {
+    return parseGitignoreDirs(readFileSync(join(root, ".gitignore"), "utf-8"));
+  } catch {
+    return { anyDepth: new Set(), rooted: new Set() };
+  }
+}
+
+export function walkRepoDocs(
+  root: string,
+  currentDir = root,
+  depth = 0,
+  files: string[] = [],
+  ignore: GitignoreDirs = readGitignoreDirs(root),
+): string[] {
   if (depth > 4) return files;
   try {
     const entries = readdirSync(currentDir, { withFileTypes: true });
@@ -356,7 +392,9 @@ function walkRepoDocs(root: string, currentDir = root, depth = 0, files: string[
       const name = entry.name;
       if (entry.isDirectory()) {
         if (name === "node_modules" || name === ".git" || name === "coverage" || name === "build" || /^dist/.test(name)) continue;
-        walkRepoDocs(root, join(currentDir, name), depth + 1, files);
+        if (ignore.anyDepth.has(name)) continue;
+        if (ignore.rooted.size && ignore.rooted.has(relative(root, join(currentDir, name)).split(sep).join("/"))) continue;
+        walkRepoDocs(root, join(currentDir, name), depth + 1, files, ignore);
       } else {
         if (/\.md$/i.test(name) || /^readme/i.test(name) || name === "CLAUDE.md" || name === "AGENTS.md") {
           files.push(join(currentDir, name));

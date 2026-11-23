@@ -1,6 +1,5 @@
 import { expect, test } from "vitest";
-import { mkdtempSync, writeFileSync, readdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, writeFileSync, readdirSync, rmSync } from "node:fs";import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -93,10 +92,16 @@ test("restore remaps colliding Inbox project + owner actor by key/name, no orpha
   await src.client.close(); await tgt.client.close();
 });
 
-test("pruneBackups keeps last N export files", () => {
+test("pruneBackups applies tiers and deletes only export-*.json", () => {
   const dir = mkdtempSync(join(tmpdir(), "vibeops-bkp-"));
-  for (const ts of ["a", "b", "c", "d", "e"]) writeFileSync(join(dir, `export-2026-01-0${ts === "a" ? 1 : ts === "b" ? 2 : ts === "c" ? 3 : ts === "d" ? 4 : 5}.json`), "{}");
-  pruneBackups(dir, 3);
-  expect(readdirSync(dir).filter((f) => f.startsWith("export-")).length).toBe(3);
+  const n = (iso: string) => `export-${iso.replace(/[:.]/g, "-")}.json`;
+  const exports = [
+    "2026-11-21T01:00:00.000Z", "2026-11-21T09:00:00.000Z",
+    "2026-11-22T01:00:00.000Z", "2026-11-22T09:00:00.000Z",
+    "2026-11-23T01:00:00.000Z", "2026-11-23T09:00:00.000Z",
+  ].map(n);
+  for (const f of [...exports, "keep.txt", "export-bad.json"]) writeFileSync(join(dir, f), "{}");
+  pruneBackups(dir, { recent: 1, days: 2, weeks: 0 }, Date.parse("2026-11-23T12:00:00.000Z"));
+  expect(readdirSync(dir).sort()).toEqual(["export-bad.json", "keep.txt", exports[3], exports[5]].sort());
   rmSync(dir, { recursive: true, force: true });
 });

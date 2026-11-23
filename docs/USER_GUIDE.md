@@ -62,10 +62,11 @@ Periodic checkpoints run every 2 minutes by default (tunable via `VIBEOPS_CHECKP
 These reduce WAL replay time on startup, not data loss (WAL replay already recovers all
 committed transactions).
 
-A rolling known-good snapshot is taken automatically on successful open (e.g.
-`~/.vibeops/data.good-<ts>`, last 3 kept). A logical JSON export runs every 6 hours and on
-clean shutdown under `~/.vibeops/backups/` (last 30). Use `npm run backup` and
-`npm run restore <file>` for logical export/restore (only when the server is stopped).
+One known-good snapshot (`~/.vibeops/data.good-<ts>`) is taken at boot. Logical JSON exports
+run at boot, every 6 hours, a few minutes after writes, and on clean shutdown, into
+`~/.vibeops/backups/`. Retention: the newest 10, plus the newest per day for 7 days, plus the
+newest per ISO week for 4 weeks. Use `npm run backup` and `npm run restore <file>` for
+logical export/restore (only when the server is stopped).
 
 If the app starts in recovery mode (503 "embedded_db_open_failed"), the database was
 corrupted by concurrent access or an older PGlite version. To recover using `pg_resetwal`:
@@ -80,3 +81,22 @@ After a manual `pg_resetwal` + restart, the server logs a `recovery:` line quant
 discarded rows vs the newest logical export.
 
 The app never deletes or reinitialises your data directory on its own.
+
+## Backups and restore
+
+**Covered:** the durable tables: projects, actors, tickets, notes, comments, events, settings.
+
+**Not covered:** embeddings are excluded (rebuildable by re-indexing). The indexed text of
+sessions exists only in the database and in snapshots.
+
+**Offsite copy:** set `backup.offsiteDir` with `PATCH /settings/backup.offsiteDir` and body
+`{"value":"H:\\VibeOps-backup"}`. It must be an absolute path outside `~/.vibeops`; empty
+turns the copy off. After each export it is copied to `<dir>\exports` (24 recent, 30 daily,
+26 weekly kept). The newest known-good snapshot is copied to `<dir>\snapshots` (newest 3 kept).
+Check `GET /system/backup` (admin) for errors and `sameVolume`; a folder on the same drive as
+the data gives no protection against a disk failure.
+
+**Restore from an export:** stop the server, then `npm run restore <file>`.
+
+**Restore from a snapshot:** stop the app, rename `~/.vibeops/data` aside, copy the snapshot
+folder to `~/.vibeops/data`, then start the app.

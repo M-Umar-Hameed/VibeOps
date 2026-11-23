@@ -20,6 +20,7 @@ import { syncProject } from "../sync/run.js";
 import { listActors, createActor, revokeActor } from "../services/actors.js";
 import { requireAdmin } from "./auth.js";
 import { bump, snapshot } from "../services/metrics.js";
+import { getBackupStatus } from "../services/offsite.js";
 import { getSystemMetrics, getSystemLogs, getSystemTopology, getAiUsage, getSystemStatus, getKnowledgeUsage, recordError } from "../services/system.js";
 import { getSetting, setSetting } from "../services/settings.js";
 import { getCorsOrigins } from "../services/settings-cache.js";
@@ -554,6 +555,7 @@ app.post("/ingest/sessions", requireAdmin, async (c) => {
 
 app.get("/system/metrics", async (c) => c.json(await getSystemMetrics()));
 app.get("/system/status", requireAdmin, async (c) => c.json(await getSystemStatus()));
+app.get("/system/backup", requireAdmin, async (c) => c.json(await getBackupStatus()));
 app.get("/system/logs", requireAdmin, async (c) => c.json(await getSystemLogs()));
 app.get("/system/topology", async (c) => c.json(await getSystemTopology()));
 app.get("/system/ai-usage", async (c) => c.json(await getAiUsage()));

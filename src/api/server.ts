@@ -56,8 +56,9 @@ async function bootNormally() {
         try {
           const { writeBackup } = await import("../services/backup.js");
           const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-          const { path, counts } = await writeBackup(stamp);
+          const { path, counts, offsite } = await writeBackup(stamp);
           console.log(`logical export -> ${path} ${JSON.stringify(counts)}`);
+          if (!offsite.ok) console.warn(`offsite export failed: ${offsite.error}`);
         } catch (e) {
           console.warn(`logical export failed: ${(e as Error).message}`);
         }
@@ -66,9 +67,16 @@ async function bootNormally() {
   if (isEmbedded) {
     const { snapshotKnownGood, checkpointEmbedded } = await import("../db/client.js");
     void snapshotKnownGood()
-      .catch((e) => console.warn(`known-good snapshot failed: ${(e as Error).message}`));
+      .catch((e) => console.warn(`known-good snapshot failed: ${(e as Error).message}`))
+      .then(() => import("../services/offsite.js"))
+      .then((m) => m.syncSnapshotOffsite())
+      .then((r) => { if (r.copied) console.log(`offsite snapshot -> ${r.name}`); else if (r.error) console.warn(`offsite snapshot failed: ${r.error}`); })
+      .catch((e) => console.warn(`offsite snapshot failed: ${(e as Error).message}`));
     void runLogicalExport!();
-    setInterval(() => void runLogicalExport!(), 6 * 60 * 60_000).unref();
+    setInterval(() => {
+      void runLogicalExport!();
+      void import("../services/offsite.js").then((m) => m.syncSnapshotOffsite()).catch(() => {});
+    }, 6 * 60 * 60_000).unref();
     configureExport(runLogicalExport!);
     // Periodic CHECKPOINT reduces WAL replay time after unclean exit; 2-min default, env-tunable.
     const checkpointMs = Number(process.env.VIBEOPS_CHECKPOINT_MS ?? 120_000);

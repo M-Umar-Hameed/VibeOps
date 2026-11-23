@@ -47,8 +47,8 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
 
   if (cmd === "backup") {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const { path, counts } = await backup.writeBackup(stamp, db);
-    console.log(JSON.stringify({ path, counts }));
+    const { path, counts, offsite } = await backup.writeBackup(stamp, db);
+    console.log(JSON.stringify({ path, counts, offsite }));
   } else if (cmd === "restore") {
     if (!arg) { console.error("usage: restore <export.json>"); process.exit(1); }
     const dump = JSON.parse(readFileSync(arg, "utf-8"));

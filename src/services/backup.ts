@@ -129,31 +129,77 @@ export async function restoreDurable(target: Db, dump: Dump): Promise<Counts> {
   return countTables(target);
 }
 
-// Newest N logical exports retained. Bumped from 30 for the write-triggered
-// cadence: at the 5-min export floor that's ~12/hr worst case, so 90 covers
-// ~7.5h of continuous churn (days under normal bursty use) — enough that the
-// 6-hourly milestone exports aren't evicted within a day.
-// ponytail: flat count; if churn ever evicts milestones, switch to tiered
-// retention (keep newest N write-exports + all 6-hourly) instead of raising N.
-export const KEEP_EXPORTS = 90;
+export type Tiers = { recent: number; days: number; weeks: number };
+// Local disk is tight (C: ~14 GB free); offsite keeps months.
+export const LOCAL_TIERS: Tiers = { recent: 10, days: 7, weeks: 4 };
+export const OFFSITE_TIERS: Tiers = { recent: 24, days: 30, weeks: 26 };
+
+export const EXPORT_RE = /^export-(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z\.json$/;
+
+function exportTime(name: string): number | null {
+  const m = EXPORT_RE.exec(name);
+  if (!m) return null;
+  const t = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], +m[7]);
+  return Number.isNaN(t) ? null : t;
+}
+
+// ISO-8601 week key (UTC), e.g. "2026-W53". The Thursday of the week decides its year.
+export function isoWeekKey(t: number): string {
+  const d = new Date(t);
+  const day = (d.getUTCDay() + 6) % 7; // Mon=0..Sun=6
+  const thu = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day + 3);
+  const y = new Date(thu).getUTCFullYear();
+  const week = Math.floor((thu - Date.UTC(y, 0, 1)) / 86_400_000 / 7) + 1;
+  return `${y}-W${String(week).padStart(2, "0")}`;
+}
+
+// Pure. Returns the export names to KEEP, newest first. Non-matching names are
+// never returned. Files dated after `now` (clock skew) are always kept and
+// excluded from tier counting.
+export function selectExportsToKeep(names: string[], now: number, tiers: Tiers): string[] {
+  const parsed = names
+    .map((n) => ({ n, t: exportTime(n) }))
+    .filter((x): x is { n: string; t: number } => x.t !== null)
+    .sort((a, b) => b.t - a.t || (a.n < b.n ? 1 : -1));
+  const keep = new Set<string>();
+  const past = parsed.filter((x) => { if (x.t > now) { keep.add(x.n); return false; } return true; });
+  past.slice(0, Math.max(0, tiers.recent)).forEach((x) => keep.add(x.n));
+  const newestPer = (key: (t: number) => string, limit: number) => {
+    const seen = new Set<string>();
+    for (const x of past) {
+      const k = key(x.t);
+      if (seen.has(k)) continue;
+      if (seen.size >= limit) break;
+      seen.add(k); keep.add(x.n);
+    }
+  };
+  newestPer((t) => new Date(t).toISOString().slice(0, 10), Math.max(0, tiers.days));
+  newestPer(isoWeekKey, Math.max(0, tiers.weeks));
+  return parsed.filter((x) => keep.has(x.n)).map((x) => x.n);
+}
 
 export function backupDir(): string {
   return join(vibeopsHome(), ".vibeops", "backups");
 }
 
 export async function writeBackup(
-  now: string, source: Db = db, dir = backupDir(), keep = KEEP_EXPORTS,
-): Promise<{ path: string; counts: Counts }> {
+  now: string, source: Db = db, dir = backupDir(), tiers: Tiers = LOCAL_TIERS,
+): Promise<{ path: string; counts: Counts; offsite: import("./offsite.js").OffsiteExportResult }> {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const dump = await dumpDurable(source);
   const counts = countDump(dump);
   const path = join(dir, `export-${now}.json`);
   writeFileSync(path, JSON.stringify(dump), { mode: 0o600 });
-  pruneBackups(dir, keep);
-  return { path, counts };
+  pruneBackups(dir, tiers);
+  // Never throws: offsite failures are recorded in backup-status.json, not raised.
+  const { afterLocalExport } = await import("./offsite.js");
+  const offsite = await afterLocalExport(path);
+  return { path, counts, offsite };
 }
 
-export function pruneBackups(dir: string, keep: number): void {
-  const files = readdirSync(dir).filter((f) => f.startsWith("export-") && f.endsWith(".json")).sort();
-  for (const f of files.slice(0, Math.max(0, files.length - keep))) rmSync(join(dir, f));
+// Deletes only files matching EXPORT_RE and not selected by the tiers.
+export function pruneBackups(dir: string, tiers: Tiers, now = Date.now()): void {
+  const names = readdirSync(dir).filter((f) => EXPORT_RE.test(f));
+  const keep = new Set(selectExportsToKeep(names, now, tiers));
+  for (const f of names) if (!keep.has(f)) rmSync(join(dir, f));
 }

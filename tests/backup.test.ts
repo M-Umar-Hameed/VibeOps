@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { mkdtempSync, writeFileSync, readdirSync, rmSync } from "node:fs";import { tmpdir } from "node:os";
+import { mkdtempSync, writeFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";

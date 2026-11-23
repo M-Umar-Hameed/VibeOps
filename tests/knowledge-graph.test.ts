@@ -42,7 +42,7 @@ test("GET /knowledge/graph returns 200", async () => {
   expect(res.status).toBe(200);
 });
 
-test("knowledgeGraph(projectId) returns only that project's repo nodes, with vault/session still shown", async () => {
+test("knowledgeGraph(projectId) returns only that project's repo nodes, with global vault shown, unattributed session excluded", async () => {
   const pA = randomUUID();
   const pB = randomUUID();
   const vaultRef = `vault-shared-${Date.now()}.md`;
@@ -57,7 +57,8 @@ test("knowledgeGraph(projectId) returns only that project's repo nodes, with vau
   expect(ids).toContain(`${pA}:README.md`);
   expect(ids).not.toContain(`${pB}:README.md`);
   expect(ids).toContain(vaultRef);
-  expect(ids).toContain(sessRef);
+  // unattributed sessions are no longer global in a project view
+  expect(ids).not.toContain(sessRef);
 });
 
 test("knowledgeGraph() with no projectId includes repo nodes for any project (unchanged)", async () => {
@@ -90,9 +91,10 @@ test("knowledgeGraph(projectId) budgets project nodes first: 5 repo + 55 global 
     await upsertSourceDoc("repo", ref, `project repo doc ${i}`, emb);
   }
   for (let i = 0; i < 100; i++) {
-    const ref = `budget-sess-${i}-${stamp}`;
+    // global rows are bare vault refs: unattributed sessions no longer fill the global group
+    const ref = `budget-vault-${i}-${stamp}.md`;
     refs.push(ref);
-    await upsertSourceDoc("session", ref, `global session ${i}`, emb);
+    await upsertSourceDoc("vault", ref, `global vault ${i}`, emb);
   }
   const res = await knowledgeGraph(60, proj, refs);
   const repoIds = res.nodes.filter(n => n.kind === "repo" && n.id.startsWith(`${proj}:`)).map(n => n.id);
@@ -123,7 +125,8 @@ test("project sessions show as project rows in graph", async () => {
   const projSessions = res.nodes.filter(n => n.kind === "session" && n.id.startsWith(`psess-`));
   const globalSessions = res.nodes.filter(n => n.kind === "session" && n.id.startsWith(`global-sess-`));
   expect(projSessions.length).toBeGreaterThanOrEqual(25); // Tens of project sessions
-  expect(globalSessions.length).toBeGreaterThanOrEqual(1); // Global session in floor
+  // unattributed session is excluded from a project graph
+  expect(globalSessions.length).toBe(0);
 });
 
 test("clampGraphLimit", () => {
@@ -230,10 +233,10 @@ test("knowledgeGraph(projectId) keeps repo and project-vault next to many newer 
     refs.push(n.id);
   }
 
-  // 30 global sessions
+  // 30 global chats (global sessions are gone from project views; chat is a separate kind)
   for (let i = 0; i < 30; i++) {
-    const r = `fair-sess-${i}-${stamp}`;
-    await upsertSourceDoc("session", r, `fair session ${i} ${stamp}`, emb);
+    const r = `fair-chat-${i}-${stamp}`;
+    await upsertSourceDoc("chat", r, `fair chat ${i} ${stamp}`, emb);
     refs.push(r);
   }
 
@@ -245,7 +248,7 @@ test("knowledgeGraph(projectId) keeps repo and project-vault next to many newer 
   expect(ids).toContain(pvRef);
   expect(ids).toContain(gvRef);
 
-  const globalCount = ids.filter(id => id === gvRef || id.startsWith("fair-sess-")).length;
+  const globalCount = ids.filter(id => id === gvRef || id.startsWith("fair-chat-")).length;
   expect(globalCount).toBe(15);
 
   const noteCount = res.nodes.filter(n => n.kind === "note").length;
@@ -262,8 +265,9 @@ test("knowledgeGraph(projectId) reserves a global floor: 55 repo + 28 global at 
     refs.push(r);
   }
   for (let i = 0; i < 28; i++) {
-    const r = `floor-sess-${i}-${stamp}`;
-    await upsertSourceDoc("session", r, `session ${i}`, emb);
+    // bare vault refs: unattributed sessions no longer count as global
+    const r = `floor-vault-${i}-${stamp}.md`;
+    await upsertSourceDoc("vault", r, `vault ${i}`, emb);
     refs.push(r);
   }
   const res = await knowledgeGraph(60, proj, refs);

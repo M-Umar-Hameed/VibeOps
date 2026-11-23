@@ -439,14 +439,22 @@ export async function repoIndexed(projectId: string): Promise<boolean> {
 
 // Column-indexed scope (S5). project_id = P is project-only, so clearProjectKnowledge
 // deletes exactly this project's rows and knowledgeGraph keeps project/global disjoint.
-// searchKnowledge ORs this with globalScopeWhere so global rows stay visible in a
-// scoped search — that union lives in the caller, NOT here (see :235).
 export function projectScopeWhere(projectId: string) {
   return dsql`(project_id = ${projectId}::uuid)`;
 }
 
+// Global = curated shared knowledge visible in EVERY project: global-scope notes,
+// rules and decisions, the legacy shared vault (no "<uuid>:" prefix), project-less chat.
+// Unattributed SESSIONS (project_id NULL, source_kind 'session') are NOT global: they
+// appear only in the unscoped view. Flip this one predicate to change that.
 function globalScopeWhere() {
-  return dsql`(project_id IS NULL)`;
+  return dsql`(project_id IS NULL AND source_kind <> 'session')`;
+}
+
+// Rows visible in project P. searchKnowledge uses it; knowledgeGraph budgets its two
+// halves (projectScopeWhere, globalScopeWhere) as separate groups.
+export function projectVisibleWhere(projectId: string) {
+  return dsql`(${projectScopeWhere(projectId)} OR ${globalScopeWhere()})`;
 }
 
 export async function searchKnowledge(
@@ -458,7 +466,7 @@ export async function searchKnowledge(
   const limit = opts.limit ?? 5;
   const lit = vecLiteral(qv);
   const scope = opts.projectId
-    ? dsql`AND (${projectScopeWhere(opts.projectId)} OR ${globalScopeWhere()})`
+    ? dsql`AND ${projectVisibleWhere(opts.projectId)}`
     : dsql``;
   // Cosine distance; filter to active dim so mixed-dim rows never compare.
   // SET LOCAL needs the same connection as the query, hence the transaction.
@@ -512,11 +520,12 @@ export async function clearProjectKnowledge(projectId: string, executor: Executo
   return rows.length;
 }
 
-export async function listSessionDocs(limit = 50): Promise<{ ref: string; chunkCount: number; created_at: string; excerpt: string }[]> {
+export async function listSessionDocs(limit = 50, projectId?: string): Promise<{ ref: string; chunkCount: number; created_at: string; excerpt: string }[]> {
+  const scope = projectId ? dsql`AND ${projectScopeWhere(projectId)}` : dsql``;
   const rows: unknown = await db.execute(dsql`
     SELECT source_ref, count(id) as chunk_count, max(created_at) as created_at
     FROM embeddings
-    WHERE source_kind = 'session'
+    WHERE source_kind = 'session' ${scope}
     GROUP BY source_ref
     ORDER BY created_at DESC
     LIMIT ${limit}
@@ -648,9 +657,10 @@ export function clampGraphLimit(raw: unknown, fallback = 60): number {
 export async function knowledgeGraph(limit = 60, projectId?: string, refs?: string[]): Promise<{ nodes: { id: string; kind: string; chunks: number; createdAt: string }[]; edges: { a: string; b: string; w: number }[] }> {
   limit = clampGraphLimit(limit);
   // repo nodes carry a "<projectId>:" sourceRef prefix. Sessions with a project_id
-  // are project rows; sessions with no project_id (unmatched sessions) are global.
+  // are project rows; sessions with no project_id (unmatched) are excluded from a
+  // project view and shown only unscoped.
   // note nodes map to a project via scope+refId; global-scope notes are global.
-  // vault is always global.
+  // the legacy vault (no project prefix) and project-less chat are global.
   const unwrap = (r: unknown) => (Array.isArray(r) ? r : (r as { rows: unknown[] }).rows) as any[];
   const perKindQuery = (where: ReturnType<typeof dsql>) => db.execute(dsql`
     SELECT source_ref, source_kind, chunk_count, created_at FROM (
@@ -673,9 +683,8 @@ export async function knowledgeGraph(limit = 60, projectId?: string, refs?: stri
     // globally-shared, always-newer session/vault stream. Project-scoped nodes
     // (repo docs + this project's sessions + this project's project/ticket notes)
     // are selected FIRST, then remaining slots fill with global nodes (vault +
-    // unmatched sessions + global-scope notes), newest-first within each group.
-    // The two groups are disjoint (a row is repo, vault, session, or a note of
-    // exactly one scope) so no dedup is needed.
+    // global-scope notes + project-less chat), newest-first within each group.
+    // The two groups are disjoint (project_id = P vs NULL) so no dedup is needed.
     const projectWhere = refWhere
       ? dsql`WHERE ${projectScopeWhere(projectId)} AND ${refWhere}`
       : dsql`WHERE ${projectScopeWhere(projectId)}`;
@@ -686,7 +695,7 @@ export async function knowledgeGraph(limit = 60, projectId?: string, refs?: stri
     // project-vault files always appear next to notes even when notes are newer.
     const projectRows = budgetByKind(unwrap(await perKindQuery(projectWhere)), limit);
     const globalRows = budgetByKind(unwrap(await perKindQuery(globalWhere)), limit);
-    // Reserve a floor for global (shared vault/session) nodes so shared knowledge
+    // Reserve a floor for global (shared vault/note/chat) nodes so shared knowledge
     // stays visible even when a project has more than `limit` nodes; project-first
     // for the remaining budget, newest-first within each group.
     const GLOBAL_FLOOR = Math.floor(limit * 0.25);

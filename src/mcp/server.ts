@@ -108,7 +108,10 @@ export async function buildServer(apiKey: string) {
     async () => ({ content: [{ type: "text", text: JSON.stringify(await listProjects()) }] }));
 
   server.registerTool("search_knowledge",
-    { inputSchema: { query: z.string(), limit: z.number().optional(), project: z.string().optional() } },
+    {
+      description: "Semantic search over VibeOps knowledge (notes, rules, decisions, vault, repo docs, sessions, chats). Pass project = the projectId from list_projects to search that project plus global knowledge. Omitting project searches ALL projects.",
+      inputSchema: { query: z.string(), limit: z.number().optional(), project: z.string().optional() },
+    },
     async ({ query, limit, project }) => ({
       content: [{ type: "text", text: JSON.stringify(await searchKnowledge(query, { limit, projectId: project, caller: "mcp:search_knowledge" })) }],
     }));

@@ -3,7 +3,7 @@ import { test, expect } from "vitest";
 import { app } from "../src/api/app.js";
 import { db } from "../src/db/client.js";
 import { tickets, comments, notes } from "../src/db/schema.js";
-import { buildBrief, MAX_BRIEF_CHARS } from "../src/services/export.js";
+import { buildBrief, buildBriefParts, MAX_BRIEF_CHARS } from "../src/services/export.js";
 import { upsertSourceDoc } from "../src/services/knowledge.js";
 import { getEmbedder } from "../src/knowledge/embedder.js";
 import { saveNote } from "../src/services/notes.js";
@@ -132,7 +132,7 @@ test("export brief project: no indexed repo docs throws actionable conflict, end
   expect(res.status).toBe(409);
 });
 
-test("export brief project: respects size cap and states truncation", async () => {
+test("export brief project: big docs split into parts, nothing truncated", async () => {
   const uniq = "exp-prj-cap-" + randomUUID().slice(0, 8);
   await createActor({ name: uniq, kind: "human", role: "admin" });
   const project = await createProject({ key: uniq, name: `Big ${uniq}` });
@@ -143,7 +143,16 @@ test("export brief project: respects size cap and states truncation", async () =
     await upsertSourceDoc("repo", `${project.id}:docs/${i}.md`, big, embedder);
   }
 
-  const { markdown } = await buildBrief("project", project.id);
-  expect(markdown).toContain("truncated");
-  expect(markdown.length).toBeLessThanOrEqual(MAX_BRIEF_CHARS + 500);
+  const { parts } = await buildBriefParts("project", project.id);
+  const n = parts.length;
+  expect(n).toBeGreaterThanOrEqual(2);
+  expect(parts[0].startsWith(`# Big ${uniq} - Repo Knowledge Brief (part 1 of ${n})`)).toBe(true);
+  for (const part of parts) {
+    expect(part).not.toContain("truncated");
+    expect(part.length).toBeLessThanOrEqual(MAX_BRIEF_CHARS);
+  }
+  const all = parts.join("");
+  for (let i = 0; i < 4; i++) {
+    expect(all.split(`## docs/${i}.md`).length - 1).toBe(1);
+  }
 });

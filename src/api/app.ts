@@ -99,6 +99,7 @@ app.use("*", cors({
   },
   allowHeaders: ["Authorization", "Content-Type"],
   allowMethods: ["GET", "POST", "PATCH", "PUT", "DELETE"],
+  exposeHeaders: ["X-Brief-Parts", "Content-Disposition"],
 }));
 
 app.use("*", async (c, next) => {

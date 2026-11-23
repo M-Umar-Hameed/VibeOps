@@ -4,8 +4,15 @@ import { api } from "../../lib/api.js";
 import type { Project } from "../../api/types.js";
 import { pickFolder, dialogAvailable } from "../../lib/native-dialog.js";
 import { ImportFromFolder } from "../projects/ImportFromFolder.js";
-import { exportBrief, sendBriefToNotebookLM } from "../../lib/notebooklm.js";
+import { saveProjectBriefFiles, briefFilesNotice } from "../../lib/notebooklm.js";
+import { StaleVersionError } from "../../api/errors.js";
 import { useJobs, isActive, JobProgress } from "../JobProgress.js";
+
+const INDEX_FIRST = 'Export failed. Use "Index docs" first, then retry.';
+function briefError(e: unknown): string {
+  if (e instanceof StaleVersionError) return INDEX_FIRST;
+  return `Export failed: ${e instanceof Error ? e.message : "unknown error"}`;
+}
 
 export function ProjectWorkspaceRow({ project }: { project: Project }) {
   const queryClient = useQueryClient();
@@ -92,18 +99,20 @@ export function ProjectWorkspaceRow({ project }: { project: Project }) {
   const handleExportBrief = async () => {
     setBriefNotice("");
     try {
-      await exportBrief("project", project.id);
-    } catch {
-      setBriefNotice('Export failed. Use "Index docs" first, then retry.');
+      setBriefNotice(briefFilesNotice(await saveProjectBriefFiles(project.id)));
+    } catch (e) {
+      setBriefNotice(briefError(e));
     }
   };
 
   const handleSendBrief = async () => {
     setBriefNotice("");
     try {
-      setBriefNotice(await sendBriefToNotebookLM("project", project.id));
-    } catch {
-      setBriefNotice('Export failed. Use "Index docs" first, then retry.');
+      const r = await saveProjectBriefFiles(project.id);
+      window.open("https://notebooklm.google.com/", "_blank", "noopener,noreferrer");
+      setBriefNotice(briefFilesNotice(r));
+    } catch (e) {
+      setBriefNotice(briefError(e));
     }
   };
 

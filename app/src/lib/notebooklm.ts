@@ -1,3 +1,5 @@
+import { api } from "./api.js";
+
 export async function fetchBrief(kind: string, id: string): Promise<{ text: string; filename: string }> {
   const { getSettings } = await import("../settings.js");
   const { baseUrl, apiKey } = await getSettings();
@@ -40,4 +42,15 @@ export async function sendBriefToNotebookLM(kind: string, id: string): Promise<s
   }
   window.open("https://notebooklm.google.com/", "_blank", "noopener,noreferrer");
   return notice;
+}
+
+export type BriefFiles = { dir: string; parts: number; files: { name: string; chars: number }[] };
+
+export async function saveProjectBriefFiles(id: string): Promise<BriefFiles> {
+  return await api.post("/export/brief-files", { kind: "project", id });
+}
+
+export function briefFilesNotice(r: BriefFiles): string {
+  const n = r.files.length;
+  return `Saved ${n} ${n === 1 ? "file" : "files"} to ${r.dir}. In NotebookLM: + Add source -> Upload files, and select all of them.`;
 }

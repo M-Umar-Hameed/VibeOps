@@ -102,6 +102,9 @@ async function bootNormally() {
   void import("../ingest/sessions/session-project.js")
     .then((m) => m.backfillSessionKnowledgeOnce())
     .catch((e) => console.warn(`sessions backfill failed: ${(e as Error).message}`))
+    .then(() => import("../ingest/sessions/antigravity-project.js"))
+    .then((m) => m.backfillAntigravityKnowledgeOnce())
+    .catch((e) => console.warn(`antigravity backfill failed: ${(e as Error).message}`))
     .then(() => startSessionAutoSync({ runNow: true }))
     .catch((e) => console.warn(`sessions auto-sync failed to start: ${(e as Error).message}`));
   // Embedded (installed desktop) mode is loopback-only; external-Postgres deployments

@@ -45,19 +45,27 @@ function parseTranscript(raw: string): string {
   return out.trim();
 }
 
+// The conversation is the first path segment under the last "brain" segment that has a file below it.
+export function conversationDirOf(ref: string): string | null {
+  return /^(.*[\\/]brain[\\/][^\\/]+)[\\/]/i.exec(ref)?.[1] ?? null;
+}
+
 export function makeAntigravitySource(
   rootDirs = [
     join(homedir(), ".gemini", "antigravity"),
     join(homedir(), ".gemini", "antigravity-cli"),
     join(homedir(), ".gemini", "antigravity-ide")
-  ]
+  ],
+  opts: { resolveProject?: (convDir: string) => Promise<string | null> } = {}
 ): SessionSource {
   return {
     source: "antigravity",
     async listSessionDocs(sinceDays: number): Promise<SessionDoc[]> {
       const cutoff = Date.now() - sinceDays * 24 * 3600 * 1000;
       const docs: SessionDoc[] = [];
-      
+      // Lazy: the DB-backed resolver is only loaded when a brain doc exists.
+      let resolve: ((d: string) => Promise<string | null>) | undefined;
+
       for (const rootDir of rootDirs) {
         for (const sub of SUBDIRS) {
           const dir = join(rootDir, sub);
@@ -77,7 +85,13 @@ export function makeAntigravitySource(
 
             if (!text) continue;
             if (text.length > 200_000) text = text.slice(-200_000);
-            docs.push({ ref: path, text, hash: t.hash });
+            const conv = conversationDirOf(path);
+            let projectId: string | null | undefined;
+            if (conv) {
+              resolve ??= opts.resolveProject ?? await (await import("./antigravity-project.js")).loadAntigravityProjectResolver();
+              projectId = await resolve(conv);
+            }
+            docs.push({ ref: path, text, hash: t.hash, projectId });
           } catch (e) {
             console.warn(`antigravity artifact skipped ${path}: ${(e as Error).message}`);
           }

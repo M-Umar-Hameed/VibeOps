@@ -97,15 +97,15 @@ export async function loadSessionProjectResolver(sandboxDir = sandboxRoot()): Pr
     .from(projects)
     .where(isNotNull(projects.repoPath));
 
-  const ticketProject = async (ticketId: string): Promise<string | null> => {
-    const [t] = await db.select({ projectId: tickets.projectId })
-      .from(tickets)
-      .where(eq(tickets.id, ticketId))
-      .limit(1);
-    return t?.projectId ?? null;
-  };
+  return buildSessionProjectResolver({ projects: projs, ticketProject: ticketProjectFromDb, sandboxDir });
+}
 
-  return buildSessionProjectResolver({ projects: projs, ticketProject, sandboxDir });
+export async function ticketProjectFromDb(ticketId: string): Promise<string | null> {
+  const [t] = await db.select({ projectId: tickets.projectId })
+    .from(tickets)
+    .where(eq(tickets.id, ticketId))
+    .limit(1);
+  return t?.projectId ?? null;
 }
 
 export function defaultSkipDirs(): string[] {

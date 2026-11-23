@@ -410,7 +410,8 @@ app.get("/knowledge/sessions", async (c) => {
   }
   const n = Number(c.req.query("limit"));
   const limit = Number.isFinite(n) && n > 0 ? n : undefined;
-  return c.json(await listSessionDocs(limit));
+  const projectId = c.req.query("project") || undefined;
+  return c.json(await listSessionDocs(limit, projectId));
 });
 
 app.get("/knowledge/graph", async (c) => {

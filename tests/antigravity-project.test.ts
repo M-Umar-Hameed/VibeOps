@@ -16,6 +16,8 @@ import {
   backfillAntigravityKnowledge,
   backfillAntigravityKnowledgeOnce,
   buildAntigravityProjectResolver,
+  decodeTranscript,
+  transcriptHead,
 } from "../src/ingest/sessions/antigravity-project.js";
 
 const SB = "C:\\Users\\Admin\\.vibeops\\sandbox";
@@ -48,6 +50,19 @@ test("Forge sandbox conversation maps to the ticket's project (JSON-escaped path
   const text = JSON.stringify({ c: `cd ${SB}\\${TICKET}\\src\\a.ts` });
   expect(text).toContain("\\\\");
   expect(await attribute(text, { [TICKET]: "p-mono" })).toBe("p-mono");
+});
+
+test("paths right after a JSON newline escape are still found in a real transcript file", async () => {
+  const conv = mkdtempSync(join(tmpdir(), "ag-conv-"));
+  mkdirSync(join(conv, ".system_generated", "logs"), { recursive: true });
+  const lines = [0, 1, 2].map((i) =>
+    JSON.stringify({ type: "PLANNER_RESPONSE", content: `done\n${MONO}\\src\\f${i}.ts\n\tG:\\Github\\monorepo\\docs\\x.md` }));
+  writeFileSync(join(conv, ".system_generated", "logs", "transcript.jsonl"), lines.join("\n") + "\n{\"cut");
+  expect(lines[0]).toContain("\\nG:\\\\Github");
+  const raw = lines.join("\n");
+  expect(await attribute(raw)).toBeNull(); // the escaped form defeats the matcher
+  expect(decodeTranscript(raw)).toContain("\nG:\\Github\\monorepo\\src\\f0.ts");
+  expect(await attribute(transcriptHead(conv))).toBe("p-mono");
 });
 
 test("sandbox uuid that is not a ticket falls through to the tally", async () => {

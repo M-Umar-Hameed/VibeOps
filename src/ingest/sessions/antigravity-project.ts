@@ -119,9 +119,26 @@ export function buildAntigravityProjectResolver(input: AgResolverInput): (convDi
   };
 }
 
-// First 400 KB of the conversation transcript ("" when missing).
+// JSONL writes a newline inside a string as the two characters \n, which glues onto the next path
+// ("\nG:\\Github" normalises to "/ng:/github"). Decode each line and join its string values so
+// paths survive intact; a line that does not parse (cut at the head limit) is kept as it is.
+export function decodeTranscript(raw: string): string {
+  const out: string[] = [];
+  const collect = (v: unknown): void => {
+    if (typeof v === "string") out.push(v);
+    else if (Array.isArray(v)) v.forEach(collect);
+    else if (v && typeof v === "object") Object.values(v).forEach(collect);
+  };
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try { collect(JSON.parse(line)); } catch { out.push(line); }
+  }
+  return out.join("\n");
+}
+
+// First 400 KB of the conversation transcript, decoded ("" when missing).
 export function transcriptHead(convDir: string): string {
-  return readHead(join(convDir, ".system_generated", "logs", "transcript.jsonl"), 409_600);
+  return decodeTranscript(readHead(join(convDir, ".system_generated", "logs", "transcript.jsonl"), 409_600));
 }
 
 export async function loadAntigravityProjectResolver(sandboxDir = sandboxRoot()): Promise<(convDir: string) => Promise<string | null>> {

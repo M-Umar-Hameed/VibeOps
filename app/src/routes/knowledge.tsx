@@ -69,8 +69,8 @@ export function KnowledgeScreen() {
   const [sessionFilter, setSessionFilter] = useState("");
   const [graphLimit, setGraphLimit] = useState(200);
 
-  const sq = useQuery({ queryKey: ["knowledge", submitted], queryFn: () => knowledge.search(submitted), enabled: !!submitted });
-  const sessionsQuery = useQuery({ queryKey: ["sessions"], queryFn: () => apiFetch("/knowledge/sessions") as Promise<{ref: string, chunkCount: number, created_at: string, excerpt: string}[]>, enabled: tab === "Sessions" });
+  const sq = useQuery({ queryKey: ["knowledge", submitted, activeProjectId], queryFn: () => knowledge.search(submitted, undefined, activeProjectId), enabled: !!submitted });
+  const sessionsQuery = useQuery({ queryKey: ["sessions", activeProjectId], queryFn: () => apiFetch("/knowledge/sessions", activeProjectId ? { query: { project: activeProjectId } } : undefined) as Promise<{ref: string, chunkCount: number, created_at: string, excerpt: string}[]>, enabled: tab === "Sessions" });
   const graphQuery = useQuery({ queryKey: ["graph", activeProjectId, graphLimit], queryFn: () => apiFetch("/knowledge/graph", { query: { limit: String(graphLimit), ...(activeProjectId ? { project: activeProjectId } : {}) } }) as Promise<{nodes: any[], edges: any[]}>, enabled: tab === "Graph" });
   
   const sourceQuery = useQuery({
@@ -232,7 +232,7 @@ export function KnowledgeScreen() {
                 </>
               )}
             </div>
-            <p className="font-code-sm text-[10px] text-on-surface-variant/60 mt-3 uppercase tracking-widest text-center">Vault and session knowledge is shared across all projects</p>
+            <p className="font-code-sm text-[10px] text-on-surface-variant/60 mt-3 uppercase tracking-widest text-center">Global notes and the shared vault appear in every project. Sessions belong to one project; sessions that are not tied to a project show only when no project is selected.</p>
             </>
           ) : tab === "Search" ? (
             <>
